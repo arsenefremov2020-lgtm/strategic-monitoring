@@ -2,7 +2,8 @@ import streamlit as st
 import pandas as pd
 
 st.set_page_config(
-    page_title="Моніторинг стратегічного плану",
+    page_title="Стратегічний план",
+    page_icon="📊",
     layout="wide"
 )
 

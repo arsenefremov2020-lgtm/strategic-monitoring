@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+import os
 
 st.set_page_config(
     page_title="Моніторинг виконання",
@@ -96,6 +97,8 @@ with st.form("monitoring_form", clear_on_submit=False):
         "Подати інформацію на погодження"
     )
 
+SAVE_FILE = "monitoring_requests.csv"
+
 if submitted:
 
     rows = []
@@ -118,6 +121,14 @@ if submitted:
         })
 
     preview = pd.DataFrame(rows)
+
+    if os.path.exists(SAVE_FILE):
+    old_data = pd.read_csv(SAVE_FILE)
+    final_data = pd.concat([old_data, preview], ignore_index=True)
+else:
+    final_data = preview
+
+final_data.to_csv(SAVE_FILE, index=False)
 
     st.success("Інформацію подано на погодження адміністратору.")
 

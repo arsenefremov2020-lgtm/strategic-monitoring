@@ -38,13 +38,22 @@ else:
 
     st.subheader("Демо-блок погодження")
 
-    selected_index = st.number_input(
-        "Номер рядка заявки для зміни статусу",
-        min_value=0,
-        max_value=len(df) - 1,
-        value=0,
-        step=1
-    )
+   df["selection"] = (
+    df["department"].astype(str)
+    + " | "
+    + df["strat_code"].astype(str)
+    + " | "
+    + df["responsible_person"].astype(str)
+)
+
+selected_item = st.selectbox(
+    "Оберіть заявку",
+    df["selection"].tolist()
+)
+
+selected_index = df[
+    df["selection"] == selected_item
+].index[0]
 
     new_status = st.selectbox(
         "Новий статус",

@@ -1,14 +1,17 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-import os
+from supabase import create_client
 
 st.set_page_config(
     page_title="Моніторинг виконання",
     layout="wide"
 )
 
-SAVE_FILE = "monitoring_requests.csv"
+supabase = create_client(
+    st.secrets["SUPABASE_URL"],
+    st.secrets["SUPABASE_KEY"]
+)
 
 st.title("Внесення даних моніторингу виконання Стратегічного плану")
 
@@ -117,26 +120,25 @@ if submitted:
             "progress_text": item["progress_text"],
             "numeric_value": item["numeric_value"],
             "risks": item["risks"],
-            "submitted_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "submitted_at": datetime.now().isoformat(),
             "approval_status": "Очікує погодження"
         })
 
-    preview = pd.DataFrame(rows)
+    try:
+        supabase.table("monitoring_requests").insert(rows).execute()
 
-    if os.path.exists(SAVE_FILE):
-        old_data = pd.read_csv(SAVE_FILE)
-        final_data = pd.concat([old_data, preview], ignore_index=True)
-    else:
-        final_data = preview
+        preview = pd.DataFrame(rows)
 
-    final_data.to_csv(SAVE_FILE, index=False)
+        st.success("Інформацію подано на погодження адміністратору.")
 
-    st.success("Інформацію подано на погодження адміністратору.")
+        st.subheader("Попередній перегляд поданих даних")
 
-    st.subheader("Попередній перегляд поданих даних")
+        st.dataframe(
+            preview,
+            use_container_width=True,
+            hide_index=True
+        )
 
-    st.dataframe(
-        preview,
-        use_container_width=True,
-        hide_index=True
-    )
+    except Exception as e:
+        st.error("Не вдалося зберегти дані в Supabase.")
+        st.exception(e)

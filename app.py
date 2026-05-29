@@ -72,6 +72,18 @@ st.title(
     "Моніторинг виконання стратегічного плану"
 )
 
+col1, col2 = st.columns([3,1])
+
+with col2:
+
+    st.page_link(
+        "pages/1_Моніторинг_виконання.py",
+        label="Внесення даних моніторингу виконання СП",
+        icon="📝"
+    )
+
+st.divider()
+
 departments = sorted(
     df["department"]
     .dropna()

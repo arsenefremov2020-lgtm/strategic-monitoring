@@ -12,21 +12,33 @@ SAVE_FILE = "monitoring_requests.csv"
 st.title("Адміністрування заявок моніторингу")
 
 if not os.path.exists(SAVE_FILE):
+
     st.warning("Поки що немає поданих заявок.")
+
 else:
+
     df = pd.read_csv(SAVE_FILE)
+
+    if "admin_comment" not in df.columns:
+        df["admin_comment"] = ""
 
     st.subheader("Усі подані заявки")
 
+    status_options = ["Усі"] + sorted(
+        df["approval_status"].dropna().unique().tolist()
+    )
+
     status_filter = st.selectbox(
         "Фільтр за статусом погодження",
-        ["Усі"] + sorted(df["approval_status"].dropna().unique().tolist())
+        status_options
     )
 
     filtered = df.copy()
 
     if status_filter != "Усі":
-        filtered = filtered[filtered["approval_status"] == status_filter]
+        filtered = filtered[
+            filtered["approval_status"] == status_filter
+        ]
 
     st.dataframe(
         filtered,
@@ -36,7 +48,7 @@ else:
 
     st.divider()
 
-    st.subheader("Демо-блок погодження")
+    st.subheader("Погодження заявки")
 
     df["selection"] = (
         df["department"].astype(str)
@@ -44,16 +56,20 @@ else:
         + df["strat_code"].astype(str)
         + " | "
         + df["responsible_person"].astype(str)
-)
+        + " | "
+        + df["year"].astype(str)
+        + " "
+        + df["quarter"].astype(str)
+    )
 
-selected_item = st.selectbox(
-    "Оберіть заявку",
-    df["selection"].tolist()
-)
+    selected_item = st.selectbox(
+        "Оберіть заявку",
+        df["selection"].tolist()
+    )
 
-selected_index = df[
-    df["selection"] == selected_item
-].index[0]
+    selected_index = df[
+        df["selection"] == selected_item
+    ].index[0]
 
     new_status = st.selectbox(
         "Новий статус",
@@ -64,12 +80,16 @@ selected_index = df[
         ]
     )
 
-    admin_comment = st.text_area("Коментар адміністратора")
+    admin_comment = st.text_area(
+        "Коментар адміністратора"
+    )
 
     if st.button("Оновити статус заявки"):
 
         df.loc[selected_index, "approval_status"] = new_status
         df.loc[selected_index, "admin_comment"] = admin_comment
+
+        df = df.drop(columns=["selection"])
 
         df.to_csv(SAVE_FILE, index=False)
 

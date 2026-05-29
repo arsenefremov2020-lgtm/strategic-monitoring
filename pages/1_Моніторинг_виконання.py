@@ -13,7 +13,15 @@ st.info(
     "Одна форма може містити кілька заходів одного департаменту за один квартал."
 )
 
-with st.form("monitoring_form"):
+measures_count = st.number_input(
+    "Кількість заходів у цьому поданні",
+    min_value=1,
+    max_value=20,
+    value=1,
+    step=1
+)
+
+with st.form("monitoring_form", clear_on_submit=False):
 
     st.subheader("Загальні дані подання")
 
@@ -27,13 +35,6 @@ with st.form("monitoring_form"):
     with col2:
         responsible_person = st.text_input("ПІБ відповідальної особи")
         phone = st.text_input("Контактний номер телефону")
-        measures_count = st.number_input(
-            "Кількість заходів у цьому поданні",
-            min_value=1,
-            max_value=20,
-            value=1,
-            step=1
-        )
 
     st.divider()
     st.subheader("Інформація по заходах")

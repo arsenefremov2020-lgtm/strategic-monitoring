@@ -8,10 +8,13 @@ st.set_page_config(
     layout="wide"
 )
 
+SAVE_FILE = "monitoring_requests.csv"
+
 st.title("Внесення даних моніторингу виконання Стратегічного плану")
 
 st.info(
-    "Одна форма може містити кілька заходів одного департаменту за один квартал."
+    "Одна форма може містити кілька заходів одного департаменту за один квартал. "
+    "Після подання інформація отримує статус: Очікує погодження."
 )
 
 measures_count = st.number_input(
@@ -97,8 +100,6 @@ with st.form("monitoring_form", clear_on_submit=False):
         "Подати інформацію на погодження"
     )
 
-SAVE_FILE = "monitoring_requests.csv"
-
 if submitted:
 
     rows = []
@@ -123,12 +124,12 @@ if submitted:
     preview = pd.DataFrame(rows)
 
     if os.path.exists(SAVE_FILE):
-    old_data = pd.read_csv(SAVE_FILE)
-    final_data = pd.concat([old_data, preview], ignore_index=True)
-else:
-    final_data = preview
+        old_data = pd.read_csv(SAVE_FILE)
+        final_data = pd.concat([old_data, preview], ignore_index=True)
+    else:
+        final_data = preview
 
-final_data.to_csv(SAVE_FILE, index=False)
+    final_data.to_csv(SAVE_FILE, index=False)
 
     st.success("Інформацію подано на погодження адміністратору.")
 

@@ -38,12 +38,12 @@ else:
 
     st.subheader("Демо-блок погодження")
 
-   df["selection"] = (
-    df["department"].astype(str)
-    + " | "
-    + df["strat_code"].astype(str)
-    + " | "
-    + df["responsible_person"].astype(str)
+    df["selection"] = (
+        df["department"].astype(str)
+        + " | "
+        + df["strat_code"].astype(str)
+        + " | "
+        + df["responsible_person"].astype(str)
 )
 
 selected_item = st.selectbox(

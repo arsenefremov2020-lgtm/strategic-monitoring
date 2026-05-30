@@ -17,8 +17,11 @@ supabase = create_client(
 
 
 def safe_filename(name):
-    name = re.sub(r"[^A-Za-zА-Яа-яІіЇїЄєҐґ0-9._-]", "_", name)
-    return name
+    name = str(name)
+    name = name.replace(" ", "_")
+    name = re.sub(r"[^A-Za-z0-9._-]", "_", name)
+    name = re.sub(r"_+", "_", name)
+    return name.strip("_")
 
 
 @st.cache_data
@@ -85,6 +88,9 @@ def upload_files(files, code):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = safe_filename(file.name)
 
+        if not filename:
+            filename = f"file_{timestamp}"
+
         path = f"{safe_code}/{timestamp}_{filename}"
 
         supabase.storage.from_(BUCKET_NAME).upload(
@@ -102,7 +108,6 @@ def upload_files(files, code):
         names.append(file.name)
 
     return ", ".join(names), ", ".join(urls)
-
 
 df = load_strat_matrix()
 approved_df = load_approved_monitoring()

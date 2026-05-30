@@ -1,145 +1,152 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
 from supabase import create_client
-import re
 
-st.set_page_config(page_title="Моніторинг виконання", layout="wide")
+st.set_page_config(
+    page_title="Моніторинг виконання СП",
+    layout="wide"
+)
 
 FILE_PATH = "Під моніторинг СП.xlsx"
 SHEET_NAME = "Страт_матриця"
-BUCKET_NAME = "monitoring-files"
 
 supabase = create_client(
     st.secrets["SUPABASE_URL"],
     st.secrets["SUPABASE_KEY"]
 )
 
+st.markdown("""
+<style>
 
-def safe_filename(name):
-    name = str(name)
-    name = name.replace(" ", "_")
-    name = re.sub(r"[^A-Za-z0-9._-]", "_", name)
-    name = re.sub(r"_+", "_", name)
-    return name.strip("_")
+.stApp{
+background:
+linear-gradient(
+180deg,
+#f4f7fb 0%,
+#eef3f8 100%
+);
+}
 
+.main-title{
+font-size:34px;
+font-weight:700;
+color:#12355B;
+margin-bottom:5px;
+}
 
-def quarter_to_num(q):
-    mapping = {
-        "I": 1,
-        "II": 2,
-        "III": 3,
-        "IV": 4
-    }
-    return mapping.get(str(q), None)
+.ministry{
+text-align:right;
+font-size:14px;
+color:#4f5d73;
+margin-bottom:20px;
+}
 
+.hero-box{
+background:#198754;
+padding:30px;
+border-radius:14px;
+color:white;
+margin-bottom:25px;
+box-shadow:0px 3px 12px rgba(0,0,0,0.08);
+}
 
-def parse_period(value):
-    text = str(value).lower().strip()
+.hero-title{
+font-size:30px;
+font-weight:700;
+}
 
-    if text in ["", "nan", "none", "н.д."]:
-        return None
+.hero-sub{
+font-size:16px;
+opacity:0.95;
+}
 
-    q = None
-    year = None
+.info-box{
+background:white;
+padding:18px;
+border-radius:12px;
+border-left:5px solid #12355B;
+margin-bottom:18px;
+}
 
-    if "1 квартал" in text or "i квартал" in text:
-        q = 1
-    elif "2 квартал" in text or "ii квартал" in text:
-        q = 2
-    elif "3 квартал" in text or "iii квартал" in text:
-        q = 3
-    elif "4 квартал" in text or "iv квартал" in text:
-        q = 4
+.legend{
+padding:12px;
+border-radius:10px;
+background:white;
+margin-bottom:20px;
+}
 
-    year_match = re.search(r"20\d{2}", text)
+.footer{
+margin-top:80px;
+padding-top:20px;
+text-align:center;
+font-size:13px;
+color:#6c757d;
+}
 
-    if year_match:
-        year = int(year_match.group())
+.goal-card{
+background:#12355B;
+color:white;
+padding:16px;
+border-radius:12px;
+margin-bottom:8px;
+font-weight:700;
+}
 
-    if year and q:
-        return year * 10 + q
+.yellow{
+background:#fff3cd;
+}
 
-    return None
+.red{
+background:#f8d7da;
+}
 
+.normal{
+background:white;
+}
 
-def upload_files(files, code):
-    urls = []
-    names = []
+.measure-card{
+padding:10px;
+border-radius:8px;
+margin-bottom:6px;
+border:1px solid #e1e5ea;
+}
 
-    safe_code = safe_filename(str(code)).replace(".", "_")
-
-    for file in files:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = safe_filename(file.name)
-
-        if not filename:
-            filename = f"file_{timestamp}"
-
-        path = f"{safe_code}/{timestamp}_{filename}"
-
-        supabase.storage.from_(BUCKET_NAME).upload(
-            path,
-            file.getvalue(),
-            file_options={
-                "content-type": file.type,
-                "upsert": "true"
-            }
-        )
-
-        public_url = supabase.storage.from_(BUCKET_NAME).get_public_url(path)
-
-        urls.append(public_url)
-        names.append(file.name)
-
-    return ", ".join(names), ", ".join(urls)
+</style>
+""", unsafe_allow_html=True)
 
 
 @st.cache_data
-def load_strat_matrix():
-    df = pd.read_excel(FILE_PATH, sheet_name=SHEET_NAME, header=None, engine="openpyxl")
+def load_matrix():
+
+    df = pd.read_excel(
+        FILE_PATH,
+        sheet_name=SHEET_NAME,
+        header=None,
+        engine="openpyxl"
+    )
+
     data = df.iloc[7:].copy()
 
     result = pd.DataFrame({
-        "type_marker": data.iloc[:, 1],
-        "code": data.iloc[:, 2],
-        "name": data.iloc[:, 3],
-        "indicator": data.iloc[:, 5],
-        "unit": data.iloc[:, 6],
-        "target_2026": data.iloc[:, 10],
-        "target_2027": data.iloc[:, 11],
-        "target_2028": data.iloc[:, 12],
-        "department": data.iloc[:, 17],
-        "start_date_plan": data.iloc[:, 22],
-        "end_date_plan": data.iloc[:, 23],
+        "type_marker": data.iloc[:,1],
+        "code": data.iloc[:,2],
+        "name": data.iloc[:,3],
+        "department": data.iloc[:,17]
     })
 
     result = result.dropna(subset=["code"])
-    result["code"] = result["code"].astype(str).str.strip()
-    result["type_marker"] = result["type_marker"].astype(str).str.strip()
 
-    def classify(row):
-        marker = str(row["type_marker"]).lower()
-        code = str(row["code"]).strip()
+    result["code"] = result["code"].astype(str)
 
-        if "стратегічна ціль" in marker:
-            return "goal"
-        if "завдання" in marker:
-            return "task"
-        if code.count(".") >= 3:
-            return "measure"
-        return "other"
-
-    result["object_type"] = result.apply(classify, axis=1)
     return result
 
 
-def load_approved_monitoring():
+def load_requests():
+
     response = (
         supabase
         .table("monitoring_requests")
         .select("*")
-        .eq("approval_status", "Погоджено")
         .execute()
     )
 
@@ -149,300 +156,174 @@ def load_approved_monitoring():
     return pd.DataFrame(response.data)
 
 
-df = load_strat_matrix()
-approved_df = load_approved_monitoring()
+matrix = load_matrix()
+requests = load_requests()
 
-measures_df = df[df["object_type"] == "measure"].copy()
+status_map = {}
 
-st.title("Внесення даних моніторингу виконання Стратегічного плану")
+if not requests.empty:
 
-st.info(
-    "Оберіть департамент і рік звітування. Система автоматично підтягне всі заходи, "
-    "за якими обраний департамент є головним виконавцем."
-)
-
-departments = sorted(measures_df["department"].dropna().astype(str).unique())
-
-col1, col2 = st.columns(2)
-
-with col1:
-    selected_department = st.selectbox("Департамент", departments)
-
-with col2:
-    selected_year = st.selectbox("Рік звітування", [2026, 2027, 2028])
-
-department_measures = measures_df[
-    measures_df["department"].astype(str) == str(selected_department)
-].copy()
-
-if department_measures.empty:
-    st.warning("Для цього департаменту заходів не знайдено.")
-    st.stop()
-
-target_col = f"target_{selected_year}"
-
-quarter_values = {}
-
-if not approved_df.empty:
-    year_data = approved_df[approved_df["year"] == selected_year]
-
-    for _, row in year_data.iterrows():
-        code = str(row["strat_code"]).strip()
-        quarter = str(row["quarter"]).strip()
-        value = row.get("numeric_value", "")
-
-        quarter_values.setdefault(code, {})
-        quarter_values[quarter] = value
-
-for q in ["I", "II", "III", "IV"]:
-    department_measures[f"{selected_year} {q} квартал"] = department_measures["code"].apply(
-        lambda x: quarter_values.get(str(x).strip(), {}).get(q, "")
+    latest = (
+        requests
+        .sort_values("submitted_at")
+        .groupby("strat_code")
+        .tail(1)
     )
 
-form_df = pd.DataFrame({
-    "Подати": False,
-    "Код заходу": department_measures["code"],
-    "Назва заходу": department_measures["name"],
-    "Індикатор": department_measures["indicator"],
-    "Одиниця виміру": department_measures["unit"],
-    f"Планове значення {selected_year}": department_measures[target_col],
-    f"{selected_year} I квартал": department_measures[f"{selected_year} I квартал"],
-    f"{selected_year} II квартал": department_measures[f"{selected_year} II квартал"],
-    f"{selected_year} III квартал": department_measures[f"{selected_year} III квартал"],
-    f"{selected_year} IV квартал": department_measures[f"{selected_year} IV квартал"],
-    "Початкова дата виконання": department_measures["start_date_plan"],
-    "Кінцева дата виконання": department_measures["end_date_plan"],
-    "Статус виконання": "Виконується",
-    "Опис прогресу": "",
-    "Ризики / проблеми / відхилення": ""
-})
+    for _, row in latest.iterrows():
 
-st.subheader("Загальні дані подання")
+        status_map[
+            str(row["strat_code"])
+        ] = str(row["approval_status"])
 
-g1, g2 = st.columns(2)
-
-with g1:
-    responsible_person = st.text_input("ПІБ відповідальної особи")
-
-with g2:
-    phone = st.text_input("Контактний номер телефону")
-
-st.subheader("Заходи департаменту")
 
 st.markdown(
-    """
-    **Як працювати з таблицею:**
-
-    1. Поставте галочку у колонці **«Подати»** біля заходів, за якими подаєте інформацію.
-    2. У квартальних колонках внесіть фактичні значення виконання.
-    3. Якщо дані вже були погоджені раніше, вони підтягнуться автоматично.
-    4. Терміни виконання підтягуються зі стратегічної матриці.
-    5. Заповніть статус, опис прогресу та ризики/проблеми/відхилення.
-    6. Нижче завантажте підтвердні файли для обраних заходів.
-    7. Натисніть **«Подати інформацію на погодження»**.
-    """
+"""
+<div class='ministry'>
+Міністерство економіки, довкілля та сільського господарства України
+</div>
+""",
+unsafe_allow_html=True
 )
 
-edited_df = st.data_editor(
-    form_df,
-    use_container_width=True,
-    hide_index=True,
-    num_rows="fixed",
-    height=580,
-    row_height=95,
-    column_config={
-        "Подати": st.column_config.CheckboxColumn("Подати", width="small"),
-        "Код заходу": st.column_config.TextColumn("Код заходу", disabled=True, width="small"),
-        "Назва заходу": st.column_config.TextColumn("Назва заходу", disabled=True, width="large"),
-        "Індикатор": st.column_config.TextColumn("Індикатор", disabled=True, width="large"),
-        "Одиниця виміру": st.column_config.TextColumn("Одиниця виміру", disabled=True, width="medium"),
-        f"Планове значення {selected_year}": st.column_config.TextColumn(
-            f"Планове значення {selected_year}",
-            disabled=True,
-            width="medium"
-        ),
-        f"{selected_year} I квартал": st.column_config.TextColumn(f"{selected_year} I квартал", width="medium"),
-        f"{selected_year} II квартал": st.column_config.TextColumn(f"{selected_year} II квартал", width="medium"),
-        f"{selected_year} III квартал": st.column_config.TextColumn(f"{selected_year} III квартал", width="medium"),
-        f"{selected_year} IV квартал": st.column_config.TextColumn(f"{selected_year} IV квартал", width="medium"),
-        "Початкова дата виконання": st.column_config.TextColumn(
-            "Початкова дата виконання",
-            disabled=True,
-            width="medium"
-        ),
-        "Кінцева дата виконання": st.column_config.TextColumn(
-            "Кінцева дата виконання",
-            disabled=True,
-            width="medium"
-        ),
-        "Статус виконання": st.column_config.SelectboxColumn(
-            "Статус виконання",
-            options=[
-                "Не розпочато",
-                "Виконується",
-                "Виконано",
-                "Виконано частково",
-                "Прострочено",
-                "Потребує уваги"
-            ],
-            required=True,
-            width="medium"
-        ),
-        "Опис прогресу": st.column_config.TextColumn("Опис прогресу", width="large"),
-        "Ризики / проблеми / відхилення": st.column_config.TextColumn(
-            "Ризики / проблеми / відхилення",
-            width="large"
-        )
-    }
+st.markdown(
+"""
+<div class='main-title'>
+Моніторинг виконання стратегічного плану
+</div>
+""",
+unsafe_allow_html=True
 )
 
-selected_rows = edited_df[edited_df["Подати"] == True].copy()
+st.markdown(
+"""
+<div class='hero-box'>
+<div class='hero-title'>
+Внесення квартального моніторингу
+</div>
 
-st.subheader("Підтвердні файли")
+<div class='hero-sub'>
+Перейдіть у вкладку "Моніторинг виконання" та подайте інформацію щодо заходів свого департаменту.
+</div>
+</div>
+""",
+unsafe_allow_html=True
+)
 
-file_map = {}
+c1,c2,c3,c4 = st.columns(4)
 
-if selected_rows.empty:
-    st.info("Позначте хоча б один захід у таблиці, щоб додати файли.")
-else:
-    for _, row in selected_rows.iterrows():
-        code = str(row["Код заходу"])
-        files = st.file_uploader(
-            f"Файли для заходу {code}",
-            accept_multiple_files=True,
-            key=f"files_{code}"
-        )
-        file_map[code] = files
+with c1:
+    st.metric(
+        "Заходів у СП",
+        len(matrix)
+    )
 
-submit = st.button("Подати інформацію на погодження")
+with c2:
+    st.metric(
+        "Поданих заявок",
+        len(requests)
+    )
 
-if submit:
-    errors = []
-    warnings = []
+with c3:
 
-    if not responsible_person.strip():
-        errors.append("Заповніть ПІБ відповідальної особи.")
+    if not requests.empty:
 
-    if not phone.strip():
-        errors.append("Заповніть контактний номер телефону.")
-
-    if selected_rows.empty:
-        errors.append("Позначте хоча б один захід для подання.")
-
-    rows_to_insert = []
-
-    quarter_columns = {
-        "I": f"{selected_year} I квартал",
-        "II": f"{selected_year} II квартал",
-        "III": f"{selected_year} III квартал",
-        "IV": f"{selected_year} IV квартал"
-    }
-
-    for _, row in selected_rows.iterrows():
-        code = str(row["Код заходу"])
-        status = str(row["Статус виконання"]).strip()
-        risks = str(row["Ризики / проблеми / відхилення"]).strip()
-        progress = str(row["Опис прогресу"]).strip()
-        files = file_map.get(code, [])
-
-        start_period_num = parse_period(row["Початкова дата виконання"])
-        end_period_num = parse_period(row["Кінцева дата виконання"])
-
-        quarters_filled = []
-
-        for quarter, col_name in quarter_columns.items():
-            value = row[col_name]
-
-            if pd.notna(value) and str(value).strip() != "":
-                quarters_filled.append((quarter, str(value).strip()))
-
-        if not quarters_filled:
-            errors.append(f"Для заходу {code} потрібно заповнити хоча б одну квартальну колонку.")
-            continue
-
-        if status == "Виконано" and not quarters_filled:
-            errors.append(f"Для заходу {code} статус «Виконано» неможливий без фактичного значення.")
-
-        if not progress:
-            warnings.append(f"Для заходу {code} не заповнено опис прогресу.")
-
-        if status == "Виконано" and risks:
-            warnings.append(
-                f"Для заходу {code} статус «Виконано», але заповнено ризики/проблеми. Перевірте коректність."
-            )
-
-        if not files:
-            warnings.append(f"Для заходу {code} не додано підтвердні файли.")
-
-        for quarter, value in quarters_filled:
-            current_period_num = selected_year * 10 + quarter_to_num(quarter)
-
-            if start_period_num is not None and current_period_num < start_period_num:
-                warnings.append(
-                    f"Для заходу {code} подається інформація за {quarter} квартал {selected_year}, "
-                    f"але період виконання ще не настав."
-                )
-
-            if end_period_num is not None and current_period_num > end_period_num:
-                warnings.append(
-                    f"Для заходу {code} подається інформація за {quarter} квартал {selected_year}, "
-                    f"але період виконання вже завершився."
-                )
-
-        uploaded_names = ""
-        uploaded_urls = ""
-
-        try:
-            uploaded_names, uploaded_urls = upload_files(files, code)
-        except Exception as e:
-            errors.append(f"Не вдалося завантажити файл для заходу {code}: {e}")
-            continue
-
-        for quarter, value in quarters_filled:
-            rows_to_insert.append({
-                "year": int(selected_year),
-                "quarter": quarter,
-                "department": str(selected_department),
-                "responsible_person": responsible_person,
-                "phone": phone,
-                "strat_code": code,
-                "status": status,
-                "progress_text": progress,
-                "numeric_value": value,
-                "risks": risks,
-                "submitted_at": datetime.now().isoformat(),
-                "approval_status": "Очікує погодження",
-                "start_date": str(row["Початкова дата виконання"]) if pd.notna(row["Початкова дата виконання"]) else None,
-                "end_date": str(row["Кінцева дата виконання"]) if pd.notna(row["Кінцева дата виконання"]) else None,
-                "evidence_links": "",
-                "file_names": uploaded_names,
-                "file_urls": uploaded_urls
-            })
-
-    if errors:
-        st.error("Подання не виконано. Виправте помилки:")
-        for error in errors:
-            st.error(error)
-        st.stop()
-
-    if warnings:
-        st.warning("Система виявила попередження. Дані все одно можна подати:")
-        for warning in warnings:
-            st.warning(warning)
-
-    try:
-        supabase.table("monitoring_requests").insert(rows_to_insert).execute()
-
-        st.success("Інформацію подано на погодження адміністратору.")
-
-        st.subheader("Попередній перегляд поданих даних")
-
-        st.dataframe(
-            pd.DataFrame(rows_to_insert),
-            use_container_width=True,
-            hide_index=True
+        approved = len(
+            requests[
+                requests["approval_status"]
+                ==
+                "Погоджено"
+            ]
         )
 
-    except Exception as e:
-        st.error("Не вдалося зберегти дані в Supabase.")
-        st.exception(e)
+    else:
+        approved = 0
+
+    st.metric(
+        "Погоджено",
+        approved
+    )
+
+with c4:
+
+    waiting = 0
+
+    if not requests.empty:
+
+        waiting = len(
+            requests[
+                requests["approval_status"]
+                ==
+                "Очікує погодження"
+            ]
+        )
+
+    st.metric(
+        "Очікують погодження",
+        waiting
+    )
+
+st.markdown("""
+<div class='info-box'>
+
+<b>Як працювати із системою:</b>
+
+1. Перегляньте структуру стратегічного плану  
+2. Перейдіть у вкладку моніторингу  
+3. Заповніть квартальні дані  
+4. Додайте файли  
+5. Подайте на погодження  
+6. Перевіряйте статус у вкладці "Мої заявки"
+
+</div>
+""", unsafe_allow_html=True)
+
+st.markdown("""
+<div class='legend'>
+
+🟨 Подано та очікує погодження  
+⚪ Погоджено адміністратором  
+🔴 Повернуто на доопрацювання  
+
+</div>
+""", unsafe_allow_html=True)
+
+st.subheader("Структура стратегічного плану")
+
+for _, row in matrix.iterrows():
+
+    code = str(row["code"])
+
+    approval = status_map.get(code, "")
+
+    css = "normal"
+
+    if approval == "Очікує погодження":
+        css = "yellow"
+
+    elif approval == "Повернуто на доопрацювання":
+        css = "red"
+
+    st.markdown(
+        f"""
+        <div class='measure-card {css}'>
+
+        <b>{code}</b><br>
+
+        {row['name']}
+
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+st.markdown(
+"""
+<div class='footer'>
+
+Розроблено департаментом стратегічного планування та макроекономічного прогнозування
+
+</div>
+""",
+unsafe_allow_html=True
+)

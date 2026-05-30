@@ -3,10 +3,7 @@ import pandas as pd
 from datetime import datetime
 from supabase import create_client
 
-st.set_page_config(
-    page_title="Моніторинг виконання",
-    layout="wide"
-)
+st.set_page_config(page_title="Моніторинг виконання", layout="wide")
 
 FILE_PATH = "Під моніторинг СП.xlsx"
 SHEET_NAME = "Страт_матриця"
@@ -18,13 +15,7 @@ supabase = create_client(
 
 @st.cache_data
 def load_strat_matrix():
-    df = pd.read_excel(
-        FILE_PATH,
-        sheet_name=SHEET_NAME,
-        header=None,
-        engine="openpyxl"
-    )
-
+    df = pd.read_excel(FILE_PATH, sheet_name=SHEET_NAME, header=None, engine="openpyxl")
     data = df.iloc[7:].copy()
 
     result = pd.DataFrame({
@@ -36,14 +27,24 @@ def load_strat_matrix():
         "target_2026": data.iloc[:, 10],
         "target_2027": data.iloc[:, 11],
         "target_2028": data.iloc[:, 12],
-        "department": data.iloc[:, 17],
-        "start_date_plan": None,
-        "end_date_plan": None
+        "department_main": data.iloc[:, 17],
+        "department_alt": data.iloc[:, 38],
+        "start_date_plan": data.iloc[:, 22],
+        "end_date_plan": data.iloc[:, 23],
     })
 
     result = result.dropna(subset=["code"])
     result["code"] = result["code"].astype(str).str.strip()
     result["type_marker"] = result["type_marker"].astype(str).str.strip()
+
+    result["department"] = result["department_main"]
+
+    result.loc[
+        result["department"].isna() | (result["department"].astype(str).str.strip() == ""),
+        "department"
+    ] = result["department_alt"]
+
+    result["department"] = result["department"].astype(str).str.strip()
 
     def classify(row):
         marker = str(row["type_marker"]).lower()
@@ -98,16 +99,10 @@ departments = sorted(
 col1, col2 = st.columns(2)
 
 with col1:
-    selected_department = st.selectbox(
-        "Департамент",
-        departments
-    )
+    selected_department = st.selectbox("Департамент", departments)
 
 with col2:
-    selected_year = st.selectbox(
-        "Рік звітування",
-        [2026, 2027, 2028]
-    )
+    selected_year = st.selectbox("Рік звітування", [2026, 2027, 2028])
 
 department_measures = measures_df[
     measures_df["department"].astype(str) == str(selected_department)
@@ -122,9 +117,7 @@ target_col = f"target_{selected_year}"
 quarter_values = {}
 
 if not approved_df.empty:
-    year_data = approved_df[
-        approved_df["year"] == selected_year
-    ]
+    year_data = approved_df[approved_df["year"] == selected_year]
 
     for _, row in year_data.iterrows():
         code = str(row["strat_code"]).strip()
@@ -133,7 +126,6 @@ if not approved_df.empty:
 
         quarter_values.setdefault(code, {})
         quarter_values[quarter] = value
-
 
 for q in ["I", "II", "III", "IV"]:
     department_measures[f"{selected_year} {q} квартал"] = department_measures["code"].apply(
@@ -175,12 +167,12 @@ st.markdown(
     **Як працювати з таблицею:**
 
     1. Перегляньте перелік заходів, які автоматично підтягнулися для вашого департаменту.
-    2. У колонці **«Подати»** поставте галочку лише біля тих заходів, за якими подаєте інформацію.
+    2. У колонці **«Подати»** поставте галочку біля заходів, за якими подаєте інформацію.
     3. У квартальних колонках внесіть фактичні значення виконання. Якщо дані вже були погоджені раніше, вони підтягнуться автоматично.
-    4. За потреби уточніть початкову та кінцеву дату виконання.
+    4. Початкова та кінцева дата виконання підтягуються зі стратегічної матриці.
     5. Оберіть статус виконання, заповніть опис прогресу та ризики/проблеми/відхилення.
     6. Нижче можна додати підтвердні файли для кожного обраного заходу.
-    7. Після перевірки натисніть **«Подати інформацію на погодження»**. Дані не потрапляють у моніторинг автоматично — спочатку їх має погодити адміністратор.
+    7. Після перевірки натисніть **«Подати інформацію на погодження»**.
     """
 )
 
@@ -189,61 +181,31 @@ edited_df = st.data_editor(
     use_container_width=True,
     hide_index=True,
     num_rows="fixed",
-    height=560,
+    height=580,
     row_height=95,
     column_config={
-        "Подати": st.column_config.CheckboxColumn(
-            "Подати",
-            help="Позначте заходи, за якими подається моніторингова інформація",
-            width="small"
-        ),
-        "Код заходу": st.column_config.TextColumn(
-            "Код заходу",
-            disabled=True,
-            width="small"
-        ),
-        "Назва заходу": st.column_config.TextColumn(
-            "Назва заходу",
-            disabled=True,
-            width="large"
-        ),
-        "Індикатор": st.column_config.TextColumn(
-            "Індикатор",
-            disabled=True,
-            width="large"
-        ),
-        "Одиниця виміру": st.column_config.TextColumn(
-            "Одиниця виміру",
-            disabled=True,
-            width="medium"
-        ),
+        "Подати": st.column_config.CheckboxColumn("Подати", width="small"),
+        "Код заходу": st.column_config.TextColumn("Код заходу", disabled=True, width="small"),
+        "Назва заходу": st.column_config.TextColumn("Назва заходу", disabled=True, width="large"),
+        "Індикатор": st.column_config.TextColumn("Індикатор", disabled=True, width="large"),
+        "Одиниця виміру": st.column_config.TextColumn("Одиниця виміру", disabled=True, width="medium"),
         f"Планове значення {selected_year}": st.column_config.TextColumn(
             f"Планове значення {selected_year}",
             disabled=True,
             width="medium"
         ),
-        f"{selected_year} I квартал": st.column_config.TextColumn(
-            f"{selected_year} I квартал",
-            width="medium"
-        ),
-        f"{selected_year} II квартал": st.column_config.TextColumn(
-            f"{selected_year} II квартал",
-            width="medium"
-        ),
-        f"{selected_year} III квартал": st.column_config.TextColumn(
-            f"{selected_year} III квартал",
-            width="medium"
-        ),
-        f"{selected_year} IV квартал": st.column_config.TextColumn(
-            f"{selected_year} IV квартал",
-            width="medium"
-        ),
-        "Початкова дата виконання": st.column_config.DateColumn(
+        f"{selected_year} I квартал": st.column_config.TextColumn(f"{selected_year} I квартал", width="medium"),
+        f"{selected_year} II квартал": st.column_config.TextColumn(f"{selected_year} II квартал", width="medium"),
+        f"{selected_year} III квартал": st.column_config.TextColumn(f"{selected_year} III квартал", width="medium"),
+        f"{selected_year} IV квартал": st.column_config.TextColumn(f"{selected_year} IV квартал", width="medium"),
+        "Початкова дата виконання": st.column_config.TextColumn(
             "Початкова дата виконання",
+            disabled=True,
             width="medium"
         ),
-        "Кінцева дата виконання": st.column_config.DateColumn(
+        "Кінцева дата виконання": st.column_config.TextColumn(
             "Кінцева дата виконання",
+            disabled=True,
             width="medium"
         ),
         "Статус виконання": st.column_config.SelectboxColumn(
@@ -259,10 +221,7 @@ edited_df = st.data_editor(
             required=True,
             width="medium"
         ),
-        "Опис прогресу": st.column_config.TextColumn(
-            "Опис прогресу",
-            width="large"
-        ),
+        "Опис прогресу": st.column_config.TextColumn("Опис прогресу", width="large"),
         "Ризики / проблеми / відхилення": st.column_config.TextColumn(
             "Ризики / проблеми / відхилення",
             width="large"
@@ -291,7 +250,6 @@ else:
             accept_multiple_files=True,
             key=f"files_{code}"
         )
-
         file_map[code] = ", ".join([file.name for file in files]) if files else ""
 
 submit = st.button("Подати інформацію на погодження")
@@ -329,15 +287,10 @@ if submit:
                 quarters_filled.append((quarter, str(value).strip()))
 
         if not quarters_filled:
-            errors.append(
-                f"Для заходу {code} потрібно заповнити хоча б одну квартальну колонку."
-            )
+            errors.append(f"Для заходу {code} потрібно заповнити хоча б одну квартальну колонку.")
             continue
 
         for quarter, value in quarters_filled:
-            start_date = row["Початкова дата виконання"]
-            end_date = row["Кінцева дата виконання"]
-
             rows_to_insert.append({
                 "year": int(selected_year),
                 "quarter": quarter,
@@ -351,8 +304,8 @@ if submit:
                 "risks": str(row["Ризики / проблеми / відхилення"]),
                 "submitted_at": datetime.now().isoformat(),
                 "approval_status": "Очікує погодження",
-                "start_date": str(start_date) if pd.notna(start_date) else None,
-                "end_date": str(end_date) if pd.notna(end_date) else None,
+                "start_date": str(row["Початкова дата виконання"]) if pd.notna(row["Початкова дата виконання"]) else None,
+                "end_date": str(row["Кінцева дата виконання"]) if pd.notna(row["Кінцева дата виконання"]) else None,
                 "evidence_links": "",
                 "file_names": file_map.get(code, "")
             })

@@ -233,19 +233,31 @@ for _, goal in goals.iterrows():
 
     with st.expander(f"{goal_code} {goal_name}", expanded=False):
 
+        goal_rows = df[df["code"].astype(str).str.startswith(goal_code)]
+
+        tasks_count = goal_rows[goal_rows["object_type"] == "task"].shape[0]
+        measures_count = goal_rows[goal_rows["object_type"] == "measure"].shape[0]
+
         st.markdown(
             f"""
             <div style="
                 background-color:#1d4ed8;
                 color:white;
-                padding:14px;
+                padding:14px 18px;
                 border-radius:10px;
                 font-weight:700;
-                margin-bottom:12px;">
-                {goal_code} {goal_name}
+                margin-bottom:12px;
+                display:flex;
+                justify-content:space-between;
+                align-items:center;">
+            <div>{goal_code} {goal_name}</div>
+            <div style="text-align:right; font-size:13px; line-height:1.5;">
+                <div>Завдань — {tasks_count}</div>
+                <div>Заходів — {measures_count}</div>
             </div>
-            """,
-            unsafe_allow_html=True
+        </div>
+        """,
+        unsafe_allow_html=True
         )
 
         goal_indicators = df[
@@ -255,17 +267,27 @@ for _, goal in goals.iterrows():
 
         if not goal_indicators.empty:
             st.markdown("**Індикатори досягнення стратегічної цілі**")
+            goal_indicators = goal_indicators.rename(columns={
+                "indicator": "Індикатор",
+                "unit": "Одиниця виміру",
+                "base_2021": "Базове значення 2021",
+                "fact_2024": "Звіт 2024",
+                "expected_2025": "Очікуване 2025",
+                "target_2026": "План 2026",
+                "target_2027": "План 2027",
+                "target_2028": "План 2028"
+            })
             render_table(
                 goal_indicators[
                     [
-                        "indicator",
-                        "unit",
-                        "base_2021",
-                        "fact_2024",
-                        "expected_2025",
-                        "target_2026",
-                        "target_2027",
-                        "target_2028"
+                        "Індикатор",
+                        "Одиниця виміру",
+                        "Базове значення 2021",
+                        "Звіт 2024",
+                        "Очікуване 2025",
+                        "План 2026",
+                        "План 2027",
+                        "План 2028"
                     ]
                 ]
             )
@@ -303,17 +325,27 @@ for _, goal in goals.iterrows():
 
                 if not task_indicators.empty:
                     st.markdown("**Індикатори досягнення завдання**")
+                    goal_indicators = goal_indicators.rename(columns={
+                        "indicator": "Індикатор",
+                        "unit": "Одиниця виміру",
+                        "base_2021": "Базове значення 2021",
+                        "fact_2024": "Звіт 2024",
+                        "expected_2025": "Очікуване 2025",
+                        "target_2026": "План 2026",
+                        "target_2027": "План 2027",
+                        "target_2028": "План 2028"
+                    })
                     render_table(
                         task_indicators[
                             [
-                                "indicator",
-                                "unit",
-                                "base_2021",
-                                "fact_2024",
-                                "expected_2025",
-                                "target_2026",
-                                "target_2027",
-                                "target_2028"
+                                "Індикатор",
+                                "Одиниця виміру",
+                                "Базове значення 2021",
+                                "Звіт 2024",
+                                "Очікуване 2025",
+                                "План 2026",
+                                "План 2027",
+                                "План 2028"
                             ]
                         ]
                     )

@@ -3,10 +3,7 @@ import pandas as pd
 from supabase import create_client
 from html import escape
 
-st.set_page_config(
-    page_title="Стратегічний план",
-    layout="wide"
-)
+st.set_page_config(page_title="Стратегічний план", layout="wide")
 
 FILE_PATH = "Під моніторинг СП.xlsx"
 SHEET_NAME = "Страт_матриця"
@@ -16,168 +13,124 @@ supabase = create_client(
     st.secrets["SUPABASE_KEY"]
 )
 
-st.markdown(
-    """
-    <style>
-    .main .block-container {
-        padding-top: 1.5rem;
-        max-width: 1500px;
-    }
+st.markdown("""
+<style>
+.main .block-container {
+    max-width: 1500px;
+    padding-top: 1.5rem;
+}
 
-    div[data-testid="stExpander"] {
-        border: none;
-        box-shadow: none;
-        background: transparent;
-        margin-bottom: 14px;
-    }
+/* Загальні expander */
+div[data-testid="stExpander"] {
+    border: none;
+    margin-bottom: 14px;
+}
 
-    div[data-testid="stExpander"] details {
-        border: none;
-    }
+/* Стратегічна ціль — синій клікабельний блок */
+div[data-testid="stExpander"] > details > summary {
+    background: linear-gradient(90deg, #1d4ed8, #0f55e8) !important;
+    color: white !important;
+    border-radius: 12px !important;
+    padding: 18px 22px !important;
+    font-weight: 800 !important;
+    box-shadow: 0 6px 16px rgba(29,78,216,0.18);
+}
 
-    div[data-testid="stExpander"] summary {
-        padding: 0 !important;
-        background: transparent !important;
-        border: none !important;
-    }
+/* Текст у синьому expander */
+div[data-testid="stExpander"] > details > summary p {
+    color: white !important;
+    font-size: 16px !important;
+    font-weight: 800 !important;
+}
 
-    div[data-testid="stExpander"] summary p {
-        display: none;
-    }
+/* Завдання — темно-сірий клікабельний блок */
+div[data-testid="stExpander"] div[data-testid="stExpander"] > details > summary {
+    background: linear-gradient(90deg, #1f2937, #374151) !important;
+    color: white !important;
+    border-radius: 10px !important;
+    padding: 15px 18px !important;
+    font-weight: 750 !important;
+    box-shadow: none;
+}
 
-    .goal-card {
-        background: linear-gradient(90deg, #1d4ed8, #0f55e8);
-        color: white;
-        padding: 18px 22px;
-        border-radius: 12px;
-        font-weight: 800;
-        margin: 10px 0 12px 0;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 20px;
-        box-shadow: 0 6px 16px rgba(29,78,216,0.18);
-    }
+/* Текст у темно-сірому expander */
+div[data-testid="stExpander"] div[data-testid="stExpander"] > details > summary p {
+    color: white !important;
+    font-size: 15px !important;
+    font-weight: 750 !important;
+}
 
-    .goal-title {
-        font-size: 17px;
-        line-height: 1.35;
-    }
+.section-title {
+    font-size: 16px;
+    font-weight: 800;
+    color: #111827;
+    margin: 18px 0 12px 0;
+}
 
-    .goal-meta {
-        font-size: 14px;
-        line-height: 1.55;
-        text-align: right;
-        min-width: 130px;
-    }
+.table-scroll {
+    overflow-x: auto;
+    width: 100%;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    margin-bottom: 18px;
+    background: white;
+}
 
-    .task-card {
-        background: linear-gradient(90deg, #1f2937, #374151);
-        color: white;
-        padding: 15px 18px;
-        border-radius: 10px 10px 0 0;
-        font-weight: 750;
-        margin-top: 16px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 18px;
-    }
+table.custom-table {
+    min-width: 2100px;
+    border-collapse: collapse;
+    table-layout: fixed;
+    font-size: 13px;
+}
 
-    .task-title {
-        font-size: 15px;
-        line-height: 1.4;
-    }
+table.custom-table th {
+    background-color: #e9eef7;
+    color: #111827;
+    padding: 10px;
+    border: 1px solid #d1d5db;
+    text-align: left;
+    vertical-align: top;
+    white-space: normal;
+    font-weight: 800;
+}
 
-    .task-meta {
-        font-size: 14px;
-        min-width: 110px;
-        text-align: right;
-    }
+table.custom-table td {
+    padding: 10px;
+    border: 1px solid #d1d5db;
+    vertical-align: top;
+    white-space: normal;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    line-height: 1.45;
+}
 
-    .section-box {
-        border: 1px solid #d6dce8;
-        border-top: none;
-        border-radius: 0 0 10px 10px;
-        padding: 16px 16px 18px 16px;
-        margin-bottom: 18px;
-        background: white;
-    }
+table.custom-table tr:nth-child(even) {
+    background-color: #f8fafc;
+}
 
-    .section-title {
-        font-size: 16px;
-        font-weight: 800;
-        color: #111827;
-        margin: 12px 0 12px 0;
-    }
+table.custom-table tr:nth-child(odd) {
+    background-color: #ffffff;
+}
 
-    .table-scroll {
-        overflow-x: auto;
-        width: 100%;
-        border: 1px solid #d1d5db;
-        border-radius: 8px;
-        margin-bottom: 18px;
-        background: white;
-    }
+.col-code { width: 95px; }
+.col-name { width: 360px; }
+.col-indicator { width: 360px; }
+.col-unit { width: 170px; }
+.col-year { width: 130px; }
+.col-quarter { width: 130px; }
+.col-department { width: 130px; }
 
-    table.custom-table {
-        min-width: 1850px;
-        border-collapse: collapse;
-        table-layout: fixed;
-        font-size: 13px;
-    }
-
-    table.custom-table th {
-        background-color: #e9eef7;
-        color: #111827;
-        padding: 10px;
-        border: 1px solid #d1d5db;
-        text-align: left;
-        vertical-align: top;
-        white-space: normal;
-        word-wrap: break-word;
-        font-weight: 800;
-    }
-
-    table.custom-table td {
-        padding: 10px;
-        border: 1px solid #d1d5db;
-        vertical-align: top;
-        white-space: normal;
-        word-wrap: break-word;
-        overflow-wrap: break-word;
-        line-height: 1.45;
-    }
-
-    table.custom-table tr:nth-child(even) {
-        background-color: #f8fafc;
-    }
-
-    table.custom-table tr:nth-child(odd) {
-        background-color: #ffffff;
-    }
-
-    .col-code { width: 95px; }
-    .col-name { width: 330px; }
-    .col-indicator { width: 330px; }
-    .col-unit { width: 170px; }
-    .col-year { width: 125px; }
-    .col-quarter { width: 125px; }
-    .col-department { width: 130px; }
-
-    .note-box {
-        border: 1px solid #d6dce8;
-        border-radius: 8px;
-        padding: 12px 16px;
-        background: #f8fafc;
-        color: #374151;
-        margin-top: 18px;
-        font-size: 14px;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
+.note-box {
+    border: 1px solid #d6dce8;
+    border-radius: 8px;
+    padding: 12px 16px;
+    background: #f8fafc;
+    color: #374151;
+    margin-top: 18px;
+    font-size: 14px;
+}
+</style>
+""", unsafe_allow_html=True)
 
 
 @st.cache_data
@@ -228,21 +181,13 @@ def load_strat_matrix():
         return "other"
 
     result["object_type"] = result.apply(classify, axis=1)
-
     return result
 
 
 def load_monitoring():
-    response = (
-        supabase
-        .table("monitoring_requests")
-        .select("*")
-        .execute()
-    )
-
+    response = supabase.table("monitoring_requests").select("*").execute()
     if not response.data:
         return pd.DataFrame()
-
     return pd.DataFrame(response.data)
 
 
@@ -252,7 +197,7 @@ def clean_value(value):
     return escape(str(value))
 
 
-def render_table(df, min_width=1850):
+def render_table(df, min_width=2100):
     if df.empty:
         st.info("Дані відсутні.")
         return
@@ -260,8 +205,7 @@ def render_table(df, min_width=1850):
     html = f"""
     <div class="table-scroll">
     <table class="custom-table" style="min-width:{min_width}px;">
-    <thead>
-    <tr>
+    <thead><tr>
     """
 
     for col in df.columns:
@@ -291,7 +235,6 @@ def render_table(df, min_width=1850):
         html += "</tr>"
 
     html += "</tbody></table></div>"
-
     st.markdown(html, unsafe_allow_html=True)
 
 
@@ -318,7 +261,7 @@ def indicator_table(data):
         "План 2028"
     ]
 
-    render_table(renamed[show_cols], min_width=1300)
+    render_table(renamed[show_cols], min_width=1350)
 
 
 df = load_strat_matrix()
@@ -326,11 +269,9 @@ monitoring_df = load_monitoring()
 
 approved = pd.DataFrame()
 
-selected_year = 2026
-
 if not monitoring_df.empty:
     approved = monitoring_df[
-        (monitoring_df["approval_status"] == "Погоджено")
+        monitoring_df["approval_status"] == "Погоджено"
     ].copy()
 
 quarter_data = {}
@@ -340,7 +281,6 @@ if not approved.empty:
         key = str(row["strat_code"]).strip()
         year = str(row["year"]).strip()
         q = str(row["quarter"]).strip()
-
         quarter_data.setdefault(key, {})
         quarter_data[key][f"{year}_{q}"] = row["numeric_value"]
 
@@ -383,24 +323,11 @@ for _, goal in goals.iterrows():
     measures_count = len(measures_all)
 
     goal_label = (
-        f"🔽 {goal_code} {goal_name}     "
-        f"Завдань — {tasks_count} | Заходів — {measures_count}"
+        f"{goal_code} {goal_name}     "
+        f"｜ Завдань — {tasks_count} ｜ Заходів — {measures_count}"
     )
 
     with st.expander(goal_label, expanded=False):
-
-        st.markdown(
-            f"""
-            <div class="goal-card">
-                <div class="goal-title">{escape(goal_code)} {escape(goal_name)}</div>
-                <div class="goal-meta">
-                    <div>Завдань — {tasks_count}</div>
-                    <div>Заходів — {measures_count}</div>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
 
         goal_indicators = df[
             (df["object_type"] == "goal_indicator") &
@@ -408,7 +335,10 @@ for _, goal in goals.iterrows():
         ].copy()
 
         if not goal_indicators.empty:
-            st.markdown('<div class="section-title">Індикатори досягнення стратегічної цілі</div>', unsafe_allow_html=True)
+            st.markdown(
+                '<div class="section-title">Індикатори досягнення стратегічної цілі</div>',
+                unsafe_allow_html=True
+            )
             indicator_table(goal_indicators)
 
         for _, task in tasks.iterrows():
@@ -427,20 +357,12 @@ for _, goal in goals.iterrows():
 
             task_measures_count = len(task_measures_for_count)
 
-            task_label = f"▶ {task_code} {task_name}     Заходів — {task_measures_count}"
+            task_label = (
+                f"{task_code} {task_name}     "
+                f"｜ Заходів — {task_measures_count}"
+            )
 
             with st.expander(task_label, expanded=False):
-
-                st.markdown(
-                    f"""
-                    <div class="task-card">
-                        <div class="task-title">{escape(task_code)} {escape(task_name)}</div>
-                        <div class="task-meta">Заходів — {task_measures_count}</div>
-                    </div>
-                    <div class="section-box">
-                    """,
-                    unsafe_allow_html=True
-                )
 
                 task_indicators = df[
                     (df["object_type"] == "task_indicator") &
@@ -448,7 +370,10 @@ for _, goal in goals.iterrows():
                 ].copy()
 
                 if not task_indicators.empty:
-                    st.markdown('<div class="section-title">Індикатори досягнення завдання</div>', unsafe_allow_html=True)
+                    st.markdown(
+                        '<div class="section-title">Індикатори досягнення завдання</div>',
+                        unsafe_allow_html=True
+                    )
                     indicator_table(task_indicators)
 
                 measures = task_measures.copy()
@@ -458,54 +383,58 @@ for _, goal in goals.iterrows():
                         measures["department"].astype(str) == selected_dep
                     ]
 
-                if not measures.empty:
-                    for q in ["I", "II", "III", "IV"]:
-                        measures[f"{selected_year}_{q}"] = measures["code"].apply(
-                            lambda x: quarter_data.get(str(x).strip(), {}).get(f"{selected_year}_{q}", "")
-                        )
-
-                    measures = measures.rename(columns={
-                        "code": "Код",
-                        "name": "Захід",
-                        "indicator": "Індикатор",
-                        "unit": "Одиниця виміру",
-                        "base_2021": "Базове значення 2021",
-                        "fact_2024": "Звіт 2024",
-                        "expected_2025": "Очікуване 2025",
-                        "target_2026": "План 2026",
-                        f"{selected_year}_I": f"{selected_year} I квартал",
-                        f"{selected_year}_II": f"{selected_year} II квартал",
-                        f"{selected_year}_III": f"{selected_year} III квартал",
-                        f"{selected_year}_IV": f"{selected_year} IV квартал",
-                        "target_2027": "План 2027",
-                        "target_2028": "План 2028",
-                        "department": "Департамент"
-                    })
-
-                    show_cols = [
-                        "Код",
-                        "Захід",
-                        "Індикатор",
-                        "Одиниця виміру",
-                        "Базове значення 2021",
-                        "Звіт 2024",
-                        "Очікуване 2025",
-                        "План 2026",
-                        f"{selected_year} I квартал",
-                        f"{selected_year} II квартал",
-                        f"{selected_year} III квартал",
-                        f"{selected_year} IV квартал",
-                        "План 2027",
-                        "План 2028",
-                        "Департамент"
-                    ]
-
-                    st.markdown('<div class="section-title">Заходи</div>', unsafe_allow_html=True)
-                    render_table(measures[show_cols], min_width=2100)
-                else:
+                if measures.empty:
                     st.info("Заходів за цим завданням не знайдено.")
+                    continue
 
-                st.markdown("</div>", unsafe_allow_html=True)
+                for q in ["I", "II", "III", "IV"]:
+                    measures[f"{selected_year}_{q}"] = measures["code"].apply(
+                        lambda x: quarter_data.get(
+                            str(x).strip(), {}
+                        ).get(f"{selected_year}_{q}", "")
+                    )
+
+                measures = measures.rename(columns={
+                    "code": "Код",
+                    "name": "Захід",
+                    "indicator": "Індикатор",
+                    "unit": "Одиниця виміру",
+                    "base_2021": "Базове значення 2021",
+                    "fact_2024": "Звіт 2024",
+                    "expected_2025": "Очікуване 2025",
+                    "target_2026": "План 2026",
+                    f"{selected_year}_I": f"{selected_year} I квартал",
+                    f"{selected_year}_II": f"{selected_year} II квартал",
+                    f"{selected_year}_III": f"{selected_year} III квартал",
+                    f"{selected_year}_IV": f"{selected_year} IV квартал",
+                    "target_2027": "План 2027",
+                    "target_2028": "План 2028",
+                    "department": "Департамент"
+                })
+
+                show_cols = [
+                    "Код",
+                    "Захід",
+                    "Індикатор",
+                    "Одиниця виміру",
+                    "Базове значення 2021",
+                    "Звіт 2024",
+                    "Очікуване 2025",
+                    "План 2026",
+                    f"{selected_year} I квартал",
+                    f"{selected_year} II квартал",
+                    f"{selected_year} III квартал",
+                    f"{selected_year} IV квартал",
+                    "План 2027",
+                    "План 2028",
+                    "Департамент"
+                ]
+
+                st.markdown(
+                    '<div class="section-title">Заходи</div>',
+                    unsafe_allow_html=True
+                )
+                render_table(measures[show_cols], min_width=2200)
 
 st.markdown(
     """

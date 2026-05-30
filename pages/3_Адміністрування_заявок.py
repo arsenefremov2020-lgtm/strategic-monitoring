@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 from supabase import create_client
-from datetime import datetime
 from html import escape
 
 st.set_page_config(
@@ -20,39 +19,37 @@ st.markdown(
     .request-card {
         border: 1px solid #d1d5db;
         border-radius: 12px;
-        padding: 16px 18px;
-        margin-bottom: 16px;
+        padding: 18px;
         background: #ffffff;
-        box-shadow: 0 4px 12px rgba(15,23,42,0.05);
+        box-shadow: 0 4px 12px rgba(15,23,42,0.06);
+        margin-bottom: 18px;
     }
 
     .request-header {
         display: flex;
         justify-content: space-between;
-        align-items: flex-start;
-        gap: 16px;
-        margin-bottom: 12px;
+        gap: 20px;
+        margin-bottom: 14px;
     }
 
     .request-title {
-        font-size: 18px;
+        font-size: 20px;
         font-weight: 800;
         color: #111827;
-        line-height: 1.35;
     }
 
     .request-meta {
-        font-size: 13px;
-        color: #4b5563;
-        line-height: 1.55;
+        font-size: 14px;
+        color: #374151;
+        line-height: 1.6;
+        margin-top: 6px;
     }
 
     .status-badge {
-        display: inline-block;
-        padding: 6px 10px;
+        padding: 7px 12px;
         border-radius: 999px;
         font-size: 13px;
-        font-weight: 700;
+        font-weight: 800;
         white-space: nowrap;
     }
 
@@ -73,9 +70,9 @@ st.markdown(
 
     .mini-grid {
         display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
+        grid-template-columns: repeat(4, 1fr);
         gap: 10px;
-        margin: 12px 0;
+        margin: 16px 0;
     }
 
     .mini-cell {
@@ -88,21 +85,20 @@ st.markdown(
     .mini-label {
         font-size: 12px;
         color: #6b7280;
-        margin-bottom: 4px;
+        margin-bottom: 5px;
     }
 
     .mini-value {
-        font-size: 14px;
-        font-weight: 700;
+        font-size: 15px;
+        font-weight: 800;
         color: #111827;
-        white-space: normal;
         overflow-wrap: break-word;
     }
 
     .text-block {
         border: 1px solid #e5e7eb;
         border-radius: 8px;
-        padding: 10px 12px;
+        padding: 12px;
         background: #ffffff;
         margin-top: 10px;
     }
@@ -164,7 +160,8 @@ if df.empty:
     st.warning("Поки що немає поданих заявок.")
     st.stop()
 
-for col in [
+required_cols = [
+    "id",
     "department",
     "year",
     "quarter",
@@ -180,7 +177,9 @@ for col in [
     "admin_comment",
     "start_date",
     "end_date"
-]:
+]
+
+for col in required_cols:
     if col not in df.columns:
         df[col] = ""
 
@@ -197,17 +196,18 @@ with f2:
     selected_year = st.selectbox("Рік", ["Усі"] + years)
 
 with f3:
-    quarters = ["I", "II", "III", "IV"]
-    selected_quarter = st.selectbox("Квартал", ["Усі"] + quarters)
+    selected_quarter = st.selectbox("Квартал", ["Усі", "I", "II", "III", "IV"])
 
 with f4:
-    statuses = [
-        "Усі",
-        "Очікує погодження",
-        "Погоджено",
-        "Повернуто на доопрацювання"
-    ]
-    selected_approval_status = st.selectbox("Статус погодження", statuses)
+    selected_approval_status = st.selectbox(
+        "Статус погодження",
+        [
+            "Усі",
+            "Очікує погодження",
+            "Погоджено",
+            "Повернуто на доопрацювання"
+        ]
+    )
 
 filtered = df.copy()
 
@@ -263,72 +263,70 @@ selected_row = filtered[
 ].iloc[0]
 
 approval_status = str(selected_row["approval_status"])
-
 badge_class = status_class(approval_status)
 
-st.markdown(
-    f"""
-    <div class="request-card">
-        <div class="request-header">
-            <div>
-                <div class="request-title">
-                    Заявка ID {safe(selected_row["id"])} — захід {safe(selected_row["strat_code"])}
-                </div>
-                <div class="request-meta">
-                    Департамент: <b>{safe(selected_row["department"])}</b><br>
-                    Період: <b>{safe(selected_row["year"])} рік, {safe(selected_row["quarter"])} квартал</b><br>
-                    Подав/подала: <b>{safe(selected_row["responsible_person"])}</b>, тел. {safe(selected_row["phone"])}
-                </div>
+card_html = f"""
+<div class="request-card">
+    <div class="request-header">
+        <div>
+            <div class="request-title">
+                Заявка ID {safe(selected_row["id"])} — захід {safe(selected_row["strat_code"])}
             </div>
-            <div>
-                <span class="status-badge {badge_class}">
-                    {safe(approval_status)}
-                </span>
+            <div class="request-meta">
+                Департамент: <b>{safe(selected_row["department"])}</b><br>
+                Період: <b>{safe(selected_row["year"])} рік, {safe(selected_row["quarter"])} квартал</b><br>
+                Подав/подала: <b>{safe(selected_row["responsible_person"])}</b>, тел. {safe(selected_row["phone"])}
             </div>
         </div>
-
-        <div class="mini-grid">
-            <div class="mini-cell">
-                <div class="mini-label">Статус виконання</div>
-                <div class="mini-value">{safe(selected_row["status"])}</div>
-            </div>
-            <div class="mini-cell">
-                <div class="mini-label">Фактичне значення</div>
-                <div class="mini-value">{safe(selected_row["numeric_value"])}</div>
-            </div>
-            <div class="mini-cell">
-                <div class="mini-label">Початкова дата</div>
-                <div class="mini-value">{safe(selected_row["start_date"])}</div>
-            </div>
-            <div class="mini-cell">
-                <div class="mini-label">Кінцева дата</div>
-                <div class="mini-value">{safe(selected_row["end_date"])}</div>
-            </div>
-        </div>
-
-        <div class="text-block">
-            <div class="text-label">Опис прогресу</div>
-            <div class="text-value">{safe(selected_row["progress_text"])}</div>
-        </div>
-
-        <div class="text-block">
-            <div class="text-label">Ризики / проблеми / відхилення</div>
-            <div class="text-value">{safe(selected_row["risks"])}</div>
-        </div>
-
-        <div class="text-block">
-            <div class="text-label">Підтвердні файли</div>
-            <div class="text-value">{safe(selected_row["file_names"])}</div>
-        </div>
-
-        <div class="text-block">
-            <div class="text-label">Коментар адміністратора</div>
-            <div class="text-value">{safe(selected_row["admin_comment"])}</div>
+        <div>
+            <span class="status-badge {badge_class}">
+                {safe(approval_status)}
+            </span>
         </div>
     </div>
-    """,
-    unsafe_allow_html=True
-)
+
+    <div class="mini-grid">
+        <div class="mini-cell">
+            <div class="mini-label">Статус виконання</div>
+            <div class="mini-value">{safe(selected_row["status"])}</div>
+        </div>
+        <div class="mini-cell">
+            <div class="mini-label">Фактичне значення</div>
+            <div class="mini-value">{safe(selected_row["numeric_value"])}</div>
+        </div>
+        <div class="mini-cell">
+            <div class="mini-label">Початкова дата</div>
+            <div class="mini-value">{safe(selected_row["start_date"])}</div>
+        </div>
+        <div class="mini-cell">
+            <div class="mini-label">Кінцева дата</div>
+            <div class="mini-value">{safe(selected_row["end_date"])}</div>
+        </div>
+    </div>
+
+    <div class="text-block">
+        <div class="text-label">Опис прогресу</div>
+        <div class="text-value">{safe(selected_row["progress_text"])}</div>
+    </div>
+
+    <div class="text-block">
+        <div class="text-label">Ризики / проблеми / відхилення</div>
+        <div class="text-value">{safe(selected_row["risks"])}</div>
+    </div>
+
+    <div class="text-block">
+        <div class="text-label">Підтвердні файли</div>
+        <div class="text-value">{safe(selected_row["file_names"])}</div>
+    </div>
+
+    <div class="text-block">
+        <div class="text-label">Коментар адміністратора</div>
+        <div class="text-value">{safe(selected_row["admin_comment"])}</div>
+    </div>
+</div>
+"""
+
+st.markdown(card_html, unsafe_allow_html=True)
 
 st.subheader("Рішення адміністратора")
 

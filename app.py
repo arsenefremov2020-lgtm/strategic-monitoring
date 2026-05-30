@@ -17,13 +17,7 @@ supabase = create_client(
 
 @st.cache_data
 def load_strat_matrix():
-    df = pd.read_excel(
-        FILE_PATH,
-        sheet_name=SHEET_NAME,
-        header=None,
-        engine="openpyxl"
-    )
-
+    df = pd.read_excel(FILE_PATH, sheet_name=SHEET_NAME, header=None, engine="openpyxl")
     data = df.iloc[7:].copy()
 
     result = pd.DataFrame({
@@ -63,21 +57,13 @@ def load_strat_matrix():
         return "other"
 
     result["object_type"] = result.apply(classify, axis=1)
-
     return result
 
 
 def load_monitoring():
-    response = (
-        supabase
-        .table("monitoring_requests")
-        .select("*")
-        .execute()
-    )
-
+    response = supabase.table("monitoring_requests").select("*").execute()
     if not response.data:
         return pd.DataFrame()
-
     return pd.DataFrame(response.data)
 
 
@@ -93,6 +79,7 @@ def render_table(df):
         width: 100%;
         border: 1px solid #d1d5db;
         border-radius: 8px;
+        margin-bottom: 16px;
     }
 
     table.custom-table {
@@ -133,10 +120,10 @@ def render_table(df):
     .col-code { width: 90px; }
     .col-name { width: 360px; }
     .col-indicator { width: 360px; }
-    .col-unit { width: 160px; }
-    .col-year { width: 120px; }
-    .col-quarter { width: 120px; }
-    .col-department { width: 120px; }
+    .col-unit { width: 170px; }
+    .col-year { width: 130px; }
+    .col-quarter { width: 130px; }
+    .col-department { width: 130px; }
     </style>
     """
 
@@ -144,7 +131,7 @@ def render_table(df):
     html += "<table class='custom-table'><thead><tr>"
 
     for col in df.columns:
-        css_class = ""
+        css_class = "col-year"
 
         if col == "Код":
             css_class = "col-code"
@@ -158,8 +145,6 @@ def render_table(df):
             css_class = "col-quarter"
         elif "Департамент" in col:
             css_class = "col-department"
-        else:
-            css_class = "col-year"
 
         html += f"<th class='{css_class}'>{col}</th>"
 
@@ -175,8 +160,33 @@ def render_table(df):
         html += "</tr>"
 
     html += "</tbody></table></div>"
-
     st.markdown(html, unsafe_allow_html=True)
+
+
+def ua_indicator_table(data):
+    renamed = data.rename(columns={
+        "indicator": "Індикатор",
+        "unit": "Одиниця виміру",
+        "base_2021": "Базове значення 2021",
+        "fact_2024": "Звіт 2024",
+        "expected_2025": "Очікуване 2025",
+        "target_2026": "План 2026",
+        "target_2027": "План 2027",
+        "target_2028": "План 2028"
+    })
+
+    render_table(renamed[
+        [
+            "Індикатор",
+            "Одиниця виміру",
+            "Базове значення 2021",
+            "Звіт 2024",
+            "Очікуване 2025",
+            "План 2026",
+            "План 2027",
+            "План 2028"
+        ]
+    ])
 
 
 df = load_strat_matrix()
@@ -227,16 +237,15 @@ st.subheader("Стратегічний план")
 goals = df[df["object_type"] == "goal"]
 
 for _, goal in goals.iterrows():
-
     goal_code = str(goal["code"])
     goal_name = str(goal["name"])
 
-    with st.expander(f"{goal_code} {goal_name}", expanded=False):
+    goal_rows = df[df["code"].astype(str).str.startswith(goal_code)]
 
-        goal_rows = df[df["code"].astype(str).str.startswith(goal_code)]
+    tasks_count = goal_rows[goal_rows["object_type"] == "task"].shape[0]
+    measures_count = goal_rows[goal_rows["object_type"] == "measure"].shape[0]
 
-        tasks_count = goal_rows[goal_rows["object_type"] == "task"].shape[0]
-        measures_count = goal_rows[goal_rows["object_type"] == "measure"].shape[0]
+    with st.expander(f"{goal_code}", expanded=False):
 
         st.markdown(
             f"""
@@ -250,14 +259,14 @@ for _, goal in goals.iterrows():
                 display:flex;
                 justify-content:space-between;
                 align-items:center;">
-            <div>{goal_code} {goal_name}</div>
-            <div style="text-align:right; font-size:13px; line-height:1.5;">
-                <div>Завдань — {tasks_count}</div>
-                <div>Заходів — {measures_count}</div>
+                <div>{goal_code} {goal_name}</div>
+                <div style="text-align:right; font-size:13px; line-height:1.5;">
+                    <div>Завдань — {tasks_count}</div>
+                    <div>Заходів — {measures_count}</div>
+                </div>
             </div>
-        </div>
-        """,
-        unsafe_allow_html=True
+            """,
+            unsafe_allow_html=True
         )
 
         goal_indicators = df[
@@ -267,52 +276,35 @@ for _, goal in goals.iterrows():
 
         if not goal_indicators.empty:
             st.markdown("**Індикатори досягнення стратегічної цілі**")
-            goal_indicators = goal_indicators.rename(columns={
-                "indicator": "Індикатор",
-                "unit": "Одиниця виміру",
-                "base_2021": "Базове значення 2021",
-                "fact_2024": "Звіт 2024",
-                "expected_2025": "Очікуване 2025",
-                "target_2026": "План 2026",
-                "target_2027": "План 2027",
-                "target_2028": "План 2028"
-            })
-            render_table(
-                goal_indicators[
-                    [
-                        "Індикатор",
-                        "Одиниця виміру",
-                        "Базове значення 2021",
-                        "Звіт 2024",
-                        "Очікуване 2025",
-                        "План 2026",
-                        "План 2027",
-                        "План 2028"
-                    ]
-                ]
-            )
-
-        goal_rows = df[df["code"].astype(str).str.startswith(goal_code)]
+            ua_indicator_table(goal_indicators)
 
         tasks = goal_rows[goal_rows["object_type"] == "task"]
 
         for _, task in tasks.iterrows():
-
             task_code = str(task["code"])
             task_name = str(task["name"])
 
-            with st.expander(f"{task_code} {task_name}", expanded=False):
+            task_rows = df[df["code"].astype(str).str.startswith(task_code)]
+            task_measures_count = task_rows[task_rows["object_type"] == "measure"].shape[0]
+
+            with st.expander(f"{task_code}", expanded=False):
 
                 st.markdown(
                     f"""
                     <div style="
                         background-color:#374151;
                         color:white;
-                        padding:12px;
+                        padding:12px 16px;
                         border-radius:8px;
                         font-weight:600;
-                        margin-bottom:12px;">
-                        {task_code} {task_name}
+                        margin-bottom:12px;
+                        display:flex;
+                        justify-content:space-between;
+                        align-items:center;">
+                        <div>{task_code} {task_name}</div>
+                        <div style="text-align:right; font-size:13px;">
+                            Заходів — {task_measures_count}
+                        </div>
                     </div>
                     """,
                     unsafe_allow_html=True
@@ -325,30 +317,7 @@ for _, goal in goals.iterrows():
 
                 if not task_indicators.empty:
                     st.markdown("**Індикатори досягнення завдання**")
-                    goal_indicators = goal_indicators.rename(columns={
-                        "indicator": "Індикатор",
-                        "unit": "Одиниця виміру",
-                        "base_2021": "Базове значення 2021",
-                        "fact_2024": "Звіт 2024",
-                        "expected_2025": "Очікуване 2025",
-                        "target_2026": "План 2026",
-                        "target_2027": "План 2027",
-                        "target_2028": "План 2028"
-                    })
-                    render_table(
-                        task_indicators[
-                            [
-                                "Індикатор",
-                                "Одиниця виміру",
-                                "Базове значення 2021",
-                                "Звіт 2024",
-                                "Очікуване 2025",
-                                "План 2026",
-                                "План 2027",
-                                "План 2028"
-                            ]
-                        ]
-                    )
+                    ua_indicator_table(task_indicators)
 
                 measures = df[
                     (df["object_type"] == "measure") &

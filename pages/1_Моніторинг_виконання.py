@@ -79,10 +79,13 @@ def upload_files(files, code):
     urls = []
     names = []
 
+    safe_code = safe_filename(str(code)).replace(".", "_")
+
     for file in files:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = safe_filename(file.name)
-        path = f"{code}/{timestamp}_{filename}"
+
+        path = f"{safe_code}/{timestamp}_{filename}"
 
         supabase.storage.from_(BUCKET_NAME).upload(
             path,

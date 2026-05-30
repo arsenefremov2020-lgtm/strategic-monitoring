@@ -84,7 +84,7 @@ required_cols = [
     "id", "department", "year", "quarter", "approval_status", "status",
     "strat_code", "responsible_person", "phone", "numeric_value",
     "progress_text", "risks", "file_names", "admin_comment",
-    "start_date", "end_date"
+    "start_date", "end_date", "file_urls"
 ]
 
 for col in required_cols:
@@ -290,12 +290,18 @@ st.text_area(
 
 st.markdown("### Підтвердні файли")
 
-st.text_area(
-    "Назви файлів",
-    value=clean(selected_row["file_names"]),
-    disabled=True,
-    height=90
-)
+file_names = clean(selected_row["file_names"])
+file_urls = clean(selected_row["file_urls"])
+
+if not file_urls:
+    st.info("Файлів до заявки не додано.")
+else:
+    urls = [u.strip() for u in file_urls.split(",") if u.strip()]
+    names = [n.strip() for n in file_names.split(",") if n.strip()]
+
+    for i, url in enumerate(urls):
+        label = names[i] if i < len(names) else f"Файл {i + 1}"
+        st.markdown(f"[{label}]({url})")
 
 st.divider()
 

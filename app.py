@@ -1,9 +1,11 @@
 import streamlit as st
 import pandas as pd
 from supabase import create_client
-from html import escape
 
-st.set_page_config(page_title="Стратегічний план", layout="wide")
+st.set_page_config(
+    page_title="Моніторинг виконання СП",
+    layout="wide"
+)
 
 FILE_PATH = "Під моніторинг СП.xlsx"
 SHEET_NAME = "Страт_матриця"
@@ -15,126 +17,107 @@ supabase = create_client(
 
 st.markdown("""
 <style>
-.main .block-container {
-    max-width: 1500px;
-    padding-top: 1.5rem;
+
+.stApp{
+background:
+linear-gradient(
+180deg,
+#f4f7fb 0%,
+#eef3f8 100%
+);
 }
 
-/* Загальні expander */
-div[data-testid="stExpander"] {
-    border: none;
-    margin-bottom: 14px;
+.main-title{
+font-size:34px;
+font-weight:700;
+color:#12355B;
+margin-bottom:5px;
 }
 
-/* Стратегічна ціль — синій клікабельний блок */
-div[data-testid="stExpander"] > details > summary {
-    background: linear-gradient(90deg, #1d4ed8, #0f55e8) !important;
-    color: white !important;
-    border-radius: 12px !important;
-    padding: 18px 22px !important;
-    font-weight: 800 !important;
-    box-shadow: 0 6px 16px rgba(29,78,216,0.18);
+.ministry{
+text-align:right;
+font-size:14px;
+color:#4f5d73;
+margin-bottom:20px;
 }
 
-/* Текст у синьому expander */
-div[data-testid="stExpander"] > details > summary p {
-    color: white !important;
-    font-size: 16px !important;
-    font-weight: 800 !important;
+.hero-box{
+background:#198754;
+padding:30px;
+border-radius:14px;
+color:white;
+margin-bottom:25px;
+box-shadow:0px 3px 12px rgba(0,0,0,0.08);
 }
 
-/* Завдання — темно-сірий клікабельний блок */
-div[data-testid="stExpander"] div[data-testid="stExpander"] > details > summary {
-    background: linear-gradient(90deg, #1f2937, #374151) !important;
-    color: white !important;
-    border-radius: 10px !important;
-    padding: 15px 18px !important;
-    font-weight: 750 !important;
-    box-shadow: none;
+.hero-title{
+font-size:30px;
+font-weight:700;
 }
 
-/* Текст у темно-сірому expander */
-div[data-testid="stExpander"] div[data-testid="stExpander"] > details > summary p {
-    color: white !important;
-    font-size: 15px !important;
-    font-weight: 750 !important;
+.hero-sub{
+font-size:16px;
+opacity:0.95;
 }
 
-.section-title {
-    font-size: 16px;
-    font-weight: 800;
-    color: #111827;
-    margin: 18px 0 12px 0;
+.info-box{
+background:white;
+padding:18px;
+border-radius:12px;
+border-left:5px solid #12355B;
+margin-bottom:18px;
 }
 
-.table-scroll {
-    overflow-x: auto;
-    width: 100%;
-    border: 1px solid #d1d5db;
-    border-radius: 8px;
-    margin-bottom: 18px;
-    background: white;
+.legend{
+padding:12px;
+border-radius:10px;
+background:white;
+margin-bottom:20px;
 }
 
-table.custom-table {
-    min-width: 2100px;
-    border-collapse: collapse;
-    table-layout: fixed;
-    font-size: 13px;
+.footer{
+margin-top:80px;
+padding-top:20px;
+text-align:center;
+font-size:13px;
+color:#6c757d;
 }
 
-table.custom-table th {
-    background-color: #e9eef7;
-    color: #111827;
-    padding: 10px;
-    border: 1px solid #d1d5db;
-    text-align: left;
-    vertical-align: top;
-    white-space: normal;
-    font-weight: 800;
+.goal-card{
+background:#12355B;
+color:white;
+padding:16px;
+border-radius:12px;
+margin-bottom:8px;
+font-weight:700;
 }
 
-table.custom-table td {
-    padding: 10px;
-    border: 1px solid #d1d5db;
-    vertical-align: top;
-    white-space: normal;
-    word-wrap: break-word;
-    overflow-wrap: break-word;
-    line-height: 1.45;
+.yellow{
+background:#fff3cd;
 }
 
-table.custom-table tr:nth-child(even) {
-    background-color: #f8fafc;
+.red{
+background:#f8d7da;
 }
 
-table.custom-table tr:nth-child(odd) {
-    background-color: #ffffff;
+.normal{
+background:white;
 }
 
-.col-code { width: 95px; }
-.col-name { width: 360px; }
-.col-indicator { width: 360px; }
-.col-unit { width: 170px; }
-.col-year { width: 130px; }
-.col-quarter { width: 130px; }
-.col-department { width: 130px; }
-
-.note-box {
-    border: 1px solid #d6dce8;
-    border-radius: 8px;
-    padding: 12px 16px;
-    background: #f8fafc;
-    color: #374151;
-    margin-top: 18px;
-    font-size: 14px;
+.measure-card{
+padding:10px;
+border-radius:8px;
+margin-bottom:6px;
+border:1px solid #e1e5ea;
 }
+
 </style>
 """, unsafe_allow_html=True)
 
 
 @st.cache_data
-def load_strat_matrix():
+def load_matrix():
+
     df = pd.read_excel(
         FILE_PATH,
         sheet_name=SHEET_NAME,
@@ -145,302 +128,202 @@ def load_strat_matrix():
     data = df.iloc[7:].copy()
 
     result = pd.DataFrame({
-        "type_marker": data.iloc[:, 1],
-        "code": data.iloc[:, 2],
-        "name": data.iloc[:, 3],
-        "indicator": data.iloc[:, 5],
-        "unit": data.iloc[:, 6],
-        "base_2021": data.iloc[:, 7],
-        "fact_2024": data.iloc[:, 8],
-        "expected_2025": data.iloc[:, 9],
-        "target_2026": data.iloc[:, 10],
-        "target_2027": data.iloc[:, 11],
-        "target_2028": data.iloc[:, 12],
-        "department": data.iloc[:, 17]
+        "type_marker": data.iloc[:,1],
+        "code": data.iloc[:,2],
+        "name": data.iloc[:,3],
+        "department": data.iloc[:,17]
     })
 
     result = result.dropna(subset=["code"])
-    result["code"] = result["code"].astype(str).str.strip()
-    result["type_marker"] = result["type_marker"].astype(str).str.strip()
 
-    def classify(row):
-        marker = str(row["type_marker"]).lower()
-        code = str(row["code"]).strip()
-        dots = code.count(".")
+    result["code"] = result["code"].astype(str)
 
-        if "стратегічна ціль" in marker:
-            return "goal"
-        if "завдання" in marker:
-            return "task"
-        if dots == 1:
-            return "goal_indicator"
-        if dots == 2:
-            return "task_indicator"
-        if dots >= 3:
-            return "measure"
-        return "other"
-
-    result["object_type"] = result.apply(classify, axis=1)
     return result
 
 
-def load_monitoring():
-    response = supabase.table("monitoring_requests").select("*").execute()
+def load_requests():
+
+    response = (
+        supabase
+        .table("monitoring_requests")
+        .select("*")
+        .execute()
+    )
+
     if not response.data:
         return pd.DataFrame()
+
     return pd.DataFrame(response.data)
 
 
-def clean_value(value):
-    if pd.isna(value) or str(value) == "None":
-        return ""
-    return escape(str(value))
+matrix = load_matrix()
+requests = load_requests()
 
+status_map = {}
 
-def render_table(df, min_width=2100):
-    if df.empty:
-        st.info("Дані відсутні.")
-        return
+if not requests.empty:
 
-    html = f"""
-    <div class="table-scroll">
-    <table class="custom-table" style="min-width:{min_width}px;">
-    <thead><tr>
-    """
-
-    for col in df.columns:
-        css_class = "col-year"
-
-        if col == "Код":
-            css_class = "col-code"
-        elif col == "Захід":
-            css_class = "col-name"
-        elif col == "Індикатор":
-            css_class = "col-indicator"
-        elif col == "Одиниця виміру":
-            css_class = "col-unit"
-        elif "квартал" in col:
-            css_class = "col-quarter"
-        elif "Департамент" in col:
-            css_class = "col-department"
-
-        html += f"<th class='{css_class}'>{escape(str(col))}</th>"
-
-    html += "</tr></thead><tbody>"
-
-    for _, row in df.iterrows():
-        html += "<tr>"
-        for col in df.columns:
-            html += f"<td>{clean_value(row[col])}</td>"
-        html += "</tr>"
-
-    html += "</tbody></table></div>"
-    st.markdown(html, unsafe_allow_html=True)
-
-
-def indicator_table(data):
-    renamed = data.rename(columns={
-        "indicator": "Індикатор",
-        "unit": "Одиниця виміру",
-        "base_2021": "Базове значення 2021",
-        "fact_2024": "Звіт 2024",
-        "expected_2025": "Очікуване 2025",
-        "target_2026": "План 2026",
-        "target_2027": "План 2027",
-        "target_2028": "План 2028"
-    })
-
-    show_cols = [
-        "Індикатор",
-        "Одиниця виміру",
-        "Базове значення 2021",
-        "Звіт 2024",
-        "Очікуване 2025",
-        "План 2026",
-        "План 2027",
-        "План 2028"
-    ]
-
-    render_table(renamed[show_cols], min_width=1350)
-
-
-df = load_strat_matrix()
-monitoring_df = load_monitoring()
-
-approved = pd.DataFrame()
-
-if not monitoring_df.empty:
-    approved = monitoring_df[
-        monitoring_df["approval_status"] == "Погоджено"
-    ].copy()
-
-quarter_data = {}
-
-if not approved.empty:
-    for _, row in approved.iterrows():
-        key = str(row["strat_code"]).strip()
-        year = str(row["year"]).strip()
-        q = str(row["quarter"]).strip()
-        quarter_data.setdefault(key, {})
-        quarter_data[key][f"{year}_{q}"] = row["numeric_value"]
-
-
-st.title("Стратегічний план")
-
-top_left, top_right = st.columns([3, 1])
-
-with top_right:
-    st.page_link(
-        "pages/1_Моніторинг_виконання.py",
-        label="Внесення даних моніторингу",
-        icon="🖊️"
+    latest = (
+        requests
+        .sort_values("submitted_at")
+        .groupby("strat_code")
+        .tail(1)
     )
 
-f1, f2 = st.columns(2)
+    for _, row in latest.iterrows():
 
-departments = sorted(df["department"].dropna().astype(str).unique())
+        status_map[
+            str(row["strat_code"])
+        ] = str(row["approval_status"])
 
-with f1:
-    selected_dep = st.selectbox("Департамент", ["Усі"] + departments)
-
-with f2:
-    selected_year = st.selectbox("Рік моніторингу", [2026, 2027, 2028])
-
-st.markdown("")
-
-goals = df[df["object_type"] == "goal"]
-
-for _, goal in goals.iterrows():
-    goal_code = str(goal["code"])
-    goal_name = str(goal["name"])
-
-    goal_rows = df[df["code"].astype(str).str.startswith(goal_code)]
-
-    tasks = goal_rows[goal_rows["object_type"] == "task"].copy()
-    measures_all = goal_rows[goal_rows["object_type"] == "measure"].copy()
-
-    tasks_count = len(tasks)
-    measures_count = len(measures_all)
-
-    goal_label = (
-        f"{goal_code} {goal_name}     "
-        f"｜ Завдань — {tasks_count} ｜ Заходів — {measures_count}"
-    )
-
-    with st.expander(goal_label, expanded=False):
-
-        goal_indicators = df[
-            (df["object_type"] == "goal_indicator") &
-            (df["code"].astype(str) == goal_code)
-        ].copy()
-
-        if not goal_indicators.empty:
-            st.markdown(
-                '<div class="section-title">Індикатори досягнення стратегічної цілі</div>',
-                unsafe_allow_html=True
-            )
-            indicator_table(goal_indicators)
-
-        for _, task in tasks.iterrows():
-            task_code = str(task["code"])
-            task_name = str(task["name"])
-
-            task_rows = df[df["code"].astype(str).str.startswith(task_code)]
-            task_measures = task_rows[task_rows["object_type"] == "measure"].copy()
-
-            if selected_dep != "Усі":
-                task_measures_for_count = task_measures[
-                    task_measures["department"].astype(str) == selected_dep
-                ]
-            else:
-                task_measures_for_count = task_measures
-
-            task_measures_count = len(task_measures_for_count)
-
-            task_label = (
-                f"{task_code} {task_name}     "
-                f"｜ Заходів — {task_measures_count}"
-            )
-
-            with st.expander(task_label, expanded=False):
-
-                task_indicators = df[
-                    (df["object_type"] == "task_indicator") &
-                    (df["code"].astype(str) == task_code)
-                ].copy()
-
-                if not task_indicators.empty:
-                    st.markdown(
-                        '<div class="section-title">Індикатори досягнення завдання</div>',
-                        unsafe_allow_html=True
-                    )
-                    indicator_table(task_indicators)
-
-                measures = task_measures.copy()
-
-                if selected_dep != "Усі":
-                    measures = measures[
-                        measures["department"].astype(str) == selected_dep
-                    ]
-
-                if measures.empty:
-                    st.info("Заходів за цим завданням не знайдено.")
-                    continue
-
-                for q in ["I", "II", "III", "IV"]:
-                    measures[f"{selected_year}_{q}"] = measures["code"].apply(
-                        lambda x: quarter_data.get(
-                            str(x).strip(), {}
-                        ).get(f"{selected_year}_{q}", "")
-                    )
-
-                measures = measures.rename(columns={
-                    "code": "Код",
-                    "name": "Захід",
-                    "indicator": "Індикатор",
-                    "unit": "Одиниця виміру",
-                    "base_2021": "Базове значення 2021",
-                    "fact_2024": "Звіт 2024",
-                    "expected_2025": "Очікуване 2025",
-                    "target_2026": "План 2026",
-                    f"{selected_year}_I": f"{selected_year} I квартал",
-                    f"{selected_year}_II": f"{selected_year} II квартал",
-                    f"{selected_year}_III": f"{selected_year} III квартал",
-                    f"{selected_year}_IV": f"{selected_year} IV квартал",
-                    "target_2027": "План 2027",
-                    "target_2028": "План 2028",
-                    "department": "Департамент"
-                })
-
-                show_cols = [
-                    "Код",
-                    "Захід",
-                    "Індикатор",
-                    "Одиниця виміру",
-                    "Базове значення 2021",
-                    "Звіт 2024",
-                    "Очікуване 2025",
-                    "План 2026",
-                    f"{selected_year} I квартал",
-                    f"{selected_year} II квартал",
-                    f"{selected_year} III квартал",
-                    f"{selected_year} IV квартал",
-                    "План 2027",
-                    "План 2028",
-                    "Департамент"
-                ]
-
-                st.markdown(
-                    '<div class="section-title">Заходи</div>',
-                    unsafe_allow_html=True
-                )
-                render_table(measures[show_cols], min_width=2200)
 
 st.markdown(
-    """
-    <div class="note-box">
-        У квартальних колонках відображаються фактичні значення з моніторингу, якщо заявка погоджена адміністратором.
-    </div>
-    """,
-    unsafe_allow_html=True
+"""
+<div class='ministry'>
+Міністерство економіки, довкілля та сільського господарства України
+</div>
+""",
+unsafe_allow_html=True
+)
+
+st.markdown(
+"""
+<div class='main-title'>
+Моніторинг виконання стратегічного плану
+</div>
+""",
+unsafe_allow_html=True
+)
+
+st.markdown(
+"""
+<div class='hero-box'>
+<div class='hero-title'>
+Внесення квартального моніторингу
+</div>
+
+<div class='hero-sub'>
+Перейдіть у вкладку "Моніторинг виконання" та подайте інформацію щодо заходів свого департаменту.
+</div>
+</div>
+""",
+unsafe_allow_html=True
+)
+
+c1,c2,c3,c4 = st.columns(4)
+
+with c1:
+    st.metric(
+        "Заходів у СП",
+        len(matrix)
+    )
+
+with c2:
+    st.metric(
+        "Поданих заявок",
+        len(requests)
+    )
+
+with c3:
+
+    if not requests.empty:
+
+        approved = len(
+            requests[
+                requests["approval_status"]
+                ==
+                "Погоджено"
+            ]
+        )
+
+    else:
+        approved = 0
+
+    st.metric(
+        "Погоджено",
+        approved
+    )
+
+with c4:
+
+    waiting = 0
+
+    if not requests.empty:
+
+        waiting = len(
+            requests[
+                requests["approval_status"]
+                ==
+                "Очікує погодження"
+            ]
+        )
+
+    st.metric(
+        "Очікують погодження",
+        waiting
+    )
+
+st.markdown("""
+<div class='info-box'>
+
+<b>Як працювати із системою:</b>
+
+1. Перегляньте структуру стратегічного плану  
+2. Перейдіть у вкладку моніторингу  
+3. Заповніть квартальні дані  
+4. Додайте файли  
+5. Подайте на погодження  
+6. Перевіряйте статус у вкладці "Мої заявки"
+
+</div>
+""", unsafe_allow_html=True)
+
+st.markdown("""
+<div class='legend'>
+
+🟨 Подано та очікує погодження  
+⚪ Погоджено адміністратором  
+🔴 Повернуто на доопрацювання  
+
+</div>
+""", unsafe_allow_html=True)
+
+st.subheader("Структура стратегічного плану")
+
+for _, row in matrix.iterrows():
+
+    code = str(row["code"])
+
+    approval = status_map.get(code, "")
+
+    css = "normal"
+
+    if approval == "Очікує погодження":
+        css = "yellow"
+
+    elif approval == "Повернуто на доопрацювання":
+        css = "red"
+
+    st.markdown(
+        f"""
+        <div class='measure-card {css}'>
+
+        <b>{code}</b><br>
+
+        {row['name']}
+
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+st.markdown(
+"""
+<div class='footer'>
+
+Розроблено департаментом стратегічного планування та макроекономічного прогнозування
+
+</div>
+""",
+unsafe_allow_html=True
 )

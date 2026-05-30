@@ -71,6 +71,33 @@ def load_requests():
     return pd.DataFrame(response.data)
 
 
+def load_logs(request_id):
+    response = (
+        supabase
+        .table("monitoring_logs")
+        .select("*")
+        .eq("request_id", request_id)
+        .order("changed_at", desc=True)
+        .execute()
+    )
+
+    if not response.data:
+        return pd.DataFrame()
+
+    return pd.DataFrame(response.data)
+
+
+def write_log(request_id, action, old_status, new_status, admin_comment):
+    supabase.table("monitoring_logs").insert({
+        "request_id": int(request_id),
+        "action": action,
+        "old_status": old_status,
+        "new_status": new_status,
+        "admin_comment": admin_comment,
+        "changed_by": "Адміністратор"
+    }).execute()
+
+
 st.title("Адміністрування заявок моніторингу")
 
 df = load_requests()
@@ -81,10 +108,23 @@ if df.empty:
     st.stop()
 
 required_cols = [
-    "id", "department", "year", "quarter", "approval_status", "status",
-    "strat_code", "responsible_person", "phone", "numeric_value",
-    "progress_text", "risks", "file_names", "admin_comment",
-    "start_date", "end_date", "file_urls"
+    "id",
+    "department",
+    "year",
+    "quarter",
+    "approval_status",
+    "status",
+    "strat_code",
+    "responsible_person",
+    "phone",
+    "numeric_value",
+    "progress_text",
+    "risks",
+    "file_names",
+    "file_urls",
+    "admin_comment",
+    "start_date",
+    "end_date"
 ]
 
 for col in required_cols:
@@ -109,19 +149,30 @@ with f3:
 with f4:
     selected_approval_status = st.selectbox(
         "Статус погодження",
-        ["Усі", "Очікує погодження", "Погоджено", "Повернуто на доопрацювання"]
+        [
+            "Усі",
+            "Очікує погодження",
+            "Погоджено",
+            "Повернуто на доопрацювання"
+        ]
     )
 
 filtered = df.copy()
 
 if selected_department != "Усі":
-    filtered = filtered[filtered["department"].astype(str) == str(selected_department)]
+    filtered = filtered[
+        filtered["department"].astype(str) == str(selected_department)
+    ]
 
 if selected_year != "Усі":
-    filtered = filtered[filtered["year"].astype(int) == int(selected_year)]
+    filtered = filtered[
+        filtered["year"].astype(int) == int(selected_year)
+    ]
 
 if selected_quarter != "Усі":
-    filtered = filtered[filtered["quarter"].astype(str) == str(selected_quarter)]
+    filtered = filtered[
+        filtered["quarter"].astype(str) == str(selected_quarter)
+    ]
 
 if selected_approval_status != "Усі":
     filtered = filtered[
@@ -330,6 +381,14 @@ if approve:
         "admin_comment": admin_comment
     }).eq("id", selected_id).execute()
 
+    write_log(
+        selected_id,
+        "Погодження заявки",
+        approval_status,
+        "Погоджено",
+        admin_comment
+    )
+
     st.success("Заявку погоджено.")
     st.rerun()
 
@@ -338,6 +397,14 @@ if return_back:
         "approval_status": "Повернуто на доопрацювання",
         "admin_comment": admin_comment
     }).eq("id", selected_id).execute()
+
+    write_log(
+        selected_id,
+        "Повернення заявки на доопрацювання",
+        approval_status,
+        "Повернуто на доопрацювання",
+        admin_comment
+    )
 
     st.warning("Заявку повернуто на доопрацювання.")
     st.rerun()
@@ -348,8 +415,42 @@ if keep_waiting:
         "admin_comment": admin_comment
     }).eq("id", selected_id).execute()
 
+    write_log(
+        selected_id,
+        "Заявку залишено в очікуванні",
+        approval_status,
+        "Очікує погодження",
+        admin_comment
+    )
+
     st.info("Заявку залишено в очікуванні.")
     st.rerun()
+
+st.divider()
+
+st.subheader("Історія змін заявки")
+
+logs_df = load_logs(selected_id)
+
+if logs_df.empty:
+    st.info("Історії змін для цієї заявки поки що немає.")
+else:
+    show_log_cols = [
+        "changed_at",
+        "action",
+        "old_status",
+        "new_status",
+        "admin_comment",
+        "changed_by"
+    ]
+
+    available_log_cols = [col for col in show_log_cols if col in logs_df.columns]
+
+    st.dataframe(
+        logs_df[available_log_cols],
+        use_container_width=True,
+        hide_index=True
+    )
 
 st.divider()
 

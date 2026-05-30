@@ -2,16 +2,24 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 from supabase import create_client
+import re
 
 st.set_page_config(page_title="Моніторинг виконання", layout="wide")
 
 FILE_PATH = "Під моніторинг СП.xlsx"
 SHEET_NAME = "Страт_матриця"
+BUCKET_NAME = "monitoring-files"
 
 supabase = create_client(
     st.secrets["SUPABASE_URL"],
     st.secrets["SUPABASE_KEY"]
 )
+
+
+def safe_filename(name):
+    name = re.sub(r"[^A-Za-zА-Яа-яІіЇїЄєҐґ0-9._-]", "_", name)
+    return name
+
 
 @st.cache_data
 def load_strat_matrix():
@@ -27,8 +35,7 @@ def load_strat_matrix():
         "target_2026": data.iloc[:, 10],
         "target_2027": data.iloc[:, 11],
         "target_2028": data.iloc[:, 12],
-        "department_main": data.iloc[:, 17],
-        "department_alt": data.iloc[:, 38],
+        "department": data.iloc[:, 17],
         "start_date_plan": data.iloc[:, 22],
         "end_date_plan": data.iloc[:, 23],
     })
@@ -36,15 +43,6 @@ def load_strat_matrix():
     result = result.dropna(subset=["code"])
     result["code"] = result["code"].astype(str).str.strip()
     result["type_marker"] = result["type_marker"].astype(str).str.strip()
-
-    result["department"] = result["department_main"]
-
-    result.loc[
-        result["department"].isna() | (result["department"].astype(str).str.strip() == ""),
-        "department"
-    ] = result["department_alt"]
-
-    result["department"] = result["department"].astype(str).str.strip()
 
     def classify(row):
         marker = str(row["type_marker"]).lower()
@@ -77,6 +75,32 @@ def load_approved_monitoring():
     return pd.DataFrame(response.data)
 
 
+def upload_files(files, code):
+    urls = []
+    names = []
+
+    for file in files:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = safe_filename(file.name)
+        path = f"{code}/{timestamp}_{filename}"
+
+        supabase.storage.from_(BUCKET_NAME).upload(
+            path,
+            file.getvalue(),
+            file_options={
+                "content-type": file.type,
+                "upsert": "true"
+            }
+        )
+
+        public_url = supabase.storage.from_(BUCKET_NAME).get_public_url(path)
+
+        urls.append(public_url)
+        names.append(file.name)
+
+    return ", ".join(names), ", ".join(urls)
+
+
 df = load_strat_matrix()
 approved_df = load_approved_monitoring()
 
@@ -89,12 +113,7 @@ st.info(
     "за якими обраний департамент є головним виконавцем."
 )
 
-departments = sorted(
-    measures_df["department"]
-    .dropna()
-    .astype(str)
-    .unique()
-)
+departments = sorted(measures_df["department"].dropna().astype(str).unique())
 
 col1, col2 = st.columns(2)
 
@@ -166,13 +185,13 @@ st.markdown(
     """
     **Як працювати з таблицею:**
 
-    1. Перегляньте перелік заходів, які автоматично підтягнулися для вашого департаменту.
-    2. У колонці **«Подати»** поставте галочку біля заходів, за якими подаєте інформацію.
-    3. У квартальних колонках внесіть фактичні значення виконання. Якщо дані вже були погоджені раніше, вони підтягнуться автоматично.
-    4. Початкова та кінцева дата виконання підтягуються зі стратегічної матриці.
-    5. Оберіть статус виконання, заповніть опис прогресу та ризики/проблеми/відхилення.
-    6. Нижче можна додати підтвердні файли для кожного обраного заходу.
-    7. Після перевірки натисніть **«Подати інформацію на погодження»**.
+    1. Поставте галочку у колонці **«Подати»** біля заходів, за якими подаєте інформацію.
+    2. У квартальних колонках внесіть фактичні значення виконання.
+    3. Якщо дані вже були погоджені раніше, вони підтягнуться автоматично.
+    4. Терміни виконання підтягуються зі стратегічної матриці.
+    5. Заповніть статус, опис прогресу та ризики/проблеми/відхилення.
+    6. Нижче завантажте підтвердні файли для обраних заходів.
+    7. Натисніть **«Подати інформацію на погодження»**.
     """
 )
 
@@ -233,11 +252,6 @@ selected_rows = edited_df[edited_df["Подати"] == True].copy()
 
 st.subheader("Підтвердні файли")
 
-st.caption(
-    "Файли додаються до обраних заходів. На цьому етапі в заявку записуються назви файлів. "
-    "Пізніше можна підключити Supabase Storage для повного зберігання файлів."
-)
-
 file_map = {}
 
 if selected_rows.empty:
@@ -250,7 +264,7 @@ else:
             accept_multiple_files=True,
             key=f"files_{code}"
         )
-        file_map[code] = ", ".join([file.name for file in files]) if files else ""
+        file_map[code] = files
 
 submit = st.button("Подати інформацію на погодження")
 
@@ -290,6 +304,15 @@ if submit:
             errors.append(f"Для заходу {code} потрібно заповнити хоча б одну квартальну колонку.")
             continue
 
+        uploaded_names = ""
+        uploaded_urls = ""
+
+        try:
+            uploaded_names, uploaded_urls = upload_files(file_map.get(code, []), code)
+        except Exception as e:
+            errors.append(f"Не вдалося завантажити файл для заходу {code}: {e}")
+            continue
+
         for quarter, value in quarters_filled:
             rows_to_insert.append({
                 "year": int(selected_year),
@@ -307,7 +330,8 @@ if submit:
                 "start_date": str(row["Початкова дата виконання"]) if pd.notna(row["Початкова дата виконання"]) else None,
                 "end_date": str(row["Кінцева дата виконання"]) if pd.notna(row["Кінцева дата виконання"]) else None,
                 "evidence_links": "",
-                "file_names": file_map.get(code, "")
+                "file_names": uploaded_names,
+                "file_urls": uploaded_urls
             })
 
     if errors:

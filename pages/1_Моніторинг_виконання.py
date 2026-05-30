@@ -24,6 +24,77 @@ def safe_filename(name):
     return name.strip("_")
 
 
+def quarter_to_num(q):
+    mapping = {
+        "I": 1,
+        "II": 2,
+        "III": 3,
+        "IV": 4
+    }
+    return mapping.get(str(q), None)
+
+
+def parse_period(value):
+    text = str(value).lower().strip()
+
+    if text in ["", "nan", "none", "н.д."]:
+        return None
+
+    q = None
+    year = None
+
+    if "1 квартал" in text or "i квартал" in text:
+        q = 1
+    elif "2 квартал" in text or "ii квартал" in text:
+        q = 2
+    elif "3 квартал" in text or "iii квартал" in text:
+        q = 3
+    elif "4 квартал" in text or "iv квартал" in text:
+        q = 4
+
+    year_match = re.search(r"20\d{2}", text)
+
+    if year_match:
+        year = int(year_match.group())
+
+    if year and q:
+        return year * 10 + q
+
+    return None
+
+
+def upload_files(files, code):
+    urls = []
+    names = []
+
+    safe_code = safe_filename(str(code)).replace(".", "_")
+
+    for file in files:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = safe_filename(file.name)
+
+        if not filename:
+            filename = f"file_{timestamp}"
+
+        path = f"{safe_code}/{timestamp}_{filename}"
+
+        supabase.storage.from_(BUCKET_NAME).upload(
+            path,
+            file.getvalue(),
+            file_options={
+                "content-type": file.type,
+                "upsert": "true"
+            }
+        )
+
+        public_url = supabase.storage.from_(BUCKET_NAME).get_public_url(path)
+
+        urls.append(public_url)
+        names.append(file.name)
+
+    return ", ".join(names), ", ".join(urls)
+
+
 @st.cache_data
 def load_strat_matrix():
     df = pd.read_excel(FILE_PATH, sheet_name=SHEET_NAME, header=None, engine="openpyxl")
@@ -77,37 +148,6 @@ def load_approved_monitoring():
 
     return pd.DataFrame(response.data)
 
-
-def upload_files(files, code):
-    urls = []
-    names = []
-
-    safe_code = safe_filename(str(code)).replace(".", "_")
-
-    for file in files:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = safe_filename(file.name)
-
-        if not filename:
-            filename = f"file_{timestamp}"
-
-        path = f"{safe_code}/{timestamp}_{filename}"
-
-        supabase.storage.from_(BUCKET_NAME).upload(
-            path,
-            file.getvalue(),
-            file_options={
-                "content-type": file.type,
-                "upsert": "true"
-            }
-        )
-
-        public_url = supabase.storage.from_(BUCKET_NAME).get_public_url(path)
-
-        urls.append(public_url)
-        names.append(file.name)
-
-    return ", ".join(names), ", ".join(urls)
 
 df = load_strat_matrix()
 approved_df = load_approved_monitoring()
@@ -278,6 +318,7 @@ submit = st.button("Подати інформацію на погодження"
 
 if submit:
     errors = []
+    warnings = []
 
     if not responsible_person.strip():
         errors.append("Заповніть ПІБ відповідальної особи.")
@@ -299,6 +340,13 @@ if submit:
 
     for _, row in selected_rows.iterrows():
         code = str(row["Код заходу"])
+        status = str(row["Статус виконання"]).strip()
+        risks = str(row["Ризики / проблеми / відхилення"]).strip()
+        progress = str(row["Опис прогресу"]).strip()
+        files = file_map.get(code, [])
+
+        start_period_num = parse_period(row["Початкова дата виконання"])
+        end_period_num = parse_period(row["Кінцева дата виконання"])
 
         quarters_filled = []
 
@@ -312,11 +360,40 @@ if submit:
             errors.append(f"Для заходу {code} потрібно заповнити хоча б одну квартальну колонку.")
             continue
 
+        if status == "Виконано" and not quarters_filled:
+            errors.append(f"Для заходу {code} статус «Виконано» неможливий без фактичного значення.")
+
+        if not progress:
+            warnings.append(f"Для заходу {code} не заповнено опис прогресу.")
+
+        if status == "Виконано" and risks:
+            warnings.append(
+                f"Для заходу {code} статус «Виконано», але заповнено ризики/проблеми. Перевірте коректність."
+            )
+
+        if not files:
+            warnings.append(f"Для заходу {code} не додано підтвердні файли.")
+
+        for quarter, value in quarters_filled:
+            current_period_num = selected_year * 10 + quarter_to_num(quarter)
+
+            if start_period_num is not None and current_period_num < start_period_num:
+                warnings.append(
+                    f"Для заходу {code} подається інформація за {quarter} квартал {selected_year}, "
+                    f"але період виконання ще не настав."
+                )
+
+            if end_period_num is not None and current_period_num > end_period_num:
+                warnings.append(
+                    f"Для заходу {code} подається інформація за {quarter} квартал {selected_year}, "
+                    f"але період виконання вже завершився."
+                )
+
         uploaded_names = ""
         uploaded_urls = ""
 
         try:
-            uploaded_names, uploaded_urls = upload_files(file_map.get(code, []), code)
+            uploaded_names, uploaded_urls = upload_files(files, code)
         except Exception as e:
             errors.append(f"Не вдалося завантажити файл для заходу {code}: {e}")
             continue
@@ -329,10 +406,10 @@ if submit:
                 "responsible_person": responsible_person,
                 "phone": phone,
                 "strat_code": code,
-                "status": str(row["Статус виконання"]),
-                "progress_text": str(row["Опис прогресу"]),
+                "status": status,
+                "progress_text": progress,
                 "numeric_value": value,
-                "risks": str(row["Ризики / проблеми / відхилення"]),
+                "risks": risks,
                 "submitted_at": datetime.now().isoformat(),
                 "approval_status": "Очікує погодження",
                 "start_date": str(row["Початкова дата виконання"]) if pd.notna(row["Початкова дата виконання"]) else None,
@@ -343,9 +420,15 @@ if submit:
             })
 
     if errors:
+        st.error("Подання не виконано. Виправте помилки:")
         for error in errors:
             st.error(error)
         st.stop()
+
+    if warnings:
+        st.warning("Система виявила попередження. Дані все одно можна подати:")
+        for warning in warnings:
+            st.warning(warning)
 
     try:
         supabase.table("monitoring_requests").insert(rows_to_insert).execute()

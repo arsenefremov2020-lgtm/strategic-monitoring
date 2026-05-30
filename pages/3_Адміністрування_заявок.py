@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 from supabase import create_client
-from html import escape
 
 st.set_page_config(
     page_title="Адміністрування заявок",
@@ -13,128 +12,11 @@ supabase = create_client(
     st.secrets["SUPABASE_KEY"]
 )
 
-st.markdown(
-    """
-    <style>
-    .request-card {
-        border: 1px solid #d1d5db;
-        border-radius: 12px;
-        padding: 18px;
-        background: #ffffff;
-        box-shadow: 0 4px 12px rgba(15,23,42,0.06);
-        margin-bottom: 18px;
-    }
 
-    .request-header {
-        display: flex;
-        justify-content: space-between;
-        gap: 20px;
-        margin-bottom: 14px;
-    }
-
-    .request-title {
-        font-size: 20px;
-        font-weight: 800;
-        color: #111827;
-    }
-
-    .request-meta {
-        font-size: 14px;
-        color: #374151;
-        line-height: 1.6;
-        margin-top: 6px;
-    }
-
-    .status-badge {
-        padding: 7px 12px;
-        border-radius: 999px;
-        font-size: 13px;
-        font-weight: 800;
-        white-space: nowrap;
-    }
-
-    .status-waiting {
-        background: #fef3c7;
-        color: #92400e;
-    }
-
-    .status-approved {
-        background: #dcfce7;
-        color: #166534;
-    }
-
-    .status-returned {
-        background: #fee2e2;
-        color: #991b1b;
-    }
-
-    .mini-grid {
-        display: grid;
-        grid-template-columns: repeat(4, 1fr);
-        gap: 10px;
-        margin: 16px 0;
-    }
-
-    .mini-cell {
-        border: 1px solid #e5e7eb;
-        border-radius: 8px;
-        padding: 10px;
-        background: #f8fafc;
-    }
-
-    .mini-label {
-        font-size: 12px;
-        color: #6b7280;
-        margin-bottom: 5px;
-    }
-
-    .mini-value {
-        font-size: 15px;
-        font-weight: 800;
-        color: #111827;
-        overflow-wrap: break-word;
-    }
-
-    .text-block {
-        border: 1px solid #e5e7eb;
-        border-radius: 8px;
-        padding: 12px;
-        background: #ffffff;
-        margin-top: 10px;
-    }
-
-    .text-label {
-        font-size: 13px;
-        font-weight: 800;
-        color: #374151;
-        margin-bottom: 6px;
-    }
-
-    .text-value {
-        font-size: 14px;
-        color: #111827;
-        line-height: 1.5;
-        white-space: pre-wrap;
-        overflow-wrap: break-word;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-
-
-def safe(value):
+def clean(value):
     if value is None or pd.isna(value) or str(value) == "None":
         return ""
-    return escape(str(value))
-
-
-def status_class(status):
-    if status == "Погоджено":
-        return "status-approved"
-    if status == "Повернуто на доопрацювання":
-        return "status-returned"
-    return "status-waiting"
+    return str(value)
 
 
 def load_requests():
@@ -262,77 +144,102 @@ selected_row = filtered[
     filtered["id"].astype(int) == selected_id
 ].iloc[0]
 
-approval_status = str(selected_row["approval_status"])
-badge_class = status_class(approval_status)
+approval_status = clean(selected_row["approval_status"])
 
-card_html = f"""
-<div class="request-card">
-    <div class="request-header">
-        <div>
-            <div class="request-title">
-                Заявка ID {safe(selected_row["id"])} — захід {safe(selected_row["strat_code"])}
-            </div>
-            <div class="request-meta">
-                Департамент: <b>{safe(selected_row["department"])}</b><br>
-                Період: <b>{safe(selected_row["year"])} рік, {safe(selected_row["quarter"])} квартал</b><br>
-                Подав/подала: <b>{safe(selected_row["responsible_person"])}</b>, тел. {safe(selected_row["phone"])}
-            </div>
-        </div>
-        <div>
-            <span class="status-badge {badge_class}">
-                {safe(approval_status)}
-            </span>
-        </div>
-    </div>
+st.subheader(f"Заявка ID {clean(selected_row['id'])} — захід {clean(selected_row['strat_code'])}")
 
-    <div class="mini-grid">
-        <div class="mini-cell">
-            <div class="mini-label">Статус виконання</div>
-            <div class="mini-value">{safe(selected_row["status"])}</div>
-        </div>
-        <div class="mini-cell">
-            <div class="mini-label">Фактичне значення</div>
-            <div class="mini-value">{safe(selected_row["numeric_value"])}</div>
-        </div>
-        <div class="mini-cell">
-            <div class="mini-label">Початкова дата</div>
-            <div class="mini-value">{safe(selected_row["start_date"])}</div>
-        </div>
-        <div class="mini-cell">
-            <div class="mini-label">Кінцева дата</div>
-            <div class="mini-value">{safe(selected_row["end_date"])}</div>
-        </div>
-    </div>
+if approval_status == "Погоджено":
+    st.success("Статус погодження: Погоджено")
+elif approval_status == "Повернуто на доопрацювання":
+    st.error("Статус погодження: Повернуто на доопрацювання")
+else:
+    st.warning("Статус погодження: Очікує погодження")
 
-    <div class="text-block">
-        <div class="text-label">Опис прогресу</div>
-        <div class="text-value">{safe(selected_row["progress_text"])}</div>
-    </div>
+m1, m2, m3 = st.columns(3)
 
-    <div class="text-block">
-        <div class="text-label">Ризики / проблеми / відхилення</div>
-        <div class="text-value">{safe(selected_row["risks"])}</div>
-    </div>
+with m1:
+    st.metric("Департамент", clean(selected_row["department"]))
+    st.metric("Рік", clean(selected_row["year"]))
 
-    <div class="text-block">
-        <div class="text-label">Підтвердні файли</div>
-        <div class="text-value">{safe(selected_row["file_names"])}</div>
-    </div>
+with m2:
+    st.metric("Квартал", clean(selected_row["quarter"]))
+    st.metric("Статус виконання", clean(selected_row["status"]))
 
-    <div class="text-block">
-        <div class="text-label">Коментар адміністратора</div>
-        <div class="text-value">{safe(selected_row["admin_comment"])}</div>
-    </div>
-</div>
-"""
+with m3:
+    st.metric("Фактичне значення", clean(selected_row["numeric_value"]))
+    st.metric("Код заходу", clean(selected_row["strat_code"]))
 
-st.markdown(card_html, unsafe_allow_html=True)
+st.markdown("### Дані відповідальної особи")
+
+p1, p2 = st.columns(2)
+
+with p1:
+    st.text_input(
+        "ПІБ відповідальної особи",
+        value=clean(selected_row["responsible_person"]),
+        disabled=True
+    )
+
+with p2:
+    st.text_input(
+        "Контактний номер телефону",
+        value=clean(selected_row["phone"]),
+        disabled=True
+    )
+
+st.markdown("### Терміни виконання")
+
+d1, d2 = st.columns(2)
+
+with d1:
+    st.text_input(
+        "Початкова дата виконання",
+        value=clean(selected_row["start_date"]),
+        disabled=True
+    )
+
+with d2:
+    st.text_input(
+        "Кінцева дата виконання",
+        value=clean(selected_row["end_date"]),
+        disabled=True
+    )
+
+st.markdown("### Опис прогресу")
+
+st.text_area(
+    "Опис прогресу",
+    value=clean(selected_row["progress_text"]),
+    disabled=True,
+    height=120
+)
+
+st.markdown("### Ризики / проблеми / відхилення")
+
+st.text_area(
+    "Ризики / проблеми / відхилення",
+    value=clean(selected_row["risks"]),
+    disabled=True,
+    height=120
+)
+
+st.markdown("### Підтвердні файли")
+
+st.text_area(
+    "Назви файлів",
+    value=clean(selected_row["file_names"]),
+    disabled=True,
+    height=90
+)
+
+st.divider()
 
 st.subheader("Рішення адміністратора")
 
 admin_comment = st.text_area(
     "Коментар адміністратора",
-    value="" if pd.isna(selected_row["admin_comment"]) else str(selected_row["admin_comment"])
+    value=clean(selected_row["admin_comment"]),
+    height=120
 )
 
 c1, c2, c3 = st.columns(3)

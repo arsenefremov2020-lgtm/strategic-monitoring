@@ -36,7 +36,9 @@ def load_strat_matrix():
         "target_2026": data.iloc[:, 10],
         "target_2027": data.iloc[:, 11],
         "target_2028": data.iloc[:, 12],
-        "department": data.iloc[:, 17]
+        "department": data.iloc[:, 17],
+        "start_date_plan": None,
+        "end_date_plan": None
     })
 
     result = result.dropna(subset=["code"])
@@ -83,7 +85,7 @@ st.title("Внесення даних моніторингу виконання 
 
 st.info(
     "Оберіть департамент і рік звітування. Система автоматично підтягне всі заходи, "
-    "за якими цей департамент є головним виконавцем."
+    "за якими обраний департамент є головним виконавцем."
 )
 
 departments = sorted(
@@ -93,7 +95,7 @@ departments = sorted(
     .unique()
 )
 
-col1, col2, col3 = st.columns(3)
+col1, col2 = st.columns(2)
 
 with col1:
     selected_department = st.selectbox(
@@ -105,12 +107,6 @@ with col2:
     selected_year = st.selectbox(
         "Рік звітування",
         [2026, 2027, 2028]
-    )
-
-with col3:
-    selected_quarter = st.selectbox(
-        "Квартал звітування",
-        ["I", "II", "III", "IV"]
     )
 
 department_measures = measures_df[
@@ -136,20 +132,13 @@ if not approved_df.empty:
         value = row.get("numeric_value", "")
 
         quarter_values.setdefault(code, {})
-        quarter_values[code][quarter] = value
+        quarter_values[quarter] = value
 
-department_measures["2026 I квартал"] = department_measures["code"].apply(
-    lambda x: quarter_values.get(str(x).strip(), {}).get("I", "")
-)
-department_measures["2026 II квартал"] = department_measures["code"].apply(
-    lambda x: quarter_values.get(str(x).strip(), {}).get("II", "")
-)
-department_measures["2026 III квартал"] = department_measures["code"].apply(
-    lambda x: quarter_values.get(str(x).strip(), {}).get("III", "")
-)
-department_measures["2026 IV квартал"] = department_measures["code"].apply(
-    lambda x: quarter_values.get(str(x).strip(), {}).get("IV", "")
-)
+
+for q in ["I", "II", "III", "IV"]:
+    department_measures[f"{selected_year} {q} квартал"] = department_measures["code"].apply(
+        lambda x: quarter_values.get(str(x).strip(), {}).get(q, "")
+    )
 
 form_df = pd.DataFrame({
     "Подати": False,
@@ -158,16 +147,14 @@ form_df = pd.DataFrame({
     "Індикатор": department_measures["indicator"],
     "Одиниця виміру": department_measures["unit"],
     f"Планове значення {selected_year}": department_measures[target_col],
-    f"{selected_year} I квартал": department_measures["2026 I квартал"],
-    f"{selected_year} II квартал": department_measures["2026 II квартал"],
-    f"{selected_year} III квартал": department_measures["2026 III квартал"],
-    f"{selected_year} IV квартал": department_measures["2026 IV квартал"],
-    "Початкова дата виконання": None,
-    "Кінцева дата виконання": None,
+    f"{selected_year} I квартал": department_measures[f"{selected_year} I квартал"],
+    f"{selected_year} II квартал": department_measures[f"{selected_year} II квартал"],
+    f"{selected_year} III квартал": department_measures[f"{selected_year} III квартал"],
+    f"{selected_year} IV квартал": department_measures[f"{selected_year} IV квартал"],
+    "Початкова дата виконання": department_measures["start_date_plan"],
+    "Кінцева дата виконання": department_measures["end_date_plan"],
     "Статус виконання": "Виконується",
-    "Фактичне значення за квартал": "",
     "Опис прогресу": "",
-    "Посилання на підтвердні матеріали": "",
     "Ризики / проблеми / відхилення": ""
 })
 
@@ -183,15 +170,32 @@ with g2:
 
 st.subheader("Заходи департаменту")
 
+st.markdown(
+    """
+    **Як працювати з таблицею:**
+
+    1. Перегляньте перелік заходів, які автоматично підтягнулися для вашого департаменту.
+    2. У колонці **«Подати»** поставте галочку лише біля тих заходів, за якими подаєте інформацію.
+    3. У квартальних колонках внесіть фактичні значення виконання. Якщо дані вже були погоджені раніше, вони підтягнуться автоматично.
+    4. За потреби уточніть початкову та кінцеву дату виконання.
+    5. Оберіть статус виконання, заповніть опис прогресу та ризики/проблеми/відхилення.
+    6. Нижче можна додати підтвердні файли для кожного обраного заходу.
+    7. Після перевірки натисніть **«Подати інформацію на погодження»**. Дані не потрапляють у моніторинг автоматично — спочатку їх має погодити адміністратор.
+    """
+)
+
 edited_df = st.data_editor(
     form_df,
     use_container_width=True,
     hide_index=True,
     num_rows="fixed",
+    height=560,
+    row_height=95,
     column_config={
         "Подати": st.column_config.CheckboxColumn(
             "Подати",
-            help="Позначте заходи, за якими подається моніторингова інформація"
+            help="Позначте заходи, за якими подається моніторингова інформація",
+            width="small"
         ),
         "Код заходу": st.column_config.TextColumn(
             "Код заходу",
@@ -220,29 +224,27 @@ edited_df = st.data_editor(
         ),
         f"{selected_year} I квартал": st.column_config.TextColumn(
             f"{selected_year} I квартал",
-            disabled=True,
             width="medium"
         ),
         f"{selected_year} II квартал": st.column_config.TextColumn(
             f"{selected_year} II квартал",
-            disabled=True,
             width="medium"
         ),
         f"{selected_year} III квартал": st.column_config.TextColumn(
             f"{selected_year} III квартал",
-            disabled=True,
             width="medium"
         ),
         f"{selected_year} IV квартал": st.column_config.TextColumn(
             f"{selected_year} IV квартал",
-            disabled=True,
             width="medium"
         ),
         "Початкова дата виконання": st.column_config.DateColumn(
-            "Початкова дата виконання"
+            "Початкова дата виконання",
+            width="medium"
         ),
         "Кінцева дата виконання": st.column_config.DateColumn(
-            "Кінцева дата виконання"
+            "Кінцева дата виконання",
+            width="medium"
         ),
         "Статус виконання": st.column_config.SelectboxColumn(
             "Статус виконання",
@@ -254,17 +256,11 @@ edited_df = st.data_editor(
                 "Прострочено",
                 "Потребує уваги"
             ],
-            required=True
-        ),
-        "Фактичне значення за квартал": st.column_config.TextColumn(
-            "Фактичне значення за квартал"
+            required=True,
+            width="medium"
         ),
         "Опис прогресу": st.column_config.TextColumn(
             "Опис прогресу",
-            width="large"
-        ),
-        "Посилання на підтвердні матеріали": st.column_config.TextColumn(
-            "Посилання на підтвердні матеріали",
             width="large"
         ),
         "Ризики / проблеми / відхилення": st.column_config.TextColumn(
@@ -279,8 +275,8 @@ selected_rows = edited_df[edited_df["Подати"] == True].copy()
 st.subheader("Підтвердні файли")
 
 st.caption(
-    "На цьому етапі файли не зберігаються в Supabase Storage, але їхні назви записуються в заявку. "
-    "Для повноцінного зберігання файлів пізніше додамо окремий bucket у Supabase."
+    "Файли додаються до обраних заходів. На цьому етапі в заявку записуються назви файлів. "
+    "Пізніше можна підключити Supabase Storage для повного зберігання файлів."
 )
 
 file_map = {}
@@ -312,41 +308,59 @@ if submit:
     if selected_rows.empty:
         errors.append("Позначте хоча б один захід для подання.")
 
+    rows_to_insert = []
+
+    quarter_columns = {
+        "I": f"{selected_year} I квартал",
+        "II": f"{selected_year} II квартал",
+        "III": f"{selected_year} III квартал",
+        "IV": f"{selected_year} IV квартал"
+    }
+
     for _, row in selected_rows.iterrows():
-        if not str(row["Статус виконання"]).strip():
-            errors.append(f"Не заповнено статус для заходу {row['Код заходу']}.")
+        code = str(row["Код заходу"])
+
+        quarters_filled = []
+
+        for quarter, col_name in quarter_columns.items():
+            value = row[col_name]
+
+            if pd.notna(value) and str(value).strip() != "":
+                quarters_filled.append((quarter, str(value).strip()))
+
+        if not quarters_filled:
+            errors.append(
+                f"Для заходу {code} потрібно заповнити хоча б одну квартальну колонку."
+            )
+            continue
+
+        for quarter, value in quarters_filled:
+            start_date = row["Початкова дата виконання"]
+            end_date = row["Кінцева дата виконання"]
+
+            rows_to_insert.append({
+                "year": int(selected_year),
+                "quarter": quarter,
+                "department": str(selected_department),
+                "responsible_person": responsible_person,
+                "phone": phone,
+                "strat_code": code,
+                "status": str(row["Статус виконання"]),
+                "progress_text": str(row["Опис прогресу"]),
+                "numeric_value": value,
+                "risks": str(row["Ризики / проблеми / відхилення"]),
+                "submitted_at": datetime.now().isoformat(),
+                "approval_status": "Очікує погодження",
+                "start_date": str(start_date) if pd.notna(start_date) else None,
+                "end_date": str(end_date) if pd.notna(end_date) else None,
+                "evidence_links": "",
+                "file_names": file_map.get(code, "")
+            })
 
     if errors:
         for error in errors:
             st.error(error)
         st.stop()
-
-    rows_to_insert = []
-
-    for _, row in selected_rows.iterrows():
-        code = str(row["Код заходу"])
-
-        start_date = row["Початкова дата виконання"]
-        end_date = row["Кінцева дата виконання"]
-
-        rows_to_insert.append({
-            "year": int(selected_year),
-            "quarter": selected_quarter,
-            "department": str(selected_department),
-            "responsible_person": responsible_person,
-            "phone": phone,
-            "strat_code": code,
-            "status": str(row["Статус виконання"]),
-            "progress_text": str(row["Опис прогресу"]),
-            "numeric_value": str(row["Фактичне значення за квартал"]),
-            "risks": str(row["Ризики / проблеми / відхилення"]),
-            "submitted_at": datetime.now().isoformat(),
-            "approval_status": "Очікує погодження",
-            "start_date": str(start_date) if pd.notna(start_date) else None,
-            "end_date": str(end_date) if pd.notna(end_date) else None,
-            "evidence_links": str(row["Посилання на підтвердні матеріали"]),
-            "file_names": file_map.get(code, "")
-        })
 
     try:
         supabase.table("monitoring_requests").insert(rows_to_insert).execute()

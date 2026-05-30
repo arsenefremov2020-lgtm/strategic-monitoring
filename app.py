@@ -88,12 +88,20 @@ def render_table(df):
 
     html = """
     <style>
-    table.custom-table {
+    .table-scroll {
+        overflow-x: auto;
         width: 100%;
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+    }
+
+    table.custom-table {
+        min-width: 1800px;
         border-collapse: collapse;
         table-layout: fixed;
         font-size: 13px;
     }
+
     table.custom-table th {
         background-color: #e9eef7;
         color: #1f2937;
@@ -104,6 +112,7 @@ def render_table(df):
         white-space: normal;
         word-wrap: break-word;
     }
+
     table.custom-table td {
         padding: 8px;
         border: 1px solid #d1d5db;
@@ -112,19 +121,47 @@ def render_table(df):
         word-wrap: break-word;
         overflow-wrap: break-word;
     }
+
     table.custom-table tr:nth-child(even) {
         background-color: #f8fafc;
     }
+
     table.custom-table tr:nth-child(odd) {
         background-color: #ffffff;
     }
+
+    .col-code { width: 90px; }
+    .col-name { width: 360px; }
+    .col-indicator { width: 360px; }
+    .col-unit { width: 160px; }
+    .col-year { width: 120px; }
+    .col-quarter { width: 120px; }
+    .col-department { width: 120px; }
     </style>
     """
 
+    html += "<div class='table-scroll'>"
     html += "<table class='custom-table'><thead><tr>"
 
     for col in df.columns:
-        html += f"<th>{col}</th>"
+        css_class = ""
+
+        if col == "Код":
+            css_class = "col-code"
+        elif col == "Захід":
+            css_class = "col-name"
+        elif col == "Індикатор":
+            css_class = "col-indicator"
+        elif col == "Одиниця виміру":
+            css_class = "col-unit"
+        elif "квартал" in col:
+            css_class = "col-quarter"
+        elif "Департамент" in col:
+            css_class = "col-department"
+        else:
+            css_class = "col-year"
+
+        html += f"<th class='{css_class}'>{col}</th>"
 
     html += "</tr></thead><tbody>"
 
@@ -132,12 +169,12 @@ def render_table(df):
         html += "<tr>"
         for col in df.columns:
             value = row[col]
-            if pd.isna(value):
+            if pd.isna(value) or value == "None":
                 value = ""
             html += f"<td>{value}</td>"
         html += "</tr>"
 
-    html += "</tbody></table>"
+    html += "</tbody></table></div>"
 
     st.markdown(html, unsafe_allow_html=True)
 
@@ -183,7 +220,7 @@ if not approved.empty:
         key = str(row["strat_code"]).strip()
         q = str(row["quarter"]).strip()
         quarter_data.setdefault(key, {})
-        quarter_data[key][q] = row["status"]
+        quarter_data[key][q] = row["numeric_value"]
 
 st.subheader("Стратегічний план")
 
@@ -300,22 +337,40 @@ for _, goal in goals.iterrows():
                         lambda x: quarter_data.get(str(x).strip(), {}).get(q, "")
                     )
 
+                measures = measures.rename(columns={
+                    "code": "Код",
+                    "name": "Захід",
+                    "indicator": "Індикатор",
+                    "unit": "Одиниця виміру",
+                    "base_2021": "Базове значення 2021",
+                    "fact_2024": "Звіт 2024",
+                    "expected_2025": "Очікуване 2025",
+                    "target_2026": "План 2026",
+                    f"{selected_year} QI": f"{selected_year} I квартал",
+                    f"{selected_year} QII": f"{selected_year} II квартал",
+                    f"{selected_year} QIII": f"{selected_year} III квартал",
+                    f"{selected_year} QIV": f"{selected_year} IV квартал",
+                    "target_2027": "План 2027",
+                    "target_2028": "План 2028",
+                    "department": "Департамент"
+                })
+
                 show_cols = [
-                    "code",
-                    "name",
-                    "indicator",
-                    "unit",
-                    "base_2021",
-                    "fact_2024",
-                    "expected_2025",
-                    "target_2026",
-                    f"{selected_year} QI",
-                    f"{selected_year} QII",
-                    f"{selected_year} QIII",
-                    f"{selected_year} QIV",
-                    "target_2027",
-                    "target_2028",
-                    "department"
+                    "Код",
+                    "Захід",
+                    "Індикатор",
+                    "Одиниця виміру",
+                    "Базове значення 2021",
+                    "Звіт 2024",
+                    "Очікуване 2025",
+                    "План 2026",
+                    f"{selected_year} I квартал",
+                    f"{selected_year} II квартал",
+                    f"{selected_year} III квартал",
+                    f"{selected_year} IV квартал",
+                    "План 2027",
+                    "План 2028",
+                    "Департамент"
                 ]
 
                 st.markdown("**Заходи**")

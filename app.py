@@ -43,24 +43,26 @@ def load_strat_matrix():
 
     result = result.dropna(subset=["code"])
     result["code"] = result["code"].astype(str).str.strip()
-    result["name"] = result["name"].astype(str).str.strip()
+    result["type_marker"] = result["type_marker"].astype(str).str.strip()
 
-    def define_type(row):
+    def classify(row):
         marker = str(row["type_marker"]).lower()
-        code = str(row["code"])
+        code = str(row["code"]).strip()
+        dots = code.count(".")
 
         if "стратегічна ціль" in marker:
             return "goal"
-        elif "завдання" in marker:
+        if "завдання" in marker:
             return "task"
-        elif "заход" in marker:
+        if dots == 1:
+            return "goal_indicator"
+        if dots == 2:
+            return "task_indicator"
+        if dots >= 3:
             return "measure"
-        elif code.count(".") >= 3:
-            return "measure"
-        else:
-            return "other"
+        return "other"
 
-    result["object_type"] = result.apply(define_type, axis=1)
+    result["object_type"] = result.apply(classify, axis=1)
 
     return result
 
@@ -73,13 +75,71 @@ def load_monitoring():
         .execute()
     )
 
-    data = response.data
-
-    if not data:
+    if not response.data:
         return pd.DataFrame()
 
-    df = pd.DataFrame(data)
-    return df
+    return pd.DataFrame(response.data)
+
+
+def render_table(df):
+    if df.empty:
+        st.info("Дані відсутні.")
+        return
+
+    html = """
+    <style>
+    table.custom-table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+        font-size: 13px;
+    }
+    table.custom-table th {
+        background-color: #e9eef7;
+        color: #1f2937;
+        padding: 8px;
+        border: 1px solid #d1d5db;
+        text-align: left;
+        vertical-align: top;
+        white-space: normal;
+        word-wrap: break-word;
+    }
+    table.custom-table td {
+        padding: 8px;
+        border: 1px solid #d1d5db;
+        vertical-align: top;
+        white-space: normal;
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+    }
+    table.custom-table tr:nth-child(even) {
+        background-color: #f8fafc;
+    }
+    table.custom-table tr:nth-child(odd) {
+        background-color: #ffffff;
+    }
+    </style>
+    """
+
+    html += "<table class='custom-table'><thead><tr>"
+
+    for col in df.columns:
+        html += f"<th>{col}</th>"
+
+    html += "</tr></thead><tbody>"
+
+    for _, row in df.iterrows():
+        html += "<tr>"
+        for col in df.columns:
+            value = row[col]
+            if pd.isna(value):
+                value = ""
+            html += f"<td>{value}</td>"
+        html += "</tr>"
+
+    html += "</tbody></table>"
+
+    st.markdown(html, unsafe_allow_html=True)
 
 
 df = load_strat_matrix()
@@ -98,51 +158,32 @@ with col2:
 
 st.divider()
 
-st.subheader("Фільтри")
+departments = sorted(df["department"].dropna().astype(str).unique())
 
 f1, f2 = st.columns(2)
 
 with f1:
-    departments = sorted(
-        df["department"]
-        .dropna()
-        .astype(str)
-        .unique()
-    )
-
-    selected_dep = st.selectbox(
-        "Департамент",
-        ["Усі"] + departments
-    )
+    selected_dep = st.selectbox("Департамент", ["Усі"] + departments)
 
 with f2:
-    selected_year = st.selectbox(
-        "Рік",
-        [2026, 2027, 2028]
-    )
+    selected_year = st.selectbox("Рік моніторингу", [2026, 2027, 2028])
 
-filtered = df.copy()
-
-if selected_dep != "Усі":
-    filtered = filtered[
-        filtered["department"].astype(str) == selected_dep
-    ]
-
-approved_monitoring = pd.DataFrame()
+approved = pd.DataFrame()
 
 if not monitoring_df.empty:
-    approved_monitoring = monitoring_df[
+    approved = monitoring_df[
         (monitoring_df["approval_status"] == "Погоджено") &
         (monitoring_df["year"] == selected_year)
     ].copy()
 
-    if not approved_monitoring.empty:
-        approved_monitoring = (
-            approved_monitoring
-            .sort_values("submitted_at")
-            .groupby("strat_code")
-            .tail(1)
-        )
+quarter_data = {}
+
+if not approved.empty:
+    for _, row in approved.iterrows():
+        key = str(row["strat_code"]).strip()
+        q = str(row["quarter"]).strip()
+        quarter_data.setdefault(key, {})
+        quarter_data[key][q] = row["status"]
 
 st.subheader("Стратегічний план")
 
@@ -150,76 +191,132 @@ goals = df[df["object_type"] == "goal"]
 
 for _, goal in goals.iterrows():
 
-    goal_code = goal["code"]
-    goal_name = goal["name"]
+    goal_code = str(goal["code"])
+    goal_name = str(goal["name"])
 
-    with st.expander(f"{goal_code} {goal_name}"):
+    with st.expander(f"{goal_code} {goal_name}", expanded=False):
 
-        goal_rows = filtered[
-            filtered["code"].astype(str).str.startswith(goal_code)
-        ]
+        st.markdown(
+            f"""
+            <div style="
+                background-color:#1d4ed8;
+                color:white;
+                padding:14px;
+                border-radius:10px;
+                font-weight:700;
+                margin-bottom:12px;">
+                {goal_code} {goal_name}
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
-        tasks = goal_rows[
-            goal_rows["object_type"] == "task"
-        ]
+        goal_indicators = df[
+            (df["object_type"] == "goal_indicator") &
+            (df["code"].astype(str) == goal_code)
+        ].copy()
+
+        if not goal_indicators.empty:
+            st.markdown("**Індикатори досягнення стратегічної цілі**")
+            render_table(
+                goal_indicators[
+                    [
+                        "indicator",
+                        "unit",
+                        "base_2021",
+                        "fact_2024",
+                        "expected_2025",
+                        "target_2026",
+                        "target_2027",
+                        "target_2028"
+                    ]
+                ]
+            )
+
+        goal_rows = df[df["code"].astype(str).str.startswith(goal_code)]
+
+        tasks = goal_rows[goal_rows["object_type"] == "task"]
 
         for _, task in tasks.iterrows():
 
-            task_code = task["code"]
+            task_code = str(task["code"])
+            task_name = str(task["name"])
 
-            with st.expander(f"{task_code} {task['name']}"):
+            with st.expander(f"{task_code} {task_name}", expanded=False):
 
-                measures = goal_rows[
-                    (goal_rows["object_type"] == "measure") &
-                    (goal_rows["code"].astype(str).str.startswith(task_code))
+                st.markdown(
+                    f"""
+                    <div style="
+                        background-color:#374151;
+                        color:white;
+                        padding:12px;
+                        border-radius:8px;
+                        font-weight:600;
+                        margin-bottom:12px;">
+                        {task_code} {task_name}
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+
+                task_indicators = df[
+                    (df["object_type"] == "task_indicator") &
+                    (df["code"].astype(str) == task_code)
                 ].copy()
+
+                if not task_indicators.empty:
+                    st.markdown("**Індикатори досягнення завдання**")
+                    render_table(
+                        task_indicators[
+                            [
+                                "indicator",
+                                "unit",
+                                "base_2021",
+                                "fact_2024",
+                                "expected_2025",
+                                "target_2026",
+                                "target_2027",
+                                "target_2028"
+                            ]
+                        ]
+                    )
+
+                measures = df[
+                    (df["object_type"] == "measure") &
+                    (df["code"].astype(str).str.startswith(task_code))
+                ].copy()
+
+                if selected_dep != "Усі":
+                    measures = measures[
+                        measures["department"].astype(str) == selected_dep
+                    ]
 
                 if measures.empty:
                     st.info("Заходів за цим завданням не знайдено.")
                     continue
 
-                if not approved_monitoring.empty:
-                    measures = measures.merge(
-                        approved_monitoring[
-                            [
-                                "strat_code",
-                                "quarter",
-                                "status",
-                                "progress_text",
-                                "numeric_value",
-                                "risks",
-                                "submitted_at"
-                            ]
-                        ],
-                        left_on="code",
-                        right_on="strat_code",
-                        how="left"
+                for q in ["I", "II", "III", "IV"]:
+                    measures[f"{selected_year} Q{q}"] = measures["code"].apply(
+                        lambda x: quarter_data.get(str(x).strip(), {}).get(q, "")
                     )
-                else:
-                    measures["quarter"] = ""
-                    measures["status"] = ""
-                    measures["progress_text"] = ""
-                    measures["numeric_value"] = ""
-                    measures["risks"] = ""
-                    measures["submitted_at"] = ""
-
-                year_col = f"target_{selected_year}"
 
                 show_cols = [
                     "code",
                     "name",
                     "indicator",
                     "unit",
-                    year_col,
-                    "quarter",
-                    "status",
-                    "numeric_value",
-                    "progress_text",
+                    "base_2021",
+                    "fact_2024",
+                    "expected_2025",
+                    "target_2026",
+                    f"{selected_year} QI",
+                    f"{selected_year} QII",
+                    f"{selected_year} QIII",
+                    f"{selected_year} QIV",
+                    "target_2027",
+                    "target_2028",
                     "department"
                 ]
 
-                st.dataframe(
-                    measures[show_cols],
-                    use_container_width=True,
-                    hide_index=True
-                )
+                st.markdown("**Заходи**")
+                render_table(measures[show_cols])

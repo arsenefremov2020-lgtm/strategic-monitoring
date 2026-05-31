@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 from supabase import create_client
+from datetime import datetime
 
 st.set_page_config(
     page_title="Адміністрування заявок",
@@ -15,11 +17,235 @@ supabase = create_client(
     st.secrets["SUPABASE_KEY"]
 )
 
+st.markdown("""
+<style>
+.stApp {
+    background:
+        radial-gradient(circle at top right, rgba(37,99,235,0.08), transparent 28%),
+        radial-gradient(circle at bottom left, rgba(22,163,74,0.07), transparent 30%),
+        linear-gradient(180deg, #f6f8fb 0%, #eef2f7 100%);
+}
+
+.stApp::before {
+    content: "";
+    position: fixed;
+    top: -160px;
+    right: -120px;
+    width: 460px;
+    height: 460px;
+    border-radius: 50%;
+    background: rgba(37, 99, 235, 0.045);
+    z-index: 0;
+}
+
+.stApp::after {
+    content: "";
+    position: fixed;
+    bottom: -180px;
+    left: -120px;
+    width: 390px;
+    height: 390px;
+    border-radius: 50%;
+    background: rgba(22, 163, 74, 0.045);
+    z-index: 0;
+}
+
+.main .block-container {
+    max-width: 1550px;
+    padding-top: 1.2rem;
+    position: relative;
+    z-index: 1;
+}
+
+.ua-line {
+    height: 7px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #005BBB 0%, #005BBB 50%, #FFD500 50%, #FFD500 100%);
+    margin-bottom: 14px;
+}
+
+.ministry-label {
+    text-align: right;
+    color: #475569;
+    font-size: 14px;
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+
+.header-box {
+    background: rgba(255,255,255,0.94);
+    border: 1px solid #d8dee9;
+    border-radius: 16px;
+    padding: 24px 28px;
+    margin-bottom: 18px;
+    box-shadow: 0 8px 24px rgba(15,23,42,0.06);
+}
+
+.header-title {
+    font-size: 32px;
+    font-weight: 900;
+    color: #0f172a;
+    margin-bottom: 8px;
+}
+
+.header-subtitle {
+    font-size: 15px;
+    color: #475569;
+    line-height: 1.55;
+}
+
+.status-pill-wrap {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 14px;
+}
+
+.status-pill {
+    background: #f8fafc;
+    border: 1px solid #d8dee9;
+    border-radius: 999px;
+    padding: 8px 12px;
+    font-size: 13px;
+    color: #334155;
+}
+
+.card {
+    background: rgba(255,255,255,0.94);
+    border: 1px solid #d8dee9;
+    border-radius: 16px;
+    padding: 20px 22px;
+    margin: 18px 0;
+    box-shadow: 0 6px 18px rgba(15,23,42,0.045);
+}
+
+.card-title {
+    font-size: 20px;
+    font-weight: 900;
+    color: #0f172a;
+    margin-bottom: 8px;
+}
+
+.card-subtitle {
+    color: #64748b;
+    font-size: 14px;
+    margin-bottom: 12px;
+}
+
+.flow-box {
+    background: white;
+    border: 1px solid #d8dee9;
+    border-radius: 14px;
+    padding: 16px 18px;
+    margin: 18px 0;
+    box-shadow: 0 4px 12px rgba(15,23,42,0.04);
+}
+
+.flow-title {
+    font-weight: 900;
+    color: #0f172a;
+    margin-bottom: 10px;
+}
+
+.flow-steps {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    color: #334155;
+    font-size: 14px;
+}
+
+.flow-step {
+    padding: 8px 12px;
+    border-radius: 999px;
+    background: #f1f5f9;
+    border: 1px solid #d8dee9;
+}
+
+.badge-wrap {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 10px 0 16px 0;
+}
+
+.badge {
+    background: #eef6ff;
+    border: 1px solid #bfdbfe;
+    color: #1d4ed8;
+    border-radius: 999px;
+    padding: 7px 11px;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.badge-green {
+    background: #dcfce7;
+    border: 1px solid #bbf7d0;
+    color: #166534;
+}
+
+.badge-yellow {
+    background: #fef9c3;
+    border: 1px solid #fde68a;
+    color: #854d0e;
+}
+
+.badge-red {
+    background: #fee2e2;
+    border: 1px solid #fecaca;
+    color: #991b1b;
+}
+
+.review-box {
+    background: #f8fafc;
+    border: 1px solid #d8dee9;
+    border-radius: 14px;
+    padding: 16px 18px;
+    margin: 12px 0;
+}
+
+.review-title {
+    font-size: 16px;
+    font-weight: 900;
+    color: #0f172a;
+    margin-bottom: 8px;
+}
+
+div[data-testid="stMetric"] {
+    background: rgba(255,255,255,0.88);
+    border: 1px solid #d8dee9;
+    border-radius: 14px;
+    padding: 14px 16px;
+    box-shadow: 0 4px 12px rgba(15,23,42,0.04);
+}
+
+div.stButton > button {
+    border-radius: 12px;
+    padding: 12px 18px;
+    font-weight: 800;
+}
+
+.footer {
+    text-align: center;
+    color: #64748b;
+    font-size: 13px;
+    margin-top: 50px;
+    padding: 22px 0 12px 0;
+    border-top: 1px solid #d8dee9;
+}
+</style>
+""", unsafe_allow_html=True)
+
 
 def clean(value):
     if value is None or pd.isna(value) or str(value) == "None":
         return ""
     return str(value)
+
+
+def has_value(value):
+    return clean(value).strip() != ""
 
 
 @st.cache_data
@@ -98,7 +324,109 @@ def write_log(request_id, action, old_status, new_status, admin_comment):
     }).execute()
 
 
-st.title("Адміністрування заявок моніторингу")
+def quality_assessment(row):
+    checks = []
+    score = 0
+
+    if has_value(row.get("numeric_value", "")):
+        checks.append(("Фактичне значення", "Заповнено", True))
+        score += 1
+    else:
+        checks.append(("Фактичне значення", "Не заповнено", False))
+
+    if has_value(row.get("progress_text", "")):
+        checks.append(("Опис прогресу", "Заповнено", True))
+        score += 1
+    else:
+        checks.append(("Опис прогресу", "Не заповнено", False))
+
+    if has_value(row.get("file_urls", "")):
+        checks.append(("Підтвердні файли", "Додано", True))
+        score += 1
+    else:
+        checks.append(("Підтвердні файли", "Не додано", False))
+
+    if has_value(row.get("responsible_person", "")):
+        checks.append(("Відповідальна особа", "Заповнено", True))
+        score += 1
+    else:
+        checks.append(("Відповідальна особа", "Не заповнено", False))
+
+    if has_value(row.get("phone", "")):
+        checks.append(("Телефон", "Заповнено", True))
+        score += 1
+    else:
+        checks.append(("Телефон", "Не заповнено", False))
+
+    if has_value(row.get("email", "")):
+        checks.append(("Email", "Заповнено", True))
+        score += 1
+    else:
+        checks.append(("Email", "Не заповнено", False))
+
+    if has_value(row.get("risks", "")):
+        checks.append(("Ризики", "Є зазначені ризики", False))
+    else:
+        checks.append(("Ризики", "Не зазначено", True))
+
+    if score >= 5 and not has_value(row.get("risks", "")):
+        recommendation = "Можна погоджувати"
+        badge = "badge-green"
+    elif score >= 4:
+        recommendation = "Потребує перевірки"
+        badge = "badge-yellow"
+    else:
+        recommendation = "Краще повернути на доопрацювання"
+        badge = "badge-red"
+
+    return checks, recommendation, badge, score
+
+
+st.markdown('<div class="ua-line"></div>', unsafe_allow_html=True)
+
+st.markdown(
+    """
+    <div class="ministry-label">
+    🇺🇦 Міністерство економіки, довкілля та сільського господарства України
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+st.markdown(
+    """
+    <div class="header-box">
+        <div class="header-title">Адміністрування заявок моніторингу</div>
+        <div class="header-subtitle">
+            Робочий кабінет адміністратора для перевірки поданих даних, перегляду підтвердних файлів,
+            погодження заявок, повернення на доопрацювання та контролю історії змін.
+        </div>
+        <div class="status-pill-wrap">
+            <div class="status-pill">● Режим: адміністрування</div>
+            <div class="status-pill">● Дані: Supabase</div>
+            <div class="status-pill">● Журнал змін: активний</div>
+            <div class="status-pill">● Оновлено: """ + datetime.now().strftime("%d.%m.%Y %H:%M") + """</div>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+st.markdown(
+    """
+    <div class="flow-box">
+        <div class="flow-title">Маршрут рішення адміністратора</div>
+        <div class="flow-steps">
+            <div class="flow-step">1. Відфільтрувати заявки</div>
+            <div class="flow-step">2. Переглянути захід</div>
+            <div class="flow-step">3. Перевірити факт і файли</div>
+            <div class="flow-step">4. Додати коментар</div>
+            <div class="flow-step">5. Прийняти рішення</div>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 
 df = load_requests()
 strat_df = load_strat_matrix()
@@ -117,6 +445,7 @@ required_cols = [
     "strat_code",
     "responsible_person",
     "phone",
+    "email",
     "numeric_value",
     "progress_text",
     "risks",
@@ -124,14 +453,58 @@ required_cols = [
     "file_urls",
     "admin_comment",
     "start_date",
-    "end_date"
+    "end_date",
+    "submitted_at"
 ]
 
 for col in required_cols:
     if col not in df.columns:
         df[col] = ""
 
-st.subheader("Фільтри")
+st.markdown('<div class="card"><div class="card-title">Огляд заявок</div><div class="card-subtitle">Короткий стан черги адміністрування.</div>', unsafe_allow_html=True)
+
+total_requests = len(df)
+waiting_count = len(df[df["approval_status"] == "Очікує погодження"])
+approved_count = len(df[df["approval_status"] == "Погоджено"])
+returned_count = len(df[df["approval_status"] == "Повернуто на доопрацювання"])
+with_files_count = len(df[df["file_urls"].fillna("").astype(str).str.strip() != ""])
+with_risks_count = len(df[df["risks"].fillna("").astype(str).str.strip() != ""])
+
+m1, m2, m3, m4, m5, m6 = st.columns(6)
+
+m1.metric("Усього", total_requests)
+m2.metric("Очікують", waiting_count)
+m3.metric("Погоджено", approved_count)
+m4.metric("Повернуто", returned_count)
+m5.metric("Із файлами", with_files_count)
+m6.metric("Із ризиками", with_risks_count)
+
+st.markdown('</div>', unsafe_allow_html=True)
+
+st.markdown('<div class="card"><div class="card-title">Міні-візуалізація статусів</div>', unsafe_allow_html=True)
+
+chart_df = (
+    df["approval_status"]
+    .fillna("Невідомо")
+    .value_counts()
+    .reset_index()
+)
+
+chart_df.columns = ["Статус", "Кількість"]
+
+fig = px.pie(
+    chart_df,
+    names="Статус",
+    values="Кількість",
+    hole=0.5,
+    title="Розподіл заявок за статусом погодження"
+)
+
+st.plotly_chart(fig, use_container_width=True)
+
+st.markdown('</div>', unsafe_allow_html=True)
+
+st.markdown('<div class="card"><div class="card-title">Фільтри та пошук</div>', unsafe_allow_html=True)
 
 f1, f2, f3, f4 = st.columns(4)
 
@@ -140,11 +513,12 @@ with f1:
     selected_department = st.selectbox("Департамент", ["Усі"] + departments)
 
 with f2:
-    years = sorted(df["year"].dropna().astype(int).unique().tolist())
+    years = sorted(df["year"].dropna().astype(str).unique().tolist())
     selected_year = st.selectbox("Рік", ["Усі"] + years)
 
 with f3:
-    selected_quarter = st.selectbox("Квартал", ["Усі", "I", "II", "III", "IV"])
+    quarters = sorted(df["quarter"].dropna().astype(str).unique().tolist())
+    selected_quarter = st.selectbox("Квартал", ["Усі"] + quarters)
 
 with f4:
     selected_approval_status = st.selectbox(
@@ -157,6 +531,26 @@ with f4:
         ]
     )
 
+q1, q2 = st.columns([1, 2])
+
+with q1:
+    quick_filter = st.selectbox(
+        "Швидкий фільтр",
+        [
+            "Усі заявки",
+            "Тільки очікують",
+            "Повернуті",
+            "Без файлів",
+            "Із ризиками",
+            "Останні подані"
+        ]
+    )
+
+with q2:
+    search_query = st.text_input(
+        "Пошук за ID, кодом заходу, ПІБ або департаментом"
+    )
+
 filtered = df.copy()
 
 if selected_department != "Усі":
@@ -166,7 +560,7 @@ if selected_department != "Усі":
 
 if selected_year != "Усі":
     filtered = filtered[
-        filtered["year"].astype(int) == int(selected_year)
+        filtered["year"].astype(str) == str(selected_year)
     ]
 
 if selected_quarter != "Усі":
@@ -179,13 +573,78 @@ if selected_approval_status != "Усі":
         filtered["approval_status"].astype(str) == str(selected_approval_status)
     ]
 
+if quick_filter == "Тільки очікують":
+    filtered = filtered[filtered["approval_status"] == "Очікує погодження"]
+
+elif quick_filter == "Повернуті":
+    filtered = filtered[filtered["approval_status"] == "Повернуто на доопрацювання"]
+
+elif quick_filter == "Без файлів":
+    filtered = filtered[filtered["file_urls"].fillna("").astype(str).str.strip() == ""]
+
+elif quick_filter == "Із ризиками":
+    filtered = filtered[filtered["risks"].fillna("").astype(str).str.strip() != ""]
+
+elif quick_filter == "Останні подані":
+    filtered = filtered.sort_values("submitted_at", ascending=False).head(10)
+
+if search_query.strip():
+    sq = search_query.strip().lower()
+
+    filtered = filtered[
+        filtered["id"].astype(str).str.lower().str.contains(sq, na=False)
+        |
+        filtered["strat_code"].astype(str).str.lower().str.contains(sq, na=False)
+        |
+        filtered["responsible_person"].astype(str).str.lower().str.contains(sq, na=False)
+        |
+        filtered["department"].astype(str).str.lower().str.contains(sq, na=False)
+    ]
+
 st.caption(f"Знайдено заявок: {len(filtered)}")
+
+st.markdown('</div>', unsafe_allow_html=True)
 
 if filtered.empty:
     st.info("За обраними фільтрами заявок не знайдено.")
     st.stop()
 
-st.divider()
+queue_df = filtered[
+    filtered["approval_status"] == "Очікує погодження"
+].copy()
+
+if not queue_df.empty:
+    st.markdown('<div class="card"><div class="card-title">Черга на розгляд</div><div class="card-subtitle">Заявки, які потребують рішення адміністратора.</div>', unsafe_allow_html=True)
+
+    queue_show = queue_df.rename(columns={
+        "id": "ID",
+        "department": "Департамент",
+        "year": "Рік",
+        "quarter": "Квартал",
+        "strat_code": "Код заходу",
+        "responsible_person": "Відповідальна особа",
+        "submitted_at": "Дата подання"
+    })
+
+    st.dataframe(
+        queue_show[
+            [
+                "ID",
+                "Департамент",
+                "Код заходу",
+                "Рік",
+                "Квартал",
+                "Відповідальна особа",
+                "Дата подання"
+            ]
+        ],
+        use_container_width=True,
+        hide_index=True
+    )
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+st.markdown('<div class="card"><div class="card-title">Вибір заявки</div>', unsafe_allow_html=True)
 
 selected_options = []
 
@@ -195,7 +654,8 @@ for _, row in filtered.iterrows():
         f"{row['department']} | "
         f"{row['strat_code']} | "
         f"{row['year']} {row['quarter']} квартал | "
-        f"{row['approval_status']}"
+        f"{row['approval_status']} | "
+        f"{clean(row['submitted_at'])}"
     )
     selected_options.append(option)
 
@@ -210,19 +670,59 @@ selected_row = filtered[
     filtered["id"].astype(int) == selected_id
 ].iloc[0]
 
+st.markdown('</div>', unsafe_allow_html=True)
+
 approval_status = clean(selected_row["approval_status"])
 selected_code = clean(selected_row["strat_code"])
 
-st.subheader(f"Заявка ID {clean(selected_row['id'])} — захід {selected_code}")
+checks, recommendation, rec_badge, quality_score = quality_assessment(selected_row)
+
+st.markdown('<div class="card"><div class="card-title">Картка заявки</div>', unsafe_allow_html=True)
 
 if approval_status == "Погоджено":
-    st.success("Статус погодження: Погоджено")
+    status_badge = "badge-green"
 elif approval_status == "Повернуто на доопрацювання":
-    st.error("Статус погодження: Повернуто на доопрацювання")
+    status_badge = "badge-red"
 else:
-    st.warning("Статус погодження: Очікує погодження")
+    status_badge = "badge-yellow"
 
-st.markdown("### Інформація про захід зі стратегічного плану")
+st.markdown(
+    f"""
+    <div class="badge-wrap">
+        <div class="badge {status_badge}">Статус погодження: {approval_status}</div>
+        <div class="badge">Заявка ID {clean(selected_row['id'])}</div>
+        <div class="badge">Захід {selected_code}</div>
+        <div class="badge {rec_badge}">Рекомендація: {recommendation}</div>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+m1, m2, m3, m4, m5, m6 = st.columns(6)
+
+m1.metric("Департамент", clean(selected_row["department"]))
+m2.metric("Рік", clean(selected_row["year"]))
+m3.metric("Квартал", clean(selected_row["quarter"]))
+m4.metric("Статус виконання", clean(selected_row["status"]))
+m5.metric("Факт", clean(selected_row["numeric_value"]))
+m6.metric("Код", selected_code)
+
+st.markdown('</div>', unsafe_allow_html=True)
+
+st.markdown('<div class="card"><div class="card-title">Автоматична оцінка якості заявки</div>', unsafe_allow_html=True)
+
+qcols = st.columns(len(checks))
+
+for idx, item in enumerate(checks):
+    label, value, ok = item
+    icon = "✅" if ok else "⚠️"
+    qcols[idx].metric(label, f"{icon} {value}")
+
+st.progress(min(quality_score / 6, 1.0), text=f"Заповненість ключових полів: {round(quality_score / 6 * 100, 1)}%")
+
+st.markdown('</div>', unsafe_allow_html=True)
+
+st.markdown('<div class="card"><div class="card-title">Інформація про захід зі стратегічного плану</div>', unsafe_allow_html=True)
 
 measure_info = strat_df[
     strat_df["code"].astype(str).str.strip() == selected_code
@@ -231,63 +731,66 @@ measure_info = strat_df[
 if measure_info.empty:
     st.warning("Захід не знайдено у стратегічній матриці.")
 else:
-    measure_info = measure_info.rename(columns={
-        "code": "Код",
-        "name": "Захід",
-        "indicator": "Індикатор",
-        "unit": "Одиниця виміру",
-        "base_2021": "Базове значення 2021",
-        "fact_2024": "Звіт 2024",
-        "expected_2025": "Очікуване 2025",
-        "target_2026": "План 2026",
-        "target_2027": "План 2027",
-        "target_2028": "План 2028",
-        "department": "Департамент",
-        "start_date_plan": "Початкова дата зі СП",
-        "end_date_plan": "Кінцева дата зі СП"
-    })
+    short_info = measure_info.iloc[0]
 
-    st.dataframe(
-        measure_info[
-            [
-                "Код",
-                "Захід",
-                "Індикатор",
-                "Одиниця виміру",
-                "Базове значення 2021",
-                "Звіт 2024",
-                "Очікуване 2025",
-                "План 2026",
-                "План 2027",
-                "План 2028",
-                "Департамент",
-                "Початкова дата зі СП",
-                "Кінцева дата зі СП"
-            ]
-        ],
-        use_container_width=True,
-        hide_index=True
+    st.markdown(
+        f"""
+        <div class="review-box">
+            <div class="review-title">{clean(short_info.get("code", ""))} — {clean(short_info.get("name", ""))}</div>
+            <div><b>Індикатор:</b> {clean(short_info.get("indicator", ""))}</div>
+            <div><b>Одиниця виміру:</b> {clean(short_info.get("unit", ""))}</div>
+            <div><b>Період виконання:</b> {clean(short_info.get("start_date_plan", ""))} — {clean(short_info.get("end_date_plan", ""))}</div>
+        </div>
+        """,
+        unsafe_allow_html=True
     )
 
-st.markdown("### Дані заявки")
+    with st.expander("Детальна таблиця заходу"):
+        measure_info = measure_info.rename(columns={
+            "code": "Код",
+            "name": "Захід",
+            "indicator": "Індикатор",
+            "unit": "Одиниця виміру",
+            "base_2021": "Базове значення 2021",
+            "fact_2024": "Звіт 2024",
+            "expected_2025": "Очікуване 2025",
+            "target_2026": "План 2026",
+            "target_2027": "План 2027",
+            "target_2028": "План 2028",
+            "department": "Департамент",
+            "start_date_plan": "Початкова дата зі СП",
+            "end_date_plan": "Кінцева дата зі СП"
+        })
 
-m1, m2, m3 = st.columns(3)
+        detail_cols = [
+            "Код",
+            "Захід",
+            "Індикатор",
+            "Одиниця виміру",
+            "Базове значення 2021",
+            "Звіт 2024",
+            "Очікуване 2025",
+            "План 2026",
+            "План 2027",
+            "План 2028",
+            "Департамент",
+            "Початкова дата зі СП",
+            "Кінцева дата зі СП"
+        ]
 
-with m1:
-    st.metric("Департамент", clean(selected_row["department"]))
-    st.metric("Рік", clean(selected_row["year"]))
+        available_detail_cols = [c for c in detail_cols if c in measure_info.columns]
 
-with m2:
-    st.metric("Квартал", clean(selected_row["quarter"]))
-    st.metric("Статус виконання", clean(selected_row["status"]))
+        st.dataframe(
+            measure_info[available_detail_cols],
+            use_container_width=True,
+            hide_index=True
+        )
 
-with m3:
-    st.metric("Фактичне значення", clean(selected_row["numeric_value"]))
-    st.metric("Код заходу", selected_code)
+st.markdown('</div>', unsafe_allow_html=True)
 
-st.markdown("### Дані відповідальної особи")
+st.markdown('<div class="card"><div class="card-title">Дані відповідальної особи</div>', unsafe_allow_html=True)
 
-p1, p2 = st.columns(2)
+p1, p2, p3 = st.columns(3)
 
 with p1:
     st.text_input(
@@ -303,7 +806,16 @@ with p2:
         disabled=True
     )
 
-st.markdown("### Терміни виконання")
+with p3:
+    st.text_input(
+        "Електронна пошта",
+        value=clean(selected_row["email"]),
+        disabled=True
+    )
+
+st.markdown('</div>', unsafe_allow_html=True)
+
+st.markdown('<div class="card"><div class="card-title">Терміни виконання</div>', unsafe_allow_html=True)
 
 d1, d2 = st.columns(2)
 
@@ -321,42 +833,60 @@ with d2:
         disabled=True
     )
 
-st.markdown("### Опис прогресу")
+st.markdown('</div>', unsafe_allow_html=True)
 
-st.text_area(
-    "Опис прогресу",
-    value=clean(selected_row["progress_text"]),
-    disabled=True,
-    height=120
-)
+st.markdown('<div class="card"><div class="card-title">Опис прогресу та ризики</div>', unsafe_allow_html=True)
 
-st.markdown("### Ризики / проблеми / відхилення")
+t1, t2 = st.columns(2)
 
-st.text_area(
-    "Ризики / проблеми / відхилення",
-    value=clean(selected_row["risks"]),
-    disabled=True,
-    height=120
-)
+with t1:
+    st.text_area(
+        "Опис прогресу",
+        value=clean(selected_row["progress_text"]),
+        disabled=True,
+        height=150
+    )
 
-st.markdown("### Підтвердні файли")
+with t2:
+    st.text_area(
+        "Ризики / проблеми / відхилення",
+        value=clean(selected_row["risks"]),
+        disabled=True,
+        height=150
+    )
+
+st.markdown('</div>', unsafe_allow_html=True)
+
+st.markdown('<div class="card"><div class="card-title">Підтвердні файли</div>', unsafe_allow_html=True)
 
 file_names = clean(selected_row["file_names"])
 file_urls = clean(selected_row["file_urls"])
 
 if not file_urls:
-    st.info("Файлів до заявки не додано.")
+    st.warning("Файлів до заявки не додано.")
 else:
     urls = [u.strip() for u in file_urls.split(",") if u.strip()]
     names = [n.strip() for n in file_names.split(",") if n.strip()]
+
+    st.caption(f"Додано файлів: {len(urls)}")
 
     for i, url in enumerate(urls):
         label = names[i] if i < len(names) else f"Файл {i + 1}"
         st.markdown(f"[{label}]({url})")
 
-st.divider()
+st.markdown('</div>', unsafe_allow_html=True)
 
-st.subheader("Рішення адміністратора")
+st.markdown('<div class="card"><div class="card-title">Рішення адміністратора</div><div class="card-subtitle">Додайте коментар і прийміть рішення щодо обраної заявки.</div>', unsafe_allow_html=True)
+
+st.markdown(
+    f"""
+    <div class="badge-wrap">
+        <div class="badge {rec_badge}">Системна рекомендація: {recommendation}</div>
+        <div class="badge">Заповненість: {round(quality_score / 6 * 100, 1)}%</div>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 
 admin_comment = st.text_area(
     "Коментар адміністратора",
@@ -426,38 +956,71 @@ if keep_waiting:
     st.info("Заявку залишено в очікуванні.")
     st.rerun()
 
-st.divider()
+st.markdown('</div>', unsafe_allow_html=True)
 
-st.subheader("Історія змін заявки")
+st.markdown('<div class="card"><div class="card-title">Остання дія та історія змін</div>', unsafe_allow_html=True)
 
 logs_df = load_logs(selected_id)
 
 if logs_df.empty:
     st.info("Історії змін для цієї заявки поки що немає.")
 else:
-    show_log_cols = [
-        "changed_at",
-        "action",
-        "old_status",
-        "new_status",
-        "admin_comment",
-        "changed_by"
-    ]
+    latest_log = logs_df.iloc[0]
 
-    available_log_cols = [col for col in show_log_cols if col in logs_df.columns]
+    st.markdown(
+        f"""
+        <div class="review-box">
+            <div class="review-title">Остання дія: {clean(latest_log.get("action", ""))}</div>
+            <div><b>Статус:</b> {clean(latest_log.get("old_status", ""))} → {clean(latest_log.get("new_status", ""))}</div>
+            <div><b>Коментар:</b> {clean(latest_log.get("admin_comment", ""))}</div>
+            <div><b>Дата:</b> {clean(latest_log.get("changed_at", ""))}</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
+    with st.expander("Повна історія змін заявки"):
+        show_logs = logs_df.rename(columns={
+            "changed_at": "Дата зміни",
+            "action": "Дія",
+            "old_status": "Попередній статус",
+            "new_status": "Новий статус",
+            "admin_comment": "Коментар адміністратора",
+            "changed_by": "Ким змінено"
+        })
+
+        show_cols = [
+            "Дата зміни",
+            "Дія",
+            "Попередній статус",
+            "Новий статус",
+            "Коментар адміністратора",
+            "Ким змінено"
+        ]
+
+        available_log_cols = [col for col in show_cols if col in show_logs.columns]
+
+        st.dataframe(
+            show_logs[available_log_cols],
+            use_container_width=True,
+            hide_index=True
+        )
+
+st.markdown('</div>', unsafe_allow_html=True)
+
+with st.expander("Технічна таблиця заявок"):
     st.dataframe(
-        logs_df[available_log_cols],
+        filtered,
         use_container_width=True,
         hide_index=True
     )
 
-st.divider()
-
-st.subheader("Технічна таблиця заявок")
-
-st.dataframe(
-    filtered,
-    use_container_width=True,
-    hide_index=True
+st.markdown(
+    """
+    <div class="footer">
+        Розроблено департаментом стратегічного планування та макроекономічного прогнозування<br>
+        Версія DEMO 0.9 | Кабінет адміністрування заявок моніторингу
+    </div>
+    """,
+    unsafe_allow_html=True
 )

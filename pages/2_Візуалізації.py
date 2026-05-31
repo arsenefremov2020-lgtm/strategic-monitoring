@@ -131,6 +131,53 @@ st.markdown("""
     margin-bottom: 12px;
 }
 
+.alert-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    margin: 14px 0;
+}
+
+.alert-card {
+    border-radius: 14px;
+    padding: 16px;
+    border: 1px solid #d8dee9;
+    background: white;
+}
+
+.alert-title {
+    font-size: 13px;
+    color: #64748b;
+    font-weight: 800;
+}
+
+.alert-value {
+    font-size: 28px;
+    color: #0f172a;
+    font-weight: 950;
+    margin-top: 4px;
+}
+
+.alert-red {
+    background: #fee2e2;
+    border-color: #fecaca;
+}
+
+.alert-yellow {
+    background: #fef9c3;
+    border-color: #fde68a;
+}
+
+.alert-green {
+    background: #dcfce7;
+    border-color: #bbf7d0;
+}
+
+.alert-blue {
+    background: #dbeafe;
+    border-color: #bfdbfe;
+}
+
 .badge-wrap {
     display: flex;
     flex-wrap: wrap;
@@ -164,6 +211,21 @@ st.markdown("""
     background: #dcfce7;
     border: 1px solid #bbf7d0;
     color: #166534;
+}
+
+.traffic-green {
+    color: #166534;
+    font-weight: 900;
+}
+
+.traffic-yellow {
+    color: #a16207;
+    font-weight: 900;
+}
+
+.traffic-red {
+    color: #991b1b;
+    font-weight: 900;
 }
 
 div[data-testid="stMetric"] {
@@ -230,11 +292,15 @@ def load_strat_matrix():
 
 def load_requests():
     response = supabase.table("monitoring_requests").select("*").execute()
-
     if not response.data:
         return pd.DataFrame()
-
     return pd.DataFrame(response.data)
+
+
+def clean(value):
+    if value is None or pd.isna(value) or str(value) == "None":
+        return ""
+    return str(value)
 
 
 def parse_period(value):
@@ -343,51 +409,73 @@ def plan_fact_percent(actual, target):
     return None
 
 
-def risk_assessment(row, selected_period_num, selected_quarter_num):
+def traffic_light(score):
+    if score >= 70:
+        return "🟢 У графіку"
+    if score >= 35:
+        return "🟡 Потребує уваги"
+    return "🔴 Відстає"
+
+
+def risk_level_from_score(score):
+    if score >= 70:
+        return "Низький ризик"
+    if score >= 35:
+        return "Середній ризик"
+    return "Критичний ризик"
+
+
+def risk_score_calc(row, selected_quarter_num, selected_period_num):
     status = str(row.get("status", "Не подано"))
     actual = row.get("numeric_value", "")
     target = row.get("selected_target", "")
     risks_text = str(row.get("risks", "")).strip()
+    end_num = row.get("end_num", None)
 
-    expected_progress = selected_quarter_num * 25
-    pf = plan_fact_percent(actual, target)
+    score = 0
+    reasons = []
 
     if status == "Не подано":
-        return "Критичний ризик", "За активним заходом не подано моніторингові дані."
+        score += 45
+        reasons.append("за активним заходом не подано дані")
 
-    if status == "Прострочено":
-        return "Критичний ризик", "Статус заходу — прострочено."
+    if status in ["Прострочено", "Потребує уваги"]:
+        score += 35
+        reasons.append("проблемний статус виконання")
 
-    if status == "Потребує уваги":
-        return "Помірний ризик", "Статус заходу потребує уваги."
+    if risks_text:
+        score += 20
+        reasons.append("у заявці зазначені ризики або відхилення")
 
-    if status == "Виконано частково":
-        return "Помірний ризик", "Захід виконано частково."
+    pf = plan_fact_percent(actual, target)
+    expected_progress = selected_quarter_num * 25
 
     if pf is not None:
         if pf < max(expected_progress - 25, 0):
-            return "Критичний ризик", f"Факт суттєво нижчий за очікуваний прогрес кварталу ({expected_progress}%)."
-        if pf < expected_progress:
-            return "Помірний ризик", f"Факт нижчий за очікуваний прогрес кварталу ({expected_progress}%)."
+            score += 35
+            reasons.append("факт суттєво нижчий за очікуваний прогрес")
+        elif pf < expected_progress:
+            score += 20
+            reasons.append("факт нижчий за очікуваний прогрес")
 
-    if risks_text:
-        return "Помірний ризик", "У заявці зазначені ризики / проблеми / відхилення."
+    if pd.notna(end_num) and end_num < selected_period_num and status != "Виконано":
+        score += 45
+        reasons.append("строк виконання минув, захід не виконано")
 
-    if status == "Виконано":
-        return "Низький ризик", "Захід позначено як виконаний."
+    score = min(score, 100)
 
-    if status == "Виконується":
-        return "Низький ризик", "Захід виконується без критичних відхилень."
+    if not reasons:
+        reasons.append("критичних відхилень не виявлено")
 
-    return "Низький ризик", "Критичних відхилень не виявлено."
+    return score, "; ".join(reasons)
 
 
 def dashboard_conclusion(completion, risk_share, coverage):
     if completion >= 75 and risk_share <= 15 and coverage >= 70:
-        return "План переважно виконується", "Поточний стан виконання виглядає контрольованим."
+        return "План переважно виконується", "Поточний стан виконання виглядає контрольованим.", "risk-low"
     if completion >= 45 and risk_share <= 35:
-        return "Є помірні відхилення", "Потрібна увага до окремих заходів, департаментів або стратегічних цілей."
-    return "Високий ризик невиконання", "Поточні дані свідчать про суттєві ризики або недостатнє покриття моніторингом."
+        return "Є помірні відхилення", "Потрібна увага до окремих заходів, департаментів або стратегічних цілей.", "risk-medium"
+    return "Високий ризик невиконання", "Поточні дані свідчать про суттєві ризики або недостатнє покриття моніторингом.", "risk-high"
 
 
 def gauge_chart(value, title):
@@ -502,46 +590,52 @@ def prepare_period_data(strat_df, requests_df, year, quarter, department):
     )
 
     risk_results = active.apply(
-        lambda r: risk_assessment(r, selected_period_num, selected_q_num),
+        lambda r: risk_score_calc(r, selected_q_num, selected_period_num),
         axis=1
     )
 
-    active["auto_risk"] = [x[0] for x in risk_results]
+    active["risk_score"] = [x[0] for x in risk_results]
     active["risk_reason"] = [x[1] for x in risk_results]
+    active["auto_risk"] = active["risk_score"].apply(
+        lambda x: "Критичний ризик" if x >= 70 else ("Середній ризик" if x >= 35 else "Низький ризик")
+    )
+    active["traffic_light"] = active["performance_score"].apply(traffic_light)
 
     return active
 
 
+def forecast_to_q4(current_completion, selected_quarter):
+    qn = quarter_to_number(selected_quarter)
+    if qn == 0:
+        return current_completion
+
+    forecast = current_completion / qn * 4
+    return round(min(forecast, 100), 1)
+
+
 st.markdown('<div class="ua-line"></div>', unsafe_allow_html=True)
 
-st.markdown(
-    """
-    <div class="ministry-label">
-    🇺🇦 Міністерство економіки, довкілля та сільського господарства України
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+st.markdown("""
+<div class="ministry-label">
+🇺🇦 Міністерство економіки, довкілля та сільського господарства України
+</div>
+""", unsafe_allow_html=True)
 
-st.markdown(
-    """
-    <div class="header-box">
-        <div class="header-title">Аналітична панель виконання стратегічного плану</div>
-        <div class="header-subtitle">
-            Dashboard показує не лише кількість заявок, а реальний стан виконання заходів:
-            прогрес, відхилення від плану, ризики недосягнення, активні заходи за квартал,
-            проблемні департаменти та стратегічні цілі.
-        </div>
-        <div class="status-pill-wrap">
-            <div class="status-pill">● Режим: dashboard</div>
-            <div class="status-pill">● Джерело: Excel + Supabase</div>
-            <div class="status-pill">● Факт: погоджені заявки</div>
-            <div class="status-pill">● Оновлено: """ + datetime.now().strftime("%d.%m.%Y %H:%M") + """</div>
-        </div>
+st.markdown(f"""
+<div class="header-box">
+    <div class="header-title">Executive Dashboard виконання стратегічного плану</div>
+    <div class="header-subtitle">
+        Аналітична панель поєднує виконання, покриття моніторингом, автоматичні ризики,
+        traffic light статуси, прогноз до кінця року, heatmap і рейтинг департаментів.
     </div>
-    """,
-    unsafe_allow_html=True
-)
+    <div class="status-pill-wrap">
+        <div class="status-pill">● Режим: Executive Dashboard</div>
+        <div class="status-pill">● Джерело: Excel + Supabase</div>
+        <div class="status-pill">● Факт: погоджені заявки</div>
+        <div class="status-pill">● Оновлено: {datetime.now().strftime("%d.%m.%Y %H:%M")}</div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
 strat_df = load_strat_matrix()
 requests_df = load_requests()
@@ -554,9 +648,9 @@ if requests_df.empty:
 
 measures_all = strat_df[strat_df["object_type"] == "measure"].copy()
 
-st.markdown('<div class="card"><div class="card-title">Фільтри аналітики</div><div class="card-subtitle">Оберіть період і зріз аналізу.</div>', unsafe_allow_html=True)
+st.markdown('<div class="card"><div class="card-title">Фільтри аналітики</div><div class="card-subtitle">Оберіть період, департамент і режим перегляду.</div>', unsafe_allow_html=True)
 
-f1, f2, f3, f4 = st.columns(4)
+f1, f2, f3, f4, f5 = st.columns(5)
 
 with f1:
     selected_year = st.selectbox("Рік", [2026, 2027, 2028])
@@ -572,15 +666,19 @@ with f4:
     view_mode = st.selectbox(
         "Режим перегляду",
         [
-            "Огляд",
+            "Executive overview",
             "Стратегічні цілі",
             "Департаменти",
             "Ризики",
             "Динаміка",
             "План / факт",
+            "Heatmap",
             "Таблиці"
         ]
     )
+
+with f5:
+    presentation_mode = st.toggle("Presentation mode", value=False)
 
 st.markdown('</div>', unsafe_allow_html=True)
 
@@ -600,86 +698,113 @@ total_active = len(active)
 submitted_count = len(active[active["status"] != "Не подано"])
 coverage = round(submitted_count / total_active * 100, 1) if total_active else 0
 completion = round(active["performance_score"].mean(), 1) if total_active else 0
-risk_count = len(active[active["auto_risk"].isin(["Критичний ризик", "Помірний ризик"])])
+risk_count = len(active[active["auto_risk"].isin(["Критичний ризик", "Середній ризик"])])
 critical_count = len(active[active["auto_risk"] == "Критичний ризик"])
 risk_share = round(risk_count / total_active * 100, 1) if total_active else 0
 without_data = len(active[active["status"] == "Не подано"])
+forecast_q4 = forecast_to_q4(completion, selected_quarter)
+overdue_count = len(active[(active["end_num"].notna()) & (active["status"] != "Виконано")])
+conclusion_title, conclusion_text, conclusion_badge = dashboard_conclusion(completion, risk_share, coverage)
 
-conclusion_title, conclusion_text = dashboard_conclusion(completion, risk_share, coverage)
+st.markdown('<div class="card"><div class="card-title">Стан виконання: висновок системи</div>', unsafe_allow_html=True)
 
-st.markdown('<div class="card"><div class="card-title">Чи йдемо за планом?</div>', unsafe_allow_html=True)
-
-badge_class = "risk-low"
-
-if "помірні" in conclusion_title.lower():
-    badge_class = "risk-medium"
-elif "високий" in conclusion_title.lower():
-    badge_class = "risk-high"
-
-st.markdown(
-    f"""
-    <div class="badge-wrap">
-        <div class="badge {badge_class}">{conclusion_title}</div>
-        <div class="badge">Період: {selected_year} рік, {selected_quarter} квартал</div>
-        <div class="badge">Активних заходів: {total_active}</div>
-        <div class="badge">Покриття моніторингом: {coverage}%</div>
-    </div>
-    <div style="color:#475569;font-size:14px;">{conclusion_text}</div>
-    """,
-    unsafe_allow_html=True
-)
+st.markdown(f"""
+<div class="badge-wrap">
+    <div class="badge {conclusion_badge}">{conclusion_title}</div>
+    <div class="badge">Період: {selected_year} рік, {selected_quarter} квартал</div>
+    <div class="badge">Активних заходів: {total_active}</div>
+    <div class="badge">Прогноз до IV кварталу: {forecast_q4}%</div>
+</div>
+<div style="color:#475569;font-size:14px;">{conclusion_text}</div>
+""", unsafe_allow_html=True)
 
 st.markdown('</div>', unsafe_allow_html=True)
+
+st.markdown(f"""
+<div class="alert-grid">
+    <div class="alert-card alert-blue">
+        <div class="alert-title">Виконання СП</div>
+        <div class="alert-value">{completion}%</div>
+    </div>
+    <div class="alert-card alert-green">
+        <div class="alert-title">Прогноз до IV кварталу</div>
+        <div class="alert-value">{forecast_q4}%</div>
+    </div>
+    <div class="alert-card alert-yellow">
+        <div class="alert-title">Без подання</div>
+        <div class="alert-value">{without_data}</div>
+    </div>
+    <div class="alert-card alert-red">
+        <div class="alert-title">Заходів у ризику</div>
+        <div class="alert-value">{risk_count}</div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
 k1, k2, k3, k4, k5 = st.columns(5)
 k1.metric("Активних заходів", total_active)
 k2.metric("Подано моніторинг", submitted_count)
 k3.metric("Покриття", f"{coverage}%")
-k4.metric("Виконання СП", f"{completion}%")
-k5.metric("Заходів у ризику", risk_count)
+k4.metric("Критичні ризики", critical_count)
+k5.metric("Прострочені / завершені не виконані", overdue_count)
 
-k6, k7, k8 = st.columns(3)
-k6.metric("Критичні ризики", critical_count)
-k7.metric("Без подання", without_data)
-k8.metric("Середнє відхилення", f"{round(100 - completion, 1)}%")
+if not presentation_mode:
+    st.markdown('<div class="card"><div class="card-title">Автоматичні інсайти</div>', unsafe_allow_html=True)
 
-st.markdown('<div class="card"><div class="card-title">Головні індикатори</div>', unsafe_allow_html=True)
+    worst_goals_tmp = (
+        active.groupby(["goal_code", "strategic_goal"])
+        .agg(Виконання=("performance_score", "mean"), Ризик=("risk_score", "mean"))
+        .reset_index()
+        .sort_values("Виконання")
+    )
+
+    worst_deps_tmp = (
+        active.groupby("department")
+        .agg(Виконання=("performance_score", "mean"), Ризик=("risk_score", "mean"))
+        .reset_index()
+        .sort_values("Виконання")
+    )
+
+    insights = []
+
+    if without_data > 0:
+        insights.append(f"⚠️ {without_data} активних заходів не мають поданого моніторингу.")
+    if critical_count > 0:
+        insights.append(f"🔴 {critical_count} заходів мають критичний ризик недосягнення.")
+    if not worst_goals_tmp.empty:
+        insights.append(f"📉 Найнижче виконання зараз у СЦ {worst_goals_tmp.iloc[0]['goal_code']} — {round(worst_goals_tmp.iloc[0]['Виконання'], 1)}%.")
+    if not worst_deps_tmp.empty:
+        insights.append(f"🏢 Департамент з найнижчим показником: {worst_deps_tmp.iloc[0]['department']} — {round(worst_deps_tmp.iloc[0]['Виконання'], 1)}%.")
+    if forecast_q4 < 70:
+        insights.append(f"📌 Прогноз до IV кварталу нижче 70%: поточний прогноз — {forecast_q4}%.")
+
+    if not insights:
+        insights.append("✅ Система не виявила критичних відхилень за обраним періодом.")
+
+    for insight in insights:
+        st.write(insight)
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+st.markdown('<div class="card"><div class="card-title">Головні індикатори виконання</div>', unsafe_allow_html=True)
 
 g1, g2 = st.columns([1, 1])
 
 with g1:
-    st.plotly_chart(
-        gauge_chart(completion, "Виконання СП"),
-        use_container_width=True
-    )
+    st.plotly_chart(gauge_chart(completion, "Виконання СП"), use_container_width=True)
 
 with g2:
     st.markdown("**Бар-індикатори стану**")
-    st.caption("Ці індикатори показують не кількість заявок, а стан виконання активних заходів.")
-
     st.progress(min(completion / 100, 1.0), text=f"Виконання СП: {completion}%")
     st.progress(min(coverage / 100, 1.0), text=f"Покриття моніторингом: {coverage}%")
     st.progress(min((100 - risk_share) / 100, 1.0), text=f"Безризиковість портфеля: {round(100 - risk_share, 1)}%")
-    st.progress(min((100 - (without_data / total_active * 100)) / 100, 1.0), text=f"Заходи з даними: {round(100 - (without_data / total_active * 100), 1)}%")
+    st.progress(min(forecast_q4 / 100, 1.0), text=f"Прогноз до IV кварталу: {forecast_q4}%")
 
 st.markdown('</div>', unsafe_allow_html=True)
 
-chart_mode = st.selectbox(
-    "Оберіть тип візуалізації",
-    [
-        "Автоматичний огляд",
-        "Gauge",
-        "Кругова діаграма",
-        "Стовпчаста діаграма",
-        "Stacked bar",
-        "Лінія тренду",
-        "Heatmap",
-        "Treemap"
-    ]
-)
-
 status_counts = active.groupby("status").size().reset_index(name="Кількість")
 risk_counts = active.groupby("auto_risk").size().reset_index(name="Кількість")
+traffic_counts = active.groupby("traffic_light").size().reset_index(name="Кількість")
 
 goal_progress = (
     active
@@ -688,13 +813,15 @@ goal_progress = (
         Активних_заходів=("code", "count"),
         Виконання=("performance_score", "mean"),
         Покриття=("status", lambda x: (x != "Не подано").sum()),
-        Ризикових=("auto_risk", lambda x: x.isin(["Критичний ризик", "Помірний ризик"]).sum())
+        Ризикових=("auto_risk", lambda x: x.isin(["Критичний ризик", "Середній ризик"]).sum()),
+        Середній_ризик=("risk_score", "mean")
     )
     .reset_index()
 )
 
 goal_progress["Виконання"] = goal_progress["Виконання"].round(1)
 goal_progress["Покриття_%"] = (goal_progress["Покриття"] / goal_progress["Активних_заходів"] * 100).round(1)
+goal_progress["Середній_ризик"] = goal_progress["Середній_ризик"].round(1)
 
 dep_progress = (
     active
@@ -703,90 +830,72 @@ dep_progress = (
         Активних_заходів=("code", "count"),
         Виконання=("performance_score", "mean"),
         Подано=("status", lambda x: (x != "Не подано").sum()),
-        Ризикових=("auto_risk", lambda x: x.isin(["Критичний ризик", "Помірний ризик"]).sum()),
-        Критичних=("auto_risk", lambda x: (x == "Критичний ризик").sum())
+        Ризикових=("auto_risk", lambda x: x.isin(["Критичний ризик", "Середній ризик"]).sum()),
+        Критичних=("auto_risk", lambda x: (x == "Критичний ризик").sum()),
+        Середній_ризик=("risk_score", "mean")
     )
     .reset_index()
 )
 
 dep_progress["Виконання"] = dep_progress["Виконання"].round(1)
 dep_progress["Покриття_%"] = (dep_progress["Подано"] / dep_progress["Активних_заходів"] * 100).round(1)
+dep_progress["Середній_ризик"] = dep_progress["Середній_ризик"].round(1)
 
-if view_mode in ["Огляд", "Стратегічні цілі"] or chart_mode in ["Автоматичний огляд", "Стовпчаста діаграма"]:
+if view_mode in ["Executive overview", "Стратегічні цілі"]:
     c1, c2 = st.columns(2)
 
     with c1:
-        st.subheader("Статуси активних заходів")
-
+        st.subheader("Traffic light статуси")
         fig = px.pie(
-            status_counts,
-            names="status",
+            traffic_counts,
+            names="traffic_light",
             values="Кількість",
             hole=0.45,
-            title="Розподіл статусів"
+            title="Розподіл активних заходів"
         )
-
         st.plotly_chart(fig, use_container_width=True)
 
     with c2:
         st.subheader("Виконання за стратегічними цілями")
-
         fig = px.bar(
             goal_progress.sort_values("Виконання", ascending=False),
             x="strategic_goal",
             y="Виконання",
             text="Виконання",
-            hover_data=["Активних_заходів", "Покриття_%", "Ризикових"],
-            labels={
-                "strategic_goal": "Стратегічна ціль",
-                "Виконання": "Виконання, %"
-            }
+            hover_data=["Активних_заходів", "Покриття_%", "Ризикових", "Середній_ризик"],
+            labels={"strategic_goal": "Стратегічна ціль", "Виконання": "Виконання, %"}
         )
-
         fig.update_layout(xaxis_tickangle=-25)
         st.plotly_chart(fig, use_container_width=True)
 
-if view_mode in ["Огляд", "Департаменти"] or chart_mode in ["Автоматичний огляд", "Stacked bar"]:
-    st.subheader("Виконання за департаментами")
+if view_mode in ["Executive overview", "Департаменти"]:
+    st.subheader("Рейтинг департаментів")
+
+    rank_df = dep_progress.sort_values("Виконання", ascending=False).copy()
+    rank_df["Місце"] = range(1, len(rank_df) + 1)
+
+    st.dataframe(
+        rank_df[["Місце", "department", "Виконання", "Покриття_%", "Ризикових", "Критичних", "Активних_заходів"]],
+        use_container_width=True,
+        hide_index=True
+    )
 
     fig = px.bar(
-        dep_progress.sort_values("Виконання", ascending=False),
+        rank_df,
         x="department",
         y="Виконання",
         text="Виконання",
         hover_data=["Активних_заходів", "Покриття_%", "Ризикових", "Критичних"],
-        labels={
-            "department": "Департамент",
-            "Виконання": "Виконання, %"
-        }
+        labels={"department": "Департамент", "Виконання": "Виконання, %"},
+        title="Виконання за департаментами"
     )
-
     st.plotly_chart(fig, use_container_width=True)
 
-    stacked = (
-        active
-        .groupby(["department", "auto_risk"])
-        .size()
-        .reset_index(name="Кількість")
-    )
-
-    fig = px.bar(
-        stacked,
-        x="department",
-        y="Кількість",
-        color="auto_risk",
-        title="Структура ризиків за департаментами",
-        labels={"department": "Департамент", "auto_risk": "Ризик"}
-    )
-
-    st.plotly_chart(fig, use_container_width=True)
-
-if view_mode in ["Огляд", "Ризики"] or chart_mode in ["Автоматичний огляд", "Кругова діаграма"]:
+if view_mode in ["Executive overview", "Ризики"]:
     c1, c2 = st.columns(2)
 
     with c1:
         st.subheader("Автоматична оцінка ризиків")
-
         fig = px.pie(
             risk_counts,
             names="auto_risk",
@@ -794,26 +903,23 @@ if view_mode in ["Огляд", "Ризики"] or chart_mode in ["Автомат
             hole=0.45,
             title="Рівень ризику недосягнення"
         )
-
         st.plotly_chart(fig, use_container_width=True)
 
     with c2:
-        st.subheader("Treemap ризиків")
-
-        tree_df = active.copy()
-        tree_df["strategic_goal"] = tree_df["strategic_goal"].fillna("Без стратегічної цілі")
-
-        fig = px.treemap(
-            tree_df,
-            path=["auto_risk", "department", "code"],
-            values=[1] * len(tree_df),
-            title="Структура ризиків: ризик → департамент → захід"
+        st.subheader("Структура ризиків за департаментами")
+        stacked = active.groupby(["department", "auto_risk"]).size().reset_index(name="Кількість")
+        fig = px.bar(
+            stacked,
+            x="department",
+            y="Кількість",
+            color="auto_risk",
+            title="Ризики за департаментами",
+            labels={"department": "Департамент", "auto_risk": "Ризик"}
         )
-
         st.plotly_chart(fig, use_container_width=True)
 
-if view_mode in ["Огляд", "Динаміка"] or chart_mode in ["Автоматичний огляд", "Лінія тренду"]:
-    st.subheader("Динаміка виконання за кварталами")
+if view_mode in ["Executive overview", "Динаміка"]:
+    st.subheader("Динаміка виконання і прогнозу")
 
     trend_rows = []
 
@@ -825,10 +931,12 @@ if view_mode in ["Огляд", "Динаміка"] or chart_mode in ["Автом
                 value = 0
                 cov = 0
                 risks = 0
+                forecast = 0
             else:
                 value = round(temp["performance_score"].mean(), 1)
                 cov = round(len(temp[temp["status"] != "Не подано"]) / len(temp) * 100, 1)
-                risks = len(temp[temp["auto_risk"].isin(["Критичний ризик", "Помірний ризик"])])
+                risks = len(temp[temp["auto_risk"].isin(["Критичний ризик", "Середній ризик"])])
+                forecast = forecast_to_q4(value, q)
 
             trend_rows.append({
                 "Період": f"{y} {q}",
@@ -836,6 +944,7 @@ if view_mode in ["Огляд", "Динаміка"] or chart_mode in ["Автом
                 "Квартал": q,
                 "Виконання": value,
                 "Покриття": cov,
+                "Прогноз до IV кварталу": forecast,
                 "Ризикових заходів": risks
             })
 
@@ -844,11 +953,10 @@ if view_mode in ["Огляд", "Динаміка"] or chart_mode in ["Автом
     fig = px.line(
         trend_df,
         x="Період",
-        y=["Виконання", "Покриття"],
+        y=["Виконання", "Покриття", "Прогноз до IV кварталу"],
         markers=True,
-        title="Тренд виконання та покриття моніторингом"
+        title="Тренд виконання, покриття і прогнозу"
     )
-
     st.plotly_chart(fig, use_container_width=True)
 
     fig = px.bar(
@@ -857,11 +965,10 @@ if view_mode in ["Огляд", "Динаміка"] or chart_mode in ["Автом
         y="Ризикових заходів",
         title="Динаміка кількості ризикових заходів"
     )
-
     st.plotly_chart(fig, use_container_width=True)
 
-if view_mode in ["Огляд", "Стратегічні цілі"] or chart_mode in ["Автоматичний огляд", "Heatmap"]:
-    st.subheader("Heatmap: стратегічна ціль × квартал")
+if view_mode in ["Executive overview", "Heatmap"]:
+    st.subheader("Heatmap: департамент × квартал")
 
     heat_rows = []
 
@@ -872,18 +979,17 @@ if view_mode in ["Огляд", "Стратегічні цілі"] or chart_mode 
             if temp.empty:
                 continue
 
-            gp = (
-                temp
-                .groupby("goal_code")
-                .agg(Виконання=("performance_score", "mean"))
-                .reset_index()
-            )
+            dep_heat = temp.groupby("department").agg(
+                Виконання=("performance_score", "mean"),
+                Ризик=("risk_score", "mean")
+            ).reset_index()
 
-            for _, row in gp.iterrows():
+            for _, row in dep_heat.iterrows():
                 heat_rows.append({
-                    "Стратегічна ціль": row["goal_code"],
+                    "Департамент": row["department"],
                     "Період": f"{y} {q}",
-                    "Виконання": round(row["Виконання"], 1)
+                    "Виконання": round(row["Виконання"], 1),
+                    "Ризик": round(row["Ризик"], 1)
                 })
 
     heat_df = pd.DataFrame(heat_rows)
@@ -892,21 +998,17 @@ if view_mode in ["Огляд", "Стратегічні цілі"] or chart_mode 
         fig = px.density_heatmap(
             heat_df,
             x="Період",
-            y="Стратегічна ціль",
+            y="Департамент",
             z="Виконання",
             histfunc="avg",
             title="Теплова карта виконання"
         )
-
         st.plotly_chart(fig, use_container_width=True)
 
-if view_mode in ["План / факт", "Огляд"] or chart_mode in ["Автоматичний огляд"]:
+if view_mode in ["Executive overview", "План / факт"]:
     st.subheader("Порівняння план / факт")
 
-    pf_table = active.copy()
-    pf_table = pf_table[
-        pf_table["plan_fact_percent"].notna()
-    ].copy()
+    pf_table = active[active["plan_fact_percent"].notna()].copy()
 
     if pf_table.empty:
         st.info("Для обраного періоду немає числових або бінарних показників для порівняння план / факт.")
@@ -919,55 +1021,54 @@ if view_mode in ["План / факт", "Огляд"] or chart_mode in ["Авт�
             y="plan_fact_percent",
             hover_data=["name", "indicator", "department", "selected_target", "numeric_value"],
             title="ТОП-25 заходів з найнижчим виконанням планового показника",
-            labels={
-                "code": "Код заходу",
-                "plan_fact_percent": "План / факт, %"
-            }
+            labels={"code": "Код заходу", "plan_fact_percent": "План / факт, %"}
         )
-
         st.plotly_chart(fig, use_container_width=True)
 
-if view_mode in ["Ризики", "Огляд"]:
-    st.subheader("Проблемні та ризикові заходи")
+st.subheader("Проблемні заходи")
 
-    risk_table = active[
-        active["auto_risk"].isin(["Критичний ризик", "Помірний ризик"])
-    ].copy()
+risk_table = active[
+    active["auto_risk"].isin(["Критичний ризик", "Середній ризик"])
+].copy()
 
-    if risk_table.empty:
-        st.success("Ризикових заходів за обраний період не виявлено.")
-    else:
-        risk_table = risk_table.rename(columns={
-            "code": "Код",
-            "name": "Захід",
-            "indicator": "Індикатор",
-            "department": "Департамент",
-            "status": "Статус",
-            "selected_target": "Планове значення",
-            "numeric_value": "Фактичне значення",
-            "auto_risk": "Рівень ризику",
-            "risk_reason": "Причина ризику",
-            "progress_text": "Опис прогресу"
-        })
+if risk_table.empty:
+    st.success("Ризикових заходів за обраний період не виявлено.")
+else:
+    risk_table = risk_table.rename(columns={
+        "code": "Код",
+        "name": "Захід",
+        "indicator": "Індикатор",
+        "department": "Департамент",
+        "status": "Статус",
+        "selected_target": "Планове значення",
+        "numeric_value": "Фактичне значення",
+        "auto_risk": "Рівень ризику",
+        "risk_score": "Risk score",
+        "traffic_light": "Traffic light",
+        "risk_reason": "Причина ризику",
+        "progress_text": "Опис прогресу"
+    })
 
-        st.dataframe(
-            risk_table[
-                [
-                    "Код",
-                    "Захід",
-                    "Індикатор",
-                    "Департамент",
-                    "Статус",
-                    "Планове значення",
-                    "Фактичне значення",
-                    "Рівень ризику",
-                    "Причина ризику",
-                    "Опис прогресу"
-                ]
-            ],
-            use_container_width=True,
-            hide_index=True
-        )
+    st.dataframe(
+        risk_table[
+            [
+                "Код",
+                "Захід",
+                "Індикатор",
+                "Департамент",
+                "Статус",
+                "Планове значення",
+                "Фактичне значення",
+                "Traffic light",
+                "Рівень ризику",
+                "Risk score",
+                "Причина ризику",
+                "Опис прогресу"
+            ]
+        ],
+        use_container_width=True,
+        hide_index=True
+    )
 
 if view_mode == "Таблиці":
     st.subheader("Повна таблиця активних заходів")
@@ -985,6 +1086,8 @@ if view_mode == "Таблиці":
         "status": "Статус",
         "performance_score": "Оцінка виконання, %",
         "auto_risk": "Ризик",
+        "risk_score": "Risk score",
+        "traffic_light": "Traffic light",
         "risk_reason": "Причина ризику"
     })
 
@@ -1002,7 +1105,9 @@ if view_mode == "Таблиці":
                 "Фактичне значення",
                 "Статус",
                 "Оцінка виконання, %",
+                "Traffic light",
                 "Ризик",
+                "Risk score",
                 "Причина ризику"
             ]
         ],
@@ -1010,33 +1115,40 @@ if view_mode == "Таблиці":
         hide_index=True
     )
 
-with st.expander("Методологія розрахунку"):
-    st.markdown(
-        """
-        **Активні заходи** — заходи, період виконання яких охоплює обраний рік і квартал.
+if not presentation_mode:
+    with st.expander("Методологія розрахунку"):
+        st.markdown(
+            """
+            **Активні заходи** — заходи, період виконання яких охоплює обраний рік і квартал.
 
-        **Виконання СП** рахується як середня оцінка виконання активних заходів:
-        - якщо є планове та фактичне значення — використовується співвідношення факт / план;
-        - якщо план / факт не можна порахувати числово — використовується статус виконання;
-        - «Виконано» = 100%;
-        - «Виконано частково» = 50%;
-        - «Виконується» = 40%;
-        - «Потребує уваги» = 25%;
-        - «Прострочено», «Не розпочато», «Не подано» = 0%.
+            **Виконання СП** рахується як середня оцінка виконання активних заходів:
+            - якщо є планове та фактичне значення — використовується співвідношення факт / план;
+            - якщо план / факт не можна порахувати числово — використовується статус виконання;
+            - «Виконано» = 100%;
+            - «Виконано частково» = 50%;
+            - «Виконується» = 40%;
+            - «Потребує уваги» = 25%;
+            - «Прострочено», «Не розпочато», «Не подано» = 0%.
 
-        **Ризик недосягнення** визначається автоматично:
-        - якщо активний захід не має поданих даних;
-        - якщо статус проблемний;
-        - якщо фактичне значення нижче очікуваного прогресу кварталу;
-        - якщо зазначені ризики / проблеми / відхилення.
-        """
-    )
+            **Risk score**:
+            - відсутність даних за активним заходом;
+            - проблемний статус;
+            - наявність ризиків у заявці;
+            - факт нижчий за очікуваний квартальний прогрес;
+            - строк виконання минув, але захід не виконано.
+
+            **Traffic light**:
+            - 🟢 70–100%;
+            - 🟡 35–69%;
+            - 🔴 0–34%.
+            """
+        )
 
 st.markdown(
     """
     <div class="footer">
         Розроблено департаментом стратегічного планування та макроекономічного прогнозування<br>
-        Версія DEMO 0.9 | Аналітична панель виконання стратегічного плану
+        Версія DEMO 1.0 | Executive Dashboard моніторингу стратегічного плану
     </div>
     """,
     unsafe_allow_html=True

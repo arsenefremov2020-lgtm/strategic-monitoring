@@ -792,7 +792,8 @@ if view_mode in ["Огляд", "Квартальний моніторинг"]:
     st.markdown('<div class="card"><div class="card-title">Квартальна шкала моніторингу</div><div class="card-subtitle">Колір показує статус погодження даних у відповідному кварталі.</div>', unsafe_allow_html=True)
 
     quarters = ["I", "II", "III", "IV"]
-    timeline_html = '<div class="timeline">'
+
+    timeline_parts = ['<div class="timeline">']
 
     for q in quarters:
         q_data = pd.DataFrame()
@@ -822,16 +823,18 @@ if view_mode in ["Огляд", "Квартальний моніторинг"]:
             else:
                 css = "q-empty"
 
-        timeline_html += f"""
-        <div class="timeline-cell {css}">
-            <div class="timeline-title">{q} квартал</div>
-            <div class="timeline-value">{value}</div>
-            <div class="timeline-note">{approval}</div>
-            <div class="timeline-note">{status}</div>
-        </div>
-        """
+        timeline_parts.append(
+            f'<div class="timeline-cell {css}">'
+            f'<div class="timeline-title">{q} квартал</div>'
+            f'<div class="timeline-value">{value}</div>'
+            f'<div class="timeline-note">{approval}</div>'
+            f'<div class="timeline-note">{status}</div>'
+            f'</div>'
+        )
 
-    timeline_html += "</div>"
+    timeline_parts.append("</div>")
+
+    timeline_html = "".join(timeline_parts)
 
     st.markdown(timeline_html, unsafe_allow_html=True)
 

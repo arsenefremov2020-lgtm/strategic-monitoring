@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from supabase import create_client
 from html import escape
+from datetime import datetime
 
 st.set_page_config(page_title="Стратегічний план", layout="wide")
 
@@ -16,34 +17,71 @@ supabase = create_client(
 st.markdown("""
 <style>
 .stApp {
-    background: linear-gradient(180deg, #f6f8fb 0%, #eef2f7 100%);
+    background:
+        radial-gradient(circle at top right, rgba(37,99,235,0.08), transparent 28%),
+        radial-gradient(circle at bottom left, rgba(22,163,74,0.07), transparent 30%),
+        linear-gradient(180deg, #f6f8fb 0%, #eef2f7 100%);
+}
+
+.stApp::before {
+    content: "";
+    position: fixed;
+    top: -160px;
+    right: -120px;
+    width: 460px;
+    height: 460px;
+    border-radius: 50%;
+    background: rgba(37, 99, 235, 0.045);
+    z-index: 0;
+}
+
+.stApp::after {
+    content: "";
+    position: fixed;
+    bottom: -180px;
+    left: -120px;
+    width: 390px;
+    height: 390px;
+    border-radius: 50%;
+    background: rgba(22, 163, 74, 0.045);
+    z-index: 0;
 }
 
 .main .block-container {
     max-width: 1550px;
     padding-top: 1.2rem;
+    position: relative;
+    z-index: 1;
+}
+
+.ua-line {
+    height: 7px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #005BBB 0%, #005BBB 50%, #FFD500 50%, #FFD500 100%);
+    margin-bottom: 14px;
 }
 
 .ministry-label {
     text-align: right;
     color: #475569;
     font-size: 14px;
-    font-weight: 600;
+    font-weight: 700;
     margin-bottom: 8px;
 }
 
 .header-box {
-    background: white;
+    background: rgba(255,255,255,0.92);
     border: 1px solid #d8dee9;
-    border-radius: 14px;
-    padding: 20px 24px;
+    border-radius: 16px;
+    padding: 22px 26px;
     margin-bottom: 18px;
-    box-shadow: 0 4px 14px rgba(15,23,42,0.05);
+    box-shadow: 0 8px 24px rgba(15,23,42,0.06);
+    backdrop-filter: blur(8px);
 }
 
 .header-title {
-    font-size: 30px;
-    font-weight: 850;
+    font-size: 32px;
+    font-weight: 900;
     color: #0f172a;
     margin-bottom: 8px;
 }
@@ -51,39 +89,86 @@ st.markdown("""
 .header-subtitle {
     font-size: 15px;
     color: #475569;
-    line-height: 1.5;
+    line-height: 1.55;
+}
+
+.system-status {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-top: 14px;
+}
+
+.status-pill {
+    background: #f8fafc;
+    border: 1px solid #d8dee9;
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 13px;
+    color: #334155;
 }
 
 .cta-box {
     background: linear-gradient(90deg, #15803d, #16a34a);
     color: white;
-    border-radius: 14px;
-    padding: 20px 24px;
-    margin: 12px 0 22px 0;
-    box-shadow: 0 6px 18px rgba(22,163,74,0.22);
+    border-radius: 16px;
+    padding: 22px 26px;
+    margin: 14px 0 18px 0;
+    box-shadow: 0 10px 24px rgba(22,163,74,0.25);
 }
 
 .cta-title {
-    font-size: 22px;
-    font-weight: 850;
+    font-size: 23px;
+    font-weight: 900;
     margin-bottom: 6px;
 }
 
 .cta-text {
     font-size: 15px;
-    opacity: 0.96;
+    opacity: 0.97;
 }
 
 div[data-testid="stPageLink"] a {
     background: linear-gradient(90deg, #15803d, #16a34a) !important;
     color: white !important;
     border-radius: 12px !important;
-    padding: 14px 18px !important;
-    font-weight: 800 !important;
+    padding: 15px 20px !important;
+    font-weight: 850 !important;
     text-decoration: none !important;
     border: none !important;
     width: 100%;
     justify-content: center;
+    box-shadow: 0 6px 14px rgba(22,163,74,0.20);
+}
+
+.flow-box {
+    background: white;
+    border: 1px solid #d8dee9;
+    border-radius: 14px;
+    padding: 14px 18px;
+    margin: 18px 0;
+    box-shadow: 0 4px 12px rgba(15,23,42,0.04);
+}
+
+.flow-title {
+    font-weight: 900;
+    color: #0f172a;
+    margin-bottom: 10px;
+}
+
+.flow-steps {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    color: #334155;
+    font-size: 14px;
+}
+
+.flow-step {
+    padding: 8px 12px;
+    border-radius: 999px;
+    background: #f1f5f9;
+    border: 1px solid #d8dee9;
 }
 
 .info-grid {
@@ -94,17 +179,17 @@ div[data-testid="stPageLink"] a {
 }
 
 .info-card {
-    background: white;
+    background: rgba(255,255,255,0.92);
     border: 1px solid #d8dee9;
-    border-radius: 12px;
-    padding: 16px 18px;
+    border-radius: 14px;
+    padding: 17px 19px;
     color: #1f2937;
-    box-shadow: 0 3px 10px rgba(15,23,42,0.04);
+    box-shadow: 0 4px 14px rgba(15,23,42,0.045);
 }
 
 .info-card-title {
     font-size: 16px;
-    font-weight: 850;
+    font-weight: 900;
     margin-bottom: 8px;
     color: #0f172a;
 }
@@ -112,6 +197,14 @@ div[data-testid="stPageLink"] a {
 .legend-item {
     margin-bottom: 6px;
     font-size: 14px;
+}
+
+div[data-testid="stMetric"] {
+    background: rgba(255,255,255,0.85);
+    border: 1px solid #d8dee9;
+    border-radius: 14px;
+    padding: 14px 16px;
+    box-shadow: 0 4px 12px rgba(15,23,42,0.04);
 }
 
 div[data-testid="stExpander"] {
@@ -122,36 +215,36 @@ div[data-testid="stExpander"] {
 div[data-testid="stExpander"] > details > summary {
     background: linear-gradient(90deg, #1d4ed8, #0f55e8) !important;
     color: white !important;
-    border-radius: 12px !important;
+    border-radius: 13px !important;
     padding: 18px 22px !important;
-    font-weight: 800 !important;
-    box-shadow: 0 6px 16px rgba(29,78,216,0.18);
+    font-weight: 850 !important;
+    box-shadow: 0 7px 18px rgba(29,78,216,0.20);
 }
 
 div[data-testid="stExpander"] > details > summary p {
     color: white !important;
     font-size: 16px !important;
-    font-weight: 800 !important;
+    font-weight: 850 !important;
 }
 
 div[data-testid="stExpander"] div[data-testid="stExpander"] > details > summary {
     background: linear-gradient(90deg, #1f2937, #374151) !important;
     color: white !important;
-    border-radius: 10px !important;
+    border-radius: 11px !important;
     padding: 15px 18px !important;
-    font-weight: 750 !important;
+    font-weight: 800 !important;
     box-shadow: none;
 }
 
 div[data-testid="stExpander"] div[data-testid="stExpander"] > details > summary p {
     color: white !important;
     font-size: 15px !important;
-    font-weight: 750 !important;
+    font-weight: 800 !important;
 }
 
 .section-title {
     font-size: 16px;
-    font-weight: 800;
+    font-weight: 850;
     color: #111827;
     margin: 18px 0 12px 0;
 }
@@ -160,7 +253,7 @@ div[data-testid="stExpander"] div[data-testid="stExpander"] > details > summary 
     overflow-x: auto;
     width: 100%;
     border: 1px solid #d1d5db;
-    border-radius: 8px;
+    border-radius: 9px;
     margin-bottom: 18px;
     background: white;
 }
@@ -180,7 +273,7 @@ table.custom-table th {
     text-align: left;
     vertical-align: top;
     white-space: normal;
-    font-weight: 800;
+    font-weight: 850;
 }
 
 table.custom-table td {
@@ -203,7 +296,7 @@ table.custom-table tr:nth-child(odd) {
 
 td.pending-cell {
     background-color: #fff3cd !important;
-    font-weight: 800;
+    font-weight: 850;
     color: #7a4d00;
 }
 
@@ -217,8 +310,8 @@ td.pending-cell {
 
 .note-box {
     border: 1px solid #d6dce8;
-    border-radius: 8px;
-    padding: 12px 16px;
+    border-radius: 10px;
+    padding: 13px 17px;
     background: #ffffff;
     color: #374151;
     margin-top: 18px;
@@ -230,8 +323,12 @@ td.pending-cell {
     color: #64748b;
     font-size: 13px;
     margin-top: 50px;
-    padding: 20px 0 10px 0;
+    padding: 22px 0 12px 0;
     border-top: 1px solid #d8dee9;
+}
+
+.footer strong {
+    color: #334155;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -380,11 +477,32 @@ def indicator_table(data):
     render_table(renamed[show_cols], min_width=1350)
 
 
+def get_goal_completion(goal_measures, selected_year, quarter_data):
+    if goal_measures.empty:
+        return 0
+
+    total = len(goal_measures)
+    approved_measures = 0
+
+    for _, row in goal_measures.iterrows():
+        code = str(row["code"]).strip()
+        has_approved = False
+
+        for q in ["I", "II", "III", "IV"]:
+            item = quarter_data.get(code, {}).get(f"{selected_year}_{q}", None)
+            if item is not None and item["approval"] == "Погоджено":
+                has_approved = True
+
+        if has_approved:
+            approved_measures += 1
+
+    return round((approved_measures / total) * 100, 1) if total else 0
+
+
 df = load_strat_matrix()
 monitoring_df = load_monitoring()
 
 quarter_data = {}
-pending_cells_global = set()
 
 if not monitoring_df.empty:
     visible_monitoring = monitoring_df[
@@ -413,29 +531,59 @@ total_measures = len(df[df["object_type"] == "measure"])
 submitted_count = 0
 approved_count = 0
 waiting_count = 0
+returned_count = 0
+risk_count = 0
+last_update = datetime.now().strftime("%d.%m.%Y %H:%M")
 
 if not monitoring_df.empty:
     submitted_count = len(monitoring_df)
     approved_count = len(monitoring_df[monitoring_df["approval_status"] == "Погоджено"])
     waiting_count = len(monitoring_df[monitoring_df["approval_status"] == "Очікує погодження"])
+    returned_count = len(monitoring_df[monitoring_df["approval_status"] == "Повернуто на доопрацювання"])
 
+    if "risks" in monitoring_df.columns:
+        risk_count = len(
+            monitoring_df[
+                monitoring_df["risks"].fillna("").astype(str).str.strip() != ""
+            ]
+        )
+
+    if "submitted_at" in monitoring_df.columns:
+        try:
+            last_update_value = pd.to_datetime(monitoring_df["submitted_at"], errors="coerce").max()
+            if pd.notna(last_update_value):
+                last_update = last_update_value.strftime("%d.%m.%Y %H:%M")
+        except Exception:
+            pass
+
+approved_share = round((approved_count / submitted_count) * 100, 1) if submitted_count else 0
+without_monitoring = max(total_measures - len(set(monitoring_df["strat_code"].astype(str))) if not monitoring_df.empty else total_measures, 0)
+
+
+st.markdown('<div class="ua-line"></div>', unsafe_allow_html=True)
 
 st.markdown(
     """
     <div class="ministry-label">
-    Міністерство економіки, довкілля та сільського господарства України
+    🇺🇦 Міністерство економіки, довкілля та сільського господарства України
     </div>
     """,
     unsafe_allow_html=True
 )
 
 st.markdown(
-    """
+    f"""
     <div class="header-box">
         <div class="header-title">Моніторинг виконання стратегічного плану</div>
         <div class="header-subtitle">
             Інтерактивна демо-версія системи для перегляду стратегічного плану, внесення квартального моніторингу,
             погодження даних та аналізу прогресу виконання.
+        </div>
+        <div class="system-status">
+            <div class="status-pill">● Supabase: активний</div>
+            <div class="status-pill">● Моніторинг: працює</div>
+            <div class="status-pill">● Статус системи: стабільний</div>
+            <div class="status-pill">● Оновлено: {last_update}</div>
         </div>
     </div>
     """,
@@ -460,11 +608,33 @@ st.page_link(
     icon="🖊️"
 )
 
-k1, k2, k3, k4 = st.columns(4)
-k1.metric("Заходів у стратегічному плані", total_measures)
+st.markdown(
+    """
+    <div class="flow-box">
+        <div class="flow-title">Маршрут моніторингових даних</div>
+        <div class="flow-steps">
+            <div class="flow-step">📝 Подання департаментом</div>
+            <div class="flow-step">🔎 Перевірка адміністратором</div>
+            <div class="flow-step">✅ Погодження</div>
+            <div class="flow-step">📊 Відображення у стратегічному плані</div>
+            <div class="flow-step">📈 Аналітика виконання</div>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+k1, k2, k3, k4, k5 = st.columns(5)
+k1.metric("Заходів у СП", total_measures)
 k2.metric("Поданих заявок", submitted_count)
 k3.metric("Погоджено", approved_count)
-k4.metric("Очікує погодження", waiting_count)
+k4.metric("Погоджено, %", f"{approved_share}%")
+k5.metric("Без моніторингу", without_monitoring)
+
+k6, k7, k8 = st.columns(3)
+k6.metric("Очікує погодження", waiting_count)
+k7.metric("Повернуто", returned_count)
+k8.metric("Заявок із ризиками", risk_count)
 
 st.markdown(
     """
@@ -490,9 +660,13 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-f1, f2 = st.columns(2)
+f1, f2, f3 = st.columns([1, 1, 1.2])
 
 departments = sorted(df["department"].dropna().astype(str).unique())
+goals = df[df["object_type"] == "goal"].copy()
+goal_options = ["Усі стратегічні цілі"] + [
+    f"{row['code']} {row['name']}" for _, row in goals.iterrows()
+]
 
 with f1:
     selected_dep = st.selectbox("Департамент", ["Усі"] + departments)
@@ -500,28 +674,48 @@ with f1:
 with f2:
     selected_year = st.selectbox("Рік моніторингу", [2026, 2027, 2028])
 
+with f3:
+    selected_goal_nav = st.selectbox("Швидкий перехід до стратегічної цілі", goal_options)
+
 st.subheader("Стратегічний план")
 
-goals = df[df["object_type"] == "goal"]
+selected_goal_code = None
+
+if selected_goal_nav != "Усі стратегічні цілі":
+    selected_goal_code = selected_goal_nav.split(" ")[0].strip()
 
 for _, goal in goals.iterrows():
     goal_code = str(goal["code"])
     goal_name = str(goal["name"])
+
+    if selected_goal_code and goal_code != selected_goal_code:
+        continue
 
     goal_rows = df[df["code"].astype(str).str.startswith(goal_code)]
 
     tasks = goal_rows[goal_rows["object_type"] == "task"].copy()
     measures_all = goal_rows[goal_rows["object_type"] == "measure"].copy()
 
+    if selected_dep != "Усі":
+        measures_for_progress = measures_all[
+            measures_all["department"].astype(str) == selected_dep
+        ].copy()
+    else:
+        measures_for_progress = measures_all.copy()
+
     tasks_count = len(tasks)
     measures_count = len(measures_all)
+    goal_percent = get_goal_completion(measures_for_progress, selected_year, quarter_data)
 
     goal_label = (
-        f"{goal_code} {goal_name}     "
-        f"｜ Завдань — {tasks_count} ｜ Заходів — {measures_count}"
+        f"{goal_code} {goal_name}  |  "
+        f"Завдань — {tasks_count}  |  Заходів — {measures_count}  |  Виконання — {goal_percent}%"
     )
 
-    with st.expander(goal_label, expanded=False):
+    expand_goal = selected_goal_code == goal_code
+
+    with st.expander(goal_label, expanded=expand_goal):
+        st.progress(min(goal_percent / 100, 1.0))
 
         goal_indicators = df[
             (df["object_type"] == "goal_indicator") &
@@ -552,8 +746,8 @@ for _, goal in goals.iterrows():
             task_measures_count = len(task_measures_for_count)
 
             task_label = (
-                f"{task_code} {task_name}     "
-                f"｜ Заходів — {task_measures_count}"
+                f"{task_code} {task_name}  |  "
+                f"Заходів — {task_measures_count}"
             )
 
             with st.expander(task_label, expanded=False):
@@ -585,7 +779,6 @@ for _, goal in goals.iterrows():
 
                 for q in ["I", "II", "III", "IV"]:
                     col_key = f"{selected_year}_{q}"
-                    col_name = f"{selected_year} {q} квартал"
 
                     def get_q_value(code):
                         code = str(code).strip()
@@ -594,10 +787,7 @@ for _, goal in goals.iterrows():
                         if item is None:
                             return ""
 
-                        if item["approval"] == "Очікує погодження":
-                            return item["value"]
-
-                        if item["approval"] == "Погоджено":
+                        if item["approval"] in ["Очікує погодження", "Погоджено"]:
                             return item["value"]
 
                         return ""
@@ -677,7 +867,8 @@ st.markdown(
 st.markdown(
     """
     <div class="footer">
-        Розроблено департаментом стратегічного планування та макроекономічного прогнозування
+        <strong>Розроблено департаментом стратегічного планування та макроекономічного прогнозування</strong><br>
+        Версія DEMO 0.9 | 2026 | Внутрішня система моніторингу стратегічного плану
     </div>
     """,
     unsafe_allow_html=True

@@ -4,7 +4,10 @@ from datetime import datetime
 from supabase import create_client
 import re
 
-st.set_page_config(page_title="Моніторинг виконання", layout="wide")
+st.set_page_config(
+    page_title="Моніторинг виконання",
+    layout="wide"
+)
 
 FILE_PATH = "Під моніторинг СП.xlsx"
 SHEET_NAME = "Страт_матриця"
@@ -15,6 +18,197 @@ supabase = create_client(
     st.secrets["SUPABASE_KEY"]
 )
 
+st.markdown("""
+<style>
+.stApp {
+    background:
+        radial-gradient(circle at top right, rgba(37,99,235,0.08), transparent 28%),
+        radial-gradient(circle at bottom left, rgba(22,163,74,0.07), transparent 30%),
+        linear-gradient(180deg, #f6f8fb 0%, #eef2f7 100%);
+}
+
+.main .block-container {
+    max-width: 1550px;
+    padding-top: 1.2rem;
+}
+
+.ua-line {
+    height: 7px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #005BBB 0%, #005BBB 50%, #FFD500 50%, #FFD500 100%);
+    margin-bottom: 14px;
+}
+
+.ministry-label {
+    text-align: right;
+    color: #475569;
+    font-size: 14px;
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+
+.header-box {
+    background: rgba(255,255,255,0.94);
+    border: 1px solid #d8dee9;
+    border-radius: 16px;
+    padding: 24px 28px;
+    margin-bottom: 18px;
+    box-shadow: 0 8px 24px rgba(15,23,42,0.06);
+}
+
+.header-title {
+    font-size: 32px;
+    font-weight: 900;
+    color: #0f172a;
+    margin-bottom: 8px;
+}
+
+.header-subtitle {
+    font-size: 15px;
+    color: #475569;
+    line-height: 1.55;
+}
+
+.status-pill-wrap {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 14px;
+}
+
+.status-pill {
+    background: #f8fafc;
+    border: 1px solid #d8dee9;
+    border-radius: 999px;
+    padding: 8px 12px;
+    font-size: 13px;
+    color: #334155;
+}
+
+.flow-box {
+    background: white;
+    border: 1px solid #d8dee9;
+    border-radius: 14px;
+    padding: 16px 18px;
+    margin: 18px 0;
+    box-shadow: 0 4px 12px rgba(15,23,42,0.04);
+}
+
+.flow-title {
+    font-weight: 900;
+    color: #0f172a;
+    margin-bottom: 10px;
+}
+
+.flow-steps {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    color: #334155;
+    font-size: 14px;
+}
+
+.flow-step {
+    padding: 8px 12px;
+    border-radius: 999px;
+    background: #f1f5f9;
+    border: 1px solid #d8dee9;
+}
+
+.card {
+    background: rgba(255,255,255,0.94);
+    border: 1px solid #d8dee9;
+    border-radius: 16px;
+    padding: 20px 22px;
+    margin: 18px 0;
+    box-shadow: 0 6px 18px rgba(15,23,42,0.045);
+}
+
+.card-title {
+    font-size: 20px;
+    font-weight: 900;
+    color: #0f172a;
+    margin-bottom: 8px;
+}
+
+.card-subtitle {
+    color: #64748b;
+    font-size: 14px;
+    margin-bottom: 12px;
+}
+
+.badge-wrap {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 10px 0 16px 0;
+}
+
+.badge {
+    background: #eef6ff;
+    border: 1px solid #bfdbfe;
+    color: #1d4ed8;
+    border-radius: 999px;
+    padding: 7px 11px;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.warn-badge {
+    background: #fff7ed;
+    border: 1px solid #fed7aa;
+    color: #9a3412;
+}
+
+.success-box {
+    background: linear-gradient(90deg, #15803d, #16a34a);
+    color: white;
+    border-radius: 16px;
+    padding: 20px 24px;
+    margin: 18px 0;
+    box-shadow: 0 10px 24px rgba(22,163,74,0.22);
+}
+
+.success-title {
+    font-size: 22px;
+    font-weight: 900;
+    margin-bottom: 6px;
+}
+
+.submit-zone {
+    background: white;
+    border: 1px solid #d8dee9;
+    border-radius: 16px;
+    padding: 18px 22px;
+    margin: 18px 0;
+    box-shadow: 0 6px 18px rgba(15,23,42,0.045);
+}
+
+div[data-testid="stMetric"] {
+    background: rgba(255,255,255,0.88);
+    border: 1px solid #d8dee9;
+    border-radius: 14px;
+    padding: 14px 16px;
+    box-shadow: 0 4px 12px rgba(15,23,42,0.04);
+}
+
+div.stButton > button {
+    border-radius: 12px;
+    padding: 12px 18px;
+    font-weight: 800;
+}
+
+.footer {
+    text-align: center;
+    color: #64748b;
+    font-size: 13px;
+    margin-top: 50px;
+    padding: 22px 0 12px 0;
+    border-top: 1px solid #d8dee9;
+}
+</style>
+""", unsafe_allow_html=True)
+
 
 def safe_filename(name):
     name = str(name)
@@ -22,6 +216,10 @@ def safe_filename(name):
     name = re.sub(r"[^A-Za-z0-9._-]", "_", name)
     name = re.sub(r"_+", "_", name)
     return name.strip("_")
+
+
+def valid_email(email):
+    return re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email.strip()) is not None
 
 
 def quarter_to_num(q):
@@ -149,19 +347,75 @@ def load_approved_monitoring():
     return pd.DataFrame(response.data)
 
 
+def load_all_monitoring():
+    response = (
+        supabase
+        .table("monitoring_requests")
+        .select("*")
+        .execute()
+    )
+
+    if not response.data:
+        return pd.DataFrame()
+
+    return pd.DataFrame(response.data)
+
+
 df = load_strat_matrix()
 approved_df = load_approved_monitoring()
+all_monitoring_df = load_all_monitoring()
 
 measures_df = df[df["object_type"] == "measure"].copy()
 
-st.title("Внесення даних моніторингу виконання Стратегічного плану")
+st.markdown('<div class="ua-line"></div>', unsafe_allow_html=True)
 
-st.info(
-    "Оберіть департамент і рік звітування. Система автоматично підтягне всі заходи, "
-    "за якими обраний департамент є головним виконавцем."
+st.markdown(
+    """
+    <div class="ministry-label">
+    🇺🇦 Міністерство економіки, довкілля та сільського господарства України
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+st.markdown(
+    """
+    <div class="header-box">
+        <div class="header-title">Внесення даних моніторингу виконання Стратегічного плану</div>
+        <div class="header-subtitle">
+            Кабінет департаменту для квартального подання інформації про виконання заходів,
+            додавання підтвердних файлів і передачі даних адміністратору на погодження.
+        </div>
+        <div class="status-pill-wrap">
+            <div class="status-pill">● Режим: подання даних</div>
+            <div class="status-pill">● Supabase: активний</div>
+            <div class="status-pill">● Файли: Storage підключено</div>
+            <div class="status-pill">● Статус: DEMO</div>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+st.markdown(
+    """
+    <div class="flow-box">
+        <div class="flow-title">Маршрут подання</div>
+        <div class="flow-steps">
+            <div class="flow-step">1. Обрати департамент</div>
+            <div class="flow-step">2. Позначити заходи</div>
+            <div class="flow-step">3. Заповнити квартали</div>
+            <div class="flow-step">4. Додати файли</div>
+            <div class="flow-step">5. Подати на погодження</div>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True
 )
 
 departments = sorted(measures_df["department"].dropna().astype(str).unique())
+
+st.markdown('<div class="card"><div class="card-title">Параметри подання</div><div class="card-subtitle">Оберіть департамент і рік звітування. Система підтягне тільки ті заходи, за якими департамент є головним виконавцем.</div>', unsafe_allow_html=True)
 
 col1, col2 = st.columns(2)
 
@@ -170,6 +424,8 @@ with col1:
 
 with col2:
     selected_year = st.selectbox("Рік звітування", [2026, 2027, 2028])
+
+st.markdown('</div>', unsafe_allow_html=True)
 
 department_measures = measures_df[
     measures_df["department"].astype(str) == str(selected_department)
@@ -217,17 +473,58 @@ form_df = pd.DataFrame({
     "Ризики / проблеми / відхилення": ""
 })
 
-st.subheader("Загальні дані подання")
+dept_all = pd.DataFrame()
 
-g1, g2 = st.columns(2)
+if not all_monitoring_df.empty:
+    dept_all = all_monitoring_df[
+        (all_monitoring_df["department"].astype(str) == str(selected_department)) &
+        (all_monitoring_df["year"].astype(str) == str(selected_year))
+    ].copy()
+
+dept_approved = len(dept_all[dept_all["approval_status"] == "Погоджено"]) if not dept_all.empty else 0
+dept_waiting = len(dept_all[dept_all["approval_status"] == "Очікує погодження"]) if not dept_all.empty else 0
+dept_risks = len(dept_all[dept_all["risks"].fillna("").astype(str).str.strip() != ""]) if not dept_all.empty and "risks" in dept_all.columns else 0
+dept_without = max(len(department_measures) - dept_all["strat_code"].nunique(), 0) if not dept_all.empty else len(department_measures)
+
+st.markdown('<div class="card"><div class="card-title">Поточний стан обраного департаменту</div>', unsafe_allow_html=True)
+
+k1, k2, k3, k4, k5 = st.columns(5)
+k1.metric("Заходів департаменту", len(department_measures))
+k2.metric("Погоджено заявок", dept_approved)
+k3.metric("Очікує погодження", dept_waiting)
+k4.metric("Без подання", dept_without)
+k5.metric("Із ризиками", dept_risks)
+
+st.markdown('</div>', unsafe_allow_html=True)
+
+st.markdown('<div class="card"><div class="card-title">Загальні дані подання</div><div class="card-subtitle">Ці дані будуть застосовані до всіх заходів, які ви позначите у таблиці.</div>', unsafe_allow_html=True)
+
+g1, g2, g3 = st.columns(3)
 
 with g1:
-    responsible_person = st.text_input("ПІБ відповідальної особи")
+    responsible_person = st.text_input("ПІБ відповідальної особи *")
 
 with g2:
-    phone = st.text_input("Контактний номер телефону")
+    phone = st.text_input("Контактний номер телефону *")
 
-st.subheader("Заходи департаменту")
+with g3:
+    email = st.text_input("Електронна пошта відповідальної особи *")
+
+st.markdown('</div>', unsafe_allow_html=True)
+
+st.markdown('<div class="card"><div class="card-title">Заходи департаменту</div><div class="card-subtitle">Позначте заходи для подання. Редагуються квартальні значення, статус виконання, опис прогресу та ризики.</div>', unsafe_allow_html=True)
+
+st.markdown(
+    """
+    <div class="badge-wrap">
+        <div class="badge">Редагування квартальних значень активне</div>
+        <div class="badge">Погоджені дані підтягнуто автоматично</div>
+        <div class="badge">Файли додаються після вибору заходів</div>
+        <div class="badge warn-badge">Перед поданням система виконає перевірку якості даних</div>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 
 st.markdown(
     """
@@ -298,7 +595,43 @@ edited_df = st.data_editor(
 
 selected_rows = edited_df[edited_df["Подати"] == True].copy()
 
-st.subheader("Підтвердні файли")
+selected_count = len(selected_rows)
+filled_count = 0
+
+quarter_columns_tmp = [
+    f"{selected_year} I квартал",
+    f"{selected_year} II квартал",
+    f"{selected_year} III квартал",
+    f"{selected_year} IV квартал"
+]
+
+if selected_count > 0:
+    for _, row in selected_rows.iterrows():
+        has_value = any(
+            pd.notna(row[col]) and str(row[col]).strip() != ""
+            for col in quarter_columns_tmp
+        )
+
+        if has_value:
+            filled_count += 1
+
+st.markdown('</div>', unsafe_allow_html=True)
+
+st.markdown('<div class="card"><div class="card-title">Прогрес заповнення</div>', unsafe_allow_html=True)
+
+p1, p2, p3 = st.columns(3)
+p1.metric("Позначено заходів", selected_count)
+p2.metric("З квартальними значеннями", filled_count)
+p3.metric("Очікують файлів", selected_count)
+
+if selected_count > 0:
+    st.progress(min(filled_count / selected_count, 1.0))
+else:
+    st.progress(0)
+
+st.markdown('</div>', unsafe_allow_html=True)
+
+st.markdown('<div class="card"><div class="card-title">Підтвердні файли</div><div class="card-subtitle">Додайте наказ, звіт, скан, таблицю або інший підтвердний документ для обраних заходів.</div>', unsafe_allow_html=True)
 
 file_map = {}
 
@@ -307,14 +640,42 @@ if selected_rows.empty:
 else:
     for _, row in selected_rows.iterrows():
         code = str(row["Код заходу"])
-        files = st.file_uploader(
-            f"Файли для заходу {code}",
-            accept_multiple_files=True,
-            key=f"files_{code}"
-        )
-        file_map[code] = files
 
-submit = st.button("Подати інформацію на погодження")
+        with st.expander(f"Файли для заходу {code}", expanded=True):
+            files = st.file_uploader(
+                "Завантажте підтвердні документи",
+                accept_multiple_files=True,
+                key=f"files_{code}"
+            )
+            file_map[code] = files
+
+st.markdown('</div>', unsafe_allow_html=True)
+
+files_count = sum(1 for files in file_map.values() if files)
+
+st.markdown('<div class="submit-zone">', unsafe_allow_html=True)
+
+st.markdown(
+    """
+    **Перед поданням система перевірить:**
+    - ПІБ відповідальної особи;
+    - контактний номер телефону;
+    - електронну пошту;
+    - наявність фактичних квартальних значень;
+    - статус виконання;
+    - строки виконання;
+    - наявність підтвердних файлів.
+    """
+)
+
+s1, s2, s3 = st.columns(3)
+s1.metric("Позначено заходів", selected_count)
+s2.metric("Мають квартальні значення", filled_count)
+s3.metric("Мають файли", files_count)
+
+submit = st.button("Подати інформацію на погодження", use_container_width=True)
+
+st.markdown('</div>', unsafe_allow_html=True)
 
 if submit:
     errors = []
@@ -325,6 +686,11 @@ if submit:
 
     if not phone.strip():
         errors.append("Заповніть контактний номер телефону.")
+
+    if not email.strip():
+        errors.append("Заповніть електронну пошту відповідальної особи.")
+    elif not valid_email(email):
+        errors.append("Електронна пошта має некоректний формат.")
 
     if selected_rows.empty:
         errors.append("Позначте хоча б один захід для подання.")
@@ -405,6 +771,7 @@ if submit:
                 "department": str(selected_department),
                 "responsible_person": responsible_person,
                 "phone": phone,
+                "email": email,
                 "strat_code": code,
                 "status": status,
                 "progress_text": progress,
@@ -433,7 +800,15 @@ if submit:
     try:
         supabase.table("monitoring_requests").insert(rows_to_insert).execute()
 
-        st.success("Інформацію подано на погодження адміністратору.")
+        st.markdown(
+            """
+            <div class="success-box">
+                <div class="success-title">Подання прийнято</div>
+                <div>Статус: очікує погодження адміністратора. Дані передано до системи моніторингу.</div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
         st.subheader("Попередній перегляд поданих даних")
 
@@ -446,3 +821,13 @@ if submit:
     except Exception as e:
         st.error("Не вдалося зберегти дані в Supabase.")
         st.exception(e)
+
+st.markdown(
+    """
+    <div class="footer">
+        Розроблено департаментом стратегічного планування та макроекономічного прогнозування<br>
+        Версія DEMO 0.9 | Внутрішня система моніторингу стратегічного плану
+    </div>
+    """,
+    unsafe_allow_html=True
+)

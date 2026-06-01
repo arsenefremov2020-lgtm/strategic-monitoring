@@ -1215,30 +1215,47 @@ with f7:
         key="search_main"
     )
 
+def expand_all_main():
+    st.session_state.expand_all_goals = True
+
+
+def collapse_all_main():
+    st.session_state.expand_all_goals = False
+
+
+def reset_main_filters():
+    st.session_state.selected_dep_main = "Усі"
+    st.session_state.selected_year_main = 2026
+    st.session_state.selected_quarter_main = "Усі квартали"
+    st.session_state.measure_mode_main = "Усі заходи стратегічного плану"
+    st.session_state.indicator_type_main = "Усі"
+    st.session_state.search_main = ""
+    st.session_state.selected_goal_nav_main = "Усі стратегічні цілі"
+    st.session_state.expand_all_goals = False
+
+
 b1, b2, b3 = st.columns([1, 1, 4])
 
 with b1:
-    if st.button("Розгорнути всі релевантні цілі", use_container_width=True):
-        st.session_state.expand_all_goals = True
-        st.rerun()
+    st.button(
+        "Розгорнути всі релевантні цілі",
+        use_container_width=True,
+        on_click=expand_all_main
+    )
 
 with b2:
-    if st.button("Згорнути все", use_container_width=True):
-        st.session_state.expand_all_goals = False
-        st.rerun()
+    st.button(
+        "Згорнути все",
+        use_container_width=True,
+        on_click=collapse_all_main
+    )
 
 with b3:
-    if st.button("Скинути фільтри", use_container_width=True):
-        st.session_state.selected_dep_main = "Усі"
-        st.session_state.selected_year_main = 2026
-        st.session_state.selected_quarter_main = "Усі квартали"
-        st.session_state.measure_mode_main = "Усі заходи стратегічного плану"
-        st.session_state.indicator_type_main = "Усі"
-        st.session_state.search_main = ""
-        st.session_state.selected_goal_nav_main = "Усі стратегічні цілі"
-        st.session_state.expand_all_goals = False
-        st.rerun()
-
+    st.button(
+        "Скинути фільтри",
+        use_container_width=True,
+        on_click=reset_main_filters
+    )
 st.markdown('</div>', unsafe_allow_html=True)
 
 

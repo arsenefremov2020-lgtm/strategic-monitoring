@@ -24,9 +24,35 @@ st.markdown("""
         linear-gradient(180deg, #f6f8fb 0%, #eef2f7 100%);
 }
 
+.stApp::before {
+    content: "";
+    position: fixed;
+    top: -160px;
+    right: -120px;
+    width: 460px;
+    height: 460px;
+    border-radius: 50%;
+    background: rgba(37, 99, 235, 0.045);
+    z-index: 0;
+}
+
+.stApp::after {
+    content: "";
+    position: fixed;
+    bottom: -180px;
+    left: -120px;
+    width: 390px;
+    height: 390px;
+    border-radius: 50%;
+    background: rgba(22, 163, 74, 0.045);
+    z-index: 0;
+}
+
 .main .block-container {
     max-width: 1550px;
     padding-top: 1.2rem;
+    position: relative;
+    z-index: 1;
 }
 
 .ua-line {
@@ -122,29 +148,25 @@ st.markdown("""
     margin: 10px 0;
 }
 
-.timeline {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 10px;
-    margin-top: 12px;
-}
-
-.timeline-cell {
-    border-radius: 14px;
-    border: 1px solid #d8dee9;
-    padding: 14px;
+.version-box {
     background: #f8fafc;
+    border: 1px solid #d8dee9;
+    border-radius: 14px;
+    padding: 14px 16px;
+    margin: 10px 0;
 }
 
-.timeline-title {
-    font-weight: 900;
+.version-title {
     color: #0f172a;
+    font-weight: 900;
+    font-size: 15px;
+    margin-bottom: 6px;
 }
 
-.timeline-note {
+.version-text {
+    color: #475569;
     font-size: 13px;
-    color: #64748b;
-    margin-top: 4px;
+    line-height: 1.45;
 }
 
 div[data-testid="stMetric"] {
@@ -191,7 +213,7 @@ def safe_filename(name):
 
 
 def valid_email(email):
-    return re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email.strip()) is not None
+    return re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", str(email).strip()) is not None
 
 
 def upload_files(files, code):
@@ -256,10 +278,7 @@ def load_requests():
         .execute()
     )
 
-    if not response.data:
-        return pd.DataFrame()
-
-    return pd.DataFrame(response.data)
+    return pd.DataFrame(response.data or [])
 
 
 def load_logs(request_id):
@@ -272,10 +291,7 @@ def load_logs(request_id):
         .execute()
     )
 
-    if not response.data:
-        return pd.DataFrame()
-
-    return pd.DataFrame(response.data)
+    return pd.DataFrame(response.data or [])
 
 
 def write_log(request_id, action, old_status, new_status, admin_comment):
@@ -287,6 +303,67 @@ def write_log(request_id, action, old_status, new_status, admin_comment):
         "admin_comment": admin_comment,
         "changed_by": "Департамент"
     }).execute()
+
+
+def get_next_version_number(request_id):
+    response = (
+        supabase
+        .table("monitoring_request_versions")
+        .select("version_number")
+        .eq("request_id", int(request_id))
+        .order("version_number", desc=True)
+        .limit(1)
+        .execute()
+    )
+
+    if not response.data:
+        return 1
+
+    return int(response.data[0].get("version_number", 0)) + 1
+
+
+def save_request_version(request_id, row_data, created_by="Департамент"):
+    version_number = get_next_version_number(request_id)
+
+    payload = {
+        "request_id": int(request_id),
+        "version_number": version_number,
+        "year": clean(row_data.get("year", "")),
+        "quarter": clean(row_data.get("quarter", "")),
+        "department": clean(row_data.get("department", "")),
+        "responsible_person": clean(row_data.get("responsible_person", "")),
+        "phone": clean(row_data.get("phone", "")),
+        "email": clean(row_data.get("email", "")),
+        "strat_code": clean(row_data.get("strat_code", "")),
+        "status": clean(row_data.get("status", "")),
+        "progress_text": clean(row_data.get("progress_text", "")),
+        "numeric_value": clean(row_data.get("numeric_value", "")),
+        "risks": clean(row_data.get("risks", "")),
+        "file_names": clean(row_data.get("file_names", "")),
+        "file_urls": clean(row_data.get("file_urls", "")),
+        "approval_status": clean(row_data.get("approval_status", "")),
+        "admin_comment": clean(row_data.get("admin_comment", "")),
+        "start_date": clean(row_data.get("start_date", "")),
+        "end_date": clean(row_data.get("end_date", "")),
+        "created_by": created_by
+    }
+
+    supabase.table("monitoring_request_versions").insert(payload).execute()
+
+    return version_number
+
+
+def load_versions(request_id):
+    response = (
+        supabase
+        .table("monitoring_request_versions")
+        .select("*")
+        .eq("request_id", int(request_id))
+        .order("version_number", desc=False)
+        .execute()
+    )
+
+    return pd.DataFrame(response.data or [])
 
 
 df = load_requests()
@@ -305,11 +382,12 @@ st.markdown("""
     <div class="header-title">Мої заявки</div>
     <div class="header-subtitle">
         Кабінет департаменту для перегляду поданих заявок, статусу погодження,
-        коментарів адміністратора, підтвердних файлів і повторного подання після доопрацювання.
+        коментарів адміністратора, підтвердних файлів, історії версій і повторного подання після доопрацювання.
     </div>
     <div class="badge-wrap">
         <div class="badge">● Режим: перегляд заявок</div>
         <div class="badge">● Доступ: департамент</div>
+        <div class="badge">● Версійність: активна</div>
         <div class="badge">● Повторне подання: доступне для повернутих заявок</div>
     </div>
 </div>
@@ -479,24 +557,62 @@ st.markdown('<div class="card"><div class="card-title">Дані заявки</di
 p1, p2, p3 = st.columns(3)
 
 with p1:
-    st.text_input("ПІБ відповідальної особи", value=clean(selected_row["responsible_person"]), disabled=True)
+    st.text_input(
+        "ПІБ відповідальної особи",
+        value=clean(selected_row["responsible_person"]),
+        disabled=True,
+        key=f"view_responsible_{selected_id}"
+    )
 
 with p2:
-    st.text_input("Телефон", value=clean(selected_row["phone"]), disabled=True)
+    st.text_input(
+        "Телефон",
+        value=clean(selected_row["phone"]),
+        disabled=True,
+        key=f"view_phone_{selected_id}"
+    )
 
 with p3:
-    st.text_input("Email", value=clean(selected_row["email"]), disabled=True)
+    st.text_input(
+        "Email",
+        value=clean(selected_row["email"]),
+        disabled=True,
+        key=f"view_email_{selected_id}"
+    )
 
 d1, d2 = st.columns(2)
 
 with d1:
-    st.text_input("Початкова дата виконання", value=clean(selected_row["start_date"]), disabled=True)
+    st.text_input(
+        "Початкова дата виконання",
+        value=clean(selected_row["start_date"]),
+        disabled=True,
+        key=f"view_start_{selected_id}"
+    )
 
 with d2:
-    st.text_input("Кінцева дата виконання", value=clean(selected_row["end_date"]), disabled=True)
+    st.text_input(
+        "Кінцева дата виконання",
+        value=clean(selected_row["end_date"]),
+        disabled=True,
+        key=f"view_end_{selected_id}"
+    )
 
-st.text_area("Опис прогресу", value=clean(selected_row["progress_text"]), disabled=True, height=130)
-st.text_area("Ризики / проблеми / відхилення", value=clean(selected_row["risks"]), disabled=True, height=130)
+st.text_area(
+    "Опис прогресу",
+    value=clean(selected_row["progress_text"]),
+    disabled=True,
+    height=130,
+    key=f"view_progress_{selected_id}"
+)
+
+st.text_area(
+    "Ризики / проблеми / відхилення",
+    value=clean(selected_row["risks"]),
+    disabled=True,
+    height=130,
+    key=f"view_risks_{selected_id}"
+)
 
 if has_value(selected_row["admin_comment"]):
     st.warning(f"Коментар адміністратора: {clean(selected_row['admin_comment'])}")
@@ -543,6 +659,62 @@ else:
 
 st.markdown('</div>', unsafe_allow_html=True)
 
+st.markdown('<div class="card"><div class="card-title">Історія версій заявки</div>', unsafe_allow_html=True)
+
+versions_df = load_versions(selected_id)
+
+if versions_df.empty:
+    st.info("Версій для цієї заявки поки що немає.")
+else:
+    latest_version = versions_df.sort_values("version_number", ascending=False).iloc[0]
+
+    st.markdown(f"""
+    <div class="version-box">
+        <div class="version-title">Остання збережена версія: №{clean(latest_version.get("version_number", ""))}</div>
+        <div class="version-text">
+            Створено: {clean(latest_version.get("created_at", ""))}<br>
+            Ким створено: {clean(latest_version.get("created_by", ""))}<br>
+            Статус погодження: {clean(latest_version.get("approval_status", ""))}<br>
+            Статус виконання: {clean(latest_version.get("status", ""))}<br>
+            Фактичне значення: {clean(latest_version.get("numeric_value", ""))}
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    versions_show = versions_df.rename(columns={
+        "version_number": "Версія",
+        "created_at": "Дата створення версії",
+        "created_by": "Ким створено",
+        "approval_status": "Статус погодження",
+        "status": "Статус виконання",
+        "numeric_value": "Фактичне значення",
+        "progress_text": "Опис прогресу",
+        "risks": "Ризики / проблеми",
+        "file_names": "Файли"
+    })
+
+    cols = [
+        "Версія",
+        "Дата створення версії",
+        "Ким створено",
+        "Статус погодження",
+        "Статус виконання",
+        "Фактичне значення",
+        "Опис прогресу",
+        "Ризики / проблеми",
+        "Файли"
+    ]
+
+    available = [c for c in cols if c in versions_show.columns]
+
+    st.dataframe(
+        versions_show[available],
+        use_container_width=True,
+        hide_index=True
+    )
+
+st.markdown('</div>', unsafe_allow_html=True)
+
 if approval == "Повернуто на доопрацювання":
     st.markdown('<div class="card"><div class="card-title">Редагування та повторне подання</div><div class="card-subtitle">Цей блок доступний тільки для заявок, повернутих на доопрацювання.</div>', unsafe_allow_html=True)
 
@@ -551,35 +723,28 @@ if approval == "Повернуто на доопрацювання":
         1. Перегляньте коментар адміністратора.<br>
         2. Виправте фактичне значення, опис прогресу або ризики.<br>
         3. За потреби додайте нові підтвердні файли.<br>
-        4. Натисніть «Повторно подати на погодження».
+        4. Після повторного подання система збереже стару і нову версію заявки.<br>
+        5. Натисніть «Повторно подати на погодження».
     </div>
     """, unsafe_allow_html=True)
 
+    status_options = [
+        "Не розпочато",
+        "Виконується",
+        "Виконано",
+        "Виконано частково",
+        "Прострочено",
+        "Потребує уваги"
+    ]
+
+    current_status = clean(selected_row["status"])
+    default_status_index = status_options.index(current_status) if current_status in status_options else 1
+
     new_status = st.selectbox(
         "Статус виконання",
-        [
-            "Не розпочато",
-            "Виконується",
-            "Виконано",
-            "Виконано частково",
-            "Прострочено",
-            "Потребує уваги"
-        ],
-        index=[
-            "Не розпочато",
-            "Виконується",
-            "Виконано",
-            "Виконано частково",
-            "Прострочено",
-            "Потребує уваги"
-        ].index(clean(selected_row["status"])) if clean(selected_row["status"]) in [
-            "Не розпочато",
-            "Виконується",
-            "Виконано",
-            "Виконано частково",
-            "Прострочено",
-            "Потребує уваги"
-        ] else 1
+        status_options,
+        index=default_status_index,
+        key=f"edit_status_{selected_id}"
     )
 
     new_value = st.text_input(
@@ -602,27 +767,33 @@ if approval == "Повернуто на доопрацювання":
         key=f"edit_risks_{selected_id}"
     )
 
-    new_responsible = st.text_input(
-        "ПІБ відповідальної особи",
-        value=clean(selected_row["responsible_person"]),
-        key=f"edit_responsible_{selected_id}"
-    )
+    e1, e2, e3 = st.columns(3)
 
-    new_phone = st.text_input(
-        "Телефон",
-        value=clean(selected_row["phone"]),
-        key=f"edit_phone_{selected_id}"
-    )
+    with e1:
+        new_responsible = st.text_input(
+            "ПІБ відповідальної особи",
+            value=clean(selected_row["responsible_person"]),
+            key=f"edit_responsible_{selected_id}"
+        )
 
-    new_email = st.text_input(
-        "Email",
-        value=clean(selected_row["email"]),
-        key=f"edit_email_{selected_id}"
-    )
+    with e2:
+        new_phone = st.text_input(
+            "Телефон",
+            value=clean(selected_row["phone"]),
+            key=f"edit_phone_{selected_id}"
+        )
+
+    with e3:
+        new_email = st.text_input(
+            "Email",
+            value=clean(selected_row["email"]),
+            key=f"edit_email_{selected_id}"
+        )
 
     new_files = st.file_uploader(
         "Додати нові підтвердні файли",
-        accept_multiple_files=True
+        accept_multiple_files=True,
+        key=f"edit_files_{selected_id}"
     )
 
     st.markdown("**Перед повторним поданням система перевірить:**")
@@ -630,9 +801,14 @@ if approval == "Повернуто на доопрацювання":
     st.write("- опис прогресу;")
     st.write("- ПІБ, телефон, email;")
     st.write("- коректність email;")
+    st.write("- логічну відповідність статусу і фактичного значення;")
     st.write("- підтвердні файли, якщо статус «Виконано».")
 
-    resubmit = st.button("Повторно подати на погодження", use_container_width=True)
+    resubmit = st.button(
+        "Повторно подати на погодження",
+        use_container_width=True,
+        key=f"resubmit_{selected_id}"
+    )
 
     if resubmit:
         errors = []
@@ -689,7 +865,14 @@ if approval == "Повернуто на доопрацювання":
             combined_urls = ", ".join([x for x in [old_file_urls, added_urls] if x])
 
         try:
-            supabase.table("monitoring_requests").update({
+            old_version_data = selected_row.to_dict()
+            old_version_number = save_request_version(
+                selected_id,
+                old_version_data,
+                created_by="Департамент / до редагування"
+            )
+
+            update_payload = {
                 "status": new_status,
                 "numeric_value": new_value,
                 "progress_text": new_progress,
@@ -702,17 +885,28 @@ if approval == "Повернуто на доопрацювання":
                 "approval_status": "Очікує погодження",
                 "submitted_at": datetime.now().isoformat(),
                 "admin_comment": ""
-            }).eq("id", int(selected_id)).execute()
+            }
+
+            supabase.table("monitoring_requests").update(update_payload).eq("id", int(selected_id)).execute()
+
+            new_version_data = selected_row.to_dict()
+            new_version_data.update(update_payload)
+
+            new_version_number = save_request_version(
+                selected_id,
+                new_version_data,
+                created_by="Департамент / повторне подання"
+            )
 
             write_log(
                 selected_id,
-                "Повторне подання після доопрацювання",
+                f"Повторне подання після доопрацювання: версія {old_version_number} → {new_version_number}",
                 "Повернуто на доопрацювання",
                 "Очікує погодження",
                 "Заявку повторно подано департаментом"
             )
 
-            st.success("Заявку повторно подано на погодження.")
+            st.success("Заявку повторно подано на погодження. Попередню і нову версію збережено.")
             st.rerun()
 
         except Exception as e:
@@ -738,7 +932,7 @@ st.markdown(
     <div class="footer">
         Міністерство економіки, довкілля та сільського господарства України<br>
         Розроблено департаментом стратегічного планування та макроекономічного прогнозування<br>
-        Версія DEMO 1.0 | Кабінет департаменту
+        Версія DEMO 1.1 | Кабінет департаменту з версійністю заявок
     </div>
     """,
     unsafe_allow_html=True

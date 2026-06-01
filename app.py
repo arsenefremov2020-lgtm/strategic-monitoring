@@ -364,24 +364,46 @@ def load_strat_matrix():
     result["code"] = result["code"].astype(str).str.strip()
     result["type_marker"] = result["type_marker"].astype(str).str.strip()
 
-    def classify(row):
-        marker = str(row["type_marker"]).lower()
+    current_goal_code = ""
+    current_task_code = ""
+
+    object_types = []
+    parent_goal_codes = []
+    parent_task_codes = []
+
+    for _, row in result.iterrows():
+        marker = str(row["type_marker"]).lower().strip()
         code = str(row["code"]).strip()
         dots = code.count(".")
 
         if "стратегічна ціль" in marker:
-            return "goal"
-        if "завдання" in marker:
-            return "task"
-        if dots == 1:
-            return "goal_indicator"
-        if dots == 2:
-            return "task_indicator"
-        if dots >= 3:
-            return "measure"
-        return "other"
+            object_type = "goal"
+            current_goal_code = code
+            current_task_code = ""
 
-    result["object_type"] = result.apply(classify, axis=1)
+        elif "завдання" in marker:
+            object_type = "task"
+            current_task_code = code
+
+        elif "заходи" in marker or dots >= 3:
+            object_type = "measure"
+
+        else:
+            if current_task_code:
+                object_type = "task_indicator"
+            elif current_goal_code:
+                object_type = "goal_indicator"
+            else:
+                object_type = "other"
+
+        object_types.append(object_type)
+        parent_goal_codes.append(current_goal_code)
+        parent_task_codes.append(current_task_code)
+
+    result["object_type"] = object_types
+    result["parent_goal_code"] = parent_goal_codes
+    result["parent_task_code"] = parent_task_codes
+
     return result
 
 
@@ -489,14 +511,6 @@ def indicator_table(data):
 
 
 def build_indicator_rows(parent_row, child_rows):
-    """
-    Формує повну таблицю індикаторів:
-    1) перший індикатор з рядка стратегічної цілі / завдання;
-    2) додаткові індикатори з наступних рядків.
-
-    Це потрібно, бо в Google-таблиці перший індикатор часто стоїть
-    у тому самому рядку, що й назва стратегічної цілі або завдання.
-    """
     rows = []
 
     parent_indicator = raw_value(parent_row.get("indicator", ""))
@@ -611,6 +625,7 @@ if not monitoring_df.empty:
             pass
 
 approved_share = round((approved_count / submitted_count) * 100, 1) if submitted_count else 0
+
 without_monitoring = max(
     total_measures - len(set(monitoring_df["strat_code"].astype(str))) if not monitoring_df.empty else total_measures,
     0
@@ -744,15 +759,21 @@ if selected_goal_nav != "Усі стратегічні цілі":
 
 
 for _, goal in goals.iterrows():
-    goal_code = str(goal["code"])
-    goal_name = str(goal["name"])
+    goal_code = str(goal["code"]).strip()
+    goal_name = str(goal["name"]).strip()
 
     if selected_goal_code and goal_code != selected_goal_code:
         continue
 
-    goal_rows = df[df["code"].astype(str).str.startswith(goal_code)]
-    tasks = goal_rows[goal_rows["object_type"] == "task"].copy()
-    measures_all = goal_rows[goal_rows["object_type"] == "measure"].copy()
+    tasks = df[
+        (df["object_type"] == "task") &
+        (df["parent_goal_code"].astype(str) == goal_code)
+    ].copy()
+
+    measures_all = df[
+        (df["object_type"] == "measure") &
+        (df["parent_goal_code"].astype(str) == goal_code)
+    ].copy()
 
     if selected_dep != "Усі":
         measures_for_progress = measures_all[
@@ -777,7 +798,8 @@ for _, goal in goals.iterrows():
 
         goal_indicator_children = df[
             (df["object_type"] == "goal_indicator") &
-            (df["code"].astype(str) == goal_code)
+            (df["parent_goal_code"].astype(str) == goal_code) &
+            (df["parent_task_code"].astype(str) == "")
         ].copy()
 
         goal_indicators = build_indicator_rows(goal, goal_indicator_children)
@@ -790,11 +812,13 @@ for _, goal in goals.iterrows():
             indicator_table(goal_indicators)
 
         for _, task in tasks.iterrows():
-            task_code = str(task["code"])
-            task_name = str(task["name"])
+            task_code = str(task["code"]).strip()
+            task_name = str(task["name"]).strip()
 
-            task_rows = df[df["code"].astype(str).str.startswith(task_code)]
-            task_measures = task_rows[task_rows["object_type"] == "measure"].copy()
+            task_measures = df[
+                (df["object_type"] == "measure") &
+                (df["parent_task_code"].astype(str) == task_code)
+            ].copy()
 
             if selected_dep != "Усі":
                 task_measures_for_count = task_measures[
@@ -814,7 +838,7 @@ for _, goal in goals.iterrows():
 
                 task_indicator_children = df[
                     (df["object_type"] == "task_indicator") &
-                    (df["code"].astype(str) == task_code)
+                    (df["parent_task_code"].astype(str) == task_code)
                 ].copy()
 
                 task_indicators = build_indicator_rows(task, task_indicator_children)
@@ -932,7 +956,7 @@ st.markdown(
     """
     <div class="footer">
         <strong>Розроблено департаментом стратегічного планування та макроекономічного прогнозування</strong><br>
-        Версія DEMO 1.0 | 2026 | Внутрішня система моніторингу стратегічного плану
+        Версія DEMO 1.1 | 2026 | Внутрішня система моніторингу стратегічного плану
     </div>
     """,
     unsafe_allow_html=True

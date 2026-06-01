@@ -624,9 +624,10 @@ if approval == "Повернуто на доопрацювання":
         elif not valid_email(new_email):
             errors.append("Email має некоректний формат.")
 
-        if new_status == "Виконано" and normalize_value := str(new_value).strip().lower():
-            if normalize_value in ["0", "ні", "нi", "no"]:
-                errors.append("Статус «Виконано» не узгоджується з фактичним значенням 0 / ні.")
+        normalize_value = str(new_value).strip().lower()
+
+        if new_status == "Виконано" and normalize_value in ["0", "ні", "нi", "no"]:
+            errors.append("Статус «Виконано» не узгоджується з фактичним значенням 0 / ні.")
 
         if new_status == "Виконано" and not new_files and not has_value(selected_row["file_urls"]):
             errors.append("Для статусу «Виконано» бажано додати підтвердний файл.")

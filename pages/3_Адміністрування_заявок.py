@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from supabase import create_client
-from datetime import datetime
+from datetime import datetime, timezone
 
 st.set_page_config(
     page_title="Адміністрування заявок",
@@ -279,6 +279,84 @@ st.markdown("""
     flex: 0 0 auto;
 }
 
+.attention-grid {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 12px;
+    margin-top: 12px;
+}
+
+.attention-card {
+    border-radius: 14px;
+    padding: 14px 15px;
+    min-height: 100px;
+    border: 1px solid #d8dee9;
+    box-shadow: 0 4px 12px rgba(15,23,42,0.045);
+}
+
+.attention-title {
+    color: #475569;
+    font-size: 12px;
+    font-weight: 800;
+    margin-bottom: 8px;
+}
+
+.attention-value {
+    color: #0f172a;
+    font-size: 26px;
+    font-weight: 950;
+    line-height: 1.1;
+}
+
+.attention-note {
+    color: #64748b;
+    font-size: 12px;
+    margin-top: 5px;
+    line-height: 1.25;
+}
+
+.att-red {
+    background: #fee2e2;
+    border-color: #fecaca;
+}
+
+.att-yellow {
+    background: #fef9c3;
+    border-color: #fde68a;
+}
+
+.att-blue {
+    background: #dbeafe;
+    border-color: #bfdbfe;
+}
+
+.att-green {
+    background: #dcfce7;
+    border-color: #bbf7d0;
+}
+
+.resolution-box {
+    background: #ffffff;
+    border: 1px solid #d8dee9;
+    border-left: 7px solid #2563eb;
+    border-radius: 14px;
+    padding: 16px 18px;
+    margin: 12px 0;
+}
+
+.resolution-title {
+    font-size: 17px;
+    font-weight: 900;
+    color: #0f172a;
+    margin-bottom: 8px;
+}
+
+.resolution-text {
+    color: #334155;
+    font-size: 14px;
+    line-height: 1.6;
+}
+
 div[data-testid="stMetric"] {
     background: rgba(255,255,255,0.88);
     border: 1px solid #d8dee9;
@@ -315,6 +393,30 @@ def has_value(value):
     return clean(value).strip() != ""
 
 
+def to_datetime(value):
+    text = clean(value).strip()
+
+    if not text:
+        return None
+
+    try:
+        dt = pd.to_datetime(text, errors="coerce", utc=True)
+        if pd.isna(dt):
+            return None
+        return dt.to_pydatetime()
+    except Exception:
+        return None
+
+
+def days_waiting(value):
+    dt = to_datetime(value)
+    if not dt:
+        return None
+
+    now = datetime.now(timezone.utc)
+    return (now - dt).days
+
+
 def admin_kpi_card(label, value):
     value = "" if value is None else str(value)
 
@@ -341,6 +443,19 @@ def quality_card(label, status, good=True):
                 <span class="quality-icon">{icon}</span>
                 <span>{status}</span>
             </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+
+def attention_card(title, value, note, css_class):
+    st.markdown(
+        f"""
+        <div class="attention-card {css_class}">
+            <div class="attention-title">{title}</div>
+            <div class="attention-value">{value}</div>
+            <div class="attention-note">{note}</div>
         </div>
         """,
         unsafe_allow_html=True
@@ -481,6 +596,136 @@ def quality_assessment(row):
     return checks, recommendation, badge, score
 
 
+def generate_resolution(row, recommendation, quality_score):
+    request_id = clean(row.get("id", ""))
+    code = clean(row.get("strat_code", ""))
+    year = clean(row.get("year", ""))
+    quarter = clean(row.get("quarter", ""))
+    department = clean(row.get("department", ""))
+    status = clean(row.get("status", ""))
+    fact = clean(row.get("numeric_value", ""))
+    progress = clean(row.get("progress_text", ""))
+    risks = clean(row.get("risks", ""))
+    files = clean(row.get("file_urls", ""))
+    person = clean(row.get("responsible_person", ""))
+
+    missing = []
+
+    if not has_value(fact):
+        missing.append("фактичне значення")
+    if not has_value(progress):
+        missing.append("опис прогресу")
+    if not has_value(files):
+        missing.append("підтвердні файли")
+    if not has_value(row.get("email", "")):
+        missing.append("електронна пошта")
+    if not has_value(row.get("phone", "")):
+        missing.append("контактний телефон")
+
+    if recommendation == "Можна погоджувати":
+        return (
+            f"За результатами розгляду заявки ID {request_id} щодо заходу {code} "
+            f"за {quarter} квартал {year} року, поданої підрозділом «{department}», "
+            f"подані моніторингові дані можуть бути погоджені. Заявка містить фактичне значення "
+            f"«{fact}», статус виконання «{status}», опис прогресу, контактні дані відповідальної особи "
+            f"({person}) та підтвердні матеріали. Ознак критичної неповноти даних системою не виявлено."
+        )
+
+    if recommendation == "Потребує перевірки":
+        details = []
+
+        if risks:
+            details.append("у заявці зазначено ризики / проблеми / відхилення")
+        if missing:
+            details.append("потребують перевірки такі елементи: " + ", ".join(missing))
+
+        detail_text = "; ".join(details) if details else "окремі елементи заявки потребують додаткової перевірки"
+
+        return (
+            f"За результатами попереднього аналізу заявки ID {request_id} щодо заходу {code} "
+            f"за {quarter} квартал {year} року, поданої підрозділом «{department}», "
+            f"заявка потребує додаткової перевірки перед прийняттям остаточного рішення. "
+            f"Система визначила, що {detail_text}. Рекомендовано перевірити зміст поданого фактичного значення, "
+            f"опис прогресу та наявність достатнього документального підтвердження."
+        )
+
+    missing_text = ", ".join(missing) if missing else "ключові елементи заявки заповнені неповністю"
+
+    return (
+        f"Заявку ID {request_id} щодо заходу {code} за {quarter} квартал {year} року, "
+        f"подану підрозділом «{department}», доцільно повернути на доопрацювання. "
+        f"Підстава: {missing_text}. До повторного подання необхідно уточнити фактичне значення, "
+        f"доповнити опис прогресу та/або додати підтвердні матеріали відповідно до вимог моніторингу."
+    )
+
+
+def build_attention_summary(df):
+    data = df.copy()
+
+    if data.empty:
+        return {
+            "long_waiting": pd.DataFrame(),
+            "without_files": pd.DataFrame(),
+            "with_risks": pd.DataFrame(),
+            "returned": pd.DataFrame(),
+            "approved_without_fact": pd.DataFrame(),
+            "duplicates": pd.DataFrame()
+        }
+
+    data["days_waiting"] = data["submitted_at"].apply(days_waiting)
+
+    long_waiting = data[
+        (data["approval_status"].astype(str) == "Очікує погодження") &
+        (data["days_waiting"].fillna(0) >= 7)
+    ].copy()
+
+    without_files = data[
+        data["file_urls"].fillna("").astype(str).str.strip() == ""
+    ].copy()
+
+    with_risks = data[
+        data["risks"].fillna("").astype(str).str.strip() != ""
+    ].copy()
+
+    returned = data[
+        data["approval_status"].astype(str) == "Повернуто на доопрацювання"
+    ].copy()
+
+    approved_without_fact = data[
+        (data["approval_status"].astype(str) == "Погоджено") &
+        (data["numeric_value"].fillna("").astype(str).str.strip() == "")
+    ].copy()
+
+    duplicate_keys = ["year", "quarter", "department", "strat_code"]
+
+    duplicate_groups = (
+        data
+        .groupby(duplicate_keys, dropna=False)
+        .size()
+        .reset_index(name="count")
+    )
+
+    duplicate_groups = duplicate_groups[duplicate_groups["count"] > 1]
+
+    if not duplicate_groups.empty:
+        duplicates = data.merge(
+            duplicate_groups[duplicate_keys],
+            on=duplicate_keys,
+            how="inner"
+        ).copy()
+    else:
+        duplicates = pd.DataFrame()
+
+    return {
+        "long_waiting": long_waiting,
+        "without_files": without_files,
+        "with_risks": with_risks,
+        "returned": returned,
+        "approved_without_fact": approved_without_fact,
+        "duplicates": duplicates
+    }
+
+
 st.markdown('<div class="ua-line"></div>', unsafe_allow_html=True)
 
 st.markdown(
@@ -493,7 +738,7 @@ st.markdown(
 )
 
 st.markdown(
-    """
+    f"""
     <div class="header-box">
         <div class="header-title">Адміністрування заявок моніторингу</div>
         <div class="header-subtitle">
@@ -504,7 +749,8 @@ st.markdown(
             <div class="status-pill">● Режим: адміністрування</div>
             <div class="status-pill">● Дані: Supabase</div>
             <div class="status-pill">● Журнал змін: активний</div>
-            <div class="status-pill">● Оновлено: """ + datetime.now().strftime("%d.%m.%Y %H:%M") + """</div>
+            <div class="status-pill">● Резолюція: автоматична</div>
+            <div class="status-pill">● Оновлено: {datetime.now().strftime("%d.%m.%Y %H:%M")}</div>
         </div>
     </div>
     """,
@@ -519,7 +765,7 @@ st.markdown(
             <div class="flow-step">1. Відфільтрувати заявки</div>
             <div class="flow-step">2. Переглянути захід</div>
             <div class="flow-step">3. Перевірити факт і файли</div>
-            <div class="flow-step">4. Додати коментар</div>
+            <div class="flow-step">4. Переглянути системну резолюцію</div>
             <div class="flow-step">5. Прийняти рішення</div>
         </div>
     </div>
@@ -559,6 +805,86 @@ required_cols = [
 for col in required_cols:
     if col not in df.columns:
         df[col] = ""
+
+attention = build_attention_summary(df)
+
+st.markdown('<div class="card"><div class="card-title">Потребує уваги</div><div class="card-subtitle">Автоматичні попередження для адміністратора за всіма заявками.</div>', unsafe_allow_html=True)
+
+st.markdown('<div class="attention-grid">', unsafe_allow_html=True)
+
+attention_card(
+    "Очікують понад 7 днів",
+    len(attention["long_waiting"]),
+    "Заявки довго перебувають без рішення.",
+    "att-red" if len(attention["long_waiting"]) else "att-green"
+)
+
+attention_card(
+    "Без файлів",
+    len(attention["without_files"]),
+    "Заявки без підтвердних матеріалів.",
+    "att-yellow" if len(attention["without_files"]) else "att-green"
+)
+
+attention_card(
+    "Із ризиками",
+    len(attention["with_risks"]),
+    "У заявках зазначено ризики або відхилення.",
+    "att-yellow" if len(attention["with_risks"]) else "att-green"
+)
+
+attention_card(
+    "Повернуто",
+    len(attention["returned"]),
+    "Потребують доопрацювання департаментом.",
+    "att-blue" if len(attention["returned"]) else "att-green"
+)
+
+attention_card(
+    "Погоджено без факту",
+    len(attention["approved_without_fact"]),
+    "Погоджені записи без фактичного значення.",
+    "att-red" if len(attention["approved_without_fact"]) else "att-green"
+)
+
+attention_card(
+    "Дублікати",
+    len(attention["duplicates"]),
+    "Кілька заявок по одному заходу/кварталу.",
+    "att-red" if len(attention["duplicates"]) else "att-green"
+)
+
+st.markdown('</div>', unsafe_allow_html=True)
+
+with st.expander("Переглянути записи, які потребують уваги"):
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "Очікують понад 7 днів",
+        "Без файлів",
+        "Із ризиками",
+        "Повернуті",
+        "Погоджено без факту",
+        "Дублікати"
+    ])
+
+    with tab1:
+        st.dataframe(attention["long_waiting"], use_container_width=True, hide_index=True)
+
+    with tab2:
+        st.dataframe(attention["without_files"], use_container_width=True, hide_index=True)
+
+    with tab3:
+        st.dataframe(attention["with_risks"], use_container_width=True, hide_index=True)
+
+    with tab4:
+        st.dataframe(attention["returned"], use_container_width=True, hide_index=True)
+
+    with tab5:
+        st.dataframe(attention["approved_without_fact"], use_container_width=True, hide_index=True)
+
+    with tab6:
+        st.dataframe(attention["duplicates"], use_container_width=True, hide_index=True)
+
+st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown('<div class="card"><div class="card-title">Огляд заявок</div><div class="card-subtitle">Короткий стан черги адміністрування.</div>', unsafe_allow_html=True)
 
@@ -641,7 +967,9 @@ with q1:
             "Повернуті",
             "Без файлів",
             "Із ризиками",
-            "Останні подані"
+            "Останні подані",
+            "Очікують понад 7 днів",
+            "Дублікати"
         ]
     )
 
@@ -686,6 +1014,12 @@ elif quick_filter == "Із ризиками":
 
 elif quick_filter == "Останні подані":
     filtered = filtered.sort_values("submitted_at", ascending=False).head(10)
+
+elif quick_filter == "Очікують понад 7 днів":
+    filtered = attention["long_waiting"].copy()
+
+elif quick_filter == "Дублікати":
+    filtered = attention["duplicates"].copy()
 
 if search_query.strip():
     sq = search_query.strip().lower()
@@ -775,6 +1109,7 @@ approval_status = clean(selected_row["approval_status"])
 selected_code = clean(selected_row["strat_code"])
 
 checks, recommendation, rec_badge, quality_score = quality_assessment(selected_row)
+auto_resolution = generate_resolution(selected_row, recommendation, quality_score)
 
 st.markdown('<div class="card"><div class="card-title">Картка заявки</div>', unsafe_allow_html=True)
 
@@ -831,6 +1166,25 @@ for idx, item in enumerate(checks):
 st.progress(
     min(quality_score / 6, 1.0),
     text=f"Заповненість ключових полів: {round(quality_score / 6 * 100, 1)}%"
+)
+
+st.markdown('</div>', unsafe_allow_html=True)
+
+st.markdown('<div class="card"><div class="card-title">Автоматична службова резолюція</div><div class="card-subtitle">Система формує текст на основі якості заявки, статусу, фактичного значення, файлів і ризиків.</div>', unsafe_allow_html=True)
+
+st.markdown(
+    f"""
+    <div class="resolution-box">
+        <div class="resolution-title">Проєкт резолюції</div>
+        <div class="resolution-text">{auto_resolution}</div>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+use_auto_resolution = st.checkbox(
+    "Використати цей текст як коментар адміністратора",
+    value=False
 )
 
 st.markdown('</div>', unsafe_allow_html=True)
@@ -909,21 +1263,24 @@ with p1:
     st.text_input(
         "ПІБ відповідальної особи",
         value=clean(selected_row["responsible_person"]),
-        disabled=True
+        disabled=True,
+        key=f"responsible_{selected_id}"
     )
 
 with p2:
     st.text_input(
         "Контактний номер телефону",
         value=clean(selected_row["phone"]),
-        disabled=True
+        disabled=True,
+        key=f"phone_{selected_id}"
     )
 
 with p3:
     st.text_input(
         "Електронна пошта",
         value=clean(selected_row["email"]),
-        disabled=True
+        disabled=True,
+        key=f"email_{selected_id}"
     )
 
 st.markdown('</div>', unsafe_allow_html=True)
@@ -936,14 +1293,16 @@ with d1:
     st.text_input(
         "Початкова дата виконання",
         value=clean(selected_row["start_date"]),
-        disabled=True
+        disabled=True,
+        key=f"start_{selected_id}"
     )
 
 with d2:
     st.text_input(
         "Кінцева дата виконання",
         value=clean(selected_row["end_date"]),
-        disabled=True
+        disabled=True,
+        key=f"end_{selected_id}"
     )
 
 st.markdown('</div>', unsafe_allow_html=True)
@@ -957,7 +1316,8 @@ with t1:
         "Опис прогресу",
         value=clean(selected_row["progress_text"]),
         disabled=True,
-        height=150
+        height=150,
+        key=f"progress_{selected_id}"
     )
 
 with t2:
@@ -965,7 +1325,8 @@ with t2:
         "Ризики / проблеми / відхилення",
         value=clean(selected_row["risks"]),
         disabled=True,
-        height=150
+        height=150,
+        key=f"risks_{selected_id}"
     )
 
 st.markdown('</div>', unsafe_allow_html=True)
@@ -1001,10 +1362,13 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+default_comment = auto_resolution if use_auto_resolution else clean(selected_row["admin_comment"])
+
 admin_comment = st.text_area(
     "Коментар адміністратора",
-    value=clean(selected_row["admin_comment"]),
-    height=120
+    value=default_comment,
+    height=140,
+    key=f"admin_comment_{selected_id}_{use_auto_resolution}"
 )
 
 c1, c2, c3 = st.columns(3)
@@ -1132,7 +1496,7 @@ st.markdown(
     """
     <div class="footer">
         Розроблено департаментом стратегічного планування та макроекономічного прогнозування<br>
-        Версія DEMO 1.1 | Кабінет адміністрування заявок моніторингу
+        Версія DEMO 1.2 | Кабінет адміністрування заявок моніторингу
     </div>
     """,
     unsafe_allow_html=True

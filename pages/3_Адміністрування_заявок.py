@@ -212,6 +212,73 @@ st.markdown("""
     margin-bottom: 8px;
 }
 
+.admin-kpi-card {
+    background: rgba(255,255,255,0.96);
+    border: 1px solid #d8dee9;
+    border-radius: 14px;
+    padding: 14px 16px;
+    min-height: 102px;
+    box-shadow: 0 4px 12px rgba(15,23,42,0.045);
+}
+
+.admin-kpi-label {
+    color: #475569;
+    font-size: 13px;
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+
+.admin-kpi-value {
+    color: #0f172a;
+    font-size: 24px;
+    font-weight: 850;
+    line-height: 1.15;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.quality-card {
+    background: rgba(255,255,255,0.96);
+    border: 1px solid #d8dee9;
+    border-radius: 14px;
+    padding: 14px 16px;
+    min-height: 104px;
+    box-shadow: 0 4px 12px rgba(15,23,42,0.045);
+}
+
+.quality-good {
+    border-left: 5px solid #22c55e;
+}
+
+.quality-warn {
+    border-left: 5px solid #f59e0b;
+}
+
+.quality-label {
+    color: #475569;
+    font-size: 13px;
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+
+.quality-value {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    color: #0f172a;
+    font-size: 18px;
+    font-weight: 850;
+    line-height: 1.18;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.quality-icon {
+    flex: 0 0 auto;
+}
+
 div[data-testid="stMetric"] {
     background: rgba(255,255,255,0.88);
     border: 1px solid #d8dee9;
@@ -246,6 +313,38 @@ def clean(value):
 
 def has_value(value):
     return clean(value).strip() != ""
+
+
+def admin_kpi_card(label, value):
+    value = "" if value is None else str(value)
+
+    st.markdown(
+        f"""
+        <div class="admin-kpi-card">
+            <div class="admin-kpi-label">{label}</div>
+            <div class="admin-kpi-value">{value}</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+
+def quality_card(label, status, good=True):
+    icon = "✅" if good else "⚠️"
+    css_class = "quality-good" if good else "quality-warn"
+
+    st.markdown(
+        f"""
+        <div class="quality-card {css_class}">
+            <div class="quality-label">{label}</div>
+            <div class="quality-value">
+                <span class="quality-icon">{icon}</span>
+                <span>{status}</span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 
 @st.cache_data
@@ -365,7 +464,7 @@ def quality_assessment(row):
         checks.append(("Email", "Не заповнено", False))
 
     if has_value(row.get("risks", "")):
-        checks.append(("Ризики", "Є зазначені ризики", False))
+        checks.append(("Ризики", "Є запис", False))
     else:
         checks.append(("Ризики", "Не зазначено", True))
 
@@ -698,14 +797,25 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-m1, m2, m3, m4, m5, m6 = st.columns(6)
+k1, k2, k3, k4, k5, k6 = st.columns(6)
 
-m1.metric("Департамент", clean(selected_row["department"]))
-m2.metric("Рік", clean(selected_row["year"]))
-m3.metric("Квартал", clean(selected_row["quarter"]))
-m4.metric("Статус виконання", clean(selected_row["status"]))
-m5.metric("Факт", clean(selected_row["numeric_value"]))
-m6.metric("Код", selected_code)
+with k1:
+    admin_kpi_card("Департамент", clean(selected_row.get("department", "")))
+
+with k2:
+    admin_kpi_card("Рік", clean(selected_row.get("year", "")))
+
+with k3:
+    admin_kpi_card("Квартал", clean(selected_row.get("quarter", "")))
+
+with k4:
+    admin_kpi_card("Статус виконання", clean(selected_row.get("status", "")))
+
+with k5:
+    admin_kpi_card("Факт", clean(selected_row.get("numeric_value", "")))
+
+with k6:
+    admin_kpi_card("Код", clean(selected_row.get("strat_code", "")))
 
 st.markdown('</div>', unsafe_allow_html=True)
 
@@ -715,10 +825,13 @@ qcols = st.columns(len(checks))
 
 for idx, item in enumerate(checks):
     label, value, ok = item
-    icon = "✅" if ok else "⚠️"
-    qcols[idx].metric(label, f"{icon} {value}")
+    with qcols[idx]:
+        quality_card(label, value, ok)
 
-st.progress(min(quality_score / 6, 1.0), text=f"Заповненість ключових полів: {round(quality_score / 6 * 100, 1)}%")
+st.progress(
+    min(quality_score / 6, 1.0),
+    text=f"Заповненість ключових полів: {round(quality_score / 6 * 100, 1)}%"
+)
 
 st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1019,7 +1132,7 @@ st.markdown(
     """
     <div class="footer">
         Розроблено департаментом стратегічного планування та макроекономічного прогнозування<br>
-        Версія DEMO 0.9 | Кабінет адміністрування заявок моніторингу
+        Версія DEMO 1.1 | Кабінет адміністрування заявок моніторингу
     </div>
     """,
     unsafe_allow_html=True

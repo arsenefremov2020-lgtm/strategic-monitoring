@@ -582,13 +582,43 @@ if approval == "Повернуто на доопрацювання":
         ] else 1
     )
 
-    new_value = st.text_input("Фактичне значення", value=clean(selected_row["numeric_value"]))
-    new_progress = st.text_area("Опис прогресу", value=clean(selected_row["progress_text"]), height=140)
-    new_risks = st.text_area("Ризики / проблеми / відхилення", value=clean(selected_row["risks"]), height=140)
+    new_value = st.text_input(
+        "Фактичне значення",
+        value=clean(selected_row["numeric_value"]),
+        key=f"edit_value_{selected_id}"
+    )
 
-    new_responsible = st.text_input("ПІБ відповідальної особи", value=clean(selected_row["responsible_person"]))
-    new_phone = st.text_input("Телефон", value=clean(selected_row["phone"]))
-    new_email = st.text_input("Email", value=clean(selected_row["email"]))
+    new_progress = st.text_area(
+        "Опис прогресу",
+        value=clean(selected_row["progress_text"]),
+        height=140,
+        key=f"edit_progress_{selected_id}"
+    )
+
+    new_risks = st.text_area(
+        "Ризики / проблеми / відхилення",
+        value=clean(selected_row["risks"]),
+        height=140,
+        key=f"edit_risks_{selected_id}"
+    )
+
+    new_responsible = st.text_input(
+        "ПІБ відповідальної особи",
+        value=clean(selected_row["responsible_person"]),
+        key=f"edit_responsible_{selected_id}"
+    )
+
+    new_phone = st.text_input(
+        "Телефон",
+        value=clean(selected_row["phone"]),
+        key=f"edit_phone_{selected_id}"
+    )
+
+    new_email = st.text_input(
+        "Email",
+        value=clean(selected_row["email"]),
+        key=f"edit_email_{selected_id}"
+    )
 
     new_files = st.file_uploader(
         "Додати нові підтвердні файли",

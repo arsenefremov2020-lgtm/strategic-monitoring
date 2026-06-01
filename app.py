@@ -393,9 +393,15 @@ def load_monitoring():
 
 
 def clean_value(value):
-    if pd.isna(value) or str(value) == "None":
+    if value is None or pd.isna(value) or str(value) == "None":
         return ""
     return escape(str(value))
+
+
+def raw_value(value):
+    if value is None or pd.isna(value) or str(value) == "None":
+        return ""
+    return str(value).strip()
 
 
 def render_table(df, pending_cells=None, min_width=2200):
@@ -452,6 +458,10 @@ def render_table(df, pending_cells=None, min_width=2200):
 
 
 def indicator_table(data):
+    if data.empty:
+        st.info("Індикаторів не знайдено.")
+        return
+
     renamed = data.rename(columns={
         "indicator": "Індикатор",
         "unit": "Одиниця виміру",
@@ -474,7 +484,51 @@ def indicator_table(data):
         "План 2028"
     ]
 
-    render_table(renamed[show_cols], min_width=1350)
+    existing_cols = [col for col in show_cols if col in renamed.columns]
+    render_table(renamed[existing_cols], min_width=1350)
+
+
+def build_indicator_rows(parent_row, child_rows):
+    """
+    Формує повну таблицю індикаторів:
+    1) перший індикатор з рядка стратегічної цілі / завдання;
+    2) додаткові індикатори з наступних рядків.
+
+    Це потрібно, бо в Google-таблиці перший індикатор часто стоїть
+    у тому самому рядку, що й назва стратегічної цілі або завдання.
+    """
+    rows = []
+
+    parent_indicator = raw_value(parent_row.get("indicator", ""))
+
+    if parent_indicator:
+        rows.append({
+            "indicator": parent_row.get("indicator", ""),
+            "unit": parent_row.get("unit", ""),
+            "base_2021": parent_row.get("base_2021", ""),
+            "fact_2024": parent_row.get("fact_2024", ""),
+            "expected_2025": parent_row.get("expected_2025", ""),
+            "target_2026": parent_row.get("target_2026", ""),
+            "target_2027": parent_row.get("target_2027", ""),
+            "target_2028": parent_row.get("target_2028", "")
+        })
+
+    for _, child in child_rows.iterrows():
+        child_indicator = raw_value(child.get("indicator", ""))
+
+        if child_indicator:
+            rows.append({
+                "indicator": child.get("indicator", ""),
+                "unit": child.get("unit", ""),
+                "base_2021": child.get("base_2021", ""),
+                "fact_2024": child.get("fact_2024", ""),
+                "expected_2025": child.get("expected_2025", ""),
+                "target_2026": child.get("target_2026", ""),
+                "target_2027": child.get("target_2027", ""),
+                "target_2028": child.get("target_2028", "")
+            })
+
+    return pd.DataFrame(rows)
 
 
 def get_goal_completion(goal_measures, selected_year, quarter_data):
@@ -557,7 +611,10 @@ if not monitoring_df.empty:
             pass
 
 approved_share = round((approved_count / submitted_count) * 100, 1) if submitted_count else 0
-without_monitoring = max(total_measures - len(set(monitoring_df["strat_code"].astype(str))) if not monitoring_df.empty else total_measures, 0)
+without_monitoring = max(
+    total_measures - len(set(monitoring_df["strat_code"].astype(str))) if not monitoring_df.empty else total_measures,
+    0
+)
 
 
 st.markdown('<div class="ua-line"></div>', unsafe_allow_html=True)
@@ -664,6 +721,7 @@ f1, f2, f3 = st.columns([1, 1, 1.2])
 
 departments = sorted(df["department"].dropna().astype(str).unique())
 goals = df[df["object_type"] == "goal"].copy()
+
 goal_options = ["Усі стратегічні цілі"] + [
     f"{row['code']} {row['name']}" for _, row in goals.iterrows()
 ]
@@ -684,6 +742,7 @@ selected_goal_code = None
 if selected_goal_nav != "Усі стратегічні цілі":
     selected_goal_code = selected_goal_nav.split(" ")[0].strip()
 
+
 for _, goal in goals.iterrows():
     goal_code = str(goal["code"])
     goal_name = str(goal["name"])
@@ -692,7 +751,6 @@ for _, goal in goals.iterrows():
         continue
 
     goal_rows = df[df["code"].astype(str).str.startswith(goal_code)]
-
     tasks = goal_rows[goal_rows["object_type"] == "task"].copy()
     measures_all = goal_rows[goal_rows["object_type"] == "measure"].copy()
 
@@ -717,10 +775,12 @@ for _, goal in goals.iterrows():
     with st.expander(goal_label, expanded=expand_goal):
         st.progress(min(goal_percent / 100, 1.0))
 
-        goal_indicators = df[
+        goal_indicator_children = df[
             (df["object_type"] == "goal_indicator") &
             (df["code"].astype(str) == goal_code)
         ].copy()
+
+        goal_indicators = build_indicator_rows(goal, goal_indicator_children)
 
         if not goal_indicators.empty:
             st.markdown(
@@ -752,10 +812,12 @@ for _, goal in goals.iterrows():
 
             with st.expander(task_label, expanded=False):
 
-                task_indicators = df[
+                task_indicator_children = df[
                     (df["object_type"] == "task_indicator") &
                     (df["code"].astype(str) == task_code)
                 ].copy()
+
+                task_indicators = build_indicator_rows(task, task_indicator_children)
 
                 if not task_indicators.empty:
                     st.markdown(
@@ -842,13 +904,15 @@ for _, goal in goals.iterrows():
                     "Департамент"
                 ]
 
+                existing_show_cols = [col for col in show_cols if col in measures.columns]
+
                 st.markdown(
                     '<div class="section-title">Заходи</div>',
                     unsafe_allow_html=True
                 )
 
                 render_table(
-                    measures[show_cols],
+                    measures[existing_show_cols],
                     pending_cells=pending_cells,
                     min_width=2200
                 )
@@ -868,7 +932,7 @@ st.markdown(
     """
     <div class="footer">
         <strong>Розроблено департаментом стратегічного планування та макроекономічного прогнозування</strong><br>
-        Версія DEMO 0.9 | 2026 | Внутрішня система моніторингу стратегічного плану
+        Версія DEMO 1.0 | 2026 | Внутрішня система моніторингу стратегічного плану
     </div>
     """,
     unsafe_allow_html=True

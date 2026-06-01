@@ -357,6 +357,14 @@ st.markdown("""
     line-height: 1.6;
 }
 
+.decision-box {
+    background: #f8fafc;
+    border: 1px solid #d8dee9;
+    border-radius: 14px;
+    padding: 16px 18px;
+    margin: 12px 0;
+}
+
 div[data-testid="stMetric"] {
     background: rgba(255,255,255,0.88);
     border: 1px solid #d8dee9;
@@ -369,6 +377,14 @@ div.stButton > button {
     border-radius: 12px;
     padding: 12px 18px;
     font-weight: 800;
+}
+
+div[data-testid="stFormSubmitButton"] button {
+    border-radius: 12px;
+    padding: 12px 18px;
+    font-weight: 900;
+    background: #2563eb;
+    color: white;
 }
 
 .footer {
@@ -516,7 +532,7 @@ def load_logs(request_id):
         supabase
         .table("monitoring_logs")
         .select("*")
-        .eq("request_id", request_id)
+        .eq("request_id", int(request_id))
         .order("changed_at", desc=True)
         .execute()
     )
@@ -626,7 +642,7 @@ def generate_resolution(row, recommendation, quality_score):
         return (
             f"За результатами розгляду заявки ID {request_id} щодо заходу {code} "
             f"за {quarter} квартал {year} року, поданої підрозділом «{department}», "
-            f"подані моніторингові дані можуть бути погоджені. Заявка містить фактичне значення "
+            f"моніторингові дані можуть бути погоджені. Заявка містить фактичне значення "
             f"«{fact}», статус виконання «{status}», опис прогресу, контактні дані відповідальної особи "
             f"({person}) та підтвердні матеріали. Ознак критичної неповноти даних системою не виявлено."
         )
@@ -766,7 +782,8 @@ st.markdown(
             <div class="flow-step">2. Переглянути захід</div>
             <div class="flow-step">3. Перевірити факт і файли</div>
             <div class="flow-step">4. Переглянути системну резолюцію</div>
-            <div class="flow-step">5. Прийняти рішення</div>
+            <div class="flow-step">5. Обрати рішення</div>
+            <div class="flow-step">6. Натиснути одну кнопку підтвердження</div>
         </div>
     </div>
     """,
@@ -808,7 +825,10 @@ for col in required_cols:
 
 attention = build_attention_summary(df)
 
-st.markdown('<div class="card"><div class="card-title">Потребує уваги</div><div class="card-subtitle">Автоматичні попередження для адміністратора за всіма заявками.</div>', unsafe_allow_html=True)
+st.markdown(
+    '<div class="card"><div class="card-title">Потребує уваги</div><div class="card-subtitle">Автоматичні попередження для адміністратора за всіма заявками.</div>',
+    unsafe_allow_html=True
+)
 
 st.markdown('<div class="attention-grid">', unsafe_allow_html=True)
 
@@ -886,7 +906,10 @@ with st.expander("Переглянути записи, які потребуют
 
 st.markdown('</div>', unsafe_allow_html=True)
 
-st.markdown('<div class="card"><div class="card-title">Огляд заявок</div><div class="card-subtitle">Короткий стан черги адміністрування.</div>', unsafe_allow_html=True)
+st.markdown(
+    '<div class="card"><div class="card-title">Огляд заявок</div><div class="card-subtitle">Короткий стан черги адміністрування.</div>',
+    unsafe_allow_html=True
+)
 
 total_requests = len(df)
 waiting_count = len(df[df["approval_status"] == "Очікує погодження"])
@@ -949,11 +972,13 @@ with f4:
     selected_approval_status = st.selectbox(
         "Статус погодження",
         [
+            "Активні до розгляду",
             "Усі",
             "Очікує погодження",
-            "Погоджено",
-            "Повернуто на доопрацювання"
-        ]
+            "Повернуто на доопрацювання",
+            "Погоджено"
+        ],
+        index=0
     )
 
 q1, q2 = st.columns([1, 2])
@@ -995,7 +1020,15 @@ if selected_quarter != "Усі":
         filtered["quarter"].astype(str) == str(selected_quarter)
     ]
 
-if selected_approval_status != "Усі":
+if selected_approval_status == "Активні до розгляду":
+    filtered = filtered[
+        filtered["approval_status"].astype(str).isin([
+            "Очікує погодження",
+            "Повернуто на доопрацювання"
+        ])
+    ]
+
+elif selected_approval_status != "Усі":
     filtered = filtered[
         filtered["approval_status"].astype(str) == str(selected_approval_status)
     ]
@@ -1047,7 +1080,10 @@ queue_df = filtered[
 ].copy()
 
 if not queue_df.empty:
-    st.markdown('<div class="card"><div class="card-title">Черга на розгляд</div><div class="card-subtitle">Заявки, які потребують рішення адміністратора.</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="card"><div class="card-title">Черга на розгляд</div><div class="card-subtitle">Заявки, які потребують рішення адміністратора.</div>',
+        unsafe_allow_html=True
+    )
 
     queue_show = queue_df.rename(columns={
         "id": "ID",
@@ -1170,7 +1206,10 @@ st.progress(
 
 st.markdown('</div>', unsafe_allow_html=True)
 
-st.markdown('<div class="card"><div class="card-title">Автоматична службова резолюція</div><div class="card-subtitle">Система формує текст на основі якості заявки, статусу, фактичного значення, файлів і ризиків.</div>', unsafe_allow_html=True)
+st.markdown(
+    '<div class="card"><div class="card-title">Автоматична службова резолюція</div><div class="card-subtitle">Система формує текст на основі якості заявки, статусу, фактичного значення, файлів і ризиків.</div>',
+    unsafe_allow_html=True
+)
 
 st.markdown(
     f"""
@@ -1182,9 +1221,18 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+st.text_area(
+    "Текст резолюції для копіювання",
+    value=auto_resolution,
+    height=160,
+    key=f"auto_resolution_text_{selected_id}",
+    disabled=True
+)
+
 use_auto_resolution = st.checkbox(
     "Використати цей текст як коментар адміністратора",
-    value=False
+    value=False,
+    key=f"use_auto_resolution_{selected_id}"
 )
 
 st.markdown('</div>', unsafe_allow_html=True)
@@ -1350,13 +1398,17 @@ else:
 
 st.markdown('</div>', unsafe_allow_html=True)
 
-st.markdown('<div class="card"><div class="card-title">Рішення адміністратора</div><div class="card-subtitle">Додайте коментар і прийміть рішення щодо обраної заявки.</div>', unsafe_allow_html=True)
+st.markdown(
+    '<div class="card"><div class="card-title">Рішення адміністратора</div><div class="card-subtitle">Оберіть рішення та підтвердьте його однією кнопкою. Це прибирає ризик випадкового спрацювання не тієї дії.</div>',
+    unsafe_allow_html=True
+)
 
 st.markdown(
     f"""
     <div class="badge-wrap">
         <div class="badge {rec_badge}">Системна рекомендація: {recommendation}</div>
         <div class="badge">Заповненість: {round(quality_score / 6 * 100, 1)}%</div>
+        <div class="badge {status_badge}">Поточний статус: {approval_status}</div>
     </div>
     """,
     unsafe_allow_html=True
@@ -1364,74 +1416,75 @@ st.markdown(
 
 default_comment = auto_resolution if use_auto_resolution else clean(selected_row["admin_comment"])
 
-admin_comment = st.text_area(
-    "Коментар адміністратора",
-    value=default_comment,
-    height=140,
-    key=f"admin_comment_{selected_id}_{use_auto_resolution}"
-)
-
-c1, c2, c3 = st.columns(3)
-
-with c1:
-    approve = st.button("Погодити", use_container_width=True)
-
-with c2:
-    return_back = st.button("Повернути на доопрацювання", use_container_width=True)
-
-with c3:
-    keep_waiting = st.button("Залишити в очікуванні", use_container_width=True)
-
-if approve:
-    supabase.table("monitoring_requests").update({
-        "approval_status": "Погоджено",
-        "admin_comment": admin_comment
-    }).eq("id", selected_id).execute()
-
-    write_log(
-        selected_id,
-        "Погодження заявки",
-        approval_status,
-        "Погоджено",
-        admin_comment
+with st.form(key=f"admin_decision_form_{selected_id}"):
+    decision = st.radio(
+        "Оберіть рішення",
+        [
+            "Погодити",
+            "Повернути на доопрацювання",
+            "Залишити в очікуванні"
+        ],
+        horizontal=True,
+        key=f"decision_radio_{selected_id}"
     )
 
-    st.success("Заявку погоджено.")
-    st.rerun()
-
-if return_back:
-    supabase.table("monitoring_requests").update({
-        "approval_status": "Повернуто на доопрацювання",
-        "admin_comment": admin_comment
-    }).eq("id", selected_id).execute()
-
-    write_log(
-        selected_id,
-        "Повернення заявки на доопрацювання",
-        approval_status,
-        "Повернуто на доопрацювання",
-        admin_comment
+    st.markdown(
+        f"""
+        <div class="decision-box">
+            <b>Буде застосовано рішення:</b> {decision}
+        </div>
+        """,
+        unsafe_allow_html=True
     )
 
-    st.warning("Заявку повернуто на доопрацювання.")
-    st.rerun()
-
-if keep_waiting:
-    supabase.table("monitoring_requests").update({
-        "approval_status": "Очікує погодження",
-        "admin_comment": admin_comment
-    }).eq("id", selected_id).execute()
-
-    write_log(
-        selected_id,
-        "Заявку залишено в очікуванні",
-        approval_status,
-        "Очікує погодження",
-        admin_comment
+    admin_comment = st.text_area(
+        "Коментар адміністратора",
+        value=default_comment,
+        height=150,
+        key=f"admin_comment_form_{selected_id}_{use_auto_resolution}"
     )
 
-    st.info("Заявку залишено в очікуванні.")
-    st.rerun()
+    confirm_decision = st.form_submit_button(
+        "Застосувати рішення",
+        use_container_width=True
+    )
+
+if confirm_decision:
+    if decision == "Погодити":
+        new_status = "Погоджено"
+        action_text = "Погодження заявки"
+        success_text = "Заявку погоджено."
+
+    elif decision == "Повернути на доопрацювання":
+        new_status = "Повернуто на доопрацювання"
+        action_text = "Повернення заявки на доопрацювання"
+        success_text = "Заявку повернуто на доопрацювання."
+
+    else:
+        new_status = "Очікує погодження"
+        action_text = "Заявку залишено в очікуванні"
+        success_text = "Заявку залишено в очікуванні."
+
+    try:
+        supabase.table("monitoring_requests").update({
+            "approval_status": new_status,
+            "admin_comment": admin_comment
+        }).eq("id", int(selected_id)).execute()
+
+        write_log(
+            selected_id,
+            action_text,
+            approval_status,
+            new_status,
+            admin_comment
+        )
+
+        st.success(success_text)
+        st.rerun()
+
+    except Exception as e:
+        st.error("Не вдалося застосувати рішення.")
+        st.exception(e)
 
 st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1496,7 +1549,7 @@ st.markdown(
     """
     <div class="footer">
         Розроблено департаментом стратегічного планування та макроекономічного прогнозування<br>
-        Версія DEMO 1.2 | Кабінет адміністрування заявок моніторингу
+        Версія DEMO 1.3 | Кабінет адміністрування заявок моніторингу
     </div>
     """,
     unsafe_allow_html=True

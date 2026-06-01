@@ -1289,19 +1289,99 @@ filtered_waiting = len(filtered_measures[filtered_measures["has_waiting"] == Tru
 filtered_without_submission = len(filtered_measures[filtered_measures["has_submission"] == False]) if "has_submission" in filtered_measures.columns else 0
 filtered_risks = len(filtered_measures[filtered_measures["has_risks"] == True]) if "has_risks" in filtered_measures.columns else 0
 
-st.markdown('<div class="summary-box"><div class="summary-title">Результат після застосування фільтрів</div>', unsafe_allow_html=True)
+st.markdown(
+    """
+    <div class="summary-box">
+        <div class="summary-title">Результат після застосування фільтрів</div>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 
-summary_html = '<div class="summary-grid">'
-summary_html += make_summary_card("Стратегічних цілей", len(visible_goals))
-summary_html += make_summary_card("Завдань", len(visible_tasks))
-summary_html += make_summary_card("Заходів", len(filtered_measures))
-summary_html += make_summary_card("Виконання", f"{filtered_completion}%")
-summary_html += make_summary_card("Погоджено", filtered_approved)
-summary_html += make_summary_card("Очікує", filtered_waiting)
-summary_html += make_summary_card("Без подання", filtered_without_submission)
-summary_html += "</div>"
+s1, s2, s3, s4, s5, s6, s7 = st.columns(7)
 
-st.markdown(summary_html, unsafe_allow_html=True)
+with s1:
+    st.markdown(
+        f"""
+        <div class="summary-card">
+            <div class="summary-label">Стратегічних цілей</div>
+            <div class="summary-value">{len(visible_goals)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+with s2:
+    st.markdown(
+        f"""
+        <div class="summary-card">
+            <div class="summary-label">Завдань</div>
+            <div class="summary-value">{len(visible_tasks)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+with s3:
+    st.markdown(
+        f"""
+        <div class="summary-card">
+            <div class="summary-label">Заходів</div>
+            <div class="summary-value">{len(filtered_measures)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+with s4:
+    st.markdown(
+        f"""
+        <div class="summary-card">
+            <div class="summary-label">Виконання</div>
+            <div class="summary-value">{filtered_completion}%</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+with s5:
+    st.markdown(
+        f"""
+        <div class="summary-card">
+            <div class="summary-label">Погоджено</div>
+            <div class="summary-value">{filtered_approved}</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+with s6:
+    st.markdown(
+        f"""
+        <div class="summary-card">
+            <div class="summary-label">Очікує</div>
+            <div class="summary-value">{filtered_waiting}</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+with s7:
+    st.markdown(
+        f"""
+        <div class="summary-card">
+            <div class="summary-label">Без подання</div>
+            <div class="summary-value">{filtered_without_submission}</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+st.caption(
+    f"Рік: {selected_year}. Квартал: {selected_quarter}. "
+    f"Департамент: {selected_dep}. Режим: {measure_mode}. "
+    f"Заходів із ризиками: {filtered_risks}."
+)
 
 st.caption(
     f"Рік: {selected_year}. Квартал: {selected_quarter}. "

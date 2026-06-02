@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from supabase import create_client
-from datetime import datetime
 import re
 
 st.set_page_config(page_title="Оцінка МіО", layout="wide")
@@ -44,14 +43,9 @@ st.markdown("""
     color: #0f172a;
     margin-bottom: 7px;
 }
-.header-subtitle {
+.header-subtitle, .score-note {
     font-size: 15px;
     color: #475569;
-    line-height: 1.55;
-}
-.score-note {
-    color: #475569;
-    font-size: 14px;
     line-height: 1.55;
 }
 div[data-testid="stMetric"] {
@@ -103,7 +97,6 @@ def load_strat_matrix():
     current_goal_name = ""
     current_task_code = ""
     current_task_name = ""
-
     object_types = []
     parent_goal_codes = []
     parent_goal_names = []
@@ -117,26 +110,26 @@ def load_strat_matrix():
         dots = code.count(".")
 
         if "стратегічна ціль" in marker:
-            obj_type = "goal"
+            object_type = "goal"
             current_goal_code = code
             current_goal_name = name
             current_task_code = ""
             current_task_name = ""
         elif "завдання" in marker:
-            obj_type = "task"
+            object_type = "task"
             current_task_code = code
             current_task_name = name
         elif "заход" in marker or dots >= 3:
-            obj_type = "measure"
+            object_type = "measure"
         else:
             if current_task_code:
-                obj_type = "task_indicator"
+                object_type = "task_indicator"
             elif current_goal_code:
-                obj_type = "goal_indicator"
+                object_type = "goal_indicator"
             else:
-                obj_type = "other"
+                object_type = "other"
 
-        object_types.append(obj_type)
+        object_types.append(object_type)
         parent_goal_codes.append(current_goal_code)
         parent_goal_names.append(current_goal_name)
         parent_task_codes.append(current_task_code)
@@ -165,38 +158,23 @@ def raw_value(value):
     return str(value).strip()
 
 
-def normalize_empty(value):
+def is_empty(value):
     text = raw_value(value).lower().replace(" ", "")
     return text in ["", "nan", "none", "н.д.", "нд", "-", "—"]
 
 
 def parse_number(value):
     text = raw_value(value)
-    if normalize_empty(text):
+    if is_empty(text):
         return None
-
-    text = text.replace("\u00a0", " ").replace("%", "")
-    text = text.replace(",", ".")
+    text = text.replace("\u00a0", " ").replace("%", "").replace(",", ".")
     text = re.sub(r"[^0-9.\-]", "", text)
-
     if text in ["", ".", "-", "-."]:
         return None
-
     try:
         return float(text)
     except ValueError:
         return None
-
-
-def is_yes_no_unit(unit):
-    unit_text = raw_value(unit).lower()
-    return "так/ні" in unit_text or ("так" in unit_text and "ні" in unit_text)
-
-
-def is_positive_yes(value):
-    text = raw_value(value).lower()
-    yes_values = ["так", "yes", "y", "true", "1", "виконано"]
-    return text in yes_values or text.startswith("так")
 
 
 def clamp(value, low=0, high=120):
@@ -205,8 +183,20 @@ def clamp(value, low=0, high=120):
     return max(low, min(high, float(value)))
 
 
+def is_yes_no_unit(unit):
+    text = raw_value(unit).lower()
+    return "так/ні" in text or ("так" in text and "ні" in text)
+
+
+def is_positive_yes(value):
+    text = raw_value(value).lower()
+    return text in ["так", "yes", "y", "true", "1", "виконано"] or text.startswith("так")
+
+
 def status_score(status):
-    status_text = raw_value(status).lower()
+    text = raw_value(status).lower()
+    if text == "виконано частково":
+        return 60
     mapping = {
         "виконано": 100,
         "виконано частково": 60,
@@ -215,14 +205,9 @@ def status_score(status):
         "прострочено": 25,
         "не розпочато": 0,
     }
-
-    if status_text == "виконано частково":
-        return 60
-
     for key, value in mapping.items():
-        if key in status_text:
+        if key in text:
             return value
-
     return None
 
 
@@ -250,12 +235,11 @@ def score_risk(level):
     return "Невизначений"
 
 
-def filter_monitoring(monitoring_df, selected_year, selected_quarter, only_approved=True):
+def filter_monitoring(monitoring_df, selected_year, selected_quarter):
     if monitoring_df.empty:
         return pd.DataFrame()
 
     df = monitoring_df.copy()
-
     required_cols = [
         "year", "quarter", "approval_status", "strat_code", "status",
         "numeric_value", "progress_text", "risks", "department", "submitted_at"
@@ -270,8 +254,7 @@ def filter_monitoring(monitoring_df, selected_year, selected_quarter, only_appro
         q = selected_quarter.replace(" квартал", "").strip()
         df = df[df["quarter"].astype(str).str.strip() == q].copy()
 
-    if only_approved:
-        df = df[df["approval_status"].astype(str).str.strip() == "Погоджено"].copy()
+    df = df[df["approval_status"].astype(str).str.strip() == "Погоджено"].copy()
 
     if "submitted_at" in df.columns:
         df["_submitted_at_dt"] = pd.to_datetime(df["submitted_at"], errors="coerce")
@@ -304,16 +287,13 @@ def calculate_measure_score(row, monitoring_records, selected_year):
         }
 
     last = records.iloc[-1]
-    fact_value_raw = last.get("numeric_value", "")
-    fact_num = parse_number(fact_value_raw)
+    fact_raw = last.get("numeric_value", "")
+    fact_num = parse_number(fact_raw)
     s_score = status_score(last.get("status", ""))
     has_risks = raw_value(last.get("risks", "")) != ""
 
-    indicator_score = None
-    method_note = ""
-
     if is_yes_no_unit(unit):
-        indicator_score = 100 if is_positive_yes(fact_value_raw) or raw_value(last.get("status", "")).lower() == "виконано" else 0
+        indicator_score = 100 if is_positive_yes(fact_raw) or raw_value(last.get("status", "")).lower() == "виконано" else 0
         method_note = "Індикатор так/ні: так = 100%, ні = 0%"
     elif fact_num is not None and target_num not in [None, 0]:
         indicator_score = clamp((fact_num / target_num) * 100)
@@ -344,7 +324,7 @@ def calculate_measure_score(row, monitoring_records, selected_year):
     level = score_level(final_score)
 
     return {
-        "fact_value": fact_value_raw,
+        "fact_value": fact_raw,
         "indicator_score": round(indicator_score, 1) if indicator_score is not None else None,
         "status_score": s_score,
         "measure_score": final_score,
@@ -363,10 +343,10 @@ def build_evaluation_table(strat_df, monitoring_df, selected_year, selected_quar
         measures = measures[measures["department"].astype(str).str.strip() == selected_department].copy()
 
     plan_col = f"target_{selected_year}"
-    measures["is_active_year"] = measures[plan_col].apply(lambda value: not normalize_empty(value))
+    measures["is_active_year"] = measures[plan_col].apply(lambda value: not is_empty(value))
     measures = measures[measures["is_active_year"]].copy()
 
-    filtered_monitoring = filter_monitoring(monitoring_df, selected_year, selected_quarter, only_approved=True)
+    filtered_monitoring = filter_monitoring(monitoring_df, selected_year, selected_quarter)
 
     rows = []
     for _, row in measures.iterrows():
@@ -437,13 +417,10 @@ def aggregate_scores(evaluation_df):
 def build_integral_score(goal_scores, task_scores, evaluation_df):
     if evaluation_df.empty:
         return 0.0
-
     measures_score = evaluation_df["measure_score"].mean()
     tasks_score = task_scores["task_score"].mean() if not task_scores.empty else 0
     goals_score = goal_scores["goal_score"].mean() if not goal_scores.empty else 0
-
-    integral = measures_score * 0.45 + tasks_score * 0.35 + goals_score * 0.20
-    return round(float(integral), 1)
+    return round(float(measures_score * 0.45 + tasks_score * 0.35 + goals_score * 0.20), 1)
 
 
 def build_analytical_note(evaluation_df, task_scores, goal_scores, integral_score):
@@ -454,7 +431,6 @@ def build_analytical_note(evaluation_df, task_scores, goal_scores, integral_scor
     approved = int(evaluation_df["has_approved_data"].sum())
     without_data = total - approved
     risk_count = int(evaluation_df["has_risks"].sum())
-
     problem_measures = evaluation_df[evaluation_df["measure_score"] < 50].copy()
     best_goals = goal_scores.sort_values("goal_score", ascending=False).head(3)
     weak_goals = goal_scores.sort_values("goal_score", ascending=True).head(3)
@@ -467,9 +443,7 @@ def build_analytical_note(evaluation_df, task_scores, goal_scores, integral_scor
     )
 
     if risk_count > 0:
-        text.append(
-            f"У {risk_count} заходах зазначено ризики або проблеми, тому для них застосовано понижувальну поправку до оцінки."
-        )
+        text.append(f"У {risk_count} заходах зазначено ризики або проблеми, тому для них застосовано понижувальну поправку до оцінки.")
 
     if not best_goals.empty:
         best = "; ".join([f"{r.goal_code} — {r.goal_score}%" for _, r in best_goals.iterrows()])
@@ -498,7 +472,7 @@ st.markdown(
     <div class="header-box">
         <div class="header-title">Оцінка моніторингу та результативності</div>
         <div class="header-subtitle">
-            Адаптована сторінка під логіку МіО: захід → завдання → стратегічна ціль → інтегральна оцінка.
+            Сторінка для розрахунку оцінки виконання стратегічного плану за логікою: захід → завдання → стратегічна ціль → інтегральна оцінка.
             У розрахунок включаються лише погоджені моніторингові дані. Непогоджені заявки залишаються частиною процесу адміністрування, але не впливають на оцінку.
         </div>
     </div>
@@ -520,11 +494,7 @@ with f2:
 with f3:
     selected_department = st.selectbox("Департамент", ["Усі"] + departments)
 with f4:
-    selected_view = st.selectbox(
-        "Режим перегляду",
-        ["Загальний дашборд", "Стратегічні цілі", "Завдання", "Заходи", "Методика"]
-    )
-
+    selected_view = st.selectbox("Режим перегляду", ["Загальний дашборд", "Стратегічні цілі", "Завдання", "Заходи", "Методика"])
 
 evaluation_df = build_evaluation_table(strat_df, monitoring_df, selected_year, selected_quarter, selected_department)
 task_scores, goal_scores = aggregate_scores(evaluation_df)
@@ -575,7 +545,7 @@ if selected_view == "Методика":
         7. Оцінка завдання = середнє значення оцінок його заходів.<br>
         8. Оцінка стратегічної цілі = середнє значення оцінок її завдань.<br>
         9. Інтегральна оцінка = 45% оцінка заходів + 35% оцінка завдань + 20% оцінка стратегічних цілей.<br><br>
-        Це не копія Excel-моделі ООН, а адаптація її під наявну структуру системи: стратегічна матриця + Supabase-подання + погодження.
+        Ця сторінка використовує внутрішню логіку розрахунку на основі стратегічної матриці, погоджених подань і ризиків.
         </div>
         """,
         unsafe_allow_html=True
@@ -632,6 +602,7 @@ elif selected_view == "Загальний дашборд":
             )
             fig.update_traces(textposition="outside")
             st.plotly_chart(fig, use_container_width=True)
+
     with c4:
         if not evaluation_df.empty:
             dep_df = evaluation_df.groupby("department", dropna=False).agg(
@@ -671,12 +642,7 @@ elif selected_view == "Стратегічні цілі":
             "risk_level": "Рівень ризику",
         })
         st.dataframe(show, use_container_width=True, hide_index=True)
-        st.download_button(
-            "Завантажити оцінку стратегічних цілей CSV",
-            data=prepare_download(show),
-            file_name=f"goal_scores_{selected_year}.csv",
-            mime="text/csv",
-        )
+        st.download_button("Завантажити оцінку стратегічних цілей CSV", data=prepare_download(show), file_name=f"goal_scores_{selected_year}.csv", mime="text/csv")
 
 elif selected_view == "Завдання":
     st.subheader("Оцінка завдань")
@@ -696,12 +662,7 @@ elif selected_view == "Завдання":
             "risk_level": "Рівень ризику",
         })
         st.dataframe(show, use_container_width=True, hide_index=True)
-        st.download_button(
-            "Завантажити оцінку завдань CSV",
-            data=prepare_download(show),
-            file_name=f"task_scores_{selected_year}.csv",
-            mime="text/csv",
-        )
+        st.download_button("Завантажити оцінку завдань CSV", data=prepare_download(show), file_name=f"task_scores_{selected_year}.csv", mime="text/csv")
 
 else:
     st.subheader("Оцінка заходів")
@@ -741,17 +702,12 @@ else:
             "method_note": "Метод розрахунку",
         })
         st.dataframe(show, use_container_width=True, hide_index=True)
-        st.download_button(
-            "Завантажити оцінку заходів CSV",
-            data=prepare_download(show),
-            file_name=f"measure_scores_{selected_year}.csv",
-            mime="text/csv",
-        )
+        st.download_button("Завантажити оцінку заходів CSV", data=prepare_download(show), file_name=f"measure_scores_{selected_year}.csv", mime="text/csv")
 
 st.markdown(
     """
     <div class="footer">
-        Версія DEMO 1.3 | Модуль оцінки МіО | Адаптація під методологічну логіку стратегічного моніторингу
+        Версія DEMO 1.3 | Модуль оцінки МіО | Внутрішня логіка стратегічного моніторингу
     </div>
     """,
     unsafe_allow_html=True

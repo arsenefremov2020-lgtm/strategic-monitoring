@@ -419,33 +419,6 @@ td.risk-cell {
 .footer strong {
     color: #334155;
 }
-
-div[data-testid="stSelectbox"] {
-    background: #ffffff;
-    border: 1.5px solid #cbd5e1;
-    border-radius: 14px;
-    padding: 10px 12px 12px 12px;
-    box-shadow: 0 5px 14px rgba(15, 23, 42, 0.07);
-}
-
-div[data-testid="stSelectbox"] label {
-    color: #0f172a !important;
-    font-weight: 850 !important;
-    font-size: 14px !important;
-    margin-bottom: 6px !important;
-}
-
-div[data-baseweb="select"] > div {
-    background-color: #f8fafc !important;
-    border: 1px solid #94a3b8 !important;
-    border-radius: 10px !important;
-    min-height: 46px !important;
-}
-
-div[data-baseweb="select"] span {
-    color: #0f172a !important;
-    font-weight: 650 !important;
-}
 </style>
 """, unsafe_allow_html=True)
 

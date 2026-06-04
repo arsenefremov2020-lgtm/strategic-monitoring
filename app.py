@@ -1055,7 +1055,6 @@ st.markdown(
         <div class="header-title">Моніторинг виконання Стратегічного плану на 2026-2028 роки</div>
         <div class="header-subtitle">
             Інтерактивна демо-версія системи для проведення моніторингу, оцінки результатів та актуалізації Стратегічного плану на 2026-2028 роки
-   
         </div>
         <div class="system-status">
             <div class="status-pill">● Supabase: активний</div>

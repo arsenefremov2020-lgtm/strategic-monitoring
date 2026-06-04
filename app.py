@@ -1078,7 +1078,7 @@ st.markdown(
 
 st.page_link(
     "pages/1_Моніторинг_виконання.py",
-    label="Перейти до внесення моніторингових даних",
+    label="Перейти до внесення відомостей",
     icon="🖊️"
 )
 
@@ -1087,11 +1087,11 @@ st.markdown(
     <div class="flow-box">
         <div class="flow-title">Маршрут моніторингових даних</div>
         <div class="flow-steps">
-            <div class="flow-step">📝 Подання департаментом</div>
-            <div class="flow-step">🔎 Перевірка адміністратором</div>
-            <div class="flow-step">✅ Погодження</div>
-            <div class="flow-step">📊 Відображення у стратегічному плані</div>
-            <div class="flow-step">📈 Аналітика виконання</div>
+            <div class="flow-step">📝 Подання відомостей</div>
+            <div class="flow-step">🔎 Збір та обробка</div>
+            <div class="flow-step">✅ Узгодження</div>
+            <div class="flow-step">📊 Погодження відомостей</div>
+            <div class="flow-step">📈 Оцінка виконання</div>
         </div>
     </div>
     """,

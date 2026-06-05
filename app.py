@@ -285,8 +285,22 @@ st.markdown(
 div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
 div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div,
 div[data-testid="stTextInput"] input {
-    background-color: #eef4fb !important;
-    border-color: #cbd5e1 !important;
+    background-color: #dcecff !important;
+    border: 1px solid #9db9dd !important;
+    box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.08) !important;
+}
+
+div[data-testid="stSelectbox"] div[data-baseweb="select"] > div:hover,
+div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div:hover,
+div[data-testid="stTextInput"] input:hover {
+    border-color: #6f95c8 !important;
+}
+
+div[data-testid="stSelectbox"] div[data-baseweb="select"] > div:focus-within,
+div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div:focus-within,
+div[data-testid="stTextInput"] input:focus {
+    border-color: #2563eb !important;
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.18) !important;
 }
 
 div[data-testid="stPageLink"] a {
@@ -383,11 +397,11 @@ table.custom-table th {
     color: #111827;
     padding: 9px 10px;
     border: 1px solid #d1d5db;
-    text-align: left;
+    text-align: center;
     vertical-align: middle;
     white-space: normal;
     font-weight: 850;
-    line-height: 1.25;
+    line-height: 1.22;
 }
 
 table.custom-table thead th {
@@ -404,11 +418,12 @@ table.custom-table thead tr:nth-child(2) th {
 table.custom-table td {
     padding: 8px 10px;
     border: 1px solid #d1d5db;
-    vertical-align: top;
+    vertical-align: middle;
+    text-align: center;
     white-space: normal;
     word-wrap: break-word;
     overflow-wrap: break-word;
-    line-height: 1.35;
+    line-height: 1.32;
 }
 
 table.custom-table tr:nth-child(even) {
@@ -473,7 +488,7 @@ td.risk-cell {
 .col-indicator { width: 430px; }
 .col-unit { width: 180px; }
 .col-year { width: 130px; }
-.col-long { width: 330px; }
+.col-long { width: 300px; }
 .col-resp { width: 210px; }
 .col-status { width: 160px; }
 
@@ -623,6 +638,31 @@ def load_strat_matrix():
             return data.iloc[:, index]
         return pd.Series([""] * len(data), index=data.index)
 
+    def find_col_by_keywords(keywords):
+        keywords = [k.lower() for k in keywords]
+
+        header_area = source_df.iloc[:7, :].copy()
+
+        for col_idx in range(source_df.shape[1]):
+            joined = " ".join(
+                raw_value(header_area.iloc[row_idx, col_idx]).lower()
+                for row_idx in range(len(header_area))
+            )
+
+            if all(keyword in joined for keyword in keywords):
+                return col_idx
+
+        return None
+
+
+    def safe_keyword_col(keywords):
+        col_idx = find_col_by_keywords(keywords)
+
+        if col_idx is None:
+            return pd.Series([""] * len(data), index=data.index)
+
+        return safe_col(col_idx)
+
     result = pd.DataFrame({
         # базова структура
         "type_marker": safe_col(1),       # B
@@ -651,8 +691,11 @@ def load_strat_matrix():
         "resp_co_1": safe_col(18),          # S
         "resp_co_2": safe_col(19),          # T
 
-        # резерв / майбутній заступник / службова колонка
-        "deputy_minister_raw": safe_col(20),        # U, якщо є
+        # службові / майбутні колонки
+        "deputy_minister_raw": pd.Series([""] * len(data), index=data.index),
+        "measure_period_years": safe_keyword_col(["період", "років"]),
+        "measure_start_date": safe_keyword_col(["початкова", "дата"]),
+        "measure_end_date": safe_keyword_col(["кінцева", "дата"]),
 
         # сумісність зі старим кодом
         "department": safe_col(17)
@@ -1082,10 +1125,18 @@ def build_quarter_data(monitoring_df):
 def get_quarter_columns(selected_years, selected_quarters):
     columns = []
 
+    quarter_map = {
+        "I": "Q1",
+        "II": "Q2",
+        "III": "Q3",
+        "IV": "Q4"
+    }
+
     for year in selected_years:
         for quarter in selected_quarters:
             q = str(quarter).replace(" квартал", "").strip()
-            columns.append((year, q, f"{year} {q} квартал"))
+            q_label = quarter_map.get(q, q)
+            columns.append((year, q, f"{q_label} {year}"))
 
     return columns
 
@@ -1180,59 +1231,55 @@ def build_indicator_rows(parent_row, child_rows):
 
 
 def render_indicator_table(rows):
-    headers = [
-        "Індикатор",
-        "Одиниці виміру",
-        ("2021", "базовий рівень (факт)"),
-        ("2024", "звіт"),
-        ("2025", "факт"),
-        "Проміжний цільовий орієнтир на кінець 2028 року",
-        (
-            "Цільовий орієнтир на кінець 2034 року для цілей і завдань",
-            "відповідає цілі, визначеній в НЕС-2030, ЦСР-2030"
-        ),
-        "Джерело даних (Глобальний рівень)",
-        "Джерело даних (Національний рівень)",
-        ("Відповідальні самостійні структурні підрозділи", "Головний"),
-        ("Відповідальні самостійні структурні підрозділи", "Співвиконавець 1"),
-        ("Відповідальні самостійні структурні підрозділи", "Співвиконавець 2")
-    ]
+    if not rows:
+        st.info("Індикаторів не знайдено.")
+        return
 
-    col_classes = [
-        "col-indicator",
-        "col-unit",
-        "col-year",
-        "col-year",
-        "col-year",
-        "col-long",
-        "col-long",
-        "col-long",
-        "col-long",
-        "col-resp",
-        "col-resp",
-        "col-resp"
-    ]
-
-    prepared_rows = []
+    html = """
+    <div class="table-scroll">
+    <table class="custom-table" style="min-width:2550px;">
+    <thead>
+        <tr>
+            <th class="col-indicator" rowspan="2">Індикатор</th>
+            <th class="col-unit" rowspan="2">Одиниці виміру</th>
+            <th class="col-year" rowspan="2">2021<br><span style='font-size:11px;color:#475569;'>базовий рівень (факт)</span></th>
+            <th class="col-year" rowspan="2">2024<br><span style='font-size:11px;color:#475569;'>звіт</span></th>
+            <th class="col-year" rowspan="2">2025<br><span style='font-size:11px;color:#475569;'>факт</span></th>
+            <th class="col-long" rowspan="2">Проміжний цільовий орієнтир на кінець 2028 року</th>
+            <th class="col-long" rowspan="2">Цільовий орієнтир на кінець 2034 року для цілей і завдань</th>
+            <th class="col-long" colspan="2">Джерело даних</th>
+            <th class="col-resp" colspan="3">Відповідальні самостійні структурні підрозділи</th>
+        </tr>
+        <tr>
+            <th class="col-long">Глобальний рівень</th>
+            <th class="col-long">Національний рівень</th>
+            <th class="col-resp">Головний</th>
+            <th class="col-resp">Співвиконавець 1</th>
+            <th class="col-resp">Співвиконавець 2</th>
+        </tr>
+    </thead>
+    <tbody>
+    """
 
     for row in rows:
-        prepared_rows.append([
-            {"value": row[0], "mode": "fixed"},
-            {"value": row[1], "mode": "fixed"},
-            {"value": row[2], "mode": "nowrap"},
-            {"value": row[3], "mode": "nowrap"},
-            {"value": row[4], "mode": "nowrap"},
-            {"value": row[5], "mode": "fixed"},
-            {"value": row[6], "mode": "fixed"},
-            {"value": row[7], "mode": "fixed"},
-            {"value": row[8], "mode": "fixed"},
-            {"value": row[9], "mode": "nowrap"},
-            {"value": row[10], "mode": "nowrap"},
-            {"value": row[11], "mode": "nowrap"}
-        ])
+        html += "<tr>"
+        html += f"<td class='col-indicator'>{make_cell(row[0], 'fixed')}</td>"
+        html += f"<td class='col-unit'>{make_cell(row[1], 'fixed')}</td>"
+        html += f"<td class='col-year'>{make_cell(row[2], 'nowrap')}</td>"
+        html += f"<td class='col-year'>{make_cell(row[3], 'nowrap')}</td>"
+        html += f"<td class='col-year'>{make_cell(row[4], 'nowrap')}</td>"
+        html += f"<td class='col-long'>{make_cell(row[5], 'fixed')}</td>"
+        html += f"<td class='col-long'>{make_cell(row[6], 'fixed')}</td>"
+        html += f"<td class='col-long'>{make_cell(row[7], 'fixed')}</td>"
+        html += f"<td class='col-long'>{make_cell(row[8], 'fixed')}</td>"
+        html += f"<td class='col-resp'>{make_cell(row[9], 'nowrap')}</td>"
+        html += f"<td class='col-resp'>{make_cell(row[10], 'nowrap')}</td>"
+        html += f"<td class='col-resp'>{make_cell(row[11], 'nowrap')}</td>"
+        html += "</tr>"
 
-    render_table(headers, prepared_rows, col_classes, min_width=2700)
+    html += "</tbody></table></div>"
 
+    st.markdown(html, unsafe_allow_html=True)
 
 def build_measure_rows(measures, monitoring_df, quarter_data, selected_years, selected_quarters):
     rows = []
@@ -1293,72 +1340,91 @@ def build_measure_rows(measures, monitoring_df, quarter_data, selected_years, se
 def render_measure_table(measures, monitoring_df, quarter_data, selected_years, selected_quarters):
     quarter_columns = get_quarter_columns(selected_years, selected_quarters)
 
-    headers = [
-        "Код",
-        "Захід",
-        "Тип продукту",
-        "Індикатор",
-        "Одиниці виміру",
-        ("2021", "базовий рівень (факт)"),
-        ("2024", "звіт"),
-        ("2025", "факт"),
-        ("2026", "цільовий орієнтир для заходів на рік"),
-        ("2027", "цільовий орієнтир для заходів на рік"),
-        ("2028", "цільовий орієнтир для заходів на рік"),
-        "Підстава для включення до стратегічного плану (Глобальний рівень)",
-        "Підстава для включення до стратегічного плану (Національний рівень)",
-        ("Відповідальні самостійні структурні підрозділи", "Головний"),
-        ("Відповідальні самостійні структурні підрозділи", "Співвиконавець 1"),
-        ("Відповідальні самостійні структурні підрозділи", "Співвиконавець 2"),
-        "Заступник Міністра"
-    ]
+    html = """
+    <div class="table-scroll measures-scroll">
+    <table class="custom-table" style="min-width:3900px;">
+    <thead>
+        <tr>
+            <th class="col-code" rowspan="2">Код</th>
+            <th class="col-measure" rowspan="2">Захід</th>
+            <th class="col-product" rowspan="2">Тип продукту</th>
+            <th class="col-indicator" rowspan="2">Індикатор</th>
+            <th class="col-unit" rowspan="2">Одиниці виміру</th>
+            <th class="col-year" rowspan="2">2021<br><span style='font-size:11px;color:#475569;'>базовий рівень (факт)</span></th>
+            <th class="col-year" rowspan="2">2024<br><span style='font-size:11px;color:#475569;'>звіт</span></th>
+            <th class="col-year" rowspan="2">2025<br><span style='font-size:11px;color:#475569;'>факт</span></th>
+    """
 
-    for _, _, label in quarter_columns:
-        headers.append(label)
+    for year in [2026, 2027, 2028]:
+        html += f"<th class='col-year' rowspan='2'>{year}<br><span style='font-size:11px;color:#475569;'>цільовий орієнтир для заходів на рік</span></th>"
 
-    headers.append("Статус")
+        year_quarters = [label for y, _, label in quarter_columns if int(y) == year]
 
-    col_classes = [
-        "col-code",
-        "col-measure",
-        "col-product",
-        "col-indicator",
-        "col-unit",
-        "col-year",
-        "col-year",
-        "col-year",
-        "col-year",
-        "col-year",
-        "col-year",
-        "col-long",
-        "col-long",
-        "col-resp",
-        "col-resp",
-        "col-resp",
-        "col-resp"
-    ]
+        for label in year_quarters:
+            html += f"<th class='col-year' rowspan='2'>{escape(label)}</th>"
 
-    for _ in quarter_columns:
-        col_classes.append("col-year")
+    html += """
+            <th class="col-long" colspan="2">Підстава для включення до стратегічного плану</th>
+            <th class="col-resp" colspan="3">Відповідальні самостійні структурні підрозділи</th>
+            <th class="col-resp" rowspan="2">Заступник Міністра</th>
+            <th class="col-year" rowspan="2">Період дії заходу в межах планового періоду, років</th>
+            <th class="col-year" rowspan="2">Початкова дата</th>
+            <th class="col-year" rowspan="2">Кінцева дата</th>
+        </tr>
+        <tr>
+            <th class="col-long">Глобальний рівень</th>
+            <th class="col-long">Національний рівень</th>
+            <th class="col-resp">Головний</th>
+            <th class="col-resp">Співвиконавець 1</th>
+            <th class="col-resp">Співвиконавець 2</th>
+        </tr>
+    </thead>
+    <tbody>
+    """
 
-    col_classes.append("col-status")
+    for _, measure in measures.iterrows():
+        code = raw_value(measure.get("code", ""))
 
-    rows = build_measure_rows(
-        measures,
-        monitoring_df,
-        quarter_data,
-        selected_years,
-        selected_quarters
-    )
+        html += "<tr>"
+        html += f"<td class='col-code'>{make_cell(measure.get('code', ''), 'nowrap')}</td>"
+        html += f"<td class='col-measure'>{make_cell(strip_leading_code(measure.get('name', ''), code), 'fixed')}</td>"
+        html += f"<td class='col-product'>{make_cell(measure.get('product_type', ''), 'fixed')}</td>"
+        html += f"<td class='col-indicator'>{make_cell(measure.get('indicator', ''), 'fixed')}</td>"
+        html += f"<td class='col-unit'>{make_cell(measure.get('unit', ''), 'fixed')}</td>"
+        html += f"<td class='col-year'>{make_cell(measure.get('base_2021', ''), 'nowrap')}</td>"
+        html += f"<td class='col-year'>{make_cell(measure.get('fact_2024', ''), 'nowrap')}</td>"
+        html += f"<td class='col-year'>{make_cell(measure.get('fact_2025', ''), 'nowrap')}</td>"
 
-    render_table(
-        headers,
-        rows,
-        col_classes,
-        min_width=3400,
-        scroll_class="table-scroll measures-scroll"
-    )
+        for year in [2026, 2027, 2028]:
+            html += f"<td class='col-year'>{make_cell(measure.get(f'target_{year}', ''), 'nowrap')}</td>"
 
+            year_quarters = [(y, q, label) for y, q, label in quarter_columns if int(y) == year]
+
+            for y, q, _ in year_quarters:
+                key = f"{y}_{q}"
+                item = quarter_data.get(code, {}).get(key, None)
+
+                if item is None:
+                    html += "<td class='col-year status-empty'></td>"
+                else:
+                    value = item.get("value", "")
+                    cell_class = item.get("class", "status-empty")
+                    html += f"<td class='col-year {cell_class}'>{make_cell(value, 'nowrap')}</td>"
+
+        html += f"<td class='col-long'>{make_cell(measure.get('source_global', ''), 'fixed')}</td>"
+        html += f"<td class='col-long'>{make_cell(measure.get('source_national', ''), 'fixed')}</td>"
+        html += f"<td class='col-resp'>{make_cell(measure.get('resp_main', ''), 'nowrap')}</td>"
+        html += f"<td class='col-resp'>{make_cell(measure.get('resp_co_1', ''), 'nowrap')}</td>"
+        html += f"<td class='col-resp'>{make_cell(measure.get('resp_co_2', ''), 'nowrap')}</td>"
+        html += f"<td class='col-resp'>{make_cell('', 'nowrap')}</td>"
+        html += f"<td class='col-year'>{make_cell(measure.get('measure_period_years', ''), 'nowrap')}</td>"
+        html += f"<td class='col-year'>{make_cell(measure.get('measure_start_date', ''), 'nowrap')}</td>"
+        html += f"<td class='col-year'>{make_cell(measure.get('measure_end_date', ''), 'nowrap')}</td>"
+        html += "</tr>"
+
+    html += "</tbody></table></div>"
+
+    st.markdown(html, unsafe_allow_html=True)
 
 # ------------------------------------------------------------
 # Interface state
@@ -1373,7 +1439,6 @@ def default_state():
         "status_mode_main": "Усі відомості",
         "selected_goal_codes_main": [],
         "selected_product_types_main": [],
-        "selected_deputies_main": [],
         "search_main": ""
     }
 
@@ -1389,7 +1454,6 @@ def reset_main_filters():
     st.session_state.status_mode_main = "Усі відомості"
     st.session_state.selected_goal_codes_main = []
     st.session_state.selected_product_types_main = []
-    st.session_state.selected_deputies_main = []
     st.session_state.search_main = ""
     st.session_state.expand_all_goals = False
 
@@ -1639,7 +1703,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-f1, f2, f3 = st.columns([1.25, 1.2, 1.25])
+f1, f2, f3, f4 = st.columns([1.25, 0.8, 0.8, 1.15])
 
 with f1:
     selected_ssp_indices = st.multiselect(
@@ -1650,36 +1714,41 @@ with f1:
     )
 
 with f2:
+    st.markdown(
+        "<div style='font-size:13px;font-weight:850;color:#334155;margin-bottom:4px;'>Звітний період (рік, квартал)</div>",
+        unsafe_allow_html=True
+    )
     selected_years = st.multiselect(
         "Рік",
         year_options,
         key="selected_years_main",
-        placeholder="Оберіть рік"
+        placeholder="Рік",
+        label_visibility="collapsed"
     )
 
 with f3:
+    st.markdown(
+        "<div style='font-size:13px;font-weight:850;color:#334155;margin-bottom:4px;'>&nbsp;</div>",
+        unsafe_allow_html=True
+    )
     selected_quarters = st.multiselect(
         "Квартал",
         quarter_options,
         key="selected_quarters_main",
-        placeholder="Оберіть квартал"
+        placeholder="Квартал",
+        label_visibility="collapsed"
     )
 
-f4, f5 = st.columns([1.1, 1.7])
-
 with f4:
-    status_mode = st.selectbox(
+    selected_status_mode = st.selectbox(
         "Режим перегляду даних",
         status_options,
         key="status_mode_main"
     )
 
-with f5:
-    st.markdown("&nbsp;", unsafe_allow_html=True)
-
 st.markdown('<div class="filter-subtitle">Додаткові параметри</div>', unsafe_allow_html=True)
 
-g1, g2, g3 = st.columns([1.2, 1.1, 1.4])
+g1, g2, g3 = st.columns([1.15, 1.05, 1.65])
 
 with g1:
     selected_goal_labels = st.multiselect(
@@ -1698,19 +1767,18 @@ with g2:
     )
 
 with g3:
-    selected_deputies = st.multiselect(
-        "За заступником Міністра",
-        deputy_options,
-        key="selected_deputies_main",
-        placeholder="Оберіть заступника Міністра"
-    )
-
-g4, g5 = st.columns([2.1, 1])
-
-with g4:
     search_query = st.text_input(
         "Додаткові параметри пошуку (код завдання, заходу, ключові слова)",
         key="search_main"
+    )
+
+g4, g5 = st.columns([1, 1])
+
+with g4:
+    st.page_link(
+        "pages/1_Моніторинг_виконання.py",
+        label="Подати відомості",
+        icon="🖊️"
     )
 
 with g5:
@@ -1720,12 +1788,6 @@ with g5:
         use_container_width=True,
         on_click=reset_main_filters
     )
-
-st.page_link(
-    "pages/1_Моніторинг_виконання.py",
-    label="Подати відомості",
-    icon="🖊️"
-)
 
 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1744,7 +1806,7 @@ if not selected_years:
     selected_years = [2026]
 
 if not selected_quarters:
-    selected_quarters = ["I"]
+    selected_quarters = ["I", "II", "III", "IV"]
 
 filtered_measures = apply_measure_filters(
     all_measures,
@@ -1752,10 +1814,10 @@ filtered_measures = apply_measure_filters(
     selected_ssp_indices,
     selected_years,
     selected_quarters,
-    status_mode,
+    selected_status_mode,
     selected_goal_codes,
     selected_product_types,
-    selected_deputies,
+    [],
     search_query
 )
 
@@ -1776,7 +1838,7 @@ search_cards = "".join([
     make_summary_card("Стратегічних цілей", len(visible_goals)),
     make_summary_card("Завдань", len(visible_tasks)),
     make_summary_card("Заходів", len(filtered_measures)),
-    make_summary_card("Виконано", f"{completion_percent}% / {done_count}"),
+    make_summary_card("Виконано", done_count),
     make_summary_card("Погоджено", approved_filtered),
     make_summary_card("На розгляді", waiting_filtered),
     make_summary_card("Не враховано", not_counted_filtered)
@@ -1798,7 +1860,7 @@ st.caption(
     f"Рік: {years_label}. "
     f"Квартал: {quarters_label}. "
     f"ССП: {ssp_label}. "
-    f"Параметри: {status_mode}. "
+    f"Параметри: {selected_status_mode}. "
     f"Заходів із ризиками: {risk_count}."
 )
 
@@ -1844,7 +1906,7 @@ for _, goal in visible_goals.iterrows():
         f"{goal_code} {goal_name} | "
         f"Завдань — {len(tasks)} | "
         f"Заходів — {len(goal_filtered_measures)} | "
-        f"Виконання за фільтрами — {goal_percent}%"
+        f"Виконання — {goal_percent}%"
     )
 
     with st.expander(goal_label, expanded=st.session_state.expand_all_goals):

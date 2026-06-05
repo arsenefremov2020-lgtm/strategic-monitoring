@@ -304,16 +304,18 @@ div[data-testid="stTextInput"] input:focus {
 }
 
 div[data-testid="stPageLink"] a {
-    background: linear-gradient(135deg, #15803d, #16a34a 55%, #22c55e) !important;
+    background: linear-gradient(135deg, #047857, #16a34a 55%, #22c55e) !important;
     color: white !important;
-    border-radius: 14px !important;
-    padding: 17px 22px !important;
-    font-weight: 900 !important;
+    border-radius: 16px !important;
+    padding: 19px 24px !important;
+    font-weight: 950 !important;
+    font-size: 16px !important;
     text-decoration: none !important;
-    border: none !important;
-    width: 100%;
-    justify-content: center;
-    box-shadow: 0 10px 22px rgba(22,163,74,0.28);
+    border: 1px solid rgba(255,255,255,0.22) !important;
+    width: 100% !important;
+    min-height: 62px !important;
+    justify-content: center !important;
+    box-shadow: 0 14px 26px rgba(22,163,74,0.30);
     letter-spacing: 0.2px;
 }
 
@@ -1832,14 +1834,10 @@ with g3:
         key="search_main"
     )
 
-g4, g5 = st.columns([1, 1])
+g4, g5 = st.columns([2, 1])
 
 with g4:
-    st.page_link(
-        "pages/1_Моніторинг_виконання.py",
-        label="Подати відомості",
-        icon="🖊️"
-    )
+    st.markdown("&nbsp;", unsafe_allow_html=True)
 
 with g5:
     st.markdown("&nbsp;", unsafe_allow_html=True)
@@ -2108,6 +2106,13 @@ with btn2:
         on_click=collapse_all_main
     )
 
+st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
+
+st.page_link(
+    "pages/1_Моніторинг_виконання.py",
+    label="Подати відомості",
+    icon="🖊️"
+)
 
 # ------------------------------------------------------------
 # Footer

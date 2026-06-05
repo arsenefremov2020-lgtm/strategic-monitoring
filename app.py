@@ -268,76 +268,82 @@ st.markdown(
 }
 
 .filter-box {
-    border-radius: 16px;
-    padding: 18px 20px;
-    margin: 18px 0;
-    background:
-        linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,250,252,0.98));
+    border-radius: 18px;
+    padding: 24px 26px 26px 26px;
+    margin: 18px 0 24px 0;
+    background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(241,246,253,0.98));
+    border: 1px solid #cbd8ea;
+    box-shadow: 0 10px 24px rgba(15,23,42,0.07);
+}
+
+.filter-title {
+    font-size: 22px;
+    margin-bottom: 18px;
 }
 
 .filter-subtitle {
-    color: #334155;
+    color: #1e293b;
     font-size: 15px;
-    font-weight: 900;
-    margin: 14px 0 8px 0;
+    font-weight: 950;
+    margin: 18px 0 10px 0;
+    padding-bottom: 4px;
+    border-bottom: 1px solid rgba(148,163,184,0.35);
 }
 
 div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
 div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div,
 div[data-testid="stTextInput"] input {
-    background-color: #dcecff !important;
-    border: 1px solid #9db9dd !important;
+    background-color: #d7eaff !important;
+    border: 1px solid #8fb3df !important;
+    border-radius: 10px !important;
+    min-height: 43px !important;
     box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.08) !important;
 }
 
-div[data-testid="stSelectbox"] div[data-baseweb="select"] > div:hover,
-div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div:hover,
-div[data-testid="stTextInput"] input:hover {
-    border-color: #6f95c8 !important;
+div[data-testid="stSelectbox"] label,
+div[data-testid="stMultiSelect"] label,
+div[data-testid="stTextInput"] label {
+    font-weight: 750 !important;
+    color: #1e293b !important;
 }
 
-div[data-testid="stSelectbox"] div[data-baseweb="select"] > div:focus-within,
-div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div:focus-within,
-div[data-testid="stTextInput"] input:focus {
-    border-color: #2563eb !important;
-    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.18) !important;
+.submit-action-wrap {
+    width: 100%;
+    margin-top: 22px;
+    margin-bottom: 28px;
+    padding: 0 0;
 }
 
-div[data-testid="stPageLink"] {
+.submit-action-wrap div[data-testid="stPageLink"] {
     width: 100% !important;
 }
 
-div[data-testid="stPageLink"] a {
-    background: linear-gradient(135deg, #047857, #16a34a 55%, #22c55e) !important;
-    color: white !important;
-    border-radius: 16px !important;
-    padding: 18px 24px !important;
-    font-weight: 950 !important;
-    font-size: 17px !important;
-    text-decoration: none !important;
-    border: 1px solid rgba(255,255,255,0.22) !important;
+.submit-action-wrap div[data-testid="stPageLink"] a {
     width: 100% !important;
-    min-height: 64px !important;
+    min-height: 68px !important;
     display: flex !important;
-    justify-content: center !important;
     align-items: center !important;
-    box-shadow: 0 14px 28px rgba(22,163,74,0.30);
-    letter-spacing: 0.2px;
-}
-
-div[data-testid="stPageLink"] a p {
+    justify-content: center !important;
+    background: linear-gradient(135deg, #047857 0%, #16a34a 55%, #22c55e 100%) !important;
     color: white !important;
+    border-radius: 18px !important;
+    padding: 20px 28px !important;
+    font-size: 18px !important;
     font-weight: 950 !important;
-    font-size: 17px !important;
+    letter-spacing: 0.3px !important;
+    text-decoration: none !important;
+    border: 1px solid rgba(255,255,255,0.28) !important;
+    box-shadow: 0 16px 32px rgba(22,163,74,0.32), inset 0 1px 0 rgba(255,255,255,0.22) !important;
 }
 
-div[data-testid="stPageLink"] a:hover {
+.submit-action-wrap div[data-testid="stPageLink"] a p {
+    color: white !important;
+    font-size: 18px !important;
+    font-weight: 950 !important;
+}
+
+.submit-action-wrap div[data-testid="stPageLink"] a:hover {
     filter: brightness(1.05);
-    transform: translateY(-1px);
-}
-
-div[data-testid="stPageLink"] a:hover {
-    filter: brightness(1.04);
     transform: translateY(-1px);
 }
 
@@ -1782,9 +1788,9 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-f1, f2, f3, f4 = st.columns([1.25, 0.8, 0.8, 1.15])
+top_1, top_2, top_3, top_4 = st.columns([1.35, 0.8, 0.8, 1.15])
 
-with f1:
+with top_1:
     selected_ssp_indices = st.multiselect(
         "Індекс самостійного структурного підрозділу",
         all_ssp_indices,
@@ -1792,9 +1798,9 @@ with f1:
         placeholder="Оберіть індекс ССП"
     )
 
-with f2:
+with top_2:
     st.markdown(
-        "<div style='font-size:13px;font-weight:850;color:#334155;margin-bottom:4px;'>Звітний період (рік, квартал)</div>",
+        "<div style='font-size:13px;font-weight:900;color:#1e293b;margin-bottom:4px;'>Звітний період (рік, квартал)</div>",
         unsafe_allow_html=True
     )
     selected_years = st.multiselect(
@@ -1805,9 +1811,9 @@ with f2:
         label_visibility="collapsed"
     )
 
-with f3:
+with top_3:
     st.markdown(
-        "<div style='font-size:13px;font-weight:850;color:#334155;margin-bottom:4px;'>&nbsp;</div>",
+        "<div style='font-size:13px;font-weight:900;color:#1e293b;margin-bottom:4px;'>&nbsp;</div>",
         unsafe_allow_html=True
     )
     selected_quarters = st.multiselect(
@@ -1818,7 +1824,7 @@ with f3:
         label_visibility="collapsed"
     )
 
-with f4:
+with top_4:
     selected_status_mode = st.selectbox(
         "Режим перегляду даних",
         status_options,
@@ -1827,9 +1833,9 @@ with f4:
 
 st.markdown('<div class="filter-subtitle">Додаткові параметри</div>', unsafe_allow_html=True)
 
-g1, g2, g3 = st.columns([1.15, 1.05, 1.65])
+bottom_1, bottom_2, bottom_3 = st.columns([1.1, 1.0, 1.8])
 
-with g1:
+with bottom_1:
     selected_goal_labels = st.multiselect(
         "Стратегічна ціль",
         list(goal_options.values()),
@@ -1837,7 +1843,7 @@ with g1:
         placeholder="Оберіть стратегічну ціль"
     )
 
-with g2:
+with bottom_2:
     selected_product_types = st.multiselect(
         "Тип продукту",
         product_type_options,
@@ -1845,19 +1851,19 @@ with g2:
         placeholder="Оберіть тип продукту"
     )
 
-with g3:
+with bottom_3:
     search_query = st.text_input(
         "Додаткові параметри пошуку (код завдання, заходу, ключові слова)",
-        key="search_main"
+        key="search_main",
+        placeholder="Введіть код, назву або ключове слово"
     )
 
-g4, g5 = st.columns([2, 1])
+reset_spacer, reset_col = st.columns([2.4, 1])
 
-with g4:
-    st.markdown("&nbsp;", unsafe_allow_html=True)
+with reset_spacer:
+    st.empty()
 
-with g5:
-    st.markdown("&nbsp;", unsafe_allow_html=True)
+with reset_col:
     st.button(
         "Скинути фільтри",
         use_container_width=True,
@@ -2123,16 +2129,15 @@ with btn2:
         on_click=collapse_all_main
     )
 
-st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
+st.markdown('<div class="submit-action-wrap">', unsafe_allow_html=True)
 
-submit_col_left, submit_col_center, submit_col_right = st.columns([0.15, 1.7, 0.15])
+st.page_link(
+    "pages/1_Моніторинг_виконання.py",
+    label="Подати відомості",
+    icon="🖊️"
+)
 
-with submit_col_center:
-    st.page_link(
-        "pages/1_Моніторинг_виконання.py",
-        label="Подати відомості",
-        icon="🖊️"
-    )
+st.markdown("</div>", unsafe_allow_html=True)
 
 # ------------------------------------------------------------
 # Footer

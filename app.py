@@ -303,20 +303,37 @@ div[data-testid="stTextInput"] input:focus {
     box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.18) !important;
 }
 
+div[data-testid="stPageLink"] {
+    width: 100% !important;
+}
+
 div[data-testid="stPageLink"] a {
     background: linear-gradient(135deg, #047857, #16a34a 55%, #22c55e) !important;
     color: white !important;
     border-radius: 16px !important;
-    padding: 19px 24px !important;
+    padding: 18px 24px !important;
     font-weight: 950 !important;
-    font-size: 16px !important;
+    font-size: 17px !important;
     text-decoration: none !important;
     border: 1px solid rgba(255,255,255,0.22) !important;
     width: 100% !important;
-    min-height: 62px !important;
+    min-height: 64px !important;
+    display: flex !important;
     justify-content: center !important;
-    box-shadow: 0 14px 26px rgba(22,163,74,0.30);
+    align-items: center !important;
+    box-shadow: 0 14px 28px rgba(22,163,74,0.30);
     letter-spacing: 0.2px;
+}
+
+div[data-testid="stPageLink"] a p {
+    color: white !important;
+    font-weight: 950 !important;
+    font-size: 17px !important;
+}
+
+div[data-testid="stPageLink"] a:hover {
+    filter: brightness(1.05);
+    transform: translateY(-1px);
 }
 
 div[data-testid="stPageLink"] a:hover {
@@ -2106,13 +2123,16 @@ with btn2:
         on_click=collapse_all_main
     )
 
-st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
+st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
 
-st.page_link(
-    "pages/1_Моніторинг_виконання.py",
-    label="Подати відомості",
-    icon="🖊️"
-)
+submit_col_left, submit_col_center, submit_col_right = st.columns([0.15, 1.7, 0.15])
+
+with submit_col_center:
+    st.page_link(
+        "pages/1_Моніторинг_виконання.py",
+        label="Подати відомості",
+        icon="🖊️"
+    )
 
 # ------------------------------------------------------------
 # Footer

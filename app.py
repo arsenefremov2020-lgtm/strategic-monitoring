@@ -602,6 +602,24 @@ def make_summary_card(label, value):
     )
 
 
+def format_indicator_value(value, field_name=""):
+    if value is None or pd.isna(value):
+        return ""
+
+    if isinstance(value, (pd.Timestamp, datetime)):
+        if field_name in {"strategic_target_2028", "strategic_target_2034"}:
+            return f"{value.day}-{value.month}"
+        return value.strftime("%d.%m.%Y")
+
+    text = raw_value(value)
+
+    if "00:00:00" in text and field_name in {"strategic_target_2028", "strategic_target_2034"}:
+        parsed = pd.to_datetime(text, errors="coerce")
+        if pd.notna(parsed):
+            return f"{parsed.day}-{parsed.month}"
+
+    return text
+
 def make_cell(value, mode="fixed"):
     title = clean_value(value)
 
@@ -1198,7 +1216,9 @@ def render_table(headers, rows, col_classes, min_width=2200, scroll_class="table
     st.markdown(html, unsafe_allow_html=True)
 
 
-def build_indicator_rows(parent_row, child_rows):
+def build_indicator_rows(parent_row, child_rows, selected_ssp_indices=None):
+    selected_ssp_indices = selected_ssp_indices or []
+
     rows = []
 
     indicator_cols = [
@@ -1216,11 +1236,25 @@ def build_indicator_rows(parent_row, child_rows):
         "resp_co_2"
     ]
 
+    def indicator_row_matches_ssp(row):
+        if not selected_ssp_indices:
+            return True
+
+        return row_contains_selected_ssp(row, selected_ssp_indices)
+
     def add_row(row):
         if not raw_value(row.get("indicator", "")):
             return
 
-        rows.append([row.get(col, "") for col in indicator_cols])
+        if not indicator_row_matches_ssp(row):
+            return
+
+        prepared_row = []
+
+        for col in indicator_cols:
+            prepared_row.append(format_indicator_value(row.get(col, ""), col))
+
+        rows.append(prepared_row)
 
     add_row(parent_row)
 
@@ -1228,7 +1262,6 @@ def build_indicator_rows(parent_row, child_rows):
         add_row(child)
 
     return rows
-
 
 def render_indicator_table(rows):
     if not rows:
@@ -1824,6 +1857,37 @@ filtered_measures = apply_measure_filters(
 filtered_goal_codes = set(filtered_measures["parent_goal_code"].astype(str).str.strip()) if not filtered_measures.empty else set()
 filtered_task_codes = set(filtered_measures["parent_task_code"].astype(str).str.strip()) if not filtered_measures.empty else set()
 
+if selected_ssp_indices:
+    matching_goal_indicator_rows = df[
+        (df["object_type"].isin(["goal", "goal_indicator"]))
+        & df.apply(lambda row: row_contains_selected_ssp(row, selected_ssp_indices), axis=1)
+    ].copy()
+
+    matching_task_indicator_rows = df[
+        (df["object_type"].isin(["task", "task_indicator"]))
+        & df.apply(lambda row: row_contains_selected_ssp(row, selected_ssp_indices), axis=1)
+    ].copy()
+
+    indicator_goal_codes = set(matching_goal_indicator_rows["parent_goal_code"].astype(str).str.strip())
+    direct_goal_codes = set(matching_goal_indicator_rows["code"].astype(str).str.strip())
+
+    indicator_task_goal_codes = set(matching_task_indicator_rows["parent_goal_code"].astype(str).str.strip())
+    indicator_task_codes = set(matching_task_indicator_rows["parent_task_code"].astype(str).str.strip())
+    direct_task_codes = set(matching_task_indicator_rows["code"].astype(str).str.strip())
+
+    filtered_goal_codes = (
+        filtered_goal_codes
+        | indicator_goal_codes
+        | direct_goal_codes
+        | indicator_task_goal_codes
+    )
+
+    filtered_task_codes = (
+        filtered_task_codes
+        | indicator_task_codes
+        | direct_task_codes
+    )
+
 visible_goals = goals[goals["code"].astype(str).str.strip().isin(filtered_goal_codes)].copy()
 visible_tasks = tasks_all[tasks_all["code"].astype(str).str.strip().isin(filtered_task_codes)].copy()
 
@@ -1918,12 +1982,7 @@ for _, goal in visible_goals.iterrows():
             & (df["parent_task_code"].astype(str) == "")
         ].copy()
 
-        if selected_ssp_indices:
-            goal_indicator_children = goal_indicator_children[
-                goal_indicator_children.apply(lambda row: row_contains_selected_ssp(row, selected_ssp_indices), axis=1)
-            ]
-
-        goal_indicators = build_indicator_rows(goal, goal_indicator_children)
+        goal_indicators = build_indicator_rows(goal, goal_indicator_children, selected_ssp_indices)
 
         if goal_indicators:
             st.markdown(
@@ -1957,12 +2016,7 @@ for _, goal in visible_goals.iterrows():
                     & (df["parent_task_code"].astype(str) == task_code)
                 ].copy()
 
-                if selected_ssp_indices:
-                    task_indicator_children = task_indicator_children[
-                        task_indicator_children.apply(lambda row: row_contains_selected_ssp(row, selected_ssp_indices), axis=1)
-                    ]
-
-                task_indicators = build_indicator_rows(task, task_indicator_children)
+                task_indicators = build_indicator_rows(task, task_indicator_children, selected_ssp_indices)
 
                 if task_indicators:
                     st.markdown(

@@ -1876,8 +1876,6 @@ with reset_col:
         on_click=reset_main_filters
     )
 
-st.markdown("</div>", unsafe_allow_html=True)
-
 
 # ------------------------------------------------------------
 # Filter processing

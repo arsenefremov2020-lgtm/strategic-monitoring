@@ -984,6 +984,30 @@ def row_matches_search(row, search_query):
 
     return any(query in raw_value(value).lower() for value in values)
 
+def indicator_row_matches_search(row, search_query):
+    query = raw_value(search_query).lower()
+
+    if not query:
+        return True
+
+    values = [
+        row.get("code", ""),
+        row.get("name", ""),
+        row.get("indicator", ""),
+        row.get("unit", ""),
+        row.get("base_2021", ""),
+        row.get("fact_2024", ""),
+        row.get("fact_2025", ""),
+        row.get("strategic_target_2028", ""),
+        row.get("strategic_target_2034", ""),
+        row.get("source_global", ""),
+        row.get("source_national", ""),
+        row.get("resp_main", ""),
+        row.get("resp_co_1", ""),
+        row.get("resp_co_2", "")
+    ]
+
+    return any(query in raw_value(value).lower() for value in values)
 
 def row_matches_product_type(row, selected_product_types):
     if not selected_product_types:
@@ -1216,7 +1240,7 @@ def render_table(headers, rows, col_classes, min_width=2200, scroll_class="table
     st.markdown(html, unsafe_allow_html=True)
 
 
-def build_indicator_rows(parent_row, child_rows, selected_ssp_indices=None):
+def build_indicator_rows(parent_row, child_rows, selected_ssp_indices=None, search_query=""):
     selected_ssp_indices = selected_ssp_indices or []
 
     rows = []
@@ -1236,17 +1260,20 @@ def build_indicator_rows(parent_row, child_rows, selected_ssp_indices=None):
         "resp_co_2"
     ]
 
-    def indicator_row_matches_ssp(row):
-        if not selected_ssp_indices:
-            return True
+    def indicator_row_matches_filters(row):
+        if selected_ssp_indices and not row_contains_selected_ssp(row, selected_ssp_indices):
+            return False
 
-        return row_contains_selected_ssp(row, selected_ssp_indices)
+        if raw_value(search_query) and not indicator_row_matches_search(row, search_query):
+            return False
+
+        return True
 
     def add_row(row):
         if not raw_value(row.get("indicator", "")):
             return
 
-        if not indicator_row_matches_ssp(row):
+        if not indicator_row_matches_filters(row):
             return
 
         prepared_row = []
@@ -1857,15 +1884,27 @@ filtered_measures = apply_measure_filters(
 filtered_goal_codes = set(filtered_measures["parent_goal_code"].astype(str).str.strip()) if not filtered_measures.empty else set()
 filtered_task_codes = set(filtered_measures["parent_task_code"].astype(str).str.strip()) if not filtered_measures.empty else set()
 
-if selected_ssp_indices:
+if selected_ssp_indices or raw_value(search_query):
     matching_goal_indicator_rows = df[
         (df["object_type"].isin(["goal", "goal_indicator"]))
-        & df.apply(lambda row: row_contains_selected_ssp(row, selected_ssp_indices), axis=1)
+        & df.apply(
+            lambda row: (
+                row_contains_selected_ssp(row, selected_ssp_indices)
+                and indicator_row_matches_search(row, search_query)
+            ),
+            axis=1
+        )
     ].copy()
 
     matching_task_indicator_rows = df[
         (df["object_type"].isin(["task", "task_indicator"]))
-        & df.apply(lambda row: row_contains_selected_ssp(row, selected_ssp_indices), axis=1)
+        & df.apply(
+            lambda row: (
+                row_contains_selected_ssp(row, selected_ssp_indices)
+                and indicator_row_matches_search(row, search_query)
+            ),
+            axis=1
+        )
     ].copy()
 
     indicator_goal_codes = set(matching_goal_indicator_rows["parent_goal_code"].astype(str).str.strip())
@@ -1967,7 +2006,8 @@ for _, goal in visible_goals.iterrows():
     goal_indicators = build_indicator_rows(
         goal,
         goal_indicator_children,
-        selected_ssp_indices
+        selected_ssp_indices,
+        search_query
     )
 
     if goal_filtered_measures.empty and not goal_indicators:
@@ -2003,7 +2043,19 @@ for _, goal in visible_goals.iterrows():
                 goal_filtered_measures["parent_task_code"].astype(str).str.strip() == task_code
             ].copy()
 
-            if task_measures.empty:
+            task_indicator_children = df[
+                (df["object_type"] == "task_indicator")
+                & (df["parent_task_code"].astype(str) == task_code)
+            ].copy()
+
+            task_indicators = build_indicator_rows(
+                task,
+                task_indicator_children,
+                selected_ssp_indices,
+                search_query
+            )
+
+            if task_measures.empty and not task_indicators:
                 continue
 
             task_done, task_percent = calculate_completion(task_measures)
@@ -2015,13 +2067,6 @@ for _, goal in visible_goals.iterrows():
             )
 
             with st.expander(task_label, expanded=st.session_state.expand_all_goals):
-                task_indicator_children = df[
-                    (df["object_type"] == "task_indicator")
-                    & (df["parent_task_code"].astype(str) == task_code)
-                ].copy()
-
-                task_indicators = build_indicator_rows(task, task_indicator_children, selected_ssp_indices)
-
                 if task_indicators:
                     st.markdown(
                         '<div class="section-title">Індикатори досягнення завдання</div>',

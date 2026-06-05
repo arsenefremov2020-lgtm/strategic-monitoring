@@ -307,42 +307,48 @@ div[data-testid="stTextInput"] label {
     color: #1e293b !important;
 }
 
-.submit-action-wrap {
-    width: 100%;
-    margin-top: 22px;
-    margin-bottom: 28px;
-    padding: 0 0;
-}
-
-.submit-action-wrap div[data-testid="stPageLink"] {
+div[data-testid="stPageLink"] {
     width: 100% !important;
+    display: block !important;
+    margin-top: 16px !important;
+    margin-bottom: 28px !important;
 }
 
-.submit-action-wrap div[data-testid="stPageLink"] a {
+div[data-testid="stPageLink"] a {
     width: 100% !important;
     min-height: 68px !important;
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
+
     background: linear-gradient(135deg, #047857 0%, #16a34a 55%, #22c55e 100%) !important;
-    color: white !important;
+    color: #ffffff !important;
+
     border-radius: 18px !important;
     padding: 20px 28px !important;
+    border: 1px solid rgba(255,255,255,0.28) !important;
+
     font-size: 18px !important;
     font-weight: 950 !important;
     letter-spacing: 0.3px !important;
     text-decoration: none !important;
-    border: 1px solid rgba(255,255,255,0.28) !important;
-    box-shadow: 0 16px 32px rgba(22,163,74,0.32), inset 0 1px 0 rgba(255,255,255,0.22) !important;
+
+    box-shadow: 0 16px 32px rgba(22,163,74,0.34), inset 0 1px 0 rgba(255,255,255,0.22) !important;
 }
 
-.submit-action-wrap div[data-testid="stPageLink"] a p {
-    color: white !important;
+div[data-testid="stPageLink"] a p {
+    color: #ffffff !important;
     font-size: 18px !important;
     font-weight: 950 !important;
+    margin: 0 !important;
 }
 
-.submit-action-wrap div[data-testid="stPageLink"] a:hover {
+div[data-testid="stPageLink"] a svg {
+    color: #ffffff !important;
+    fill: #ffffff !important;
+}
+
+div[data-testid="stPageLink"] a:hover {
     filter: brightness(1.05);
     transform: translateY(-1px);
 }
@@ -2128,8 +2134,6 @@ with btn2:
         use_container_width=True,
         on_click=collapse_all_main
     )
-
-st.markdown('<div class="submit-action-wrap">', unsafe_allow_html=True)
 
 st.page_link(
     "pages/1_Моніторинг_виконання.py",

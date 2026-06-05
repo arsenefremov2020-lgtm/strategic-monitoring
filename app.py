@@ -1958,10 +1958,22 @@ for _, goal in visible_goals.iterrows():
         filtered_measures["parent_goal_code"].astype(str).str.strip() == goal_code
     ].copy()
 
-    if goal_filtered_measures.empty:
+    goal_indicator_children = df[
+        (df["object_type"] == "goal_indicator")
+        & (df["parent_goal_code"].astype(str).str.strip() == goal_code)
+        & (df["parent_task_code"].astype(str).str.strip() == "")
+    ].copy()
+
+    goal_indicators = build_indicator_rows(
+        goal,
+        goal_indicator_children,
+        selected_ssp_indices
+    )
+
+    if goal_filtered_measures.empty and not goal_indicators:
         continue
 
-    goal_task_codes = set(goal_filtered_measures["parent_task_code"].astype(str).str.strip())
+    goal_task_codes = set(goal_filtered_measures["parent_task_code"].astype(str).str.strip()) if not goal_filtered_measures.empty else set()
     tasks = tasks_all[tasks_all["code"].astype(str).str.strip().isin(goal_task_codes)].copy()
 
     goal_done, goal_percent = calculate_completion(goal_filtered_measures)
@@ -1975,14 +1987,6 @@ for _, goal in visible_goals.iterrows():
 
     with st.expander(goal_label, expanded=st.session_state.expand_all_goals):
         st.progress(min(goal_percent / 100, 1.0))
-
-        goal_indicator_children = df[
-            (df["object_type"] == "goal_indicator")
-            & (df["parent_goal_code"].astype(str) == goal_code)
-            & (df["parent_task_code"].astype(str) == "")
-        ].copy()
-
-        goal_indicators = build_indicator_rows(goal, goal_indicator_children, selected_ssp_indices)
 
         if goal_indicators:
             st.markdown(

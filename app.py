@@ -1,8 +1,11 @@
-import streamlit as st
-import pandas as pd
-from supabase import create_client
-from html import escape
+import re
 from datetime import datetime
+from html import escape
+
+import pandas as pd
+import streamlit as st
+from supabase import create_client
+
 
 st.set_page_config(page_title="Стратегічний план", layout="wide")
 
@@ -14,7 +17,13 @@ supabase = create_client(
     st.secrets["SUPABASE_KEY"]
 )
 
-st.markdown("""
+
+# ------------------------------------------------------------
+# CSS
+# ------------------------------------------------------------
+
+st.markdown(
+    """
 <style>
 .stApp {
     background:
@@ -69,13 +78,22 @@ st.markdown("""
     margin-bottom: 8px;
 }
 
-.header-box {
-    background: rgba(255,255,255,0.92);
+.header-box,
+.flow-box,
+.summary-box,
+.filter-box,
+.info-card,
+.note-box,
+.search-result-box {
+    background: rgba(255,255,255,0.94);
     border: 1px solid #d8dee9;
+    box-shadow: 0 6px 18px rgba(15,23,42,0.045);
+}
+
+.header-box {
     border-radius: 16px;
     padding: 22px 26px;
     margin-bottom: 18px;
-    box-shadow: 0 8px 24px rgba(15,23,42,0.06);
     backdrop-filter: blur(8px);
 }
 
@@ -120,55 +138,109 @@ st.markdown("""
 .cta-title {
     font-size: 23px;
     font-weight: 900;
-    margin-bottom: 6px;
-}
-
-.cta-text {
-    font-size: 15px;
-    opacity: 0.97;
-}
-
-div[data-testid="stPageLink"] a {
-    background: linear-gradient(90deg, #15803d, #16a34a) !important;
-    color: white !important;
-    border-radius: 12px !important;
-    padding: 15px 20px !important;
-    font-weight: 850 !important;
-    text-decoration: none !important;
-    border: none !important;
-    width: 100%;
-    justify-content: center;
-    box-shadow: 0 6px 14px rgba(22,163,74,0.20);
 }
 
 .flow-box {
-    background: white;
-    border: 1px solid #d8dee9;
-    border-radius: 14px;
-    padding: 14px 18px;
+    border-radius: 16px;
+    padding: 18px 20px;
     margin: 18px 0;
-    box-shadow: 0 4px 12px rgba(15,23,42,0.04);
+}
+
+.flow-title,
+.summary-title,
+.filter-title,
+.guide-title,
+.info-card-title,
+.search-result-title {
+    color: #0f172a;
+    font-weight: 900;
 }
 
 .flow-title {
-    font-weight: 900;
-    color: #0f172a;
-    margin-bottom: 10px;
+    font-size: 17px;
+    margin-bottom: 12px;
 }
 
 .flow-steps {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     gap: 10px;
-    color: #334155;
-    font-size: 14px;
 }
 
 .flow-step {
-    padding: 8px 12px;
-    border-radius: 999px;
-    background: #f1f5f9;
+    min-height: 58px;
+    padding: 10px 12px;
+    border-radius: 14px;
+    background: linear-gradient(180deg, #f8fafc 0%, #eef4fb 100%);
     border: 1px solid #d8dee9;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    color: #334155;
+    font-size: 13px;
+    font-weight: 800;
+    line-height: 1.25;
+}
+
+.summary-box,
+.search-result-box {
+    border-radius: 16px;
+    padding: 18px 20px;
+    margin: 18px 0;
+}
+
+.summary-title,
+.search-result-title,
+.filter-title {
+    font-size: 20px;
+    margin-bottom: 12px;
+}
+
+.summary-grid {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 12px;
+    align-items: stretch;
+}
+
+.summary-grid-7 {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 12px;
+    align-items: stretch;
+}
+
+.summary-card {
+    background: #f8fafc;
+    border: 1px solid #d8dee9;
+    border-radius: 13px;
+    padding: 14px 15px;
+    min-height: 96px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+
+.summary-label {
+    color: #64748b;
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1.35;
+    min-height: 34px;
+    margin-bottom: 8px;
+}
+
+.summary-value {
+    color: #0f172a;
+    font-size: 24px;
+    line-height: 1;
+    font-weight: 950;
+}
+
+.guide-title {
+    font-size: 20px;
+    margin: 18px 0 10px 0;
 }
 
 .info-grid {
@@ -179,90 +251,61 @@ div[data-testid="stPageLink"] a {
 }
 
 .info-card {
-    background: rgba(255,255,255,0.92);
-    border: 1px solid #d8dee9;
     border-radius: 14px;
     padding: 17px 19px;
     color: #1f2937;
-    box-shadow: 0 4px 14px rgba(15,23,42,0.045);
+    line-height: 1.55;
 }
 
 .info-card-title {
     font-size: 16px;
-    font-weight: 900;
     margin-bottom: 8px;
-    color: #0f172a;
 }
 
 .legend-item {
-    margin-bottom: 6px;
+    margin-bottom: 7px;
     font-size: 14px;
 }
 
 .filter-box {
-    background: rgba(255,255,255,0.94);
-    border: 1px solid #d8dee9;
     border-radius: 16px;
     padding: 18px 20px;
     margin: 18px 0;
-    box-shadow: 0 6px 18px rgba(15,23,42,0.045);
+    background:
+        linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,250,252,0.98));
 }
 
-.filter-title {
-    color: #0f172a;
-    font-size: 20px;
+.filter-subtitle {
+    color: #334155;
+    font-size: 15px;
     font-weight: 900;
-    margin-bottom: 8px;
+    margin: 14px 0 8px 0;
 }
 
-.summary-box {
-    background: rgba(255,255,255,0.94);
-    border: 1px solid #d8dee9;
-    border-radius: 16px;
-    padding: 18px 20px;
-    margin: 18px 0;
-    box-shadow: 0 6px 18px rgba(15,23,42,0.045);
+div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
+div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div,
+div[data-testid="stTextInput"] input {
+    background-color: #eef4fb !important;
+    border-color: #cbd5e1 !important;
 }
 
-.summary-title {
-    color: #0f172a;
-    font-size: 19px;
-    font-weight: 900;
-    margin-bottom: 12px;
+div[data-testid="stPageLink"] a {
+    background: linear-gradient(135deg, #15803d, #16a34a 55%, #22c55e) !important;
+    color: white !important;
+    border-radius: 14px !important;
+    padding: 17px 22px !important;
+    font-weight: 900 !important;
+    text-decoration: none !important;
+    border: none !important;
+    width: 100%;
+    justify-content: center;
+    box-shadow: 0 10px 22px rgba(22,163,74,0.28);
+    letter-spacing: 0.2px;
 }
 
-.summary-grid {
-    display: grid;
-    grid-template-columns: repeat(7, 1fr);
-    gap: 10px;
-}
-
-.summary-card {
-    background: #f8fafc;
-    border: 1px solid #d8dee9;
-    border-radius: 13px;
-    padding: 13px 14px;
-}
-
-.summary-label {
-    color: #64748b;
-    font-size: 12px;
-    font-weight: 800;
-    margin-bottom: 6px;
-}
-
-.summary-value {
-    color: #0f172a;
-    font-size: 23px;
-    font-weight: 950;
-}
-
-div[data-testid="stMetric"] {
-    background: rgba(255,255,255,0.85);
-    border: 1px solid #d8dee9;
-    border-radius: 14px;
-    padding: 14px 16px;
-    box-shadow: 0 4px 12px rgba(15,23,42,0.04);
+div[data-testid="stPageLink"] a:hover {
+    filter: brightness(1.04);
+    transform: translateY(-1px);
 }
 
 div[data-testid="stExpander"] {
@@ -307,17 +350,29 @@ div[data-testid="stExpander"] div[data-testid="stExpander"] > details > summary 
     margin: 18px 0 12px 0;
 }
 
+.note-box {
+    border-radius: 10px;
+    padding: 13px 17px;
+    color: #374151;
+    margin: 12px 0 18px 0;
+    font-size: 14px;
+    line-height: 1.55;
+}
+
 .table-scroll {
-    overflow-x: auto;
+    overflow: auto;
     width: 100%;
     border: 1px solid #d1d5db;
-    border-radius: 9px;
+    border-radius: 10px;
     margin-bottom: 18px;
     background: white;
 }
 
+.table-scroll.measures-scroll {
+    max-height: 520px;
+}
+
 table.custom-table {
-    min-width: 2200px;
     border-collapse: collapse;
     table-layout: fixed;
     font-size: 13px;
@@ -326,22 +381,34 @@ table.custom-table {
 table.custom-table th {
     background-color: #e9eef7;
     color: #111827;
-    padding: 10px;
+    padding: 9px 10px;
     border: 1px solid #d1d5db;
     text-align: left;
-    vertical-align: top;
+    vertical-align: middle;
     white-space: normal;
     font-weight: 850;
+    line-height: 1.25;
+}
+
+table.custom-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+}
+
+table.custom-table thead tr:nth-child(2) th {
+    top: 38px;
+    z-index: 4;
 }
 
 table.custom-table td {
-    padding: 10px;
+    padding: 8px 10px;
     border: 1px solid #d1d5db;
     vertical-align: top;
     white-space: normal;
     word-wrap: break-word;
     overflow-wrap: break-word;
-    line-height: 1.45;
+    line-height: 1.35;
 }
 
 table.custom-table tr:nth-child(even) {
@@ -352,10 +419,28 @@ table.custom-table tr:nth-child(odd) {
     background-color: #ffffff;
 }
 
-td.pending-cell {
-    background-color: #fff3cd !important;
+.cell-fixed {
+    display: block;
+    max-height: 74px;
+    overflow: hidden;
+}
+
+.cell-fixed:hover {
+    overflow: auto;
+}
+
+.cell-nowrap {
+    display: block;
+    max-height: 42px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+td.status-review {
+    background-color: #dbeafe !important;
+    color: #1e3a8a;
     font-weight: 850;
-    color: #7a4d00;
 }
 
 td.status-approved {
@@ -364,48 +449,33 @@ td.status-approved {
     font-weight: 850;
 }
 
-td.status-waiting {
-    background-color: #fff3cd !important;
-    color: #854d0e;
+td.status-returned {
+    background-color: #fef3c7 !important;
+    color: #92400e;
     font-weight: 850;
 }
 
-td.status-returned {
+td.status-empty {
     background-color: #fee2e2 !important;
     color: #991b1b;
     font-weight: 850;
 }
 
-td.status-empty {
-    background-color: #f8fafc !important;
-    color: #64748b;
-    font-weight: 700;
-}
-
 td.risk-cell {
-    background-color: #ffedd5 !important;
-    color: #9a3412;
+    background-color: #fee2e2 !important;
+    color: #991b1b;
     font-weight: 850;
 }
 
-.col-code { width: 95px; }
-.col-name { width: 360px; }
-.col-indicator { width: 360px; }
-.col-unit { width: 170px; }
+.col-code { width: 90px; }
+.col-measure { width: 360px; }
+.col-product { width: 170px; }
+.col-indicator { width: 430px; }
+.col-unit { width: 180px; }
 .col-year { width: 130px; }
-.col-quarter { width: 130px; }
-.col-department { width: 130px; }
+.col-long { width: 330px; }
+.col-resp { width: 210px; }
 .col-status { width: 160px; }
-
-.note-box {
-    border: 1px solid #d6dce8;
-    border-radius: 10px;
-    padding: 13px 17px;
-    background: #ffffff;
-    color: #374151;
-    margin-top: 18px;
-    font-size: 14px;
-}
 
 .footer {
     text-align: center;
@@ -419,34 +489,173 @@ td.risk-cell {
 .footer strong {
     color: #334155;
 }
-</style>
-""", unsafe_allow_html=True)
 
+@media (max-width: 1100px) {
+    .summary-grid,
+    .summary-grid-7,
+    .flow-steps {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .info-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .system-status {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+</style>
+""",
+    unsafe_allow_html=True
+)
+
+
+# ------------------------------------------------------------
+# Basic helpers
+# ------------------------------------------------------------
+
+def raw_value(value):
+    if value is None or pd.isna(value) or str(value) == "None":
+        return ""
+    return str(value).strip()
+
+
+def clean_value(value):
+    return escape(raw_value(value))
+
+
+def normalize_text(value):
+    return raw_value(value).lower().replace(" ", "")
+
+
+def is_empty_or_nd(value):
+    return normalize_text(value) in {"", "н.д.", "нд", "nan", "none", "-", "—"}
+
+
+def strip_leading_code(text, code):
+    value = raw_value(text)
+    code_value = raw_value(code)
+
+    if code_value and value.startswith(code_value):
+        value = value[len(code_value):].lstrip(" .—-–|:")
+
+    return value
+
+
+def extract_ssp_index(value):
+    """
+    Витягує чистий числовий індекс ССП.
+    Приклади:
+    'деп. 30' -> '30'
+    'упр. 4' -> '4'
+    'сек. 12' -> '12'
+    """
+    text = raw_value(value)
+    if not text:
+        return ""
+
+    match = re.search(r"\d+", text)
+    return match.group(0) if match else ""
+
+
+def split_ssp_values(value):
+    """
+    Дає список усіх індексів ССП із комірки, якщо там кілька значень.
+    """
+    text = raw_value(value)
+    if not text:
+        return []
+
+    return re.findall(r"\d+", text)
+
+
+def value_contains_ssp(value, selected_indices):
+    if not selected_indices:
+        return True
+
+    found = set(split_ssp_values(value))
+    return bool(found.intersection(set(selected_indices)))
+
+
+def make_summary_card(label, value):
+    return (
+        f'<div class="summary-card">'
+        f'<div class="summary-label">{escape(str(label))}</div>'
+        f'<div class="summary-value">{escape(str(value))}</div>'
+        f'</div>'
+    )
+
+
+def make_cell(value, mode="fixed"):
+    title = clean_value(value)
+
+    if mode == "nowrap":
+        return f'<span class="cell-nowrap" title="{title}">{title}</span>'
+
+    return f'<span class="cell-fixed" title="{title}">{title}</span>'
+
+
+def business_days_between(start, end):
+    if pd.isna(start) or pd.isna(end):
+        return 0
+
+    start_date = start.date()
+    end_date = end.date()
+
+    if end_date <= start_date:
+        return 0
+
+    return len(pd.bdate_range(start=start_date, end=end_date, inclusive="right"))
+
+
+# ------------------------------------------------------------
+# Data loading
+# ------------------------------------------------------------
 
 @st.cache_data
 def load_strat_matrix():
-    df = pd.read_excel(
-        FILE_PATH,
-        sheet_name=SHEET_NAME,
-        header=None,
-        engine="openpyxl"
-    )
+    source_df = pd.read_excel(FILE_PATH, sheet_name=SHEET_NAME, header=None, engine="openpyxl")
+    data = source_df.iloc[7:].copy()
 
-    data = df.iloc[7:].copy()
+    def safe_col(index):
+        if index < source_df.shape[1]:
+            return data.iloc[:, index]
+        return pd.Series([""] * len(data), index=data.index)
 
     result = pd.DataFrame({
-        "type_marker": data.iloc[:, 1],
-        "code": data.iloc[:, 2],
-        "name": data.iloc[:, 3],
-        "indicator": data.iloc[:, 5],
-        "unit": data.iloc[:, 6],
-        "base_2021": data.iloc[:, 7],
-        "fact_2024": data.iloc[:, 8],
-        "expected_2025": data.iloc[:, 9],
-        "target_2026": data.iloc[:, 10],
-        "target_2027": data.iloc[:, 11],
-        "target_2028": data.iloc[:, 12],
-        "department": data.iloc[:, 17]
+        # базова структура
+        "type_marker": safe_col(1),       # B
+        "code": safe_col(2),              # C
+        "name": safe_col(3),              # D
+        "product_type": safe_col(4),      # E
+
+        # індикаторний блок
+        "indicator": safe_col(5),         # F
+        "unit": safe_col(6),              # G
+        "base_2021": safe_col(7),         # H
+        "fact_2024": safe_col(8),         # I
+        "fact_2025": safe_col(9),         # J
+        "target_2026": safe_col(10),      # K
+        "target_2027": safe_col(11),      # L
+        "target_2028": safe_col(12),      # M
+
+        # стратегічні орієнтири / підстави / джерела
+        "strategic_target_2028": safe_col(13),     # N
+        "strategic_target_2034": safe_col(14),     # O
+        "source_global": safe_col(15),              # P
+        "source_national": safe_col(16),            # Q
+
+        # відповідальні ССП
+        "resp_main": safe_col(17),          # R
+        "resp_co_1": safe_col(18),          # S
+        "resp_co_2": safe_col(19),          # T
+
+        # резерв / майбутній заступник / службова колонка
+        "deputy_minister_raw": safe_col(20),        # U, якщо є
+
+        # сумісність зі старим кодом
+        "department": safe_col(17)
     })
 
     result = result.dropna(subset=["code"])
@@ -455,35 +664,26 @@ def load_strat_matrix():
 
     current_goal_code = ""
     current_task_code = ""
-
     object_types = []
     parent_goal_codes = []
     parent_task_codes = []
 
     for _, row in result.iterrows():
-        marker = str(row["type_marker"]).lower().strip()
-        code = str(row["code"]).strip()
+        marker = raw_value(row["type_marker"]).lower()
+        code = raw_value(row["code"])
         dots = code.count(".")
 
         if "стратегічна ціль" in marker:
             object_type = "goal"
             current_goal_code = code
             current_task_code = ""
-
         elif "завдання" in marker:
             object_type = "task"
             current_task_code = code
-
         elif "заходи" in marker or dots >= 3:
             object_type = "measure"
-
         else:
-            if current_task_code:
-                object_type = "task_indicator"
-            elif current_goal_code:
-                object_type = "goal_indicator"
-            else:
-                object_type = "other"
+            object_type = "task_indicator" if current_task_code else "goal_indicator" if current_goal_code else "other"
 
         object_types.append(object_type)
         parent_goal_codes.append(current_goal_code)
@@ -496,6 +696,7 @@ def load_strat_matrix():
     return result
 
 
+@st.cache_data(ttl=60)
 def load_monitoring():
     response = supabase.table("monitoring_requests").select("*").execute()
 
@@ -503,71 +704,6 @@ def load_monitoring():
         return pd.DataFrame()
 
     return pd.DataFrame(response.data)
-
-
-def clean_value(value):
-    if value is None or pd.isna(value) or str(value) == "None":
-        return ""
-    return escape(str(value))
-
-
-def raw_value(value):
-    if value is None or pd.isna(value) or str(value) == "None":
-        return ""
-    return str(value).strip()
-
-
-def normalize_text(value):
-    return raw_value(value).lower().replace(" ", "")
-
-
-def is_empty_or_nd(value):
-    text = normalize_text(value)
-
-    empty_values = [
-        "",
-        "н.д.",
-        "нд",
-        "nan",
-        "none",
-        "-",
-        "—"
-    ]
-
-    return text in empty_values
-
-
-def is_active_in_year(row, selected_year):
-    col = f"target_{selected_year}"
-
-    if col not in row:
-        return False
-
-    value = raw_value(row.get(col, ""))
-
-    if is_empty_or_nd(value):
-        return False
-
-    return True
-
-
-def get_indicator_type(row, selected_year):
-    unit = raw_value(row.get("unit", "")).lower()
-    plan_value = raw_value(row.get(f"target_{selected_year}", ""))
-
-    if "так/ні" in unit or "так" in unit and "ні" in unit:
-        return "так/ні"
-
-    if "%" in unit or "відсот" in unit:
-        return "Відсоткові"
-
-    if "грн" in unit or "дол" in unit or "євро" in unit or "eur" in unit or "usd" in unit:
-        return "Фінансові"
-
-    if is_empty_or_nd(plan_value):
-        return "Без планового значення"
-
-    return "Кількісні"
 
 
 def ensure_monitoring_columns(monitoring_df):
@@ -600,443 +736,758 @@ def ensure_monitoring_columns(monitoring_df):
     return monitoring_df
 
 
-def get_measure_records(monitoring_df, code, selected_year, selected_quarter):
+# ------------------------------------------------------------
+# Monitoring status logic
+# ------------------------------------------------------------
+
+def get_measure_records(monitoring_df, code, selected_years, selected_quarters):
     if monitoring_df.empty:
         return pd.DataFrame()
 
+    years_as_str = [str(y) for y in selected_years]
+    quarters_as_str = [str(q).replace(" квартал", "").strip() for q in selected_quarters]
+
     data = monitoring_df.copy()
+    data = data[data["strat_code"].astype(str).str.strip() == str(code).strip()]
 
-    data = data[
-        data["strat_code"].astype(str).str.strip() == str(code).strip()
-    ]
+    if years_as_str:
+        data = data[data["year"].astype(str).str.strip().isin(years_as_str)]
 
-    data = data[
-        data["year"].astype(str).str.strip() == str(selected_year).strip()
-    ]
-
-    if selected_quarter != "Усі квартали":
-        q = selected_quarter.replace(" квартал", "").strip()
-        data = data[
-            data["quarter"].astype(str).str.strip() == q
-        ]
+    if quarters_as_str:
+        data = data[data["quarter"].astype(str).str.strip().isin(quarters_as_str)]
 
     return data.copy()
 
 
-def get_measure_status(monitoring_df, code, selected_year, selected_quarter):
-    records = get_measure_records(monitoring_df, code, selected_year, selected_quarter)
+def is_overdue_review_record(row):
+    if raw_value(row.get("approval_status", "")) != "Очікує погодження":
+        return False
 
-    if records.empty:
-        return "Без подання"
+    submitted = pd.to_datetime(row.get("submitted_at", None), errors="coerce")
 
-    statuses = records["approval_status"].fillna("").astype(str).str.strip().tolist()
-    unique_statuses = list(set([s for s in statuses if s]))
+    if pd.isna(submitted):
+        return False
 
-    if "Погоджено" in unique_statuses and len(unique_statuses) == 1:
+    return business_days_between(submitted, pd.Timestamp.now()) > 5
+
+
+def get_record_visual_status(row):
+    approval = raw_value(row.get("approval_status", ""))
+
+    if approval == "Погоджено":
         return "Погоджено"
 
-    if "Очікує погодження" in unique_statuses and len(unique_statuses) == 1:
-        return "Очікує погодження"
+    if approval == "Повернуто на доопрацювання":
+        return "На доопрацюванні"
 
-    if "Повернуто на доопрацювання" in unique_statuses and len(unique_statuses) == 1:
-        return "Повернуто на доопрацювання"
+    if approval == "Очікує погодження":
+        return "Не враховано" if is_overdue_review_record(row) else "На розгляді"
 
-    if "Погоджено" in unique_statuses:
-        return "Є погоджені дані"
-
-    if "Очікує погодження" in unique_statuses:
-        return "Є дані на погодженні"
-
-    if "Повернуто на доопрацювання" in unique_statuses:
-        return "Повернуто"
-
-    return "Без подання"
+    return "Не враховано"
 
 
-def has_measure_risks(monitoring_df, code, selected_year, selected_quarter):
-    records = get_measure_records(monitoring_df, code, selected_year, selected_quarter)
+def visual_status_class(status):
+    if status == "Погоджено":
+        return "status-approved"
 
-    if records.empty or "risks" not in records.columns:
-        return False
+    if status == "На розгляді":
+        return "status-review"
 
-    risks = records["risks"].fillna("").astype(str).str.strip()
-    risks = risks[risks != ""]
+    if status == "На доопрацюванні":
+        return "status-returned"
 
-    return not risks.empty
-
-
-def has_monitoring_submission(monitoring_df, code, selected_year, selected_quarter):
-    records = get_measure_records(monitoring_df, code, selected_year, selected_quarter)
-    return not records.empty
+    return "status-empty"
 
 
-def has_approved_monitoring(monitoring_df, code, selected_year, selected_quarter):
-    records = get_measure_records(monitoring_df, code, selected_year, selected_quarter)
+def get_measure_status(monitoring_df, code, selected_years, selected_quarters):
+    records = get_measure_records(monitoring_df, code, selected_years, selected_quarters)
 
     if records.empty:
+        return "Не враховано"
+
+    statuses = [get_record_visual_status(row) for _, row in records.iterrows()]
+
+    if "Погоджено" in statuses:
+        return "Погоджено"
+
+    if "На розгляді" in statuses:
+        return "На розгляді"
+
+    if "На доопрацюванні" in statuses:
+        return "На доопрацюванні"
+
+    return "Не враховано"
+
+
+def has_monitoring_submission(monitoring_df, code, selected_years, selected_quarters):
+    return not get_measure_records(monitoring_df, code, selected_years, selected_quarters).empty
+
+
+def has_approved_monitoring(monitoring_df, code, selected_years, selected_quarters):
+    return get_measure_status(monitoring_df, code, selected_years, selected_quarters) == "Погоджено"
+
+
+def has_waiting_monitoring(monitoring_df, code, selected_years, selected_quarters):
+    return get_measure_status(monitoring_df, code, selected_years, selected_quarters) == "На розгляді"
+
+
+def has_returned_monitoring(monitoring_df, code, selected_years, selected_quarters):
+    return get_measure_status(monitoring_df, code, selected_years, selected_quarters) == "На доопрацюванні"
+
+
+def has_not_counted_monitoring(monitoring_df, code, selected_years, selected_quarters):
+    return get_measure_status(monitoring_df, code, selected_years, selected_quarters) == "Не враховано"
+
+
+def has_measure_risks(monitoring_df, code, selected_years, selected_quarters):
+    return has_not_counted_monitoring(monitoring_df, code, selected_years, selected_quarters)
+
+
+def measure_matches_status_mode(monitoring_df, code, selected_years, selected_quarters, mode):
+    status = get_measure_status(monitoring_df, code, selected_years, selected_quarters)
+
+    if mode == "Усі відомості":
+        return True
+
+    if mode == "Лише погоджені":
+        return status == "Погоджено"
+
+    if mode == "Лише на розгляді":
+        return status == "На розгляді"
+
+    if mode == "Лише на доопрацюванні":
+        return status == "На доопрацюванні"
+
+    if mode == "Лише не враховані":
+        return status == "Не враховано"
+
+    return True
+
+# ------------------------------------------------------------
+# Strategic plan filtering
+# ------------------------------------------------------------
+
+def is_active_in_any_selected_year(row, selected_years):
+    for year in selected_years:
+        col = f"target_{year}"
+        if col in row and not is_empty_or_nd(row.get(col, "")):
+            return True
+
+    return False
+
+
+def get_indicator_type(row):
+    unit = raw_value(row.get("unit", "")).lower()
+
+    if "так/ні" in unit or ("так" in unit and "ні" in unit):
+        return "Так/ні"
+
+    if "%" in unit or "відсот" in unit:
+        return "Відсотковий"
+
+    if any(x in unit for x in ["грн", "дол", "євро", "eur", "usd"]):
+        return "Фінансовий"
+
+    return "Кількісний"
+
+
+def row_contains_selected_ssp(row, selected_ssp_indices):
+    if not selected_ssp_indices:
+        return True
+
+    values = [
+        row.get("resp_main", ""),
+        row.get("resp_co_1", ""),
+        row.get("resp_co_2", ""),
+        row.get("department", "")
+    ]
+
+    return any(value_contains_ssp(value, selected_ssp_indices) for value in values)
+
+
+def row_matches_search(row, search_query):
+    query = raw_value(search_query).lower()
+
+    if not query:
+        return True
+
+    values = [
+        row.get("code", ""),
+        row.get("name", ""),
+        row.get("indicator", ""),
+        row.get("product_type", ""),
+        row.get("resp_main", ""),
+        row.get("resp_co_1", ""),
+        row.get("resp_co_2", "")
+    ]
+
+    return any(query in raw_value(value).lower() for value in values)
+
+
+def row_matches_product_type(row, selected_product_types):
+    if not selected_product_types:
+        return True
+
+    return raw_value(row.get("product_type", "")) in selected_product_types
+
+
+def row_matches_deputy(row, selected_deputies):
+    if not selected_deputies:
+        return True
+
+    deputy_value = raw_value(row.get("deputy_minister_raw", ""))
+
+    if not deputy_value:
         return False
 
-    return "Погоджено" in records["approval_status"].fillna("").astype(str).str.strip().tolist()
-
-
-def has_waiting_monitoring(monitoring_df, code, selected_year, selected_quarter):
-    records = get_measure_records(monitoring_df, code, selected_year, selected_quarter)
-
-    if records.empty:
-        return False
-
-    return "Очікує погодження" in records["approval_status"].fillna("").astype(str).str.strip().tolist()
+    return deputy_value in selected_deputies
 
 
 def apply_measure_filters(
     measures,
     monitoring_df,
-    selected_dep,
-    selected_year,
-    selected_quarter,
-    measure_mode,
-    indicator_type_filter,
+    selected_ssp_indices,
+    selected_years,
+    selected_quarters,
+    status_mode,
+    selected_goal_codes,
+    selected_product_types,
+    selected_deputies,
     search_query
 ):
     filtered = measures.copy()
 
-    if selected_dep != "Усі":
-        filtered = filtered[
-            filtered["department"].astype(str).str.strip() == selected_dep
-        ]
+    if selected_goal_codes:
+        filtered = filtered[filtered["parent_goal_code"].astype(str).str.strip().isin(selected_goal_codes)]
 
-    filtered["active_in_selected_year"] = filtered.apply(
-        lambda row: is_active_in_year(row, selected_year),
-        axis=1
-    )
-
-    filtered["indicator_type"] = filtered.apply(
-        lambda row: get_indicator_type(row, selected_year),
-        axis=1
-    )
+    filtered["matches_ssp"] = filtered.apply(lambda row: row_contains_selected_ssp(row, selected_ssp_indices), axis=1)
+    filtered["matches_product_type"] = filtered.apply(lambda row: row_matches_product_type(row, selected_product_types), axis=1)
+    filtered["matches_deputy"] = filtered.apply(lambda row: row_matches_deputy(row, selected_deputies), axis=1)
+    filtered["matches_search"] = filtered.apply(lambda row: row_matches_search(row, search_query), axis=1)
+    filtered["active_in_selected_years"] = filtered.apply(lambda row: is_active_in_any_selected_year(row, selected_years), axis=1)
 
     filtered["monitoring_status"] = filtered["code"].apply(
-        lambda code: get_measure_status(monitoring_df, code, selected_year, selected_quarter)
-    )
-
-    filtered["has_risks"] = filtered["code"].apply(
-        lambda code: has_measure_risks(monitoring_df, code, selected_year, selected_quarter)
+        lambda code: get_measure_status(monitoring_df, code, selected_years, selected_quarters)
     )
 
     filtered["has_submission"] = filtered["code"].apply(
-        lambda code: has_monitoring_submission(monitoring_df, code, selected_year, selected_quarter)
+        lambda code: has_monitoring_submission(monitoring_df, code, selected_years, selected_quarters)
     )
 
     filtered["has_approved"] = filtered["code"].apply(
-        lambda code: has_approved_monitoring(monitoring_df, code, selected_year, selected_quarter)
+        lambda code: has_approved_monitoring(monitoring_df, code, selected_years, selected_quarters)
     )
 
     filtered["has_waiting"] = filtered["code"].apply(
-        lambda code: has_waiting_monitoring(monitoring_df, code, selected_year, selected_quarter)
+        lambda code: has_waiting_monitoring(monitoring_df, code, selected_years, selected_quarters)
     )
 
-    if measure_mode == "Лише активні в обраному році":
-        filtered = filtered[filtered["active_in_selected_year"] == True]
+    filtered["has_returned"] = filtered["code"].apply(
+        lambda code: has_returned_monitoring(monitoring_df, code, selected_years, selected_quarters)
+    )
 
-    elif measure_mode == "Лише заходи з поданим моніторингом":
-        filtered = filtered[filtered["has_submission"] == True]
+    filtered["has_not_counted"] = filtered["code"].apply(
+        lambda code: has_not_counted_monitoring(monitoring_df, code, selected_years, selected_quarters)
+    )
 
-    elif measure_mode == "Лише заходи без моніторингу":
-        filtered = filtered[filtered["has_submission"] == False]
+    filtered["has_risks"] = filtered["has_not_counted"]
 
-    elif measure_mode == "Лише заходи з ризиками":
-        filtered = filtered[filtered["has_risks"] == True]
+    filtered["matches_status_mode"] = filtered["code"].apply(
+        lambda code: measure_matches_status_mode(
+            monitoring_df,
+            code,
+            selected_years,
+            selected_quarters,
+            status_mode
+        )
+    )
 
-    elif measure_mode == "Лише заходи, що очікують погодження":
-        filtered = filtered[filtered["has_waiting"] == True]
-
-    elif measure_mode == "Лише погоджені заходи":
-        filtered = filtered[filtered["has_approved"] == True]
-
-    if indicator_type_filter != "Усі":
-        filtered = filtered[filtered["indicator_type"] == indicator_type_filter]
-
-    if search_query.strip():
-        sq = search_query.strip().lower()
-
-        filtered = filtered[
-            filtered["code"].astype(str).str.lower().str.contains(sq, na=False)
-            |
-            filtered["name"].astype(str).str.lower().str.contains(sq, na=False)
-            |
-            filtered["indicator"].astype(str).str.lower().str.contains(sq, na=False)
-            |
-            filtered["department"].astype(str).str.lower().str.contains(sq, na=False)
-        ]
+    filtered = filtered[
+        filtered["matches_ssp"]
+        & filtered["matches_product_type"]
+        & filtered["matches_deputy"]
+        & filtered["matches_search"]
+        & filtered["matches_status_mode"]
+    ]
 
     return filtered.copy()
 
 
-def render_table(df, pending_cells=None, status_cells=None, risk_cells=None, min_width=2200):
-    if df.empty:
+def unique_measure_count(data, condition=None):
+    if data.empty:
+        return 0
+
+    tmp = data.copy()
+
+    if condition is not None:
+        tmp = tmp[condition(tmp)]
+
+    return len(set(tmp["strat_code"].dropna().astype(str).str.strip()))
+
+
+def count_filtered_status(filtered_measures, status_name):
+    if filtered_measures.empty or "monitoring_status" not in filtered_measures.columns:
+        return 0
+
+    return len(filtered_measures[filtered_measures["monitoring_status"] == status_name])
+
+
+def calculate_completion(filtered_measures):
+    if filtered_measures.empty:
+        return 0, 0
+
+    done_count = len(filtered_measures[filtered_measures["monitoring_status"] == "Погоджено"])
+    total_count = len(filtered_measures)
+
+    percent = round((done_count / total_count) * 100, 1) if total_count else 0
+
+    return done_count, percent
+
+
+# ------------------------------------------------------------
+# Quarter values
+# ------------------------------------------------------------
+
+def build_quarter_data(monitoring_df):
+    quarter_data = {}
+
+    if monitoring_df.empty:
+        return quarter_data
+
+    visible_monitoring = monitoring_df.copy()
+
+    if "submitted_at" in visible_monitoring.columns:
+        visible_monitoring = visible_monitoring.sort_values("submitted_at")
+
+    for _, row in visible_monitoring.iterrows():
+        code = raw_value(row.get("strat_code", ""))
+        year = raw_value(row.get("year", ""))
+        quarter = raw_value(row.get("quarter", ""))
+
+        if not code or not year or not quarter:
+            continue
+
+        key = f"{year}_{quarter}"
+        visual_status = get_record_visual_status(row)
+
+        quarter_data.setdefault(code, {})[key] = {
+            "value": row.get("numeric_value", ""),
+            "visual_status": visual_status,
+            "class": visual_status_class(visual_status)
+        }
+
+    return quarter_data
+
+
+def get_quarter_columns(selected_years, selected_quarters):
+    columns = []
+
+    for year in selected_years:
+        for quarter in selected_quarters:
+            q = str(quarter).replace(" квартал", "").strip()
+            columns.append((year, q, f"{year} {q} квартал"))
+
+    return columns
+
+
+# ------------------------------------------------------------
+# HTML table rendering
+# ------------------------------------------------------------
+
+def two_line_header(top, bottom):
+    top_text = escape(str(top))
+    bottom_text = escape(str(bottom))
+
+    if bottom_text:
+        return f"{top_text}<br><span style='font-size:11px;font-weight:700;color:#475569;'>{bottom_text}</span>"
+
+    return top_text
+
+
+def render_table(headers, rows, col_classes, min_width=2200, scroll_class="table-scroll"):
+    if not rows:
         st.info("Дані відсутні.")
         return
 
-    if pending_cells is None:
-        pending_cells = set()
-
-    if status_cells is None:
-        status_cells = {}
-
-    if risk_cells is None:
-        risk_cells = set()
-
     html = f"""
-    <div class="table-scroll">
+    <div class="{scroll_class}">
     <table class="custom-table" style="min-width:{min_width}px;">
-    <thead><tr>
+    <thead>
+    <tr>
     """
 
-    for col in df.columns:
-        css_class = "col-year"
+    for idx, header in enumerate(headers):
+        col_class = col_classes[idx] if idx < len(col_classes) else "col-year"
 
-        if col == "Код":
-            css_class = "col-code"
-        elif col == "Захід":
-            css_class = "col-name"
-        elif col == "Індикатор":
-            css_class = "col-indicator"
-        elif col == "Одиниця виміру":
-            css_class = "col-unit"
-        elif "квартал" in col:
-            css_class = "col-quarter"
-        elif "Департамент" in col:
-            css_class = "col-department"
-        elif col in ["Статус моніторингу", "Ризики", "Активність у році", "Тип індикатора"]:
-            css_class = "col-status"
+        if isinstance(header, tuple):
+            header_html = two_line_header(header[0], header[1])
+        else:
+            header_html = escape(str(header))
 
-        html += f"<th class='{css_class}'>{escape(str(col))}</th>"
+        html += f"<th class='{col_class}'>{header_html}</th>"
 
     html += "</tr></thead><tbody>"
 
-    for _, row in df.iterrows():
-        code = str(row.get("Код", "")).strip()
+    for row in rows:
         html += "<tr>"
 
-        for col in df.columns:
-            value = clean_value(row[col])
-            cell_class = ""
+        for idx, cell in enumerate(row):
+            value = cell.get("value", "") if isinstance(cell, dict) else cell
+            status_class = cell.get("status_class", "") if isinstance(cell, dict) else ""
+            mode = cell.get("mode", "fixed") if isinstance(cell, dict) else "fixed"
+            col_class = col_classes[idx] if idx < len(col_classes) else "col-year"
+            classes = f"{col_class} {status_class}".strip()
 
-            if (code, col) in pending_cells:
-                cell_class = "pending-cell"
-
-            if (code, col) in status_cells:
-                cell_class = status_cells[(code, col)]
-
-            if (code, col) in risk_cells:
-                cell_class = "risk-cell"
-
-            html += f"<td class='{cell_class}'>{value}</td>"
+            html += f"<td class='{classes}'>{make_cell(value, mode)}</td>"
 
         html += "</tr>"
 
     html += "</tbody></table></div>"
+
     st.markdown(html, unsafe_allow_html=True)
-
-
-def indicator_table(data):
-    if data.empty:
-        st.info("Індикаторів не знайдено.")
-        return
-
-    renamed = data.rename(columns={
-        "indicator": "Індикатор",
-        "unit": "Одиниця виміру",
-        "base_2021": "Базове значення 2021",
-        "fact_2024": "Звіт 2024",
-        "expected_2025": "Очікуване 2025",
-        "target_2026": "План 2026",
-        "target_2027": "План 2027",
-        "target_2028": "План 2028"
-    })
-
-    show_cols = [
-        "Індикатор",
-        "Одиниця виміру",
-        "Базове значення 2021",
-        "Звіт 2024",
-        "Очікуване 2025",
-        "План 2026",
-        "План 2027",
-        "План 2028"
-    ]
-
-    existing_cols = [col for col in show_cols if col in renamed.columns]
-    render_table(renamed[existing_cols], min_width=1350)
 
 
 def build_indicator_rows(parent_row, child_rows):
     rows = []
 
-    parent_indicator = raw_value(parent_row.get("indicator", ""))
+    indicator_cols = [
+        "indicator",
+        "unit",
+        "base_2021",
+        "fact_2024",
+        "fact_2025",
+        "strategic_target_2028",
+        "strategic_target_2034",
+        "source_global",
+        "source_national",
+        "resp_main",
+        "resp_co_1",
+        "resp_co_2"
+    ]
 
-    if parent_indicator:
-        rows.append({
-            "indicator": parent_row.get("indicator", ""),
-            "unit": parent_row.get("unit", ""),
-            "base_2021": parent_row.get("base_2021", ""),
-            "fact_2024": parent_row.get("fact_2024", ""),
-            "expected_2025": parent_row.get("expected_2025", ""),
-            "target_2026": parent_row.get("target_2026", ""),
-            "target_2027": parent_row.get("target_2027", ""),
-            "target_2028": parent_row.get("target_2028", "")
-        })
+    def add_row(row):
+        if not raw_value(row.get("indicator", "")):
+            return
+
+        rows.append([row.get(col, "") for col in indicator_cols])
+
+    add_row(parent_row)
 
     for _, child in child_rows.iterrows():
-        child_indicator = raw_value(child.get("indicator", ""))
+        add_row(child)
 
-        if child_indicator:
-            rows.append({
-                "indicator": child.get("indicator", ""),
-                "unit": child.get("unit", ""),
-                "base_2021": child.get("base_2021", ""),
-                "fact_2024": child.get("fact_2024", ""),
-                "expected_2025": child.get("expected_2025", ""),
-                "target_2026": child.get("target_2026", ""),
-                "target_2027": child.get("target_2027", ""),
-                "target_2028": child.get("target_2028", "")
-            })
-
-    return pd.DataFrame(rows)
+    return rows
 
 
-def get_filtered_completion(filtered_measures, monitoring_df, selected_year, selected_quarter):
-    if filtered_measures.empty:
-        return 0
+def render_indicator_table(rows):
+    headers = [
+        "Індикатор",
+        "Одиниці виміру",
+        ("2021", "базовий рівень (факт)"),
+        ("2024", "звіт"),
+        ("2025", "факт"),
+        "Проміжний цільовий орієнтир на кінець 2028 року",
+        (
+            "Цільовий орієнтир на кінець 2034 року для цілей і завдань",
+            "відповідає цілі, визначеній в НЕС-2030, ЦСР-2030"
+        ),
+        "Джерело даних (Глобальний рівень)",
+        "Джерело даних (Національний рівень)",
+        ("Відповідальні самостійні структурні підрозділи", "Головний"),
+        ("Відповідальні самостійні структурні підрозділи", "Співвиконавець 1"),
+        ("Відповідальні самостійні структурні підрозділи", "Співвиконавець 2")
+    ]
 
-    total = len(filtered_measures)
-    approved = 0
+    col_classes = [
+        "col-indicator",
+        "col-unit",
+        "col-year",
+        "col-year",
+        "col-year",
+        "col-long",
+        "col-long",
+        "col-long",
+        "col-long",
+        "col-resp",
+        "col-resp",
+        "col-resp"
+    ]
 
-    for _, row in filtered_measures.iterrows():
-        code = str(row["code"]).strip()
+    prepared_rows = []
 
-        if has_approved_monitoring(monitoring_df, code, selected_year, selected_quarter):
-            approved += 1
+    for row in rows:
+        prepared_rows.append([
+            {"value": row[0], "mode": "fixed"},
+            {"value": row[1], "mode": "fixed"},
+            {"value": row[2], "mode": "nowrap"},
+            {"value": row[3], "mode": "nowrap"},
+            {"value": row[4], "mode": "nowrap"},
+            {"value": row[5], "mode": "fixed"},
+            {"value": row[6], "mode": "fixed"},
+            {"value": row[7], "mode": "fixed"},
+            {"value": row[8], "mode": "fixed"},
+            {"value": row[9], "mode": "nowrap"},
+            {"value": row[10], "mode": "nowrap"},
+            {"value": row[11], "mode": "nowrap"}
+        ])
 
-    return round((approved / total) * 100, 1) if total else 0
+    render_table(headers, prepared_rows, col_classes, min_width=2700)
 
 
-def get_quarter_columns(selected_year, selected_quarter):
-    if selected_quarter == "Усі квартали":
-        return [
-            ("I", f"{selected_year} I квартал"),
-            ("II", f"{selected_year} II квартал"),
-            ("III", f"{selected_year} III квартал"),
-            ("IV", f"{selected_year} IV квартал")
+def build_measure_rows(measures, monitoring_df, quarter_data, selected_years, selected_quarters):
+    rows = []
+    quarter_columns = get_quarter_columns(selected_years, selected_quarters)
+
+    for _, measure in measures.iterrows():
+        code = raw_value(measure.get("code", ""))
+        status = get_measure_status(monitoring_df, code, selected_years, selected_quarters)
+
+        row = [
+            {"value": measure.get("code", ""), "mode": "nowrap"},
+            {"value": strip_leading_code(measure.get("name", ""), code), "mode": "fixed"},
+            {"value": measure.get("product_type", ""), "mode": "fixed"},
+            {"value": measure.get("indicator", ""), "mode": "fixed"},
+            {"value": measure.get("unit", ""), "mode": "fixed"},
+            {"value": measure.get("base_2021", ""), "mode": "nowrap"},
+            {"value": measure.get("fact_2024", ""), "mode": "nowrap"},
+            {"value": measure.get("fact_2025", ""), "mode": "nowrap"},
+            {"value": measure.get("target_2026", ""), "mode": "nowrap"},
+            {"value": measure.get("target_2027", ""), "mode": "nowrap"},
+            {"value": measure.get("target_2028", ""), "mode": "nowrap"},
+            {"value": measure.get("source_global", ""), "mode": "fixed"},
+            {"value": measure.get("source_national", ""), "mode": "fixed"},
+            {"value": measure.get("resp_main", ""), "mode": "nowrap"},
+            {"value": measure.get("resp_co_1", ""), "mode": "nowrap"},
+            {"value": measure.get("resp_co_2", ""), "mode": "nowrap"},
+            {"value": measure.get("deputy_minister_raw", ""), "mode": "nowrap"}
         ]
 
-    q = selected_quarter.replace(" квартал", "").strip()
-    return [(q, f"{selected_year} {q} квартал")]
+        for year, quarter, _ in quarter_columns:
+            key = f"{year}_{quarter}"
+            item = quarter_data.get(code, {}).get(key, None)
+
+            if item is None:
+                row.append({
+                    "value": "",
+                    "status_class": "status-empty",
+                    "mode": "nowrap"
+                })
+            else:
+                row.append({
+                    "value": item.get("value", ""),
+                    "status_class": item.get("class", "status-empty"),
+                    "mode": "nowrap"
+                })
+
+        row.append({
+            "value": status,
+            "status_class": visual_status_class(status),
+            "mode": "nowrap"
+        })
+
+        rows.append(row)
+
+    return rows
 
 
-def make_summary_card(label, value):
-    return f"""
-    <div class="summary-card">
-        <div class="summary-label">{label}</div>
-        <div class="summary-value">{value}</div>
-    </div>
-    """
+def render_measure_table(measures, monitoring_df, quarter_data, selected_years, selected_quarters):
+    quarter_columns = get_quarter_columns(selected_years, selected_quarters)
+
+    headers = [
+        "Код",
+        "Захід",
+        "Тип продукту",
+        "Індикатор",
+        "Одиниці виміру",
+        ("2021", "базовий рівень (факт)"),
+        ("2024", "звіт"),
+        ("2025", "факт"),
+        ("2026", "цільовий орієнтир для заходів на рік"),
+        ("2027", "цільовий орієнтир для заходів на рік"),
+        ("2028", "цільовий орієнтир для заходів на рік"),
+        "Підстава для включення до стратегічного плану (Глобальний рівень)",
+        "Підстава для включення до стратегічного плану (Національний рівень)",
+        ("Відповідальні самостійні структурні підрозділи", "Головний"),
+        ("Відповідальні самостійні структурні підрозділи", "Співвиконавець 1"),
+        ("Відповідальні самостійні структурні підрозділи", "Співвиконавець 2"),
+        "Заступник Міністра"
+    ]
+
+    for _, _, label in quarter_columns:
+        headers.append(label)
+
+    headers.append("Статус")
+
+    col_classes = [
+        "col-code",
+        "col-measure",
+        "col-product",
+        "col-indicator",
+        "col-unit",
+        "col-year",
+        "col-year",
+        "col-year",
+        "col-year",
+        "col-year",
+        "col-year",
+        "col-long",
+        "col-long",
+        "col-resp",
+        "col-resp",
+        "col-resp",
+        "col-resp"
+    ]
+
+    for _ in quarter_columns:
+        col_classes.append("col-year")
+
+    col_classes.append("col-status")
+
+    rows = build_measure_rows(
+        measures,
+        monitoring_df,
+        quarter_data,
+        selected_years,
+        selected_quarters
+    )
+
+    render_table(
+        headers,
+        rows,
+        col_classes,
+        min_width=3400,
+        scroll_class="table-scroll measures-scroll"
+    )
 
 
-df = load_strat_matrix()
-monitoring_df = load_monitoring()
+# ------------------------------------------------------------
+# Interface state
+# ------------------------------------------------------------
 
-if monitoring_df.empty:
-    monitoring_df = pd.DataFrame()
+def default_state():
+    defaults = {
+        "expand_all_goals": False,
+        "ssp_filter": [],
+        "selected_years_main": [2026],
+        "selected_quarters_main": ["I"],
+        "status_mode_main": "Усі відомості",
+        "selected_goal_codes_main": [],
+        "selected_product_types_main": [],
+        "selected_deputies_main": [],
+        "search_main": ""
+    }
 
-monitoring_df = ensure_monitoring_columns(monitoring_df)
-
-quarter_data = {}
-
-if not monitoring_df.empty:
-    visible_monitoring = monitoring_df[
-        monitoring_df["approval_status"].isin(["Погоджено", "Очікує погодження"])
-    ].copy()
-
-    if not visible_monitoring.empty:
-        visible_monitoring = visible_monitoring.sort_values("submitted_at")
-
-        for _, row in visible_monitoring.iterrows():
-            key = str(row["strat_code"]).strip()
-            year = str(row["year"]).strip()
-            q = str(row["quarter"]).strip()
-            approval = str(row["approval_status"]).strip()
-
-            quarter_key = f"{year}_{q}"
-
-            quarter_data.setdefault(key, {})
-            quarter_data[key][quarter_key] = {
-                "value": row["numeric_value"],
-                "approval": approval
-            }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
 
 
-total_measures = len(df[df["object_type"] == "measure"])
-submitted_count = 0
-approved_count = 0
-waiting_count = 0
-returned_count = 0
-risk_count = 0
-last_update = datetime.now().strftime("%d.%m.%Y %H:%M")
-
-if not monitoring_df.empty:
-    submitted_count = len(monitoring_df)
-    approved_count = len(monitoring_df[monitoring_df["approval_status"] == "Погоджено"])
-    waiting_count = len(monitoring_df[monitoring_df["approval_status"] == "Очікує погодження"])
-    returned_count = len(monitoring_df[monitoring_df["approval_status"] == "Повернуто на доопрацювання"])
-
-    if "risks" in monitoring_df.columns:
-        risk_count = len(
-            monitoring_df[
-                monitoring_df["risks"].fillna("").astype(str).str.strip() != ""
-            ]
-        )
-
-    if "submitted_at" in monitoring_df.columns:
-        try:
-            last_update_value = pd.to_datetime(monitoring_df["submitted_at"], errors="coerce").max()
-            if pd.notna(last_update_value):
-                last_update = last_update_value.strftime("%d.%m.%Y %H:%M")
-        except Exception:
-            pass
-
-approved_share = round((approved_count / submitted_count) * 100, 1) if submitted_count else 0
-
-without_monitoring = max(
-    total_measures - len(set(monitoring_df["strat_code"].astype(str))) if not monitoring_df.empty else total_measures,
-    0
-)
-
-
-if "expand_all_goals" not in st.session_state:
+def reset_main_filters():
+    st.session_state.ssp_filter = []
+    st.session_state.selected_years_main = [2026]
+    st.session_state.selected_quarters_main = ["I"]
+    st.session_state.status_mode_main = "Усі відомості"
+    st.session_state.selected_goal_codes_main = []
+    st.session_state.selected_product_types_main = []
+    st.session_state.selected_deputies_main = []
+    st.session_state.search_main = ""
     st.session_state.expand_all_goals = False
 
-if "selected_dep_main" not in st.session_state:
-    st.session_state.selected_dep_main = "Усі"
 
-if "selected_year_main" not in st.session_state:
-    st.session_state.selected_year_main = 2026
+def expand_all_main():
+    st.session_state.expand_all_goals = True
 
-if "selected_quarter_main" not in st.session_state:
-    st.session_state.selected_quarter_main = "Усі квартали"
 
-if "measure_mode_main" not in st.session_state:
-    st.session_state.measure_mode_main = "Усі заходи стратегічного плану"
+def collapse_all_main():
+    st.session_state.expand_all_goals = False
 
-if "indicator_type_main" not in st.session_state:
-    st.session_state.indicator_type_main = "Усі"
+# ------------------------------------------------------------
+# Load data
+# ------------------------------------------------------------
 
-if "search_main" not in st.session_state:
-    st.session_state.search_main = ""
+df = load_strat_matrix()
+monitoring_df = ensure_monitoring_columns(load_monitoring())
+quarter_data = build_quarter_data(monitoring_df)
 
-if "selected_goal_nav_main" not in st.session_state:
-    st.session_state.selected_goal_nav_main = "Усі стратегічні цілі"
+default_state()
 
+all_measures = df[df["object_type"] == "measure"].copy()
+goals = df[df["object_type"] == "goal"].copy()
+tasks_all = df[df["object_type"] == "task"].copy()
+
+# ------------------------------------------------------------
+# Lists for filters
+# ------------------------------------------------------------
+
+all_ssp_indices = sorted(
+    {
+        index
+        for _, row in df.iterrows()
+        for value in [
+            row.get("resp_main", ""),
+            row.get("resp_co_1", ""),
+            row.get("resp_co_2", ""),
+            row.get("department", "")
+        ]
+        for index in split_ssp_values(value)
+    },
+    key=lambda x: int(x) if str(x).isdigit() else 9999
+)
+
+year_options = list(range(2026, 2035))
+quarter_options = ["I", "II", "III", "IV"]
+
+status_options = [
+    "Усі відомості",
+    "Лише погоджені",
+    "Лише на розгляді",
+    "Лише на доопрацюванні",
+    "Лише не враховані"
+]
+
+goal_options = {
+    raw_value(row["code"]): f'{raw_value(row["code"])} {strip_leading_code(row["name"], row["code"])}'
+    for _, row in goals.iterrows()
+}
+
+product_type_options = sorted(
+    [
+        raw_value(value)
+        for value in df["product_type"].dropna().unique()
+        if raw_value(value)
+    ]
+)
+
+deputy_options = sorted([
+    "АРТЕМЕНКО Анна Ігорівна",
+    "БАШЛИК Денис Олександрович",
+    "БЕЗКАРАВАЙНИЙ Ігор Володимирович",
+    "ВИСОЦЬКИЙ Тарас Миколайович",
+    "КІНДРАТІВ Віталій Зіновійович",
+    "КРАСНОЛУЦЬКИЙ Олександр Васильович",
+    "МАРЧАК Дарія Миколаївна",
+    "ОВЧАРЕНКО Ірина Іванівна",
+    "ПЕРЕЛИГІН Єгор Євгенович",
+    "ПЕТРУК Віталій Вікторович",
+    "ПИВОВАРОВ Андрій Андрійович",
+    "ЦИБОРТ Олександр Сергійович"
+])
+
+
+# ------------------------------------------------------------
+# Header
+# ------------------------------------------------------------
+
+last_update = datetime.now().strftime("%d.%m.%Y %H:%M")
+
+if not monitoring_df.empty and "submitted_at" in monitoring_df.columns:
+    try:
+        last_update_value = pd.to_datetime(monitoring_df["submitted_at"], errors="coerce").max()
+
+        if pd.notna(last_update_value):
+            last_update = last_update_value.strftime("%d.%m.%Y %H:%M")
+    except Exception:
+        pass
 
 st.markdown('<div class="ua-line"></div>', unsafe_allow_html=True)
 
@@ -1076,21 +1527,21 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-st.page_link(
-    "pages/1_Моніторинг_виконання.py",
-    label="Перейти до внесення відомостей",
-    icon="🖊️"
-)
+
+# ------------------------------------------------------------
+# Flow block
+# ------------------------------------------------------------
 
 st.markdown(
     """
     <div class="flow-box">
         <div class="flow-title">Маршрут моніторингових даних</div>
         <div class="flow-steps">
+            <div class="flow-step">👁️ Перегляд</div>
             <div class="flow-step">📝 Подання відомостей</div>
             <div class="flow-step">🔎 Збір та обробка</div>
-            <div class="flow-step">✅ Узгодження</div>
-            <div class="flow-step">📊 Погодження відомостей</div>
+            <div class="flow-step">🧩 Опрацювання та узгодження</div>
+            <div class="flow-step">✅ Погодження відомостей</div>
             <div class="flow-step">📈 Оцінка виконання</div>
         </div>
     </div>
@@ -1098,36 +1549,76 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-k1, k2, k3, k4, k5 = st.columns(5)
-k1.metric("Заходів у СП", total_measures)
-k2.metric("Поданих заявок", submitted_count)
-k3.metric("Погоджено", approved_count)
-k4.metric("Погоджено, %", f"{approved_share}%")
-k5.metric("Без моніторингу", without_monitoring)
 
-k6, k7, k8 = st.columns(3)
-k6.metric("Очікує погодження", waiting_count)
-k7.metric("Повернуто", returned_count)
-k8.metric("Заявок із ризиками", risk_count)
+# ------------------------------------------------------------
+# Current monitoring status
+# ------------------------------------------------------------
+
+total_measures = len(all_measures)
+
+submitted_count = unique_measure_count(monitoring_df)
+
+reviewed_count = unique_measure_count(
+    monitoring_df,
+    lambda x: x["approval_status"].isin(["Погоджено", "Повернуто на доопрацювання"])
+)
+
+waiting_count = unique_measure_count(
+    monitoring_df,
+    lambda x: x.apply(lambda row: get_record_visual_status(row) == "На розгляді", axis=1)
+)
+
+returned_count = unique_measure_count(
+    monitoring_df,
+    lambda x: x["approval_status"] == "Повернуто на доопрацювання"
+)
+
+approved_count = unique_measure_count(
+    monitoring_df,
+    lambda x: x["approval_status"] == "Погоджено"
+)
+
+current_state_cards = "".join([
+    make_summary_card("Заходів усього", total_measures),
+    make_summary_card("Поданих відомостей за заходами", submitted_count),
+    make_summary_card("Розглянуто", reviewed_count),
+    make_summary_card("Очікує розгляду", waiting_count),
+    make_summary_card("Повернуто на доопрацювання", returned_count),
+    make_summary_card("Погоджено", approved_count)
+])
+
+st.markdown(
+    f'<div class="summary-box">'
+    f'<div class="summary-title">Поточний стан моніторингу Стратегічного плану</div>'
+    f'<div class="summary-grid">{current_state_cards}</div>'
+    f'</div>',
+    unsafe_allow_html=True
+)
+
+
+# ------------------------------------------------------------
+# User guide
+# ------------------------------------------------------------
 
 st.markdown(
     """
+    <div class="guide-title">Гід користувача</div>
     <div class="info-grid">
         <div class="info-card">
-            <div class="info-card-title">Як працювати з головною сторінкою</div>
+            <div class="info-card-title">Інструкція по роботі з системою</div>
             <div>
-                1. Оберіть департамент, рік, квартал та режим відображення.<br>
-                2. Система залишить тільки релевантні стратегічні цілі, завдання та заходи.<br>
-                3. Відкрийте синій блок стратегічної цілі та темно-сірий блок завдання.<br>
-                4. Перегляньте індикатори, заходи, планові та квартальні значення.<br>
-                5. Для внесення нових даних перейдіть за зеленою кнопкою вище.
+                1. Оберіть параметри фільтрації із випадних списків: індекс самостійного структурного підрозділу, звітний період та необхідний режим перегляду даних.<br>
+                2. Система автоматично застосує обрані параметри та відобразить відповідні дані.<br>
+                3. Розгорніть відповідні блоки та перегляньте усі відомості щодо стратегічних цілей, завдань та заходів.<br>
+                4. Для переходу до внесення відомостей натисніть зелену кнопку.
             </div>
         </div>
         <div class="info-card">
-            <div class="info-card-title">Легенда квартальних даних</div>
-            <div class="legend-item">🟨 Жовта комірка — дані подані, але ще очікують погодження адміністратора.</div>
-            <div class="legend-item">🟩 Погоджено — дані враховані в моніторингу.</div>
-            <div class="legend-item">🔴 Повернуті на доопрацювання дані не відображаються як погоджені.</div>
+            <div class="info-card-title">Легенда звітних даних</div>
+            <div class="legend-item">🟦 На розгляді — відомості подані та перебувають на розгляді координатора або керівника самостійного структурного підрозділу</div>
+            <div class="legend-item">🟨 На доопрацюванні — дані потребують уточнення та доопрацювання</div>
+            <div class="legend-item">🟩 Погоджено — відомості узгоджено та враховано.</div>
+            <div class="legend-item">🟥 Не враховано — відомості не подані або перебувають на погодженні більше 5 робочих днів</div>
         </div>
     </div>
     """,
@@ -1135,286 +1626,207 @@ st.markdown(
 )
 
 
-departments = sorted(df["department"].dropna().astype(str).unique())
-goals = df[df["object_type"] == "goal"].copy()
+# ------------------------------------------------------------
+# Filters
+# ------------------------------------------------------------
 
-goal_options = ["Усі стратегічні цілі"] + [
-    f"{row['code']} {row['name']}" for _, row in goals.iterrows()
-]
+st.markdown(
+    """
+    <div class="filter-box">
+        <div class="filter-title">Параметри відбору (для перегляду)</div>
+        <div class="filter-subtitle">Основні параметри</div>
+    """,
+    unsafe_allow_html=True
+)
 
-st.markdown('<div class="filter-box"><div class="filter-title">Фільтри стратегічного плану</div>', unsafe_allow_html=True)
-
-f1, f2, f3, f4 = st.columns([1, 1, 1, 1.2])
+f1, f2, f3 = st.columns([1.25, 1.2, 1.25])
 
 with f1:
-    selected_dep = st.selectbox(
-        "Департамент",
-        ["Усі"] + departments,
-        key="selected_dep_main"
+    selected_ssp_indices = st.multiselect(
+        "Індекс самостійного структурного підрозділу",
+        all_ssp_indices,
+        key="ssp_filter",
+        placeholder="Оберіть індекс ССП"
     )
 
 with f2:
-    selected_year = st.selectbox(
-        "Рік моніторингу",
-        [2026, 2027, 2028],
-        key="selected_year_main"
+    selected_years = st.multiselect(
+        "Рік",
+        year_options,
+        key="selected_years_main",
+        placeholder="Оберіть рік"
     )
 
 with f3:
-    selected_quarter = st.selectbox(
+    selected_quarters = st.multiselect(
         "Квартал",
-        ["Усі квартали", "I квартал", "II квартал", "III квартал", "IV квартал"],
-        key="selected_quarter_main"
+        quarter_options,
+        key="selected_quarters_main",
+        placeholder="Оберіть квартал"
     )
+
+f4, f5 = st.columns([1.1, 1.7])
 
 with f4:
-    selected_goal_nav = st.selectbox(
-        "Швидкий перехід до стратегічної цілі",
-        goal_options,
-        key="selected_goal_nav_main"
+    status_mode = st.selectbox(
+        "Режим перегляду даних",
+        status_options,
+        key="status_mode_main"
     )
-
-f5, f6, f7 = st.columns([1.4, 1, 1.4])
 
 with f5:
-    measure_mode = st.selectbox(
-        "Режим відображення заходів",
-        [
-            "Усі заходи стратегічного плану",
-            "Лише активні в обраному році",
-            "Лише заходи з поданим моніторингом",
-            "Лише заходи без моніторингу",
-            "Лише заходи з ризиками",
-            "Лише заходи, що очікують погодження",
-            "Лише погоджені заходи"
-        ],
-        key="measure_mode_main"
+    st.markdown("&nbsp;", unsafe_allow_html=True)
+
+st.markdown('<div class="filter-subtitle">Додаткові параметри</div>', unsafe_allow_html=True)
+
+g1, g2, g3 = st.columns([1.2, 1.1, 1.4])
+
+with g1:
+    selected_goal_labels = st.multiselect(
+        "Стратегічна ціль",
+        list(goal_options.values()),
+        key="selected_goal_codes_main",
+        placeholder="Оберіть стратегічну ціль"
     )
 
-with f6:
-    indicator_type_filter = st.selectbox(
-        "Тип індикатора",
-        [
-            "Усі",
-            "так/ні",
-            "Кількісні",
-            "Відсоткові",
-            "Фінансові",
-            "Без планового значення"
-        ],
-        key="indicator_type_main"
+with g2:
+    selected_product_types = st.multiselect(
+        "Тип продукту",
+        product_type_options,
+        key="selected_product_types_main",
+        placeholder="Оберіть тип продукту"
     )
 
-with f7:
+with g3:
+    selected_deputies = st.multiselect(
+        "За заступником Міністра",
+        deputy_options,
+        key="selected_deputies_main",
+        placeholder="Оберіть заступника Міністра"
+    )
+
+g4, g5 = st.columns([2.1, 1])
+
+with g4:
     search_query = st.text_input(
-        "Пошук за кодом, назвою заходу, індикатором або департаментом",
+        "Додаткові параметри пошуку (код завдання, заходу, ключові слова)",
         key="search_main"
     )
 
-def expand_all_main():
-    st.session_state.expand_all_goals = True
-
-
-def collapse_all_main():
-    st.session_state.expand_all_goals = False
-
-
-def reset_main_filters():
-    st.session_state.selected_dep_main = "Усі"
-    st.session_state.selected_year_main = 2026
-    st.session_state.selected_quarter_main = "Усі квартали"
-    st.session_state.measure_mode_main = "Усі заходи стратегічного плану"
-    st.session_state.indicator_type_main = "Усі"
-    st.session_state.search_main = ""
-    st.session_state.selected_goal_nav_main = "Усі стратегічні цілі"
-    st.session_state.expand_all_goals = False
-
-
-b1, b2, b3 = st.columns([1, 1, 4])
-
-with b1:
-    st.button(
-        "Розгорнути всі релевантні цілі",
-        use_container_width=True,
-        on_click=expand_all_main
-    )
-
-with b2:
-    st.button(
-        "Згорнути все",
-        use_container_width=True,
-        on_click=collapse_all_main
-    )
-
-with b3:
+with g5:
+    st.markdown("&nbsp;", unsafe_allow_html=True)
     st.button(
         "Скинути фільтри",
         use_container_width=True,
         on_click=reset_main_filters
     )
-st.markdown('</div>', unsafe_allow_html=True)
+
+st.page_link(
+    "pages/1_Моніторинг_виконання.py",
+    label="Подати відомості",
+    icon="🖊️"
+)
+
+st.markdown("</div>", unsafe_allow_html=True)
 
 
-all_measures = df[df["object_type"] == "measure"].copy()
+# ------------------------------------------------------------
+# Filter processing
+# ------------------------------------------------------------
+
+selected_goal_codes = [
+    code
+    for code, label in goal_options.items()
+    if label in selected_goal_labels
+]
+
+if not selected_years:
+    selected_years = [2026]
+
+if not selected_quarters:
+    selected_quarters = ["I"]
 
 filtered_measures = apply_measure_filters(
     all_measures,
     monitoring_df,
-    selected_dep,
-    selected_year,
-    selected_quarter,
-    measure_mode,
-    indicator_type_filter,
+    selected_ssp_indices,
+    selected_years,
+    selected_quarters,
+    status_mode,
+    selected_goal_codes,
+    selected_product_types,
+    selected_deputies,
     search_query
 )
 
-selected_goal_code = None
+filtered_goal_codes = set(filtered_measures["parent_goal_code"].astype(str).str.strip()) if not filtered_measures.empty else set()
+filtered_task_codes = set(filtered_measures["parent_task_code"].astype(str).str.strip()) if not filtered_measures.empty else set()
 
-if selected_goal_nav != "Усі стратегічні цілі":
-    selected_goal_code = selected_goal_nav.split(" ")[0].strip()
+visible_goals = goals[goals["code"].astype(str).str.strip().isin(filtered_goal_codes)].copy()
+visible_tasks = tasks_all[tasks_all["code"].astype(str).str.strip().isin(filtered_task_codes)].copy()
 
-if selected_goal_code:
-    filtered_measures = filtered_measures[
-        filtered_measures["parent_goal_code"].astype(str) == selected_goal_code
-    ]
+done_count, completion_percent = calculate_completion(filtered_measures)
 
-filtered_goal_codes = set(filtered_measures["parent_goal_code"].astype(str).str.strip())
-filtered_task_codes = set(filtered_measures["parent_task_code"].astype(str).str.strip())
+approved_filtered = count_filtered_status(filtered_measures, "Погоджено")
+waiting_filtered = count_filtered_status(filtered_measures, "На розгляді")
+not_counted_filtered = count_filtered_status(filtered_measures, "Не враховано")
+risk_count = not_counted_filtered
 
-visible_goals = goals[
-    goals["code"].astype(str).str.strip().isin(filtered_goal_codes)
-].copy()
+search_cards = "".join([
+    make_summary_card("Стратегічних цілей", len(visible_goals)),
+    make_summary_card("Завдань", len(visible_tasks)),
+    make_summary_card("Заходів", len(filtered_measures)),
+    make_summary_card("Виконано", f"{completion_percent}% / {done_count}"),
+    make_summary_card("Погоджено", approved_filtered),
+    make_summary_card("На розгляді", waiting_filtered),
+    make_summary_card("Не враховано", not_counted_filtered)
+])
 
-visible_tasks = df[
-    (df["object_type"] == "task") &
-    (df["code"].astype(str).str.strip().isin(filtered_task_codes))
-].copy()
-
-filtered_completion = get_filtered_completion(
-    filtered_measures,
-    monitoring_df,
-    selected_year,
-    selected_quarter
+st.markdown(
+    f'<div class="search-result-box">'
+    f'<div class="search-result-title">Результати пошуку</div>'
+    f'<div class="summary-grid-7">{search_cards}</div>'
+    f'</div>',
+    unsafe_allow_html=True
 )
 
-filtered_approved = len(filtered_measures[filtered_measures["has_approved"] == True]) if "has_approved" in filtered_measures.columns else 0
-filtered_waiting = len(filtered_measures[filtered_measures["has_waiting"] == True]) if "has_waiting" in filtered_measures.columns else 0
-filtered_without_submission = len(filtered_measures[filtered_measures["has_submission"] == False]) if "has_submission" in filtered_measures.columns else 0
-filtered_risks = len(filtered_measures[filtered_measures["has_risks"] == True]) if "has_risks" in filtered_measures.columns else 0
+years_label = ", ".join(str(year) for year in selected_years)
+quarters_label = ", ".join(str(q) for q in selected_quarters)
+ssp_label = ", ".join([f"деп. {x}" for x in selected_ssp_indices]) if selected_ssp_indices else "Усі"
+
+st.caption(
+    f"Рік: {years_label}. "
+    f"Квартал: {quarters_label}. "
+    f"ССП: {ssp_label}. "
+    f"Параметри: {status_mode}. "
+    f"Заходів із ризиками: {risk_count}."
+)
+
+
+# ------------------------------------------------------------
+# Strategic plan view
+# ------------------------------------------------------------
+
+st.subheader("Відомості для моніторингу")
 
 st.markdown(
     """
-    <div class="summary-box">
-        <div class="summary-title">Результат після застосування фільтрів</div>
+    <div class="note-box">
+        Фільтрація застосовується до всієї ієрархії Стратегічного плану: стратегічна ціль → завдання → захід.<br>
+        Стратегічні цілі та завдання без відповідних заходів не відображаються.<br>
+        Відсоток виконання розраховується за відібраними заходами.
     </div>
     """,
     unsafe_allow_html=True
 )
 
-s1, s2, s3, s4, s5, s6, s7 = st.columns(7)
-
-with s1:
-    st.markdown(
-        f"""
-        <div class="summary-card">
-            <div class="summary-label">Стратегічних цілей</div>
-            <div class="summary-value">{len(visible_goals)}</div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-with s2:
-    st.markdown(
-        f"""
-        <div class="summary-card">
-            <div class="summary-label">Завдань</div>
-            <div class="summary-value">{len(visible_tasks)}</div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-with s3:
-    st.markdown(
-        f"""
-        <div class="summary-card">
-            <div class="summary-label">Заходів</div>
-            <div class="summary-value">{len(filtered_measures)}</div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-with s4:
-    st.markdown(
-        f"""
-        <div class="summary-card">
-            <div class="summary-label">Виконання</div>
-            <div class="summary-value">{filtered_completion}%</div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-with s5:
-    st.markdown(
-        f"""
-        <div class="summary-card">
-            <div class="summary-label">Погоджено</div>
-            <div class="summary-value">{filtered_approved}</div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-with s6:
-    st.markdown(
-        f"""
-        <div class="summary-card">
-            <div class="summary-label">Очікує</div>
-            <div class="summary-value">{filtered_waiting}</div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-with s7:
-    st.markdown(
-        f"""
-        <div class="summary-card">
-            <div class="summary-label">Без подання</div>
-            <div class="summary-value">{filtered_without_submission}</div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-st.caption(
-    f"Рік: {selected_year}. Квартал: {selected_quarter}. "
-    f"Департамент: {selected_dep}. Режим: {measure_mode}. "
-    f"Заходів із ризиками: {filtered_risks}."
-)
-
-st.caption(
-    f"Рік: {selected_year}. Квартал: {selected_quarter}. "
-    f"Департамент: {selected_dep}. Режим: {measure_mode}. "
-    f"Заходів із ризиками: {filtered_risks}."
-)
-
-st.markdown('</div>', unsafe_allow_html=True)
-
-
-st.subheader("Стратегічний план")
-
 if filtered_measures.empty:
-    st.warning("За обраними фільтрами заходів не знайдено.")
+    st.warning("За обраними параметрами відбору відомостей не знайдено.")
     st.stop()
 
-
 for _, goal in visible_goals.iterrows():
-    goal_code = str(goal["code"]).strip()
-    goal_name = str(goal["name"]).strip()
+    goal_code = raw_value(goal["code"])
+    goal_name = strip_leading_code(goal["name"], goal_code)
 
     goal_filtered_measures = filtered_measures[
         filtered_measures["parent_goal_code"].astype(str).str.strip() == goal_code
@@ -1424,55 +1836,43 @@ for _, goal in visible_goals.iterrows():
         continue
 
     goal_task_codes = set(goal_filtered_measures["parent_task_code"].astype(str).str.strip())
+    tasks = tasks_all[tasks_all["code"].astype(str).str.strip().isin(goal_task_codes)].copy()
 
-    tasks = df[
-        (df["object_type"] == "task") &
-        (df["code"].astype(str).str.strip().isin(goal_task_codes))
-    ].copy()
-
-    tasks_count = len(tasks)
-    measures_count = len(goal_filtered_measures)
-
-    goal_percent = get_filtered_completion(
-        goal_filtered_measures,
-        monitoring_df,
-        selected_year,
-        selected_quarter
-    )
-
-    if selected_dep != "Усі":
-        progress_label = f"Виконання {selected_dep} — {goal_percent}%"
-    else:
-        progress_label = f"Виконання за фільтрами — {goal_percent}%"
+    goal_done, goal_percent = calculate_completion(goal_filtered_measures)
 
     goal_label = (
-        f"{goal_code} {goal_name}  |  "
-        f"Завдань — {tasks_count}  |  Заходів — {measures_count}  |  {progress_label}"
+        f"{goal_code} {goal_name} | "
+        f"Завдань — {len(tasks)} | "
+        f"Заходів — {len(goal_filtered_measures)} | "
+        f"Виконання за фільтрами — {goal_percent}%"
     )
 
-    expand_goal = st.session_state.expand_all_goals or selected_goal_code == goal_code
-
-    with st.expander(goal_label, expanded=expand_goal):
+    with st.expander(goal_label, expanded=st.session_state.expand_all_goals):
         st.progress(min(goal_percent / 100, 1.0))
 
         goal_indicator_children = df[
-            (df["object_type"] == "goal_indicator") &
-            (df["parent_goal_code"].astype(str) == goal_code) &
-            (df["parent_task_code"].astype(str) == "")
+            (df["object_type"] == "goal_indicator")
+            & (df["parent_goal_code"].astype(str) == goal_code)
+            & (df["parent_task_code"].astype(str) == "")
         ].copy()
+
+        if selected_ssp_indices:
+            goal_indicator_children = goal_indicator_children[
+                goal_indicator_children.apply(lambda row: row_contains_selected_ssp(row, selected_ssp_indices), axis=1)
+            ]
 
         goal_indicators = build_indicator_rows(goal, goal_indicator_children)
 
-        if not goal_indicators.empty:
+        if goal_indicators:
             st.markdown(
                 '<div class="section-title">Індикатори досягнення стратегічної цілі</div>',
                 unsafe_allow_html=True
             )
-            indicator_table(goal_indicators)
+            render_indicator_table(goal_indicators)
 
         for _, task in tasks.iterrows():
-            task_code = str(task["code"]).strip()
-            task_name = str(task["name"]).strip()
+            task_code = raw_value(task["code"])
+            task_name = strip_leading_code(task["name"], task_code)
 
             task_measures = goal_filtered_measures[
                 goal_filtered_measures["parent_task_code"].astype(str).str.strip() == task_code
@@ -1481,194 +1881,78 @@ for _, goal in visible_goals.iterrows():
             if task_measures.empty:
                 continue
 
-            task_percent = get_filtered_completion(
-                task_measures,
-                monitoring_df,
-                selected_year,
-                selected_quarter
-            )
+            task_done, task_percent = calculate_completion(task_measures)
 
             task_label = (
-                f"{task_code} {task_name}  |  "
-                f"Заходів — {len(task_measures)}  |  "
+                f"{task_code} {task_name} | "
+                f"Заходів — {len(task_measures)} | "
                 f"Виконання — {task_percent}%"
             )
 
             with st.expander(task_label, expanded=st.session_state.expand_all_goals):
-
                 task_indicator_children = df[
-                    (df["object_type"] == "task_indicator") &
-                    (df["parent_task_code"].astype(str) == task_code)
+                    (df["object_type"] == "task_indicator")
+                    & (df["parent_task_code"].astype(str) == task_code)
                 ].copy()
+
+                if selected_ssp_indices:
+                    task_indicator_children = task_indicator_children[
+                        task_indicator_children.apply(lambda row: row_contains_selected_ssp(row, selected_ssp_indices), axis=1)
+                    ]
 
                 task_indicators = build_indicator_rows(task, task_indicator_children)
 
-                if not task_indicators.empty:
+                if task_indicators:
                     st.markdown(
                         '<div class="section-title">Індикатори досягнення завдання</div>',
                         unsafe_allow_html=True
                     )
-                    indicator_table(task_indicators)
-
-                measures = task_measures.copy()
-
-                pending_cells = set()
-                status_cells = {}
-                risk_cells = set()
-
-                quarter_columns = get_quarter_columns(selected_year, selected_quarter)
-
-                for q, col_name in quarter_columns:
-                    col_key = f"{selected_year}_{q}"
-
-                    def get_q_value(code):
-                        code = str(code).strip()
-                        item = quarter_data.get(code, {}).get(col_key, None)
-
-                        if item is None:
-                            return ""
-
-                        if item["approval"] in ["Очікує погодження", "Погоджено"]:
-                            return item["value"]
-
-                        return ""
-
-                    measures[col_key] = measures["code"].apply(get_q_value)
-
-                measures["monitoring_status_for_table"] = measures["code"].apply(
-                    lambda code: get_measure_status(monitoring_df, code, selected_year, selected_quarter)
-                )
-
-                measures["risks_for_table"] = measures["has_risks"].apply(
-                    lambda value: "Є ризики" if value else "Не зазначено"
-                )
-
-                measures["active_for_table"] = measures["active_in_selected_year"].apply(
-                    lambda value: "Активний" if value else "Неактивний / немає плану"
-                )
-
-                measures = measures.rename(columns={
-                    "code": "Код",
-                    "name": "Захід",
-                    "indicator": "Індикатор",
-                    "unit": "Одиниця виміру",
-                    "base_2021": "Базове значення 2021",
-                    "fact_2024": "Звіт 2024",
-                    "expected_2025": "Очікуване 2025",
-                    "target_2026": "План 2026",
-                    f"{selected_year}_I": f"{selected_year} I квартал",
-                    f"{selected_year}_II": f"{selected_year} II квартал",
-                    f"{selected_year}_III": f"{selected_year} III квартал",
-                    f"{selected_year}_IV": f"{selected_year} IV квартал",
-                    "target_2027": "План 2027",
-                    "target_2028": "План 2028",
-                    "department": "Департамент",
-                    "monitoring_status_for_table": "Статус моніторингу",
-                    "risks_for_table": "Ризики",
-                    "active_for_table": "Активність у році",
-                    "indicator_type": "Тип індикатора"
-                })
-
-                for _, measure_row in measures.iterrows():
-                    code = str(measure_row["Код"]).strip()
-
-                    status = str(measure_row.get("Статус моніторингу", "")).strip()
-
-                    status_class = "status-empty"
-
-                    if "Погоджено" in status or "погоджені" in status:
-                        status_class = "status-approved"
-                    elif "Очікує" in status or "погодженні" in status:
-                        status_class = "status-waiting"
-                    elif "Повернуто" in status:
-                        status_class = "status-returned"
-
-                    status_cells[(code, "Статус моніторингу")] = status_class
-
-                    if str(measure_row.get("Ризики", "")).strip() == "Є ризики":
-                        risk_cells.add((code, "Ризики"))
-
-                    for q, col_name in quarter_columns:
-                        col_key = f"{selected_year}_{q}"
-                        item = quarter_data.get(code, {}).get(col_key, None)
-
-                        if item is not None and item["approval"] == "Очікує погодження":
-                            pending_cells.add((code, col_name))
-
-                quarter_show_cols = [col_name for _, col_name in quarter_columns]
-
-                show_cols = [
-                    "Код",
-                    "Захід",
-                    "Індикатор",
-                    "Одиниця виміру",
-                    "Базове значення 2021",
-                    "Звіт 2024",
-                    "Очікуване 2025",
-                    f"План {selected_year}",
-                    *quarter_show_cols,
-                    "Статус моніторингу",
-                    "Ризики",
-                    "Активність у році",
-                    "Тип індикатора",
-                    "Департамент"
-                ]
-
-                if selected_year == 2026:
-                    plan_col = "План 2026"
-                elif selected_year == 2027:
-                    plan_col = "План 2027"
-                else:
-                    plan_col = "План 2028"
-
-                show_cols = [
-                    "Код",
-                    "Захід",
-                    "Індикатор",
-                    "Одиниця виміру",
-                    "Базове значення 2021",
-                    "Звіт 2024",
-                    "Очікуване 2025",
-                    plan_col,
-                    *quarter_show_cols,
-                    "Статус моніторингу",
-                    "Ризики",
-                    "Активність у році",
-                    "Тип індикатора",
-                    "Департамент"
-                ]
-
-                existing_show_cols = [col for col in show_cols if col in measures.columns]
+                    render_indicator_table(task_indicators)
 
                 st.markdown(
                     '<div class="section-title">Заходи</div>',
                     unsafe_allow_html=True
                 )
 
-                render_table(
-                    measures[existing_show_cols],
-                    pending_cells=pending_cells,
-                    status_cells=status_cells,
-                    risk_cells=risk_cells,
-                    min_width=2500
+                render_measure_table(
+                    task_measures,
+                    monitoring_df,
+                    quarter_data,
+                    selected_years,
+                    selected_quarters
                 )
 
-st.markdown(
-    """
-    <div class="note-box">
-        Фільтри застосовуються до всієї ієрархії стратегічного плану: стратегічна ціль → завдання → захід.
-        Якщо після фільтрації у стратегічній цілі або завданні не залишається релевантних заходів, такий блок не відображається.
-        Відсоток виконання в заголовках розраховується саме за відфільтрованими заходами.
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+
+# ------------------------------------------------------------
+# Expand / collapse controls under blue blocks
+# ------------------------------------------------------------
+
+btn1, btn2 = st.columns([1, 1])
+
+with btn1:
+    st.button(
+        "Розгорнути всі релевантні відомості",
+        use_container_width=True,
+        on_click=expand_all_main
+    )
+
+with btn2:
+    st.button(
+        "Згорнути всі відомості",
+        use_container_width=True,
+        on_click=collapse_all_main
+    )
+
+
+# ------------------------------------------------------------
+# Footer
+# ------------------------------------------------------------
 
 st.markdown(
     """
     <div class="footer">
         <strong>Розроблено департаментом стратегічного планування та макроекономічного прогнозування</strong><br>
-        Версія DEMO 1.2 | 2026 | Внутрішня система моніторингу стратегічного плану
+        Версія DEMO 1.4 | 2026 | Внутрішня система моніторингу стратегічного плану
     </div>
     """,
     unsafe_allow_html=True

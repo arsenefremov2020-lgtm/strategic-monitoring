@@ -536,6 +536,37 @@ td.risk-cell {
     color: #334155;
 }
 
+.submit-main-button {
+    display: flex;
+    width: 100%;
+    min-height: 68px;
+    align-items: center;
+    justify-content: center;
+
+    margin-top: 16px;
+    margin-bottom: 34px;
+
+    background: linear-gradient(135deg, #047857 0%, #16a34a 55%, #22c55e 100%);
+    color: #ffffff !important;
+
+    border-radius: 18px;
+    border: 1px solid rgba(255,255,255,0.28);
+
+    font-size: 18px;
+    font-weight: 950;
+    letter-spacing: 0.3px;
+    text-decoration: none !important;
+
+    box-shadow: 0 16px 32px rgba(22,163,74,0.34), inset 0 1px 0 rgba(255,255,255,0.22);
+}
+
+.submit-main-button:hover {
+    color: #ffffff !important;
+    filter: brightness(1.05);
+    transform: translateY(-1px);
+    text-decoration: none !important;
+}
+
 @media (max-width: 1100px) {
     .summary-grid,
     .summary-grid-7,
@@ -2133,10 +2164,13 @@ with btn2:
         on_click=collapse_all_main
     )
 
-st.page_link(
-    "pages/1_Моніторинг_виконання.py",
-    label="Подати відомості",
-    icon="🖊️"
+st.markdown(
+    """
+    <a class="submit-main-button" href="/~/+/Моніторинг_виконання" target="_self">
+        🖊️ Подати відомості
+    </a>
+    """,
+    unsafe_allow_html=True
 )
 
 st.markdown("</div>", unsafe_allow_html=True)

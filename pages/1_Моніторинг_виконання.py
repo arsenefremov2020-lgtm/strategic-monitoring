@@ -306,16 +306,38 @@ div[data-testid="stDataEditor"] {
     box-shadow: 0 8px 22px rgba(15,23,42,0.06) !important;
 }
 
-/* Вища шапка таблиці */
+/* Вища шапка таблиці + перенос тексту в шапці */
 div[data-testid="stDataEditor"] div[role="columnheader"] {
-    min-height: 78px !important;
-    height: 78px !important;
+    min-height: 96px !important;
+    height: 96px !important;
     background: #e8eef7 !important;
     border-bottom: 1px solid #cbd5e1 !important;
     font-weight: 900 !important;
     color: #0f172a !important;
+    line-height: 1.2 !important;
+    white-space: normal !important;
+    overflow: visible !important;
+}
+
+/* Реальний текстовий контейнер у шапці data_editor */
+div[data-testid="stDataEditor"] div[role="columnheader"] div,
+div[data-testid="stDataEditor"] div[role="columnheader"] span,
+div[data-testid="stDataEditor"] div[role="columnheader"] p {
     white-space: pre-line !important;
-    line-height: 1.25 !important;
+    word-break: normal !important;
+    overflow-wrap: anywhere !important;
+    text-align: center !important;
+    line-height: 1.2 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+}
+
+/* Забирає обрізання назв колонок */
+div[data-testid="stDataEditor"] div[role="columnheader"] [title] {
+    white-space: pre-line !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
 }
 
 /* Центрування тексту в шапці і клітинках */
@@ -330,7 +352,14 @@ div[data-testid="stDataEditor"] div[role="columnheader"] span {
     text-align: center !important;
     justify-content: center !important;
     align-items: center !important;
-    white-space: pre-line !important;
+}
+
+/* Перенос саме в рядках таблиці */
+div[data-testid="stDataEditor"] div[role="gridcell"] div,
+div[data-testid="stDataEditor"] div[role="gridcell"] p,
+div[data-testid="stDataEditor"] div[role="gridcell"] span {
+    white-space: normal !important;
+    overflow-wrap: break-word !important;
 }
 
 div[data-testid="stDataEditor"] textarea,

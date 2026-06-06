@@ -693,16 +693,21 @@ def forecast_to_q4(current_completion, selected_quarter):
 
 
 def render_alert_grid(items):
-    html = '<div class="alert-grid">'
-    for title, value, color_class in items:
-        html += f"""
-        <div class="alert-card {color_class}">
-            <div class="alert-title">{title}</div>
-            <div class="alert-value">{value}</div>
-        </div>
-        """
-    html += "</div>"
-    st.markdown(html, unsafe_allow_html=True)
+    cols = st.columns(len(items))
+
+    for col, item in zip(cols, items):
+        title, value, color_class = item
+
+        with col:
+            st.markdown(
+                f"""
+                <div class="alert-card {color_class}">
+                    <div class="alert-title">{title}</div>
+                    <div class="alert-value">{value}</div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
 
 
 def reset_filters():

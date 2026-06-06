@@ -295,79 +295,120 @@ div[data-testid="stTextArea"] label {
     color: #1e293b !important;
 }
 
-[data-testid="stDataFrame"],
-[data-testid="stDataEditor"] {
-    width: 100% !important;
-}
-
-div[data-testid="stButton"] > button {
+.html-table-wrap {
     width: 100%;
-    min-height: 68px;
-    background: linear-gradient(135deg, #dc2626 0%, #f97316 52%, #facc15 100%) !important;
-    color: #ffffff !important;
-    border: 0 !important;
-    border-radius: 18px !important;
-    font-size: 20px !important;
-    font-weight: 950 !important;
-    letter-spacing: 0.3px !important;
-    box-shadow: 0 18px 34px rgba(249,115,22,0.34), inset 0 1px 0 rgba(255,255,255,0.25) !important;
-}
-
-div[data-testid="stButton"] > button:hover {
-    filter: brightness(1.05);
-    transform: translateY(-1px);
-}
-
-.footer {
-    text-align: center;
-    color: #64748b;
-    font-size: 13px;
-    margin-top: 50px;
-    padding: 22px 0 12px 0;
-    border-top: 1px solid #d8dee9;
-}
-
-.editor-center {
     max-width: 1280px;
-    margin: 0 auto 18px auto;
+    margin: 0 auto 26px auto;
+    border-radius: 14px;
+    border: 1px solid #cbd5e1;
+    background: rgba(255,255,255,0.96);
+    box-shadow: 0 8px 22px rgba(15,23,42,0.06);
+    overflow-x: auto;
+    overflow-y: auto;
+    max-height: 640px;
 }
 
-div[data-testid="stDataFrame"],
-div[data-testid="stDataEditor"] {
-    margin-left: auto !important;
-    margin-right: auto !important;
-}
-
-div[data-testid="stDataEditor"] div[role="gridcell"],
-div[data-testid="stDataEditor"] div[role="columnheader"] {
-    text-align: center !important;
-    justify-content: center !important;
-    align-items: center !important;
-}
-
-div[data-testid="stDataEditor"] div[role="gridcell"] p,
-div[data-testid="stDataEditor"] div[role="columnheader"] p {
-    text-align: center !important;
-}
-
-.final-footer {
-    text-align: center;
-    color: #475569;
-    font-size: 13px;
-    margin-top: 48px;
-    padding-top: 24px;
-    border-top: 1px solid #cbd5e1;
-    line-height: 1.7;
-}
-
-.final-footer-main {
-    font-weight: 700;
-    color: #334155;
-}
-
-.final-footer-sub {
-    color: #64748b;
+.ref-table {
+    border-collapse: collapse;
+    width: max-content;
+    min-width: 100%;
+    table-layout: fixed;
     font-size: 12px;
+    color: #0f172a;
+}
+
+.ref-table th {
+    background: #e8eef7;
+    border: 1px solid #cbd5e1;
+    padding: 10px 8px;
+    text-align: center;
+    vertical-align: middle;
+    font-weight: 900;
+    line-height: 1.25;
+    white-space: normal;
+}
+
+.ref-table td {
+    border: 1px solid #cbd5e1;
+    padding: 10px 8px;
+    text-align: center;
+    vertical-align: middle;
+    line-height: 1.35;
+    background: rgba(255,255,255,0.96);
+    white-space: normal;
+    word-break: normal;
+    overflow-wrap: break-word;
+}
+
+.ref-table tbody tr:nth-child(even) td {
+    background: #f8fafc;
+}
+
+.ref-table .col-code {
+    width: 80px;
+    min-width: 80px;
+}
+
+.ref-table .col-measure {
+    width: 370px;
+    min-width: 370px;
+    text-align: left;
+}
+
+.ref-table .col-product {
+    width: 180px;
+    min-width: 180px;
+}
+
+.ref-table .col-indicator {
+    width: 360px;
+    min-width: 360px;
+    text-align: left;
+}
+
+.ref-table .col-unit {
+    width: 180px;
+    min-width: 180px;
+}
+
+.ref-table .col-year {
+    width: 130px;
+    min-width: 130px;
+}
+
+.ref-table .col-quarter {
+    width: 130px;
+    min-width: 130px;
+}
+
+.ref-table .col-source {
+    width: 300px;
+    min-width: 300px;
+}
+
+.ref-table .col-resp {
+    width: 210px;
+    min-width: 210px;
+}
+
+.ref-table .col-period {
+    width: 160px;
+    min-width: 160px;
+}
+
+.ref-table .col-date {
+    width: 150px;
+    min-width: 150px;
+}
+
+.edit-table-wrap {
+    max-width: 1280px;
+    margin: 0 auto 20px auto;
+}
+
+div[data-testid="stDataEditor"] {
+    border-radius: 12px !important;
+    overflow: hidden !important;
 }
 
 div[data-testid="stDataEditor"] div[role="gridcell"],
@@ -388,9 +429,42 @@ div[data-testid="stDataEditor"] [data-testid="stCheckbox"] {
     justify-content: center !important;
 }
 
-div[data-testid="stDataEditor"] {
-    border-radius: 10px !important;
-    overflow: hidden !important;
+div[data-testid="stButton"] > button {
+    width: 100%;
+    min-height: 68px;
+    background: linear-gradient(135deg, #dc2626 0%, #f97316 52%, #facc15 100%) !important;
+    color: #ffffff !important;
+    border: 0 !important;
+    border-radius: 18px !important;
+    font-size: 20px !important;
+    font-weight: 950 !important;
+    letter-spacing: 0.3px !important;
+    box-shadow: 0 18px 34px rgba(249,115,22,0.34), inset 0 1px 0 rgba(255,255,255,0.25) !important;
+}
+
+div[data-testid="stButton"] > button:hover {
+    filter: brightness(1.05);
+    transform: translateY(-1px);
+}
+
+.final-footer {
+    text-align: center;
+    color: #475569;
+    font-size: 13px;
+    margin-top: 48px;
+    padding-top: 24px;
+    border-top: 1px solid #cbd5e1;
+    line-height: 1.7;
+}
+
+.final-footer-main {
+    font-weight: 700;
+    color: #334155;
+}
+
+.final-footer-sub {
+    color: #64748b;
+    font-size: 12px;
 }
 
 @media (max-width: 1100px) {
@@ -527,6 +601,77 @@ def unique_measure_count(data):
     if data.empty or "strat_code" not in data.columns:
         return 0
     return data["strat_code"].astype(str).str.strip().replace("", pd.NA).dropna().nunique()
+
+
+def render_reference_table(data, selected_year, quarter_label):
+    target_col = f"target_{selected_year}"
+
+    html = """
+    <div class="html-table-wrap">
+        <table class="ref-table">
+            <thead>
+                <tr>
+                    <th class="col-code" rowspan="2">Код</th>
+                    <th class="col-measure" rowspan="2">Захід</th>
+                    <th class="col-product" rowspan="2">Тип продукту</th>
+                    <th class="col-indicator" rowspan="2">Індикатор</th>
+                    <th class="col-unit" rowspan="2">Одиниці виміру</th>
+                    <th class="col-year" rowspan="2">2021<br>базовий рівень<br>(факт)</th>
+                    <th class="col-year" rowspan="2">2024<br>звіт</th>
+                    <th class="col-year" rowspan="2">2025<br>факт</th>
+                    <th class="col-year" rowspan="2">""" + escape(str(selected_year)) + """<br>цільовий орієнтир<br>для заходів на рік</th>
+                    <th class="col-quarter" rowspan="2">""" + escape(str(quarter_label)) + """</th>
+                    <th colspan="2">Підстава для включення до стратегічного плану</th>
+                    <th colspan="3">Відповідальні самостійні структурні підрозділи</th>
+                    <th class="col-period" rowspan="2">Період дії заходу<br>в межах планового<br>періоду, років</th>
+                    <th class="col-date" rowspan="2">Початкова дата</th>
+                    <th class="col-date" rowspan="2">Кінцева дата</th>
+                </tr>
+                <tr>
+                    <th class="col-source">Глобальний рівень</th>
+                    <th class="col-source">Національний рівень</th>
+                    <th class="col-resp">Головний</th>
+                    <th class="col-resp">Співвиконавець 1</th>
+                    <th class="col-resp">Співвиконавець 2</th>
+                </tr>
+            </thead>
+            <tbody>
+    """
+
+    for _, row in data.iterrows():
+        code = raw_value(row.get("code", ""))
+        name = strip_leading_code(row.get("name", ""), code)
+
+        html += f"""
+            <tr>
+                <td class="col-code">{clean_value(code)}</td>
+                <td class="col-measure">{clean_value(name)}</td>
+                <td class="col-product">{clean_value(row.get("product_type", ""))}</td>
+                <td class="col-indicator">{clean_value(row.get("indicator", ""))}</td>
+                <td class="col-unit">{clean_value(row.get("unit", ""))}</td>
+                <td class="col-year">{clean_value(row.get("base_2021", ""))}</td>
+                <td class="col-year">{clean_value(row.get("fact_2024", ""))}</td>
+                <td class="col-year">{clean_value(row.get("fact_2025", ""))}</td>
+                <td class="col-year">{clean_value(row.get(target_col, ""))}</td>
+                <td class="col-quarter">—</td>
+                <td class="col-source">{clean_value(row.get("source_global", ""))}</td>
+                <td class="col-source">{clean_value(row.get("source_national", ""))}</td>
+                <td class="col-resp">{clean_value(row.get("resp_main", ""))}</td>
+                <td class="col-resp">{clean_value(row.get("resp_co_1", ""))}</td>
+                <td class="col-resp">{clean_value(row.get("resp_co_2", ""))}</td>
+                <td class="col-period">{clean_value(row.get("measure_period_years", ""))}</td>
+                <td class="col-date">{clean_value(row.get("measure_start_date", ""))}</td>
+                <td class="col-date">{clean_value(row.get("measure_end_date", ""))}</td>
+            </tr>
+        """
+
+    html += """
+            </tbody>
+        </table>
+    </div>
+    """
+
+    st.markdown(html, unsafe_allow_html=True)
 
 
 # ------------------------------------------------------------
@@ -818,10 +963,11 @@ st.markdown(
         <div class="info-grid">
             <div class="info-card">
                 <div class="info-card-title">Інструкція користувача</div>
-                <div class="instruction-item">1. Позначте у першій колонці таблиці «Подати» заходи, за якими подається інформація</div>
-                <div class="instruction-item">2. Внесіть фактичні звітні відомості (показники, стан виконання, короткий опис прогресу та інформацію щодо ризиків)</div>
-                <div class="instruction-item">3. Натисніть «Подати інформацію на розгляд»</div>
-                <div class="instruction-item">4. Після розгляду відомостей, координатор направить інформацію на погодження (відповідальний виконавець, керівник ССП)</div>
+                <div class="instruction-item">1. Перегляньте довідкову таблицю заходів</div>
+                <div class="instruction-item">2. У таблиці внесення відомостей позначте у колонці «Подати» заходи, за якими подається інформація</div>
+                <div class="instruction-item">3. Внесіть фактичні звітні відомості: показник за квартал, стан виконання, короткий опис прогресу та інформацію щодо ризиків</div>
+                <div class="instruction-item">4. Натисніть «Подати на розгляд»</div>
+                <div class="instruction-item">5. Після розгляду відомостей координатор направить інформацію на погодження (відповідальний виконавець, керівник ССП)</div>
             </div>
         </div>
     """,
@@ -968,7 +1114,7 @@ st.markdown(
 
 
 # ------------------------------------------------------------
-# Table preparation
+# Reference HTML table
 # ------------------------------------------------------------
 
 quarter_label = f"{quarter_to_q_label(selected_quarter)} {selected_year}"
@@ -977,50 +1123,44 @@ target_col = f"target_{selected_year}"
 if target_col not in filtered_measures.columns:
     filtered_measures[target_col] = ""
 
-table_rows = []
+st.markdown('<div class="table-title">Заходи</div>', unsafe_allow_html=True)
+
+if filtered_measures.empty:
+    st.info("За обраними параметрами заходів не знайдено.")
+    edited_df = pd.DataFrame()
+else:
+    render_reference_table(filtered_measures, selected_year, quarter_label)
+
+
+# ------------------------------------------------------------
+# Editor table for submission only
+# ------------------------------------------------------------
+
+editor_rows = []
 
 for _, row in filtered_measures.iterrows():
     code = raw_value(row.get("code", ""))
 
-    table_rows.append({
+    editor_rows.append({
         "Подати": False,
         "Код": code,
         "Захід": strip_leading_code(row.get("name", ""), code),
-        "Тип продукту": raw_value(row.get("product_type", "")),
-        "Індикатор": raw_value(row.get("indicator", "")),
-        "Одиниці виміру": raw_value(row.get("unit", "")),
-        "2021\nбазовий рівень (факт)": raw_value(row.get("base_2021", "")),
-        "2024\nзвіт": raw_value(row.get("fact_2024", "")),
-        "2025\nфакт": raw_value(row.get("fact_2025", "")),
-        f"{selected_year}\nцільовий орієнтир для заходів на рік": raw_value(row.get(target_col, "")),
         quarter_label: "",
-        "Підстава для включення до стратегічного плану | Глобальний рівень": raw_value(row.get("source_global", "")),
-        "Підстава для включення до стратегічного плану | Національний рівень": raw_value(row.get("source_national", "")),
-        "Відповідальні самостійні структурні підрозділи | Головний": raw_value(row.get("resp_main", "")),
-        "Відповідальні самостійні структурні підрозділи | Співвиконавець 1": raw_value(row.get("resp_co_1", "")),
-        "Відповідальні самостійні структурні підрозділи | Співвиконавець 2": raw_value(row.get("resp_co_2", "")),
-        "Період дії заходу в межах планового періоду, років": raw_value(row.get("measure_period_years", "")),
-        "Початкова дата": raw_value(row.get("measure_start_date", "")),
-        "Кінцева дата": raw_value(row.get("measure_end_date", "")),
         "Статус виконання": "",
         "Опис прогресу": "",
         "Ризики / проблеми / відхилення": ""
     })
 
-table_df = pd.DataFrame(table_rows)
+editor_df = pd.DataFrame(editor_rows)
 
-st.markdown('<div class="table-title">Заходи для внесення відомостей</div>', unsafe_allow_html=True)
+if not editor_df.empty:
+    st.markdown('<div class="table-title">Внесення відомостей</div>', unsafe_allow_html=True)
+    st.markdown('<div class="edit-table-wrap">', unsafe_allow_html=True)
 
-if table_df.empty:
-    st.info("За обраними параметрами заходів не знайдено.")
-    edited_df = pd.DataFrame()
-else:
-    dynamic_height = min(720, max(180, 95 + len(table_df) * 82))
-
-    st.markdown('<div class="editor-center">', unsafe_allow_html=True)
+    dynamic_height = min(620, max(180, 92 + len(editor_df) * 78))
 
     edited_df = st.data_editor(
-        table_df,
+        editor_df,
         key=f"monitoring_editor_{selected_ssp_index}_{selected_year}_{selected_quarter}_{search_query}",
         use_container_width=True,
         hide_index=True,
@@ -1031,74 +1171,23 @@ else:
             "Подати": st.column_config.CheckboxColumn(
                 "Подати",
                 help="Позначте заходи, за якими подається інформація",
-                width=96
+                width=92
             ),
-            "Код": st.column_config.TextColumn("Код", disabled=True, width=80),
-            "Захід": st.column_config.TextColumn("Захід", disabled=True, width=390),
-            "Тип продукту": st.column_config.TextColumn("Тип продукту", disabled=True, width=190),
-            "Індикатор": st.column_config.TextColumn("Індикатор", disabled=True, width=390),
-            "Одиниці виміру": st.column_config.TextColumn("Одиниці виміру", disabled=True, width=180),
-
-            "2021\nбазовий рівень (факт)": st.column_config.TextColumn(
-                "2021\nбазовий рівень (факт)",
+            "Код": st.column_config.TextColumn(
+                "Код",
                 disabled=True,
-                width=130
+                width=90
             ),
-            "2024\nзвіт": st.column_config.TextColumn(
-                "2024\nзвіт",
+            "Захід": st.column_config.TextColumn(
+                "Захід",
                 disabled=True,
-                width=125
-            ),
-            "2025\nфакт": st.column_config.TextColumn(
-                "2025\nфакт",
-                disabled=True,
-                width=125
-            ),
-            f"{selected_year}\nцільовий орієнтир для заходів на рік": st.column_config.TextColumn(
-                f"{selected_year}\nцільовий орієнтир для заходів на рік",
-                disabled=True,
-                width=130
+                width=390
             ),
             quarter_label: st.column_config.TextColumn(
                 quarter_label,
                 help="Фактичне значення за обраний квартал",
-                width=145
+                width=150
             ),
-
-            "Підстава для включення до стратегічного плану | Глобальний рівень": st.column_config.TextColumn(
-                "Підстава для включення до стратегічного плану | Глобальний рівень",
-                disabled=True,
-                width=300
-            ),
-            "Підстава для включення до стратегічного плану | Національний рівень": st.column_config.TextColumn(
-                "Підстава для включення до стратегічного плану | Національний рівень",
-                disabled=True,
-                width=300
-            ),
-            "Відповідальні самостійні структурні підрозділи | Головний": st.column_config.TextColumn(
-                "Відповідальні самостійні структурні підрозділи | Головний",
-                disabled=True,
-                width=210
-            ),
-            "Відповідальні самостійні структурні підрозділи | Співвиконавець 1": st.column_config.TextColumn(
-                "Відповідальні самостійні структурні підрозділи | Співвиконавець 1",
-                disabled=True,
-                width=210
-            ),
-            "Відповідальні самостійні структурні підрозділи | Співвиконавець 2": st.column_config.TextColumn(
-                "Відповідальні самостійні структурні підрозділи | Співвиконавець 2",
-                disabled=True,
-                width=210
-            ),
-
-            "Період дії заходу в межах планового періоду, років": st.column_config.TextColumn(
-                "Період дії заходу в межах планового періоду, років",
-                disabled=True,
-                width=180
-            ),
-            "Початкова дата": st.column_config.TextColumn("Початкова дата", disabled=True, width=150),
-            "Кінцева дата": st.column_config.TextColumn("Кінцева дата", disabled=True, width=150),
-
             "Статус виконання": st.column_config.SelectboxColumn(
                 "Статус виконання",
                 options=execution_status_options,
@@ -1118,26 +1207,13 @@ else:
         },
         disabled=[
             "Код",
-            "Захід",
-            "Тип продукту",
-            "Індикатор",
-            "Одиниці виміру",
-            "2021\nбазовий рівень (факт)",
-            "2024\nзвіт",
-            "2025\nфакт",
-            f"{selected_year}\nцільовий орієнтир для заходів на рік",
-            "Підстава для включення до стратегічного плану | Глобальний рівень",
-            "Підстава для включення до стратегічного плану | Національний рівень",
-            "Відповідальні самостійні структурні підрозділи | Головний",
-            "Відповідальні самостійні структурні підрозділи | Співвиконавець 1",
-            "Відповідальні самостійні структурні підрозділи | Співвиконавець 2",
-            "Період дії заходу в межах планового періоду, років",
-            "Початкова дата",
-            "Кінцева дата"
+            "Захід"
         ]
     )
 
     st.markdown('</div>', unsafe_allow_html=True)
+else:
+    edited_df = pd.DataFrame()
 
 
 # ------------------------------------------------------------
@@ -1197,13 +1273,26 @@ if submit_clicked:
         payload = []
 
         for _, row in selected_rows.iterrows():
+            code = raw_value(row.get("Код", ""))
+
+            reference_row = filtered_measures[
+                filtered_measures["code"].astype(str).str.strip() == code
+            ]
+
+            if reference_row.empty:
+                start_date = ""
+                end_date = ""
+            else:
+                start_date = raw_value(reference_row.iloc[0].get("measure_start_date", ""))
+                end_date = raw_value(reference_row.iloc[0].get("measure_end_date", ""))
+
             payload.append({
                 "department": raw_value(selected_ssp_index),
                 "year": str(selected_year),
                 "quarter": raw_value(selected_quarter),
                 "approval_status": "Очікує погодження",
                 "status": raw_value(row.get("Статус виконання", "")),
-                "strat_code": raw_value(row.get("Код", "")),
+                "strat_code": code,
                 "responsible_person": raw_value(responsible_person),
                 "phone": raw_value(responsible_phone),
                 "email": raw_value(responsible_email),
@@ -1213,8 +1302,8 @@ if submit_clicked:
                 "file_names": "",
                 "file_urls": "",
                 "admin_comment": "",
-                "start_date": raw_value(row.get("Початкова дата", "")),
-                "end_date": raw_value(row.get("Кінцева дата", "")),
+                "start_date": start_date,
+                "end_date": end_date,
                 "submitted_at": submitted_at
             })
 

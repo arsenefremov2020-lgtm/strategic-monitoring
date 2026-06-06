@@ -1,24 +1,36 @@
-import streamlit as st
-import pandas as pd
-from datetime import datetime
-from supabase import create_client
 import re
+from datetime import datetime, timezone
+from html import escape
+
+import pandas as pd
+import streamlit as st
+from supabase import create_client
+
+
+# ------------------------------------------------------------
+# Page config
+# ------------------------------------------------------------
 
 st.set_page_config(
-    page_title="Моніторинг виконання",
+    page_title="Моніторинг (внесення відомостей)",
     layout="wide"
 )
 
 FILE_PATH = "Під моніторинг СП.xlsx"
 SHEET_NAME = "Страт_матриця"
-BUCKET_NAME = "monitoring-files"
 
 supabase = create_client(
     st.secrets["SUPABASE_URL"],
     st.secrets["SUPABASE_KEY"]
 )
 
-st.markdown("""
+
+# ------------------------------------------------------------
+# CSS
+# ------------------------------------------------------------
+
+st.markdown(
+    """
 <style>
 .stApp {
     background:
@@ -27,9 +39,35 @@ st.markdown("""
         linear-gradient(180deg, #f6f8fb 0%, #eef2f7 100%);
 }
 
+.stApp::before {
+    content: "";
+    position: fixed;
+    top: -160px;
+    right: -120px;
+    width: 460px;
+    height: 460px;
+    border-radius: 50%;
+    background: rgba(37, 99, 235, 0.045);
+    z-index: 0;
+}
+
+.stApp::after {
+    content: "";
+    position: fixed;
+    bottom: -180px;
+    left: -120px;
+    width: 390px;
+    height: 390px;
+    border-radius: 50%;
+    background: rgba(22, 163, 74, 0.045);
+    z-index: 0;
+}
+
 .main .block-container {
     max-width: 1550px;
     padding-top: 1.2rem;
+    position: relative;
+    z-index: 1;
 }
 
 .ua-line {
@@ -47,13 +85,22 @@ st.markdown("""
     margin-bottom: 8px;
 }
 
-.header-box {
+.header-box,
+.flow-box,
+.summary-box,
+.filter-box,
+.info-card,
+.note-box {
     background: rgba(255,255,255,0.94);
     border: 1px solid #d8dee9;
+    box-shadow: 0 6px 18px rgba(15,23,42,0.045);
+}
+
+.header-box {
     border-radius: 16px;
-    padding: 24px 28px;
+    padding: 22px 26px;
     margin-bottom: 18px;
-    box-shadow: 0 8px 24px rgba(15,23,42,0.06);
+    backdrop-filter: blur(8px);
 }
 
 .header-title {
@@ -69,133 +116,206 @@ st.markdown("""
     line-height: 1.55;
 }
 
-.status-pill-wrap {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    margin-top: 14px;
+.user-box {
+    border-radius: 18px;
+    padding: 22px 26px 24px 26px;
+    margin: 18px 0 18px 0;
+    background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(241,246,253,0.98));
+    border: 1px solid #cbd8ea;
+    box-shadow: 0 10px 24px rgba(15,23,42,0.07);
 }
 
-.status-pill {
-    background: #f8fafc;
-    border: 1px solid #d8dee9;
-    border-radius: 999px;
-    padding: 8px 12px;
-    font-size: 13px;
-    color: #334155;
+.user-title,
+.flow-title,
+.summary-title,
+.filter-title,
+.guide-title,
+.table-title {
+    color: #0f172a;
+    font-weight: 900;
+}
+
+.user-title {
+    font-size: 20px;
+    margin-bottom: 14px;
 }
 
 .flow-box {
-    background: white;
-    border: 1px solid #d8dee9;
-    border-radius: 14px;
-    padding: 16px 18px;
+    border-radius: 16px;
+    padding: 18px 20px;
     margin: 18px 0;
-    box-shadow: 0 4px 12px rgba(15,23,42,0.04);
 }
 
 .flow-title {
-    font-weight: 900;
-    color: #0f172a;
-    margin-bottom: 10px;
-}
-
-.flow-steps {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    color: #334155;
-    font-size: 14px;
-}
-
-.flow-step {
-    padding: 8px 12px;
-    border-radius: 999px;
-    background: #f1f5f9;
-    border: 1px solid #d8dee9;
-}
-
-.card {
-    background: rgba(255,255,255,0.94);
-    border: 1px solid #d8dee9;
-    border-radius: 16px;
-    padding: 20px 22px;
-    margin: 18px 0;
-    box-shadow: 0 6px 18px rgba(15,23,42,0.045);
-}
-
-.card-title {
-    font-size: 20px;
-    font-weight: 900;
-    color: #0f172a;
-    margin-bottom: 8px;
-}
-
-.card-subtitle {
-    color: #64748b;
-    font-size: 14px;
+    font-size: 17px;
     margin-bottom: 12px;
 }
 
-.badge-wrap {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin: 10px 0 16px 0;
+.flow-steps {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 10px;
 }
 
-.badge {
-    background: #eef6ff;
-    border: 1px solid #bfdbfe;
-    color: #1d4ed8;
-    border-radius: 999px;
-    padding: 7px 11px;
-    font-size: 13px;
-    font-weight: 700;
-}
-
-.warn-badge {
-    background: #fff7ed;
-    border: 1px solid #fed7aa;
-    color: #9a3412;
-}
-
-.success-box {
-    background: linear-gradient(90deg, #15803d, #16a34a);
-    color: white;
-    border-radius: 16px;
-    padding: 20px 24px;
-    margin: 18px 0;
-    box-shadow: 0 10px 24px rgba(22,163,74,0.22);
-}
-
-.success-title {
-    font-size: 22px;
-    font-weight: 900;
-    margin-bottom: 6px;
-}
-
-.submit-zone {
-    background: white;
-    border: 1px solid #d8dee9;
-    border-radius: 16px;
-    padding: 18px 22px;
-    margin: 18px 0;
-    box-shadow: 0 6px 18px rgba(15,23,42,0.045);
-}
-
-div[data-testid="stMetric"] {
-    background: rgba(255,255,255,0.88);
-    border: 1px solid #d8dee9;
+.flow-step {
+    min-height: 58px;
+    padding: 10px 12px;
     border-radius: 14px;
-    padding: 14px 16px;
-    box-shadow: 0 4px 12px rgba(15,23,42,0.04);
+    background: linear-gradient(180deg, #f8fafc 0%, #eef4fb 100%);
+    border: 1px solid #d8dee9;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    color: #334155;
+    font-size: 13px;
+    font-weight: 800;
+    line-height: 1.25;
 }
 
-div.stButton > button {
-    border-radius: 12px;
-    padding: 12px 18px;
+.summary-box {
+    border-radius: 16px;
+    padding: 18px 20px;
+    margin: 18px 0;
+}
+
+.summary-title {
+    font-size: 20px;
+    margin-bottom: 12px;
+}
+
+.summary-grid {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 12px;
+    align-items: stretch;
+}
+
+.summary-card {
+    background: #f8fafc;
+    border: 1px solid #d8dee9;
+    border-radius: 13px;
+    padding: 14px 15px;
+    min-height: 96px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+
+.summary-label {
+    color: #64748b;
+    font-size: 12px;
     font-weight: 800;
+    line-height: 1.35;
+    min-height: 34px;
+    margin-bottom: 8px;
+}
+
+.summary-value {
+    color: #0f172a;
+    font-size: 24px;
+    line-height: 1;
+    font-weight: 950;
+}
+
+.filter-box {
+    border-radius: 18px;
+    padding: 24px 26px 26px 26px;
+    margin: 18px 0 24px 0;
+    background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(241,246,253,0.98));
+    border: 1px solid #cbd8ea;
+    box-shadow: 0 10px 24px rgba(15,23,42,0.07);
+}
+
+.filter-title {
+    font-size: 22px;
+    margin-bottom: 10px;
+}
+
+.filter-legend {
+    color: #475569;
+    font-size: 14px;
+    line-height: 1.55;
+    margin-bottom: 16px;
+}
+
+.info-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 14px;
+    margin-bottom: 20px;
+}
+
+.info-card {
+    border-radius: 14px;
+    padding: 17px 19px;
+    color: #1f2937;
+    line-height: 1.55;
+}
+
+.info-card-title {
+    color: #0f172a;
+    font-size: 16px;
+    font-weight: 900;
+    margin-bottom: 8px;
+}
+
+.instruction-item {
+    margin-bottom: 7px;
+    font-size: 14px;
+}
+
+.note-box {
+    border-radius: 10px;
+    padding: 13px 17px;
+    color: #374151;
+    font-size: 14px;
+    margin: 12px 0 18px 0;
+}
+
+.table-title {
+    font-size: 20px;
+    margin: 24px 0 12px 0;
+}
+
+div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
+div[data-testid="stTextInput"] input,
+div[data-testid="stTextArea"] textarea {
+    background-color: #d7eaff !important;
+    border: 1px solid #8fb3df !important;
+    border-radius: 10px !important;
+    min-height: 43px !important;
+    box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.08) !important;
+}
+
+div[data-testid="stSelectbox"] label,
+div[data-testid="stTextInput"] label,
+div[data-testid="stTextArea"] label {
+    font-weight: 750 !important;
+    color: #1e293b !important;
+}
+
+[data-testid="stDataFrame"],
+[data-testid="stDataEditor"] {
+    width: 100% !important;
+}
+
+div[data-testid="stButton"] > button {
+    width: 100%;
+    min-height: 68px;
+    background: linear-gradient(135deg, #dc2626 0%, #f97316 52%, #facc15 100%) !important;
+    color: #ffffff !important;
+    border: 0 !important;
+    border-radius: 18px !important;
+    font-size: 20px !important;
+    font-weight: 950 !important;
+    letter-spacing: 0.3px !important;
+    box-shadow: 0 18px 34px rgba(249,115,22,0.34), inset 0 1px 0 rgba(255,255,255,0.25) !important;
+}
+
+div[data-testid="stButton"] > button:hover {
+    filter: brightness(1.05);
+    transform: translateY(-1px);
 }
 
 .footer {
@@ -206,140 +326,256 @@ div.stButton > button {
     padding: 22px 0 12px 0;
     border-top: 1px solid #d8dee9;
 }
-</style>
-""", unsafe_allow_html=True)
 
-
-def safe_filename(name):
-    name = str(name)
-    name = name.replace(" ", "_")
-    name = re.sub(r"[^A-Za-z0-9._-]", "_", name)
-    name = re.sub(r"_+", "_", name)
-    return name.strip("_")
-
-
-def valid_email(email):
-    return re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email.strip()) is not None
-
-
-def quarter_to_num(q):
-    mapping = {
-        "I": 1,
-        "II": 2,
-        "III": 3,
-        "IV": 4
+@media (max-width: 1100px) {
+    .summary-grid,
+    .flow-steps {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
-    return mapping.get(str(q), None)
+}
+</style>
+""",
+    unsafe_allow_html=True
+)
 
 
-def parse_period(value):
-    text = str(value).lower().strip()
+# ------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------
 
-    if text in ["", "nan", "none", "н.д."]:
-        return None
-
-    q = None
-    year = None
-
-    if "1 квартал" in text or "i квартал" in text:
-        q = 1
-    elif "2 квартал" in text or "ii квартал" in text:
-        q = 2
-    elif "3 квартал" in text or "iii квартал" in text:
-        q = 3
-    elif "4 квартал" in text or "iv квартал" in text:
-        q = 4
-
-    year_match = re.search(r"20\d{2}", text)
-
-    if year_match:
-        year = int(year_match.group())
-
-    if year and q:
-        return year * 10 + q
-
-    return None
+def raw_value(value):
+    if value is None or pd.isna(value) or str(value) == "None":
+        return ""
+    return str(value).strip()
 
 
-def upload_files(files, code):
-    urls = []
-    names = []
+def clean_value(value):
+    return escape(raw_value(value))
 
-    safe_code = safe_filename(str(code)).replace(".", "_")
 
-    for file in files:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = safe_filename(file.name)
+def is_empty_or_nd(value):
+    text = raw_value(value).lower().replace(" ", "")
+    return text in {"", "н.д.", "нд", "nan", "none", "-", "—"}
 
-        if not filename:
-            filename = f"file_{timestamp}"
 
-        path = f"{safe_code}/{timestamp}_{filename}"
+def strip_leading_code(text, code):
+    value = raw_value(text)
+    code_value = raw_value(code)
 
-        supabase.storage.from_(BUCKET_NAME).upload(
-            path,
-            file.getvalue(),
-            file_options={
-                "content-type": file.type,
-                "upsert": "true"
-            }
-        )
+    if code_value and value.startswith(code_value):
+        value = value[len(code_value):].lstrip(" .—-–|:")
 
-        public_url = supabase.storage.from_(BUCKET_NAME).get_public_url(path)
+    return value
 
-        urls.append(public_url)
-        names.append(file.name)
 
-    return ", ".join(names), ", ".join(urls)
+def split_ssp_values(value):
+    text = raw_value(value)
+    if not text:
+        return []
+    return re.findall(r"\d+", text)
 
+
+def value_contains_ssp(value, selected_index):
+    if not selected_index:
+        return True
+    return selected_index in split_ssp_values(value)
+
+
+def make_summary_card(label, value):
+    return (
+        f'<div class="summary-card">'
+        f'<div class="summary-label">{escape(str(label))}</div>'
+        f'<div class="summary-value">{escape(str(value))}</div>'
+        f'</div>'
+    )
+
+
+def quarter_to_q_label(quarter):
+    mapping = {
+        "I": "Q1",
+        "II": "Q2",
+        "III": "Q3",
+        "IV": "Q4"
+    }
+    return mapping.get(raw_value(quarter), raw_value(quarter))
+
+
+def row_matches_search(row, search_query):
+    query = raw_value(search_query).lower()
+
+    if not query:
+        return True
+
+    values = [
+        row.get("code", ""),
+        row.get("name", ""),
+        row.get("indicator", ""),
+        row.get("product_type", ""),
+        row.get("resp_main", ""),
+        row.get("resp_co_1", ""),
+        row.get("resp_co_2", "")
+    ]
+
+    return any(query in raw_value(value).lower() for value in values)
+
+
+def has_target_for_year(row, year):
+    col = f"target_{year}"
+    if col not in row:
+        return True
+    return not is_empty_or_nd(row.get(col, ""))
+
+
+def get_record_visual_status(row):
+    approval = raw_value(row.get("approval_status", ""))
+
+    if approval == "Погоджено":
+        return "Погоджено"
+
+    if approval == "Повернуто на доопрацювання":
+        return "Повернуто на доопрацювання"
+
+    if approval in {"Очікує погодження", "На розгляді", "Очікує розгляду"}:
+        return "Очікує розгляду"
+
+    return "Не враховано"
+
+
+def subset_monitoring_for_selection(monitoring_df, selected_codes, selected_year, selected_quarter):
+    if monitoring_df.empty:
+        return pd.DataFrame()
+
+    data = monitoring_df.copy()
+    data["strat_code_clean"] = data["strat_code"].astype(str).str.strip()
+    data["year_clean"] = data["year"].astype(str).str.strip()
+    data["quarter_clean"] = data["quarter"].astype(str).str.strip()
+
+    return data[
+        data["strat_code_clean"].isin([str(code).strip() for code in selected_codes])
+        & (data["year_clean"] == str(selected_year))
+        & (data["quarter_clean"] == str(selected_quarter))
+    ].copy()
+
+
+def unique_measure_count(data):
+    if data.empty or "strat_code" not in data.columns:
+        return 0
+    return data["strat_code"].astype(str).str.strip().replace("", pd.NA).dropna().nunique()
+
+
+# ------------------------------------------------------------
+# Data loading
+# ------------------------------------------------------------
 
 @st.cache_data
 def load_strat_matrix():
-    df = pd.read_excel(FILE_PATH, sheet_name=SHEET_NAME, header=None, engine="openpyxl")
-    data = df.iloc[7:].copy()
+    source_df = pd.read_excel(
+        FILE_PATH,
+        sheet_name=SHEET_NAME,
+        header=None,
+        engine="openpyxl"
+    )
+
+    data = source_df.iloc[7:].copy()
+
+    def safe_col(index):
+        if index < source_df.shape[1]:
+            return data.iloc[:, index]
+        return pd.Series([""] * len(data), index=data.index)
+
+    def find_col_by_keywords(keywords):
+        keywords = [keyword.lower() for keyword in keywords]
+        header_area = source_df.iloc[:7, :].copy()
+
+        for col_idx in range(source_df.shape[1]):
+            joined = " ".join(
+                raw_value(header_area.iloc[row_idx, col_idx]).lower()
+                for row_idx in range(len(header_area))
+            )
+
+            if all(keyword in joined for keyword in keywords):
+                return col_idx
+
+        return None
+
+    def safe_keyword_col(keywords):
+        col_idx = find_col_by_keywords(keywords)
+
+        if col_idx is None:
+            return pd.Series([""] * len(data), index=data.index)
+
+        return safe_col(col_idx)
 
     result = pd.DataFrame({
-        "type_marker": data.iloc[:, 1],
-        "code": data.iloc[:, 2],
-        "name": data.iloc[:, 3],
-        "indicator": data.iloc[:, 5],
-        "unit": data.iloc[:, 6],
-        "target_2026": data.iloc[:, 10],
-        "target_2027": data.iloc[:, 11],
-        "target_2028": data.iloc[:, 12],
-        "department": data.iloc[:, 17],
-        "start_date_plan": data.iloc[:, 22],
-        "end_date_plan": data.iloc[:, 23],
+        "type_marker": safe_col(1),
+        "code": safe_col(2),
+        "name": safe_col(3),
+        "product_type": safe_col(4),
+
+        "indicator": safe_col(5),
+        "unit": safe_col(6),
+        "base_2021": safe_col(7),
+        "fact_2024": safe_col(8),
+        "fact_2025": safe_col(9),
+        "target_2026": safe_col(10),
+        "target_2027": safe_col(11),
+        "target_2028": safe_col(12),
+
+        "source_global": safe_col(15),
+        "source_national": safe_col(16),
+
+        "resp_main": safe_col(17),
+        "resp_co_1": safe_col(18),
+        "resp_co_2": safe_col(19),
+
+        "measure_period_years": safe_keyword_col(["період", "років"]),
+        "measure_start_date": safe_keyword_col(["початкова", "дата"]),
+        "measure_end_date": safe_keyword_col(["кінцева", "дата"]),
+
+        "department": safe_col(17)
     })
 
     result = result.dropna(subset=["code"])
     result["code"] = result["code"].astype(str).str.strip()
     result["type_marker"] = result["type_marker"].astype(str).str.strip()
 
-    def classify(row):
-        marker = str(row["type_marker"]).lower()
-        code = str(row["code"]).strip()
+    current_goal_code = ""
+    current_task_code = ""
+    object_types = []
+    parent_goal_codes = []
+    parent_task_codes = []
+
+    for _, row in result.iterrows():
+        marker = raw_value(row["type_marker"]).lower()
+        code = raw_value(row["code"])
+        dots = code.count(".")
 
         if "стратегічна ціль" in marker:
-            return "goal"
-        if "завдання" in marker:
-            return "task"
-        if code.count(".") >= 3:
-            return "measure"
-        return "other"
+            object_type = "goal"
+            current_goal_code = code
+            current_task_code = ""
+        elif "завдання" in marker:
+            object_type = "task"
+            current_task_code = code
+        elif "заходи" in marker or dots >= 3:
+            object_type = "measure"
+        else:
+            object_type = "task_indicator" if current_task_code else "goal_indicator" if current_goal_code else "other"
 
-    result["object_type"] = result.apply(classify, axis=1)
+        object_types.append(object_type)
+        parent_goal_codes.append(current_goal_code)
+        parent_task_codes.append(current_task_code)
+
+    result["object_type"] = object_types
+    result["parent_goal_code"] = parent_goal_codes
+    result["parent_task_code"] = parent_task_codes
+
     return result
 
 
-def load_approved_monitoring():
-    response = (
-        supabase
-        .table("monitoring_requests")
-        .select("*")
-        .eq("approval_status", "Погоджено")
-        .execute()
-    )
+@st.cache_data(ttl=60)
+def load_monitoring():
+    response = supabase.table("monitoring_requests").select("*").execute()
 
     if not response.data:
         return pd.DataFrame()
@@ -347,25 +583,69 @@ def load_approved_monitoring():
     return pd.DataFrame(response.data)
 
 
-def load_all_monitoring():
-    response = (
-        supabase
-        .table("monitoring_requests")
-        .select("*")
-        .execute()
-    )
+def ensure_monitoring_columns(monitoring_df):
+    required_cols = [
+        "id",
+        "department",
+        "year",
+        "quarter",
+        "approval_status",
+        "status",
+        "strat_code",
+        "responsible_person",
+        "phone",
+        "email",
+        "numeric_value",
+        "progress_text",
+        "risks",
+        "file_names",
+        "file_urls",
+        "admin_comment",
+        "start_date",
+        "end_date",
+        "submitted_at"
+    ]
 
-    if not response.data:
-        return pd.DataFrame()
+    for col in required_cols:
+        if col not in monitoring_df.columns:
+            monitoring_df[col] = ""
 
-    return pd.DataFrame(response.data)
+    return monitoring_df
 
+
+# ------------------------------------------------------------
+# Load data
+# ------------------------------------------------------------
 
 df = load_strat_matrix()
-approved_df = load_approved_monitoring()
-all_monitoring_df = load_all_monitoring()
+monitoring_df = ensure_monitoring_columns(load_monitoring())
 
-measures_df = df[df["object_type"] == "measure"].copy()
+all_measures = df[df["object_type"] == "measure"].copy()
+
+all_ssp_indices = sorted(
+    {
+        index
+        for _, row in all_measures.iterrows()
+        for index in split_ssp_values(row.get("resp_main", ""))
+    },
+    key=lambda x: int(x) if str(x).isdigit() else 9999
+)
+
+year_options = list(range(2026, 2035))
+quarter_options = ["I", "II", "III", "IV"]
+
+execution_status_options = [
+    "Виконано",
+    "Частково виконано",
+    "Не виконано",
+    "Не настав час",
+    "Втратило актуальність"
+]
+
+
+# ------------------------------------------------------------
+# Header
+# ------------------------------------------------------------
 
 st.markdown('<div class="ua-line"></div>', unsafe_allow_html=True)
 
@@ -381,452 +661,484 @@ st.markdown(
 st.markdown(
     """
     <div class="header-box">
-        <div class="header-title">Внесення даних моніторингу виконання Стратегічного плану</div>
+        <div class="header-title">Моніторинг стратегічних результатів</div>
         <div class="header-subtitle">
-            Кабінет департаменту для квартального подання інформації про виконання заходів,
-            додавання підтвердних файлів і передачі даних адміністратору на погодження.
-        </div>
-        <div class="status-pill-wrap">
-            <div class="status-pill">● Режим: подання даних</div>
-            <div class="status-pill">● Supabase: активний</div>
-            <div class="status-pill">● Файли: Storage підключено</div>
-            <div class="status-pill">● Статус: DEMO</div>
+            Кабінет користувача призначений для щоквартального внесення відомостей 
+            (до 15 числа місяця, наступного за звітним кварталом) з метою формування 
+            результатів моніторингу виконання заходів, оцінки прогресу досягнення 
+            стратегічних цілей, контролю статусу виконання заходів, своєчасного 
+            виявлення відхилень і ризиків, формування коригувальних дій, а також 
+            створення моніторингових звітів та інфографічних матеріалів.
         </div>
     </div>
     """,
     unsafe_allow_html=True
 )
+
+
+# ------------------------------------------------------------
+# User info fields
+# ------------------------------------------------------------
+
+st.markdown(
+    """
+    <div class="user-box">
+        <div class="user-title">Контактна інформація відповідальної особи</div>
+    """,
+    unsafe_allow_html=True
+)
+
+u1, u2, u3 = st.columns([1.2, 0.85, 1.1])
+
+with u1:
+    responsible_person = st.text_input(
+        "ПІБ відповідальної особи",
+        key="responsible_person_input",
+        placeholder="Введіть ПІБ"
+    )
+
+with u2:
+    responsible_phone = st.text_input(
+        "Контактний номер телефону",
+        key="responsible_phone_input",
+        placeholder="+380..."
+    )
+
+with u3:
+    responsible_email = st.text_input(
+        "Електронна пошта відповідальної особи",
+        key="responsible_email_input",
+        placeholder="name@me.gov.ua"
+    )
+
+st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ------------------------------------------------------------
+# Flow block
+# ------------------------------------------------------------
 
 st.markdown(
     """
     <div class="flow-box">
-        <div class="flow-title">Маршрут подання</div>
+        <div class="flow-title">Маршрут подання відомостей</div>
         <div class="flow-steps">
-            <div class="flow-step">1. Обрати департамент</div>
-            <div class="flow-step">2. Позначити заходи</div>
-            <div class="flow-step">3. Заповнити квартали</div>
-            <div class="flow-step">4. Додати файли</div>
-            <div class="flow-step">5. Подати на погодження</div>
+            <div class="flow-step">1. Вибір параметрів</div>
+            <div class="flow-step">2. Перегляд</div>
+            <div class="flow-step">3. Позначення заходу</div>
+            <div class="flow-step">4. Заповнення</div>
+            <div class="flow-step">5. Відправлення на розгляд</div>
+            <div class="flow-step">6. Погодження</div>
         </div>
     </div>
     """,
     unsafe_allow_html=True
 )
 
-departments = sorted(measures_df["department"].dropna().astype(str).unique())
 
-st.markdown('<div class="card"><div class="card-title">Параметри подання</div><div class="card-subtitle">Оберіть департамент і рік звітування. Система підтягне тільки ті заходи, за якими департамент є головним виконавцем.</div>', unsafe_allow_html=True)
-
-col1, col2 = st.columns(2)
-
-with col1:
-    selected_department = st.selectbox("Департамент", departments)
-
-with col2:
-    selected_year = st.selectbox("Рік звітування", [2026, 2027, 2028])
-
-st.markdown('</div>', unsafe_allow_html=True)
-
-department_measures = measures_df[
-    measures_df["department"].astype(str) == str(selected_department)
-].copy()
-
-if department_measures.empty:
-    st.warning("Для цього департаменту заходів не знайдено.")
-    st.stop()
-
-target_col = f"target_{selected_year}"
-
-quarter_values = {}
-
-if not approved_df.empty:
-    year_data = approved_df[approved_df["year"] == selected_year]
-
-    for _, row in year_data.iterrows():
-        code = str(row["strat_code"]).strip()
-        quarter = str(row["quarter"]).strip()
-        value = row.get("numeric_value", "")
-
-        quarter_values.setdefault(code, {})
-        quarter_values[quarter] = value
-
-for q in ["I", "II", "III", "IV"]:
-    department_measures[f"{selected_year} {q} квартал"] = department_measures["code"].apply(
-        lambda x: quarter_values.get(str(x).strip(), {}).get(q, "")
-    )
-
-form_df = pd.DataFrame({
-    "Подати": False,
-    "Код заходу": department_measures["code"],
-    "Назва заходу": department_measures["name"],
-    "Індикатор": department_measures["indicator"],
-    "Одиниця виміру": department_measures["unit"],
-    f"Планове значення {selected_year}": department_measures[target_col],
-    f"{selected_year} I квартал": department_measures[f"{selected_year} I квартал"],
-    f"{selected_year} II квартал": department_measures[f"{selected_year} II квартал"],
-    f"{selected_year} III квартал": department_measures[f"{selected_year} III квартал"],
-    f"{selected_year} IV квартал": department_measures[f"{selected_year} IV квартал"],
-    "Початкова дата виконання": department_measures["start_date_plan"],
-    "Кінцева дата виконання": department_measures["end_date_plan"],
-    "Статус виконання": "Виконується",
-    "Опис прогресу": "",
-    "Ризики / проблеми / відхилення": ""
-})
-
-dept_all = pd.DataFrame()
-
-if not all_monitoring_df.empty:
-    dept_all = all_monitoring_df[
-        (all_monitoring_df["department"].astype(str) == str(selected_department)) &
-        (all_monitoring_df["year"].astype(str) == str(selected_year))
-    ].copy()
-
-dept_approved = len(dept_all[dept_all["approval_status"] == "Погоджено"]) if not dept_all.empty else 0
-dept_waiting = len(dept_all[dept_all["approval_status"] == "Очікує погодження"]) if not dept_all.empty else 0
-dept_risks = len(dept_all[dept_all["risks"].fillna("").astype(str).str.strip() != ""]) if not dept_all.empty and "risks" in dept_all.columns else 0
-dept_without = max(len(department_measures) - dept_all["strat_code"].nunique(), 0) if not dept_all.empty else len(department_measures)
-
-st.markdown('<div class="card"><div class="card-title">Поточний стан обраного департаменту</div>', unsafe_allow_html=True)
-
-k1, k2, k3, k4, k5 = st.columns(5)
-k1.metric("Заходів департаменту", len(department_measures))
-k2.metric("Погоджено заявок", dept_approved)
-k3.metric("Очікує погодження", dept_waiting)
-k4.metric("Без подання", dept_without)
-k5.metric("Із ризиками", dept_risks)
-
-st.markdown('</div>', unsafe_allow_html=True)
-
-st.markdown('<div class="card"><div class="card-title">Загальні дані подання</div><div class="card-subtitle">Ці дані будуть застосовані до всіх заходів, які ви позначите у таблиці.</div>', unsafe_allow_html=True)
-
-g1, g2, g3 = st.columns(3)
-
-with g1:
-    responsible_person = st.text_input("ПІБ відповідальної особи *")
-
-with g2:
-    phone = st.text_input("Контактний номер телефону *")
-
-with g3:
-    email = st.text_input("Електронна пошта відповідальної особи *")
-
-st.markdown('</div>', unsafe_allow_html=True)
-
-st.markdown('<div class="card"><div class="card-title">Заходи департаменту</div><div class="card-subtitle">Позначте заходи для подання. Редагуються квартальні значення, статус виконання, опис прогресу та ризики.</div>', unsafe_allow_html=True)
+# ------------------------------------------------------------
+# User guide / filters
+# ------------------------------------------------------------
 
 st.markdown(
     """
-    <div class="badge-wrap">
-        <div class="badge">Редагування квартальних значень активне</div>
-        <div class="badge">Погоджені дані підтягнуто автоматично</div>
-        <div class="badge">Файли додаються після вибору заходів</div>
-        <div class="badge warn-badge">Перед поданням система виконає перевірку якості даних</div>
+    <div class="filter-box">
+        <div class="filter-title">Гід користувача</div>
+        <div class="filter-legend">
+            Оберіть індекс самостійного структурнго підрозділу та звітний період. 
+            Система автоматично відобразить лише ті заходи, за якими самостійний 
+            структурний підрозділ, визначений головним виконавцем.
+        </div>
+        <div class="info-grid">
+            <div class="info-card">
+                <div class="info-card-title">Інструкція користувача</div>
+                <div class="instruction-item">1. Позначте у першій колонці таблиці «Подати» заходи, за якими подається інформація</div>
+                <div class="instruction-item">2. Внесіть фактичні звітні відомості (показники, стан виконання, короткий опис прогресу та інформацію щодо ризиків)</div>
+                <div class="instruction-item">3. Натисніть «Подати інформацію на розгляд»</div>
+                <div class="instruction-item">4. Після розгляду відомостей, координатор направить інформацію на погодження (відповідальний виконавець, керівник ССП)</div>
+            </div>
+        </div>
+    """,
+    unsafe_allow_html=True
+)
+
+f1, f2, f3, f4 = st.columns([1.25, 0.7, 0.7, 1.6])
+
+with f1:
+    selected_ssp_index = st.selectbox(
+        "Індекс самостійного структурного підрозділу",
+        [""] + all_ssp_indices,
+        key="ssp_submit_filter",
+        placeholder="Оберіть індекс ССП"
+    )
+
+with f2:
+    selected_year = st.selectbox(
+        "Рік",
+        year_options,
+        index=0,
+        key="year_submit_filter"
+    )
+
+with f3:
+    selected_quarter = st.selectbox(
+        "Квартал",
+        quarter_options,
+        index=0,
+        key="quarter_submit_filter"
+    )
+
+with f4:
+    search_query = st.text_input(
+        "Додаткові параметри пошуку (код завдання, заходу, ключові слова)",
+        key="search_submit_filter",
+        placeholder="Введіть код, назву або ключове слово"
+    )
+
+st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ------------------------------------------------------------
+# Filtering
+# ------------------------------------------------------------
+
+filtered_measures = all_measures.copy()
+
+if selected_ssp_index:
+    filtered_measures = filtered_measures[
+        filtered_measures["resp_main"].apply(lambda value: value_contains_ssp(value, selected_ssp_index))
+    ]
+
+filtered_measures = filtered_measures[
+    filtered_measures.apply(lambda row: row_matches_search(row, search_query), axis=1)
+]
+
+filtered_measures = filtered_measures[
+    filtered_measures.apply(lambda row: has_target_for_year(row, selected_year), axis=1)
+]
+
+filtered_codes = filtered_measures["code"].astype(str).str.strip().tolist()
+monitoring_selected = subset_monitoring_for_selection(
+    monitoring_df,
+    filtered_codes,
+    selected_year,
+    selected_quarter
+)
+
+
+# ------------------------------------------------------------
+# Selection parameters summary
+# ------------------------------------------------------------
+
+total_count = len(filtered_measures)
+submitted_count = unique_measure_count(monitoring_selected)
+
+if monitoring_selected.empty:
+    reviewed_count = 0
+    waiting_count = 0
+    returned_count = 0
+    approved_count = 0
+else:
+    monitoring_selected["visual_status"] = monitoring_selected.apply(get_record_visual_status, axis=1)
+
+    reviewed_count = unique_measure_count(
+        monitoring_selected[
+            monitoring_selected["visual_status"].isin(["Погоджено", "Повернуто на доопрацювання"])
+        ]
+    )
+
+    waiting_count = unique_measure_count(
+        monitoring_selected[
+            monitoring_selected["visual_status"] == "Очікує розгляду"
+        ]
+    )
+
+    returned_count = unique_measure_count(
+        monitoring_selected[
+            monitoring_selected["visual_status"] == "Повернуто на доопрацювання"
+        ]
+    )
+
+    approved_count = unique_measure_count(
+        monitoring_selected[
+            monitoring_selected["visual_status"] == "Погоджено"
+        ]
+    )
+
+summary_cards = "".join([
+    make_summary_card("Заходів усього", total_count),
+    make_summary_card("Поданих відомостей за заходами", submitted_count),
+    make_summary_card("Розглянуто", reviewed_count),
+    make_summary_card("Очікує розгляду", waiting_count),
+    make_summary_card("Повернуто на доопрацювання", returned_count),
+    make_summary_card("Погоджено", approved_count)
+])
+
+st.markdown(
+    f"""
+    <div class="summary-box">
+        <div class="summary-title">Параметри відбору</div>
+        <div class="summary-grid">{summary_cards}</div>
     </div>
     """,
     unsafe_allow_html=True
 )
 
+
+# ------------------------------------------------------------
+# Status notes
+# ------------------------------------------------------------
+
 st.markdown(
     """
-    **Як працювати з таблицею:**
-
-    1. Поставте галочку у колонці **«Подати»** біля заходів, за якими подаєте інформацію.
-    2. У квартальних колонках внесіть фактичні значення виконання.
-    3. Якщо дані вже були погоджені раніше, вони підтягнуться автоматично.
-    4. Терміни виконання підтягуються зі стратегічної матриці.
-    5. Заповніть статус, опис прогресу та ризики/проблеми/відхилення.
-    6. Нижче завантажте підтвердні файли для обраних заходів.
-    7. Натисніть **«Подати інформацію на погодження»**.
-    """
+    <div class="note-box">
+        <strong>Редагування звітних даних активне.</strong><br>
+        <strong>Відомості відображаються автоматично.</strong><br>
+        <strong>Перед поданням система виконає перевірку коректності та повноти даних.</strong>
+    </div>
+    """,
+    unsafe_allow_html=True
 )
 
-edited_df = st.data_editor(
-    form_df,
-    use_container_width=True,
-    hide_index=True,
-    num_rows="fixed",
-    height=580,
-    row_height=95,
-    column_config={
-        "Подати": st.column_config.CheckboxColumn("Подати", width="small"),
-        "Код заходу": st.column_config.TextColumn("Код заходу", disabled=True, width="small"),
-        "Назва заходу": st.column_config.TextColumn("Назва заходу", disabled=True, width="large"),
-        "Індикатор": st.column_config.TextColumn("Індикатор", disabled=True, width="large"),
-        "Одиниця виміру": st.column_config.TextColumn("Одиниця виміру", disabled=True, width="medium"),
-        f"Планове значення {selected_year}": st.column_config.TextColumn(
-            f"Планове значення {selected_year}",
-            disabled=True,
-            width="medium"
-        ),
-        f"{selected_year} I квартал": st.column_config.TextColumn(f"{selected_year} I квартал", width="medium"),
-        f"{selected_year} II квартал": st.column_config.TextColumn(f"{selected_year} II квартал", width="medium"),
-        f"{selected_year} III квартал": st.column_config.TextColumn(f"{selected_year} III квартал", width="medium"),
-        f"{selected_year} IV квартал": st.column_config.TextColumn(f"{selected_year} IV квартал", width="medium"),
-        "Початкова дата виконання": st.column_config.TextColumn(
-            "Початкова дата виконання",
-            disabled=True,
-            width="medium"
-        ),
-        "Кінцева дата виконання": st.column_config.TextColumn(
-            "Кінцева дата виконання",
-            disabled=True,
-            width="medium"
-        ),
-        "Статус виконання": st.column_config.SelectboxColumn(
-            "Статус виконання",
-            options=[
-                "Не розпочато",
-                "Виконується",
-                "Виконано",
-                "Виконано частково",
-                "Прострочено",
-                "Потребує уваги"
-            ],
-            required=True,
-            width="medium"
-        ),
-        "Опис прогресу": st.column_config.TextColumn("Опис прогресу", width="large"),
-        "Ризики / проблеми / відхилення": st.column_config.TextColumn(
-            "Ризики / проблеми / відхилення",
-            width="large"
-        )
-    }
-)
 
-selected_rows = edited_df[edited_df["Подати"] == True].copy()
+# ------------------------------------------------------------
+# Table preparation
+# ------------------------------------------------------------
 
-selected_count = len(selected_rows)
-filled_count = 0
+quarter_label = f"{quarter_to_q_label(selected_quarter)} {selected_year}"
+target_col = f"target_{selected_year}"
 
-quarter_columns_tmp = [
-    f"{selected_year} I квартал",
-    f"{selected_year} II квартал",
-    f"{selected_year} III квартал",
-    f"{selected_year} IV квартал"
-]
+if target_col not in filtered_measures.columns:
+    filtered_measures[target_col] = ""
 
-if selected_count > 0:
-    for _, row in selected_rows.iterrows():
-        has_value = any(
-            pd.notna(row[col]) and str(row[col]).strip() != ""
-            for col in quarter_columns_tmp
-        )
+table_rows = []
 
-        if has_value:
-            filled_count += 1
+for _, row in filtered_measures.iterrows():
+    code = raw_value(row.get("code", ""))
 
-st.markdown('</div>', unsafe_allow_html=True)
+    table_rows.append({
+        "Подати": False,
+        "Код": code,
+        "Захід": strip_leading_code(row.get("name", ""), code),
+        "Тип продукту": raw_value(row.get("product_type", "")),
+        "Індикатор": raw_value(row.get("indicator", "")),
+        "Одиниці виміру": raw_value(row.get("unit", "")),
+        "2021\nбазовий рівень (факт)": raw_value(row.get("base_2021", "")),
+        "2024\nзвіт": raw_value(row.get("fact_2024", "")),
+        "2025\nфакт": raw_value(row.get("fact_2025", "")),
+        f"{selected_year}\nцільовий орієнтир для заходів на рік": raw_value(row.get(target_col, "")),
+        quarter_label: "",
+        "Глобальний рівень": raw_value(row.get("source_global", "")),
+        "Національний рівень": raw_value(row.get("source_national", "")),
+        "Головний": raw_value(row.get("resp_main", "")),
+        "Співвиконавець 1": raw_value(row.get("resp_co_1", "")),
+        "Співвиконавець 2": raw_value(row.get("resp_co_2", "")),
+        "Період дії заходу в межах планового періоду, років": raw_value(row.get("measure_period_years", "")),
+        "Початкова дата": raw_value(row.get("measure_start_date", "")),
+        "Кінцева дата": raw_value(row.get("measure_end_date", "")),
+        "Статус виконання": "",
+        "Опис прогресу": "",
+        "Ризики / проблеми / відхилення": ""
+    })
 
-st.markdown('<div class="card"><div class="card-title">Прогрес заповнення</div>', unsafe_allow_html=True)
+table_df = pd.DataFrame(table_rows)
 
-p1, p2, p3 = st.columns(3)
-p1.metric("Позначено заходів", selected_count)
-p2.metric("З квартальними значеннями", filled_count)
-p3.metric("Очікують файлів", selected_count)
+st.markdown('<div class="table-title">Заходи для внесення відомостей</div>', unsafe_allow_html=True)
 
-if selected_count > 0:
-    st.progress(min(filled_count / selected_count, 1.0))
+if table_df.empty:
+    st.info("За обраними параметрами заходів не знайдено.")
+    edited_df = pd.DataFrame()
 else:
-    st.progress(0)
+    dynamic_height = min(720, max(180, 95 + len(table_df) * 82))
 
-st.markdown('</div>', unsafe_allow_html=True)
-
-st.markdown('<div class="card"><div class="card-title">Підтвердні файли</div><div class="card-subtitle">Додайте наказ, звіт, скан, таблицю або інший підтвердний документ для обраних заходів.</div>', unsafe_allow_html=True)
-
-file_map = {}
-
-if selected_rows.empty:
-    st.info("Позначте хоча б один захід у таблиці, щоб додати файли.")
-else:
-    for _, row in selected_rows.iterrows():
-        code = str(row["Код заходу"])
-
-        with st.expander(f"Файли для заходу {code}", expanded=True):
-            files = st.file_uploader(
-                "Завантажте підтвердні документи",
-                accept_multiple_files=True,
-                key=f"files_{code}"
+    edited_df = st.data_editor(
+        table_df,
+        key=f"monitoring_editor_{selected_ssp_index}_{selected_year}_{selected_quarter}_{search_query}",
+        use_container_width=True,
+        hide_index=True,
+        height=dynamic_height,
+        row_height=74,
+        num_rows="fixed",
+        column_config={
+            "Подати": st.column_config.CheckboxColumn(
+                "Подати",
+                help="Позначте заходи, за якими подається інформація",
+                width="small"
+            ),
+            "Код": st.column_config.TextColumn("Код", disabled=True, width="small"),
+            "Захід": st.column_config.TextColumn("Захід", disabled=True, width="large"),
+            "Тип продукту": st.column_config.TextColumn("Тип продукту", disabled=True, width="medium"),
+            "Індикатор": st.column_config.TextColumn("Індикатор", disabled=True, width="large"),
+            "Одиниці виміру": st.column_config.TextColumn("Одиниці виміру", disabled=True, width="medium"),
+            "2021\nбазовий рівень (факт)": st.column_config.TextColumn(
+                "2021\nбазовий рівень (факт)",
+                disabled=True,
+                width="medium"
+            ),
+            "2024\nзвіт": st.column_config.TextColumn("2024\nзвіт", disabled=True, width="medium"),
+            "2025\nфакт": st.column_config.TextColumn("2025\nфакт", disabled=True, width="medium"),
+            f"{selected_year}\nцільовий орієнтир для заходів на рік": st.column_config.TextColumn(
+                f"{selected_year}\nцільовий орієнтир для заходів на рік",
+                disabled=True,
+                width="medium"
+            ),
+            quarter_label: st.column_config.TextColumn(
+                quarter_label,
+                help="Фактичне значення за обраний квартал",
+                width="medium"
+            ),
+            "Глобальний рівень": st.column_config.TextColumn("Глобальний рівень", disabled=True, width="large"),
+            "Національний рівень": st.column_config.TextColumn("Національний рівень", disabled=True, width="large"),
+            "Головний": st.column_config.TextColumn("Головний", disabled=True, width="medium"),
+            "Співвиконавець 1": st.column_config.TextColumn("Співвиконавець 1", disabled=True, width="medium"),
+            "Співвиконавець 2": st.column_config.TextColumn("Співвиконавець 2", disabled=True, width="medium"),
+            "Період дії заходу в межах планового періоду, років": st.column_config.TextColumn(
+                "Період дії заходу в межах планового періоду, років",
+                disabled=True,
+                width="medium"
+            ),
+            "Початкова дата": st.column_config.TextColumn("Початкова дата", disabled=True, width="medium"),
+            "Кінцева дата": st.column_config.TextColumn("Кінцева дата", disabled=True, width="medium"),
+            "Статус виконання": st.column_config.SelectboxColumn(
+                "Статус виконання",
+                options=execution_status_options,
+                required=False,
+                width="medium"
+            ),
+            "Опис прогресу": st.column_config.TextColumn(
+                "Опис прогресу",
+                help="Коротко опишіть фактичний прогрес за звітний квартал",
+                width="large"
+            ),
+            "Ризики / проблеми / відхилення": st.column_config.TextColumn(
+                "Ризики / проблеми / відхилення",
+                help="Якщо ризиків немає, зазначте: відсутні",
+                width="large"
             )
-            file_map[code] = files
+        },
+        disabled=[
+            "Код",
+            "Захід",
+            "Тип продукту",
+            "Індикатор",
+            "Одиниці виміру",
+            "2021\nбазовий рівень (факт)",
+            "2024\nзвіт",
+            "2025\nфакт",
+            f"{selected_year}\nцільовий орієнтир для заходів на рік",
+            "Глобальний рівень",
+            "Національний рівень",
+            "Головний",
+            "Співвиконавець 1",
+            "Співвиконавець 2",
+            "Період дії заходу в межах планового періоду, років",
+            "Початкова дата",
+            "Кінцева дата"
+        ]
+    )
 
-st.markdown('</div>', unsafe_allow_html=True)
 
-files_count = sum(1 for files in file_map.values() if files)
+# ------------------------------------------------------------
+# Submission validation and submit
+# ------------------------------------------------------------
 
-st.markdown('<div class="submit-zone">', unsafe_allow_html=True)
-
-st.markdown(
-    """
-    **Перед поданням система перевірить:**
-    - ПІБ відповідальної особи;
-    - контактний номер телефону;
-    - електронну пошту;
-    - наявність фактичних квартальних значень;
-    - статус виконання;
-    - строки виконання;
-    - наявність підтвердних файлів.
-    """
-)
-
-s1, s2, s3 = st.columns(3)
-s1.metric("Позначено заходів", selected_count)
-s2.metric("Мають квартальні значення", filled_count)
-s3.metric("Мають файли", files_count)
-
-submit = st.button("Подати інформацію на погодження", use_container_width=True)
-
-st.markdown('</div>', unsafe_allow_html=True)
-
-if submit:
+def validate_submission():
     errors = []
-    warnings = []
 
-    if not responsible_person.strip():
-        errors.append("Заповніть ПІБ відповідальної особи.")
+    if not raw_value(responsible_person):
+        errors.append("Заповніть ПІБ відповідальної особи")
 
-    if not phone.strip():
-        errors.append("Заповніть контактний номер телефону.")
+    if not raw_value(responsible_phone):
+        errors.append("Заповніть контактний номер телефону")
 
-    if not email.strip():
-        errors.append("Заповніть електронну пошту відповідальної особи.")
-    elif not valid_email(email):
-        errors.append("Електронна пошта має некоректний формат.")
+    if not raw_value(responsible_email):
+        errors.append("Заповніть електронну пошту відповідальної особи")
+
+    if edited_df.empty:
+        errors.append("Позначте хоча б один захід для подання")
+        return errors
+
+    selected_rows = edited_df[edited_df["Подати"] == True].copy()
 
     if selected_rows.empty:
-        errors.append("Позначте хоча б один захід для подання.")
-
-    rows_to_insert = []
-
-    quarter_columns = {
-        "I": f"{selected_year} I квартал",
-        "II": f"{selected_year} II квартал",
-        "III": f"{selected_year} III квартал",
-        "IV": f"{selected_year} IV квартал"
-    }
+        errors.append("Позначте хоча б один захід для подання")
+        return errors
 
     for _, row in selected_rows.iterrows():
-        code = str(row["Код заходу"])
-        status = str(row["Статус виконання"]).strip()
-        risks = str(row["Ризики / проблеми / відхилення"]).strip()
-        progress = str(row["Опис прогресу"]).strip()
-        files = file_map.get(code, [])
+        code = raw_value(row.get("Код", ""))
 
-        start_period_num = parse_period(row["Початкова дата виконання"])
-        end_period_num = parse_period(row["Кінцева дата виконання"])
+        required_values = [
+            row.get(quarter_label, ""),
+            row.get("Статус виконання", ""),
+            row.get("Опис прогресу", ""),
+            row.get("Ризики / проблеми / відхилення", "")
+        ]
 
-        quarters_filled = []
+        if any(not raw_value(value) for value in required_values):
+            errors.append(f"Заповніть усі обов’язкові поля для заходу {code}")
 
-        for quarter, col_name in quarter_columns.items():
-            value = row[col_name]
+    return errors
 
-            if pd.notna(value) and str(value).strip() != "":
-                quarters_filled.append((quarter, str(value).strip()))
 
-        if not quarters_filled:
-            errors.append(f"Для заходу {code} потрібно заповнити хоча б одну квартальну колонку.")
-            continue
+submit_clicked = st.button("Подати на розгляд", use_container_width=True)
 
-        if status == "Виконано" and not quarters_filled:
-            errors.append(f"Для заходу {code} статус «Виконано» неможливий без фактичного значення.")
+if submit_clicked:
+    validation_errors = validate_submission()
 
-        if not progress:
-            warnings.append(f"Для заходу {code} не заповнено опис прогресу.")
+    if validation_errors:
+        for error in validation_errors:
+            st.error(error)
+    else:
+        selected_rows = edited_df[edited_df["Подати"] == True].copy()
+        submitted_at = datetime.now(timezone.utc).isoformat()
 
-        if status == "Виконано" and risks:
-            warnings.append(
-                f"Для заходу {code} статус «Виконано», але заповнено ризики/проблеми. Перевірте коректність."
-            )
+        payload = []
 
-        if not files:
-            warnings.append(f"Для заходу {code} не додано підтвердні файли.")
-
-        for quarter, value in quarters_filled:
-            current_period_num = selected_year * 10 + quarter_to_num(quarter)
-
-            if start_period_num is not None and current_period_num < start_period_num:
-                warnings.append(
-                    f"Для заходу {code} подається інформація за {quarter} квартал {selected_year}, "
-                    f"але період виконання ще не настав."
-                )
-
-            if end_period_num is not None and current_period_num > end_period_num:
-                warnings.append(
-                    f"Для заходу {code} подається інформація за {quarter} квартал {selected_year}, "
-                    f"але період виконання вже завершився."
-                )
-
-        uploaded_names = ""
-        uploaded_urls = ""
-
-        try:
-            uploaded_names, uploaded_urls = upload_files(files, code)
-        except Exception as e:
-            errors.append(f"Не вдалося завантажити файл для заходу {code}: {e}")
-            continue
-
-        for quarter, value in quarters_filled:
-            rows_to_insert.append({
-                "year": int(selected_year),
-                "quarter": quarter,
-                "department": str(selected_department),
-                "responsible_person": responsible_person,
-                "phone": phone,
-                "email": email,
-                "strat_code": code,
-                "status": status,
-                "progress_text": progress,
-                "numeric_value": value,
-                "risks": risks,
-                "submitted_at": datetime.now().isoformat(),
+        for _, row in selected_rows.iterrows():
+            payload.append({
+                "department": raw_value(selected_ssp_index),
+                "year": str(selected_year),
+                "quarter": raw_value(selected_quarter),
                 "approval_status": "Очікує погодження",
-                "start_date": str(row["Початкова дата виконання"]) if pd.notna(row["Початкова дата виконання"]) else None,
-                "end_date": str(row["Кінцева дата виконання"]) if pd.notna(row["Кінцева дата виконання"]) else None,
-                "evidence_links": "",
-                "file_names": uploaded_names,
-                "file_urls": uploaded_urls
+                "status": raw_value(row.get("Статус виконання", "")),
+                "strat_code": raw_value(row.get("Код", "")),
+                "responsible_person": raw_value(responsible_person),
+                "phone": raw_value(responsible_phone),
+                "email": raw_value(responsible_email),
+                "numeric_value": raw_value(row.get(quarter_label, "")),
+                "progress_text": raw_value(row.get("Опис прогресу", "")),
+                "risks": raw_value(row.get("Ризики / проблеми / відхилення", "")),
+                "file_names": "",
+                "file_urls": "",
+                "admin_comment": "",
+                "start_date": raw_value(row.get("Початкова дата", "")),
+                "end_date": raw_value(row.get("Кінцева дата", "")),
+                "submitted_at": submitted_at
             })
 
-    if errors:
-        st.error("Подання не виконано. Виправте помилки:")
-        for error in errors:
-            st.error(error)
-        st.stop()
+        try:
+            supabase.table("monitoring_requests").insert(payload).execute()
+            st.cache_data.clear()
 
-    if warnings:
-        st.warning("Система виявила попередження. Дані все одно можна подати:")
-        for warning in warnings:
-            st.warning(warning)
+            st.success("Відомості успішно подано на розгляд")
+            st.info(
+                "Відомості опрацьовуються координатором. "
+                "Інформація про подальший статус відобразиться в особистому кабінеті."
+            )
 
-    try:
-        supabase.table("monitoring_requests").insert(rows_to_insert).execute()
+        except Exception as error:
+            st.error(f"Не вдалося подати відомості. Технічна помилка: {error}")
 
-        st.markdown(
-            """
-            <div class="success-box">
-                <div class="success-title">Подання прийнято</div>
-                <div>Статус: очікує погодження адміністратора. Дані передано до системи моніторингу.</div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
 
-        st.subheader("Попередній перегляд поданих даних")
-
-        st.dataframe(
-            pd.DataFrame(rows_to_insert),
-            use_container_width=True,
-            hide_index=True
-        )
-
-    except Exception as e:
-        st.error("Не вдалося зберегти дані в Supabase.")
-        st.exception(e)
+# ------------------------------------------------------------
+# Footer
+# ------------------------------------------------------------
 
 st.markdown(
     """
     <div class="footer">
-        Розроблено департаментом стратегічного планування та макроекономічного прогнозування<br>
-        Версія DEMO 0.9 | Внутрішня система моніторингу стратегічного плану
+        <strong>Система моніторингу стратегічного плану</strong><br>
+        Кабінет внесення відомостей
     </div>
     """,
     unsafe_allow_html=True

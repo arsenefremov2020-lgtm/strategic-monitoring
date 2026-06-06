@@ -1,6 +1,7 @@
 import re
 from datetime import datetime, timezone
 from html import escape
+from textwrap import dedent
 
 import pandas as pd
 import streamlit as st
@@ -606,37 +607,37 @@ def unique_measure_count(data):
 def render_reference_table(data, selected_year, quarter_label):
     target_col = f"target_{selected_year}"
 
-    html = """
-    <div class="html-table-wrap">
-        <table class="ref-table">
-            <thead>
-                <tr>
-                    <th class="col-code" rowspan="2">Код</th>
-                    <th class="col-measure" rowspan="2">Захід</th>
-                    <th class="col-product" rowspan="2">Тип продукту</th>
-                    <th class="col-indicator" rowspan="2">Індикатор</th>
-                    <th class="col-unit" rowspan="2">Одиниці виміру</th>
-                    <th class="col-year" rowspan="2">2021<br>базовий рівень<br>(факт)</th>
-                    <th class="col-year" rowspan="2">2024<br>звіт</th>
-                    <th class="col-year" rowspan="2">2025<br>факт</th>
-                    <th class="col-year" rowspan="2">""" + escape(str(selected_year)) + """<br>цільовий орієнтир<br>для заходів на рік</th>
-                    <th class="col-quarter" rowspan="2">""" + escape(str(quarter_label)) + """</th>
-                    <th colspan="2">Підстава для включення до стратегічного плану</th>
-                    <th colspan="3">Відповідальні самостійні структурні підрозділи</th>
-                    <th class="col-period" rowspan="2">Період дії заходу<br>в межах планового<br>періоду, років</th>
-                    <th class="col-date" rowspan="2">Початкова дата</th>
-                    <th class="col-date" rowspan="2">Кінцева дата</th>
-                </tr>
-                <tr>
-                    <th class="col-source">Глобальний рівень</th>
-                    <th class="col-source">Національний рівень</th>
-                    <th class="col-resp">Головний</th>
-                    <th class="col-resp">Співвиконавець 1</th>
-                    <th class="col-resp">Співвиконавець 2</th>
-                </tr>
-            </thead>
-            <tbody>
-    """
+    html = f"""
+<div class="html-table-wrap">
+    <table class="ref-table">
+        <thead>
+            <tr>
+                <th class="col-code" rowspan="2">Код</th>
+                <th class="col-measure" rowspan="2">Захід</th>
+                <th class="col-product" rowspan="2">Тип продукту</th>
+                <th class="col-indicator" rowspan="2">Індикатор</th>
+                <th class="col-unit" rowspan="2">Одиниці виміру</th>
+                <th class="col-year" rowspan="2">2021<br>базовий рівень<br>(факт)</th>
+                <th class="col-year" rowspan="2">2024<br>звіт</th>
+                <th class="col-year" rowspan="2">2025<br>факт</th>
+                <th class="col-year" rowspan="2">{escape(str(selected_year))}<br>цільовий орієнтир<br>для заходів на рік</th>
+                <th class="col-quarter" rowspan="2">{escape(str(quarter_label))}</th>
+                <th colspan="2">Підстава для включення до стратегічного плану</th>
+                <th colspan="3">Відповідальні самостійні структурні підрозділи</th>
+                <th class="col-period" rowspan="2">Період дії заходу<br>в межах планового<br>періоду, років</th>
+                <th class="col-date" rowspan="2">Початкова дата</th>
+                <th class="col-date" rowspan="2">Кінцева дата</th>
+            </tr>
+            <tr>
+                <th class="col-source">Глобальний рівень</th>
+                <th class="col-source">Національний рівень</th>
+                <th class="col-resp">Головний</th>
+                <th class="col-resp">Співвиконавець 1</th>
+                <th class="col-resp">Співвиконавець 2</th>
+            </tr>
+        </thead>
+        <tbody>
+"""
 
     for _, row in data.iterrows():
         code = raw_value(row.get("code", ""))
@@ -663,15 +664,15 @@ def render_reference_table(data, selected_year, quarter_label):
                 <td class="col-date">{clean_value(row.get("measure_start_date", ""))}</td>
                 <td class="col-date">{clean_value(row.get("measure_end_date", ""))}</td>
             </tr>
-        """
+"""
 
     html += """
-            </tbody>
-        </table>
-    </div>
-    """
+        </tbody>
+    </table>
+</div>
+"""
 
-    st.markdown(html, unsafe_allow_html=True)
+    st.markdown(dedent(html), unsafe_allow_html=True)
 
 
 # ------------------------------------------------------------

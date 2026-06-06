@@ -1261,7 +1261,6 @@ with f13:
             "Самостійні структурні підрозділи",
             "Ризики",
             "Динаміка",
-            "План / факт",
             "Heatmap",
             "Таблиці"
         ],
@@ -1831,29 +1830,7 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "H
         st.info("Недостатньо даних для побудови теплової карти.")
 
 
-if not presentation_mode and view_mode in ["Усі візуалізації", "План / факт"]:
-    st.subheader("Порівняння план / факт")
 
-    pf_table = active[
-        (active["plan_fact_percent"].notna()) &
-        (active["is_quantitative_pf"] == True)
-    ].copy()
-
-    if pf_table.empty:
-        st.info("Для обраного періоду немає кількісних показників для порівняння план / факт.")
-    else:
-        pf_table["Відхилення від плану, %"] = (pf_table["plan_fact_percent"] - 100).round(1)
-
-        fig = px.bar(
-            pf_table.sort_values("plan_fact_percent").head(25),
-            x="code",
-            y="plan_fact_percent",
-            hover_data=["name", "indicator", "department", "selected_target", "numeric_value"],
-            title="ТОП-25 заходів із найнижчим виконанням планового показника",
-            labels={"code": "Код заходу", "plan_fact_percent": "План / факт, %"}
-        )
-        fig.update_layout(yaxis_range=[0, 100])
-        st.plotly_chart(fig, use_container_width=True)
 
 
 # ============================================================

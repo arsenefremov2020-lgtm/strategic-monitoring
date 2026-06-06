@@ -1309,6 +1309,35 @@ if active.empty:
     st.warning("За обраними параметрами відбору даних не знайдено.")
     st.stop()
 
+def collapse_to_latest_measure_rows(df):
+    """
+    Для загальних KPI залишаємо один рядок на один захід.
+    Якщо обрано кілька років/кварталів, беремо найпізніший доступний період для кожного заходу.
+    Це прибирає дублювання типу: один захід × багато кварталів.
+    """
+    if df.empty:
+        return df
+
+    data = df.copy()
+
+    data["_period_sort"] = (
+        data["period_year"].astype(int) * 10
+        + data["period_quarter"].apply(quarter_to_number)
+    )
+
+    data = (
+        data
+        .sort_values(["code", "_period_sort"])
+        .groupby("code", as_index=False)
+        .tail(1)
+        .drop(columns=["_period_sort"])
+    )
+
+    return data
+
+
+active_period_rows = active.copy()
+active = collapse_to_latest_measure_rows(active)
 
 # ============================================================
 # MAIN METRICS

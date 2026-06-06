@@ -1156,16 +1156,18 @@ with f1:
     selected_years = st.multiselect(
         "Звітний період: рік",
         years_options,
-        default=[2026],
-        key="dash_years"
+        default=[],
+        key="dash_years",
+        placeholder="Усі роки"
     )
 
 with f2:
     selected_quarters = st.multiselect(
         "Звітний період: квартал",
         quarters_options,
-        default=["I"],
-        key="dash_quarters"
+        default=[],
+        key="dash_quarters",
+        placeholder="Усі квартали"
     )
 
 with f3:
@@ -1277,17 +1279,14 @@ with r1:
 # BUILD ACTIVE DATA
 # ============================================================
 
-if not selected_years:
-    selected_years = [2026]
-
-if not selected_quarters:
-    selected_quarters = ["I"]
+years_for_calc = selected_years if selected_years else years_options
+quarters_for_calc = selected_quarters if selected_quarters else quarters_options
 
 active_raw = build_period_data(
     strat_df,
     requests_df,
-    selected_years,
-    selected_quarters
+    years_for_calc,
+    quarters_for_calc
 )
 
 if active_raw.empty:
@@ -1340,7 +1339,19 @@ not_counted_count = len(active[active["status"] == "Не подано"])
 
 conclusion_title, conclusion_text, conclusion_badge = dashboard_conclusion(completion, risk_share, coverage)
 
-period_label = ", ".join([f"{y} рік" for y in selected_years]) + " | " + ", ".join([f"{q} квартал" for q in selected_quarters])
+period_year_label = (
+    ", ".join([f"{y} рік" for y in selected_years])
+    if selected_years
+    else "усі роки"
+)
+
+period_quarter_label = (
+    ", ".join([f"{q} квартал" for q in selected_quarters])
+    if selected_quarters
+    else "усі квартали"
+)
+
+period_label = f"{period_year_label} | {period_quarter_label}"
 
 st.markdown('<div class="card"><div class="card-title">Прогрес виконання: висновок системи</div>', unsafe_allow_html=True)
 
@@ -1691,8 +1702,8 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
 
     trend_rows = []
 
-    for y in [2026, 2027, 2028]:
-        for q in ["I", "II", "III", "IV"]:
+    for y in years_for_calc:
+        for q in quarters_for_calc:
             temp_raw = build_period_data(strat_df, requests_df, [y], [q])
             temp = apply_dashboard_filters(
                 temp_raw,
@@ -1741,8 +1752,8 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "H
 
     heat_rows = []
 
-    for y in [2026, 2027, 2028]:
-        for q in ["I", "II", "III", "IV"]:
+    for y in years_for_calc:
+        for q in quarters_for_calc:
             temp_raw = build_period_data(strat_df, requests_df, [y], [q])
             temp = apply_dashboard_filters(
                 temp_raw,

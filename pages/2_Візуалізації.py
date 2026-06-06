@@ -692,22 +692,31 @@ def forecast_to_q4(current_completion, selected_quarter):
     return round(min(forecast, 100), 1)
 
 
-def render_alert_grid(items):
-    cols = st.columns(len(items))
+def render_status_cards(items):
+    rows = [items[:5], items[5:]]
 
-    for col, item in zip(cols, items):
-        title, value, color_class = item
+    for row in rows:
+        cols = st.columns(5)
 
-        with col:
-            st.markdown(
-                f"""
-                <div class="alert-card {color_class}">
-                    <div class="alert-title">{title}</div>
-                    <div class="alert-value">{value}</div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
+        for col, item in zip(cols, row):
+            title = item["title"]
+            count = item["count"]
+            percent = item["percent"]
+            color_class = item["color"]
+
+            with col:
+                st.markdown(
+                    f"""
+                    <div class="alert-card {color_class}">
+                        <div class="alert-title">{title}</div>
+                        <div class="alert-value">{count}</div>
+                        <div style="font-size:15px;font-weight:850;color:#475569;margin-top:6px;">
+                            {percent}
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
 
 
 def reset_filters():
@@ -1347,36 +1356,74 @@ st.markdown(f"""
 
 st.markdown('</div>', unsafe_allow_html=True)
 
-render_alert_grid([
-    ("Заходів", total_active, "alert-blue"),
-    ("Виконано", completed_count, "alert-green"),
-    ("Погоджено", approved_requests_count, "alert-green"),
-    ("На розгляді", review_count, "alert-yellow"),
-    ("Не враховано", not_counted_count, "alert-red"),
-])
+def pct_value(count, total):
+    if total == 0:
+        return "0.0%"
+    return f"{round(count / total * 100, 1)}%"
 
-render_alert_grid([
-    ("Не виконано", not_done_count, "alert-red"),
-    ("Втратив актуальність", obsolete_count, "alert-neutral"),
-    ("Термін не настав", not_time_count, "alert-neutral"),
-    ("Частково виконано", partly_count, "alert-yellow"),
-    ("Виконується", in_progress_count, "alert-blue"),
-])
 
-render_alert_grid([
-    ("Виконано, %", f"{round(completed_count / total_active * 100, 1) if total_active else 0}%", "alert-green"),
-    ("Погоджено, %", f"{round(approved_requests_count / total_active * 100, 1) if total_active else 0}%", "alert-green"),
-    ("На розгляді, %", f"{round(review_count / total_active * 100, 1) if total_active else 0}%", "alert-yellow"),
-    ("Не враховано, %", f"{round(not_counted_count / total_active * 100, 1) if total_active else 0}%", "alert-red"),
-    ("Середній прогрес, %", f"{completion}%", "alert-blue"),
+render_status_cards([
+    {
+        "title": "Заходів",
+        "count": total_active,
+        "percent": "100.0%" if total_active else "0.0%",
+        "color": "alert-blue"
+    },
+    {
+        "title": "Виконано",
+        "count": completed_count,
+        "percent": pct_value(completed_count, total_active),
+        "color": "alert-green"
+    },
+    {
+        "title": "Погоджено",
+        "count": approved_requests_count,
+        "percent": pct_value(approved_requests_count, total_active),
+        "color": "alert-green"
+    },
+    {
+        "title": "На розгляді",
+        "count": review_count,
+        "percent": pct_value(review_count, total_active),
+        "color": "alert-yellow"
+    },
+    {
+        "title": "Не враховано",
+        "count": not_counted_count,
+        "percent": pct_value(not_counted_count, total_active),
+        "color": "alert-red"
+    },
+    {
+        "title": "Не виконано",
+        "count": not_done_count,
+        "percent": pct_value(not_done_count, total_active),
+        "color": "alert-red"
+    },
+    {
+        "title": "Втратив актуальність",
+        "count": obsolete_count,
+        "percent": pct_value(obsolete_count, total_active),
+        "color": "alert-neutral"
+    },
+    {
+        "title": "Термін не настав",
+        "count": not_time_count,
+        "percent": pct_value(not_time_count, total_active),
+        "color": "alert-neutral"
+    },
+    {
+        "title": "Частково виконано",
+        "count": partly_count,
+        "percent": pct_value(partly_count, total_active),
+        "color": "alert-yellow"
+    },
+    {
+        "title": "Виконується",
+        "count": in_progress_count,
+        "percent": pct_value(in_progress_count, total_active),
+        "color": "alert-blue"
+    },
 ])
-
-k1, k2, k3, k4, k5 = st.columns(5)
-k1.metric("Активних заходів", total_active)
-k2.metric("Подано моніторинг", submitted_count)
-k3.metric("Покриття", f"{coverage}%")
-k4.metric("Критичні ризики", critical_count)
-k5.metric("Прострочені / завершені не виконані", overdue_count)
 
 
 # ============================================================

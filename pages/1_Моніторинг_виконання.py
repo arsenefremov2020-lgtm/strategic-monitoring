@@ -96,6 +96,75 @@ st.markdown(
     box-shadow: 0 6px 18px rgba(15,23,42,0.045);
 }
 
+.status-row {
+    max-width: 1280px;
+    margin: 12px auto 22px auto;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1.45fr;
+    gap: 12px;
+    align-items: stretch;
+}
+
+.status-pill {
+    min-height: 58px;
+    border-radius: 14px;
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    font-size: 13px;
+    font-weight: 850;
+    line-height: 1.3;
+    text-align: center;
+    border: 1px solid transparent;
+    box-shadow: 0 6px 16px rgba(15,23,42,0.05);
+}
+
+.status-dot {
+    width: 10px;
+    height: 10px;
+    min-width: 10px;
+    border-radius: 999px;
+    display: inline-block;
+}
+
+.status-green {
+    background: #dcfce7;
+    color: #166534;
+    border-color: #86efac;
+}
+
+.status-green .status-dot {
+    background: #16a34a;
+}
+
+.status-blue {
+    background: #dbeafe;
+    color: #1e40af;
+    border-color: #93c5fd;
+}
+
+.status-blue .status-dot {
+    background: #2563eb;
+}
+
+.status-orange {
+    background: #ffedd5;
+    color: #9a3412;
+    border-color: #fdba74;
+}
+
+.status-orange .status-dot {
+    background: #f97316;
+}
+
+@media (max-width: 1100px) {
+    .status-row {
+        grid-template-columns: 1fr;
+    }
+}
+
 .header-box {
     border-radius: 16px;
     padding: 22px 26px;
@@ -974,10 +1043,19 @@ st.markdown(
 
 st.markdown(
     """
-    <div class="note-box">
-        <strong>Редагування звітних даних активне.</strong><br>
-        <strong>Відомості відображаються автоматично.</strong><br>
-        <strong>Перед поданням система виконає перевірку коректності та повноти даних.</strong>
+    <div class="status-row">
+        <div class="status-pill status-green">
+            <span class="status-dot"></span>
+            Редагування звітних даних активне
+        </div>
+        <div class="status-pill status-blue">
+            <span class="status-dot"></span>
+            Відомості відображаються автоматично
+        </div>
+        <div class="status-pill status-orange">
+            <span class="status-dot"></span>
+            Перед поданням система виконає перевірку коректності та повноти даних
+        </div>
     </div>
     """,
     unsafe_allow_html=True

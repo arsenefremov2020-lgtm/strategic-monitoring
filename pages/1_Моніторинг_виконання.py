@@ -327,6 +327,49 @@ div[data-testid="stButton"] > button:hover {
     border-top: 1px solid #d8dee9;
 }
 
+.editor-center {
+    max-width: 1280px;
+    margin: 0 auto 18px auto;
+}
+
+div[data-testid="stDataFrame"],
+div[data-testid="stDataEditor"] {
+    margin-left: auto !important;
+    margin-right: auto !important;
+}
+
+div[data-testid="stDataEditor"] div[role="gridcell"],
+div[data-testid="stDataEditor"] div[role="columnheader"] {
+    text-align: center !important;
+    justify-content: center !important;
+    align-items: center !important;
+}
+
+div[data-testid="stDataEditor"] div[role="gridcell"] p,
+div[data-testid="stDataEditor"] div[role="columnheader"] p {
+    text-align: center !important;
+}
+
+.final-footer {
+    text-align: center;
+    color: #475569;
+    font-size: 13px;
+    margin-top: 48px;
+    padding-top: 24px;
+    border-top: 1px solid #cbd5e1;
+    line-height: 1.7;
+}
+
+.final-footer-main {
+    font-weight: 700;
+    color: #334155;
+}
+
+.final-footer-sub {
+    color: #64748b;
+    font-size: 12px;
+}
+
 @media (max-width: 1100px) {
     .summary-grid,
     .flow-steps {
@@ -923,16 +966,16 @@ for _, row in filtered_measures.iterrows():
         "Тип продукту": raw_value(row.get("product_type", "")),
         "Індикатор": raw_value(row.get("indicator", "")),
         "Одиниці виміру": raw_value(row.get("unit", "")),
-        "2021\nбазовий рівень (факт)": raw_value(row.get("base_2021", "")),
+        "2021\nбазовий рівень\n(факт)": raw_value(row.get("base_2021", "")),
         "2024\nзвіт": raw_value(row.get("fact_2024", "")),
         "2025\nфакт": raw_value(row.get("fact_2025", "")),
-        f"{selected_year}\nцільовий орієнтир для заходів на рік": raw_value(row.get(target_col, "")),
+        f"{selected_year}\nцільовий орієнтир\nдля заходів на рік": raw_value(row.get(target_col, "")),
         quarter_label: "",
-        "Глобальний рівень": raw_value(row.get("source_global", "")),
-        "Національний рівень": raw_value(row.get("source_national", "")),
-        "Головний": raw_value(row.get("resp_main", "")),
-        "Співвиконавець 1": raw_value(row.get("resp_co_1", "")),
-        "Співвиконавець 2": raw_value(row.get("resp_co_2", "")),
+        "Підстава для включення до стратегічного плану\nГлобальний рівень": raw_value(row.get("source_global", "")),
+        "Підстава для включення до стратегічного плану\nНаціональний рівень": raw_value(row.get("source_national", "")),
+        "Відповідальні самостійні структурні підрозділи\nГоловний": raw_value(row.get("resp_main", "")),
+        "Відповідальні самостійні структурні підрозділи\nСпіввиконавець 1": raw_value(row.get("resp_co_1", "")),
+        "Відповідальні самостійні структурні підрозділи\nСпіввиконавець 2": raw_value(row.get("resp_co_2", "")),
         "Період дії заходу в межах планового періоду, років": raw_value(row.get("measure_period_years", "")),
         "Початкова дата": raw_value(row.get("measure_start_date", "")),
         "Кінцева дата": raw_value(row.get("measure_end_date", "")),
@@ -951,6 +994,8 @@ if table_df.empty:
 else:
     dynamic_height = min(720, max(180, 95 + len(table_df) * 82))
 
+    st.markdown('<div class="editor-center">', unsafe_allow_html=True)
+
     edited_df = st.data_editor(
         table_df,
         key=f"monitoring_editor_{selected_ssp_index}_{selected_year}_{selected_quarter}_{search_query}",
@@ -963,57 +1008,89 @@ else:
             "Подати": st.column_config.CheckboxColumn(
                 "Подати",
                 help="Позначте заходи, за якими подається інформація",
-                width="small"
-            ),
-            "Код": st.column_config.TextColumn("Код", disabled=True, width="small"),
-            "Захід": st.column_config.TextColumn("Захід", disabled=True, width="large"),
-            "Тип продукту": st.column_config.TextColumn("Тип продукту", disabled=True, width="medium"),
-            "Індикатор": st.column_config.TextColumn("Індикатор", disabled=True, width="large"),
-            "Одиниці виміру": st.column_config.TextColumn("Одиниці виміру", disabled=True, width="medium"),
-            "2021\nбазовий рівень (факт)": st.column_config.TextColumn(
-                "2021\nбазовий рівень (факт)",
-                disabled=True,
                 width="medium"
             ),
-            "2024\nзвіт": st.column_config.TextColumn("2024\nзвіт", disabled=True, width="medium"),
-            "2025\nфакт": st.column_config.TextColumn("2025\nфакт", disabled=True, width="medium"),
-            f"{selected_year}\nцільовий орієнтир для заходів на рік": st.column_config.TextColumn(
-                f"{selected_year}\nцільовий орієнтир для заходів на рік",
+            "Код": st.column_config.TextColumn("Код", disabled=True, width=80),
+            "Захід": st.column_config.TextColumn("Захід", disabled=True, width=390),
+            "Тип продукту": st.column_config.TextColumn("Тип продукту", disabled=True, width=190),
+            "Індикатор": st.column_config.TextColumn("Індикатор", disabled=True, width=390),
+            "Одиниці виміру": st.column_config.TextColumn("Одиниці виміру", disabled=True, width=180),
+
+            "2021\nбазовий рівень\n(факт)": st.column_config.TextColumn(
+                "2021\nбазовий рівень\n(факт)",
                 disabled=True,
-                width="medium"
+                width=145
+            ),
+            "2024\nзвіт": st.column_config.TextColumn(
+                "2024\nзвіт",
+                disabled=True,
+                width=125
+            ),
+            "2025\nфакт": st.column_config.TextColumn(
+                "2025\nфакт",
+                disabled=True,
+                width=125
+            ),
+            f"{selected_year}\nцільовий орієнтир\nдля заходів на рік": st.column_config.TextColumn(
+                f"{selected_year}\nцільовий орієнтир\nдля заходів на рік",
+                disabled=True,
+                width=155
             ),
             quarter_label: st.column_config.TextColumn(
                 quarter_label,
                 help="Фактичне значення за обраний квартал",
-                width="medium"
+                width=145
             ),
-            "Глобальний рівень": st.column_config.TextColumn("Глобальний рівень", disabled=True, width="large"),
-            "Національний рівень": st.column_config.TextColumn("Національний рівень", disabled=True, width="large"),
-            "Головний": st.column_config.TextColumn("Головний", disabled=True, width="medium"),
-            "Співвиконавець 1": st.column_config.TextColumn("Співвиконавець 1", disabled=True, width="medium"),
-            "Співвиконавець 2": st.column_config.TextColumn("Співвиконавець 2", disabled=True, width="medium"),
+
+            "Підстава для включення до стратегічного плану\nГлобальний рівень": st.column_config.TextColumn(
+                "Підстава для включення до стратегічного плану\nГлобальний рівень",
+                disabled=True,
+                width=270
+            ),
+            "Підстава для включення до стратегічного плану\nНаціональний рівень": st.column_config.TextColumn(
+                "Підстава для включення до стратегічного плану\nНаціональний рівень",
+                disabled=True,
+                width=330
+            ),
+            "Відповідальні самостійні структурні підрозділи\nГоловний": st.column_config.TextColumn(
+                "Відповідальні самостійні структурні підрозділи\nГоловний",
+                disabled=True,
+                width=190
+            ),
+            "Відповідальні самостійні структурні підрозділи\nСпіввиконавець 1": st.column_config.TextColumn(
+                "Відповідальні самостійні структурні підрозділи\nСпіввиконавець 1",
+                disabled=True,
+                width=190
+            ),
+            "Відповідальні самостійні структурні підрозділи\nСпіввиконавець 2": st.column_config.TextColumn(
+                "Відповідальні самостійні структурні підрозділи\nСпіввиконавець 2",
+                disabled=True,
+                width=190
+            ),
+
             "Період дії заходу в межах планового періоду, років": st.column_config.TextColumn(
                 "Період дії заходу в межах планового періоду, років",
                 disabled=True,
-                width="medium"
+                width=180
             ),
-            "Початкова дата": st.column_config.TextColumn("Початкова дата", disabled=True, width="medium"),
-            "Кінцева дата": st.column_config.TextColumn("Кінцева дата", disabled=True, width="medium"),
+            "Початкова дата": st.column_config.TextColumn("Початкова дата", disabled=True, width=150),
+            "Кінцева дата": st.column_config.TextColumn("Кінцева дата", disabled=True, width=150),
+
             "Статус виконання": st.column_config.SelectboxColumn(
                 "Статус виконання",
                 options=execution_status_options,
                 required=False,
-                width="medium"
+                width=190
             ),
             "Опис прогресу": st.column_config.TextColumn(
                 "Опис прогресу",
                 help="Коротко опишіть фактичний прогрес за звітний квартал",
-                width="large"
+                width=330
             ),
             "Ризики / проблеми / відхилення": st.column_config.TextColumn(
                 "Ризики / проблеми / відхилення",
                 help="Якщо ризиків немає, зазначте: відсутні",
-                width="large"
+                width=330
             )
         },
         disabled=[
@@ -1022,20 +1099,22 @@ else:
             "Тип продукту",
             "Індикатор",
             "Одиниці виміру",
-            "2021\nбазовий рівень (факт)",
+            "2021\nбазовий рівень\n(факт)",
             "2024\nзвіт",
             "2025\nфакт",
-            f"{selected_year}\nцільовий орієнтир для заходів на рік",
-            "Глобальний рівень",
-            "Національний рівень",
-            "Головний",
-            "Співвиконавець 1",
-            "Співвиконавець 2",
+            f"{selected_year}\nцільовий орієнтир\nдля заходів на рік",
+            "Підстава для включення до стратегічного плану\nГлобальний рівень",
+            "Підстава для включення до стратегічного плану\nНаціональний рівень",
+            "Відповідальні самостійні структурні підрозділи\nГоловний",
+            "Відповідальні самостійні структурні підрозділи\nСпіввиконавець 1",
+            "Відповідальні самостійні структурні підрозділи\nСпіввиконавець 2",
             "Період дії заходу в межах планового періоду, років",
             "Початкова дата",
             "Кінцева дата"
         ]
     )
+
+    st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ------------------------------------------------------------
@@ -1136,9 +1215,13 @@ if submit_clicked:
 
 st.markdown(
     """
-    <div class="footer">
-        <strong>Система моніторингу стратегічного плану</strong><br>
-        Кабінет внесення відомостей
+    <div class="final-footer">
+        <div class="final-footer-main">
+            Розроблено департаментом стратегічного планування та макроекономічного прогнозування
+        </div>
+        <div class="final-footer-sub">
+            Версія DEMO 1.4 | 2026 | Внутрішня система моніторингу стратегічного плану
+        </div>
     </div>
     """,
     unsafe_allow_html=True

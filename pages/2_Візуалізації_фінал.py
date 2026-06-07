@@ -1884,6 +1884,113 @@ block_css = {"risk-high": "conclusion-risk-high", "risk-medium": "conclusion-ris
 
 
 # ============================================================
+# АВТОМАТИЧНІ ІНСАЙТИ
+# ============================================================
+
+if not presentation_mode:
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Автоматичні інсайти</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-subtitle">Система автоматично виявляє відхилення та концентрації ризиків</div>', unsafe_allow_html=True)
+
+    goal_failure = weighted_failure_group(active, ["goal_code", "strategic_goal"])
+    dep_exploded_for_insights = explode_departments(active)
+    dep_failure = weighted_failure_group(dep_exploded_for_insights, ["ssp_department"])
+
+    if without_data > 0:
+        render_insight(f"⚠️ {without_data} активних заходів не мають поданого погодженого моніторингу.", "warn")
+    if critical_count > 0:
+        render_insight(f"🔴 {critical_count} заходів мають критичний ризик недосягнення.", "danger")
+    if not goal_failure.empty:
+        row = goal_failure.iloc[0]
+        render_insight(
+            f"📉 Найбільша концентрація невиконаних заходів у СЦ {row['goal_code']} — "
+            f"{int(row['Невиконаних'])} із {int(row['Активних_заходів'])}; "
+            f"вага в обраному портфелі — {row['Вага_невиконання']}%.",
+            "warn"
+        )
+    if not dep_failure.empty:
+        row = dep_failure.iloc[0]
+        render_insight(
+            f"🏢 Самостійний структурний підрозділ із найвищою концентрацією невиконання: "
+            f"{row['ssp_department']} — {int(row['Невиконаних'])} із {int(row['Активних_заходів'])}; "
+            f"вага в обраному портфелі — {row['Вага_невиконання']}%.",
+            "info"
+        )
+    render_insight(f"📌 Відхилення за звітний період: {deviation_current} в.п. від планового рівня.")
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ============================================================
+# ПОКАЗНИКИ ВИКОНАННЯ СТРАТЕГІЧНОГО ПЛАНУ
+# ============================================================
+
+st.markdown('<div class="section-card">', unsafe_allow_html=True)
+st.markdown('<div class="section-title">Показники виконання стратегічного плану</div>', unsafe_allow_html=True)
+
+ind_col1, ind_col2 = st.columns([1, 1.3])
+
+with ind_col1:
+    st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
+    fig_gauge = gauge_chart(completion, "Виконання СП")
+    st.plotly_chart(fig_gauge, use_container_width=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+with ind_col2:
+    st.markdown('<div class="chart-wrap" style="height:100%;padding-top:20px;">', unsafe_allow_html=True)
+    render_indicator_bar("Виконання СП", completion, 100, "#005BBB")
+    render_indicator_bar("Покриття моніторингом", coverage, 100, "#0891b2")
+    dev_display = round(100 + deviation_current, 1)
+    render_indicator_bar("Відхилення за звітний період", round(100 + deviation_current, 1), 100, "#d97706")
+    render_indicator_bar("Частка заходів без ризику", round(100 - risk_share, 1), 100, "#16a34a")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ============================================================
+# AGGREGATIONS
+# ============================================================
+
+status_counts = active.groupby("status_display").size().reset_index(name="Кількість")
+risk_counts = active.groupby("auto_risk").size().reset_index(name="Кількість")
+traffic_counts = active.groupby("traffic_light").size().reset_index(name="Кількість")
+
+goal_progress = (
+    active
+    .groupby(["goal_code", "strategic_goal"])
+    .agg(
+        Активних_заходів=("code", "count"),
+        Виконання=("performance_score", "mean"),
+        Покриття=("status", lambda x: (x != "Не подано").sum()),
+        Ризикових=("auto_risk", lambda x: x.isin(["Критичний ризик", "Середній ризик"]).sum()),
+        Середній_ризик=("risk_score", "mean")
+    )
+    .reset_index()
+)
+goal_progress["Виконання"] = goal_progress["Виконання"].fillna(0).round(1)
+goal_progress["Покриття_%"] = (goal_progress["Покриття"] / goal_progress["Активних_заходів"] * 100).round(1)
+goal_progress["Середній_ризик"] = goal_progress["Середній_ризик"].fillna(0).round(1)
+
+dep_active = explode_departments(active)
+dep_progress = (
+    dep_active
+    .groupby("ssp_department")
+    .agg(
+        Активних_заходів=("code", "count"),
+        Виконання=("performance_score", "mean"),
+        Подано=("status", lambda x: (x != "Не подано").sum()),
+        Ризикових=("auto_risk", lambda x: x.isin(["Критичний ризик", "Середній ризик"]).sum()),
+        Критичних=("auto_risk", lambda x: (x == "Критичний ризик").sum()),
+        Середній_ризик=("risk_score", "mean")
+    )
+    .reset_index()
+)
+dep_progress["Виконання"] = dep_progress["Виконання"].fillna(0).round(1)
+dep_progress["Покриття_%"] = (dep_progress["Подано"] / dep_progress["Активних_заходів"] * 100).round(1)
+dep_progress["Середній_ризик"] = dep_progress["Середній_ризик"].fillna(0).round(1)
+
+# ============================================================
 # PRESENTATION MODE — PowerPoint-style slides
 # ============================================================
 
@@ -2156,115 +2263,6 @@ render_kpi_grid([
 ])
 
 st.markdown("</div>", unsafe_allow_html=True)
-
-
-# ============================================================
-# АВТОМАТИЧНІ ІНСАЙТИ
-# ============================================================
-
-if not presentation_mode:
-    st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">Автоматичні інсайти</div>', unsafe_allow_html=True)
-    st.markdown('<div class="section-subtitle">Система автоматично виявляє відхилення та концентрації ризиків</div>', unsafe_allow_html=True)
-
-    goal_failure = weighted_failure_group(active, ["goal_code", "strategic_goal"])
-    dep_exploded_for_insights = explode_departments(active)
-    dep_failure = weighted_failure_group(dep_exploded_for_insights, ["ssp_department"])
-
-    if without_data > 0:
-        render_insight(f"⚠️ {without_data} активних заходів не мають поданого погодженого моніторингу.", "warn")
-    if critical_count > 0:
-        render_insight(f"🔴 {critical_count} заходів мають критичний ризик недосягнення.", "danger")
-    if not goal_failure.empty:
-        row = goal_failure.iloc[0]
-        render_insight(
-            f"📉 Найбільша концентрація невиконаних заходів у СЦ {row['goal_code']} — "
-            f"{int(row['Невиконаних'])} із {int(row['Активних_заходів'])}; "
-            f"вага в обраному портфелі — {row['Вага_невиконання']}%.",
-            "warn"
-        )
-    if not dep_failure.empty:
-        row = dep_failure.iloc[0]
-        render_insight(
-            f"🏢 Самостійний структурний підрозділ із найвищою концентрацією невиконання: "
-            f"{row['ssp_department']} — {int(row['Невиконаних'])} із {int(row['Активних_заходів'])}; "
-            f"вага в обраному портфелі — {row['Вага_невиконання']}%.",
-            "info"
-        )
-    render_insight(f"📌 Відхилення за звітний період: {deviation_current} в.п. від планового рівня.")
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
-
-# ============================================================
-# ПОКАЗНИКИ ВИКОНАННЯ СТРАТЕГІЧНОГО ПЛАНУ
-# ============================================================
-
-st.markdown('<div class="section-card">', unsafe_allow_html=True)
-st.markdown('<div class="section-title">Показники виконання стратегічного плану</div>', unsafe_allow_html=True)
-
-ind_col1, ind_col2 = st.columns([1, 1.3])
-
-with ind_col1:
-    st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
-    fig_gauge = gauge_chart(completion, "Виконання СП")
-    st.plotly_chart(fig_gauge, use_container_width=True)
-    st.markdown("</div>", unsafe_allow_html=True)
-
-with ind_col2:
-    st.markdown('<div class="chart-wrap" style="height:100%;padding-top:20px;">', unsafe_allow_html=True)
-    render_indicator_bar("Виконання СП", completion, 100, "#005BBB")
-    render_indicator_bar("Покриття моніторингом", coverage, 100, "#0891b2")
-    dev_display = round(100 + deviation_current, 1)
-    render_indicator_bar("Відхилення за звітний період", round(100 + deviation_current, 1), 100, "#d97706")
-    render_indicator_bar("Частка заходів без ризику", round(100 - risk_share, 1), 100, "#16a34a")
-    st.markdown("</div>", unsafe_allow_html=True)
-
-st.markdown("</div>", unsafe_allow_html=True)
-
-
-# ============================================================
-# AGGREGATIONS
-# ============================================================
-
-status_counts = active.groupby("status_display").size().reset_index(name="Кількість")
-risk_counts = active.groupby("auto_risk").size().reset_index(name="Кількість")
-traffic_counts = active.groupby("traffic_light").size().reset_index(name="Кількість")
-
-goal_progress = (
-    active
-    .groupby(["goal_code", "strategic_goal"])
-    .agg(
-        Активних_заходів=("code", "count"),
-        Виконання=("performance_score", "mean"),
-        Покриття=("status", lambda x: (x != "Не подано").sum()),
-        Ризикових=("auto_risk", lambda x: x.isin(["Критичний ризик", "Середній ризик"]).sum()),
-        Середній_ризик=("risk_score", "mean")
-    )
-    .reset_index()
-)
-goal_progress["Виконання"] = goal_progress["Виконання"].fillna(0).round(1)
-goal_progress["Покриття_%"] = (goal_progress["Покриття"] / goal_progress["Активних_заходів"] * 100).round(1)
-goal_progress["Середній_ризик"] = goal_progress["Середній_ризик"].fillna(0).round(1)
-
-dep_active = explode_departments(active)
-dep_progress = (
-    dep_active
-    .groupby("ssp_department")
-    .agg(
-        Активних_заходів=("code", "count"),
-        Виконання=("performance_score", "mean"),
-        Подано=("status", lambda x: (x != "Не подано").sum()),
-        Ризикових=("auto_risk", lambda x: x.isin(["Критичний ризик", "Середній ризик"]).sum()),
-        Критичних=("auto_risk", lambda x: (x == "Критичний ризик").sum()),
-        Середній_ризик=("risk_score", "mean")
-    )
-    .reset_index()
-)
-dep_progress["Виконання"] = dep_progress["Виконання"].fillna(0).round(1)
-dep_progress["Покриття_%"] = (dep_progress["Подано"] / dep_progress["Активних_заходів"] * 100).round(1)
-dep_progress["Середній_ризик"] = dep_progress["Середній_ризик"].fillna(0).round(1)
-
 
 # ============================================================
 # VISUALIZATIONS: СТРАТЕГІЧНІ ЦІЛІ (Статуси + Цілі)

@@ -296,7 +296,7 @@ div[data-testid="stButton"] button {
 /* ── KPI status grid ── */
 .kpi-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
+    grid-template-columns: repeat(5, 1fr);
     gap: clamp(8px, 1.2vw, 14px);
     margin: 6px 0 4px 0;
 }
@@ -433,11 +433,425 @@ div[data-testid="stDataFrame"] {
     margin: 22px 0;
 }
 
+/* ══════════════════════════════════════════════
+   PRESENTATION MODE — PowerPoint-like design
+   ══════════════════════════════════════════════ */
+
+.pres-overlay {
+    position: fixed;
+    inset: 0;
+    background: #0a0f1e;
+    z-index: 9999;
+    overflow-y: auto;
+    font-family: 'Helvetica Neue', 'Arial', sans-serif;
+    padding: 0;
+}
+
+/* Navigation bar */
+.pres-nav {
+    position: sticky;
+    top: 0;
+    z-index: 10001;
+    background: rgba(10,15,30,0.95);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 32px;
+}
+
+.pres-nav-title {
+    color: rgba(255,255,255,0.5);
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    font-weight: 600;
+}
+
+.pres-nav-dots {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.pres-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.2);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.pres-dot.active {
+    background: #FFD700;
+    width: 24px;
+    border-radius: 4px;
+}
+
+.pres-ua-bar {
+    height: 3px;
+    background: linear-gradient(90deg, #005BBB 50%, #FFD700 50%);
+    width: 100%;
+}
+
+/* Individual slide */
+.pres-slide {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 48px 64px;
+    position: relative;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+
+.pres-slide:last-child { border-bottom: none; }
+
+/* Slide number */
+.pres-slide-num {
+    position: absolute;
+    top: 24px; right: 40px;
+    font-size: 11px;
+    color: rgba(255,255,255,0.2);
+    letter-spacing: 0.1em;
+    font-weight: 600;
+}
+
+/* Slide 1 — Title slide */
+.pres-slide-title {
+    background: radial-gradient(ellipse at 20% 50%, rgba(0,91,187,0.25) 0%, transparent 60%),
+                radial-gradient(ellipse at 80% 30%, rgba(255,215,0,0.1) 0%, transparent 50%),
+                #0a0f1e;
+}
+
+.pres-title-eyebrow {
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: #FFD700;
+    font-weight: 700;
+    margin-bottom: 20px;
+}
+
+.pres-title-h1 {
+    font-size: clamp(32px, 4vw, 56px);
+    font-weight: 900;
+    color: #ffffff;
+    line-height: 1.1;
+    margin-bottom: 16px;
+    max-width: 800px;
+}
+
+.pres-title-sub {
+    font-size: clamp(14px, 1.4vw, 18px);
+    color: rgba(255,255,255,0.5);
+    max-width: 600px;
+    line-height: 1.6;
+    margin-bottom: 40px;
+}
+
+.pres-filter-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 8px;
+}
+
+.pres-filter-pill {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 20px;
+    padding: 6px 16px;
+    font-size: 12px;
+    color: rgba(255,255,255,0.7);
+    font-weight: 600;
+}
+
+/* Slide 2 — Conclusion / Status */
+.pres-slide-conclusion {
+    background: radial-gradient(ellipse at 80% 20%, rgba(220,38,38,0.15) 0%, transparent 50%),
+                #0d1117;
+}
+
+.pres-slide-conclusion.ok {
+    background: radial-gradient(ellipse at 80% 20%, rgba(22,163,74,0.12) 0%, transparent 50%),
+                #0d1117;
+}
+
+.pres-slide-conclusion.medium {
+    background: radial-gradient(ellipse at 80% 20%, rgba(217,119,6,0.12) 0%, transparent 50%),
+                #0d1117;
+}
+
+.pres-section-label {
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.35);
+    font-weight: 700;
+    margin-bottom: 24px;
+}
+
+.pres-verdict-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 24px;
+    border-radius: 10px;
+    font-size: clamp(18px, 2vw, 26px);
+    font-weight: 900;
+    margin-bottom: 20px;
+}
+
+.pres-verdict-badge.high { background: rgba(220,38,38,0.2); border: 1.5px solid #dc2626; color: #fca5a5; }
+.pres-verdict-badge.medium { background: rgba(217,119,6,0.2); border: 1.5px solid #d97706; color: #fde68a; }
+.pres-verdict-badge.low { background: rgba(22,163,74,0.2); border: 1.5px solid #16a34a; color: #86efac; }
+
+.pres-verdict-text {
+    font-size: clamp(13px, 1.2vw, 16px);
+    color: rgba(255,255,255,0.55);
+    max-width: 680px;
+    line-height: 1.7;
+    margin-bottom: 40px;
+}
+
+/* Slide 3 — KPI Metrics */
+.pres-slide-kpis {
+    background: #0d1117;
+}
+
+.pres-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 20px;
+    margin-top: 32px;
+}
+
+.pres-kpi-card {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px;
+    padding: 28px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    position: relative;
+    overflow: hidden;
+}
+
+.pres-kpi-card::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    border-radius: 14px 14px 0 0;
+}
+
+.pres-kpi-card.blue::before { background: #005BBB; }
+.pres-kpi-card.green::before { background: #16a34a; }
+.pres-kpi-card.red::before { background: #dc2626; }
+.pres-kpi-card.yellow::before { background: #d97706; }
+.pres-kpi-card.gray::before { background: #475569; }
+
+.pres-kpi-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.4);
+}
+
+.pres-kpi-value {
+    font-size: clamp(36px, 4vw, 56px);
+    font-weight: 900;
+    color: #ffffff;
+    line-height: 1;
+}
+
+.pres-kpi-sub {
+    font-size: 13px;
+    color: rgba(255,255,255,0.35);
+    font-weight: 600;
+}
+
+/* Slide 4 — Goals */
+.pres-slide-goals {
+    background: linear-gradient(160deg, #0d1117 60%, rgba(0,91,187,0.06) 100%);
+}
+
+.pres-goal-bar-wrap {
+    margin-top: 28px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.pres-goal-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.pres-goal-code {
+    font-size: 11px;
+    font-weight: 800;
+    color: rgba(255,255,255,0.4);
+    min-width: 36px;
+    text-align: right;
+}
+
+.pres-goal-name {
+    font-size: 13px;
+    color: rgba(255,255,255,0.7);
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 320px;
+}
+
+.pres-goal-bar-bg {
+    flex: 2;
+    background: rgba(255,255,255,0.06);
+    border-radius: 99px;
+    height: 10px;
+    overflow: hidden;
+}
+
+.pres-goal-bar-fill {
+    height: 100%;
+    border-radius: 99px;
+}
+
+.pres-goal-pct {
+    font-size: 13px;
+    font-weight: 800;
+    color: #ffffff;
+    min-width: 44px;
+    text-align: right;
+}
+
+/* Slide 5 — Risk */
+.pres-slide-risks {
+    background: #0d1117;
+}
+
+.pres-risk-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+    margin-top: 32px;
+}
+
+.pres-risk-card {
+    border-radius: 14px;
+    padding: 28px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.pres-risk-card.high { background: rgba(220,38,38,0.12); border: 1.5px solid rgba(220,38,38,0.3); }
+.pres-risk-card.medium { background: rgba(217,119,6,0.1); border: 1.5px solid rgba(217,119,6,0.25); }
+.pres-risk-card.low { background: rgba(22,163,74,0.1); border: 1.5px solid rgba(22,163,74,0.25); }
+
+.pres-risk-label { font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
+.pres-risk-card.high .pres-risk-label { color: #fca5a5; }
+.pres-risk-card.medium .pres-risk-label { color: #fde68a; }
+.pres-risk-card.low .pres-risk-label { color: #86efac; }
+
+.pres-risk-val {
+    font-size: clamp(40px, 5vw, 64px);
+    font-weight: 900;
+    line-height: 1;
+}
+.pres-risk-card.high .pres-risk-val { color: #f87171; }
+.pres-risk-card.medium .pres-risk-val { color: #fbbf24; }
+.pres-risk-card.low .pres-risk-val { color: #4ade80; }
+
+.pres-risk-sub { font-size: 13px; color: rgba(255,255,255,0.4); font-weight: 600; }
+
+/* Slide heading */
+.pres-slide-h2 {
+    font-size: clamp(24px, 2.8vw, 38px);
+    font-weight: 900;
+    color: #ffffff;
+    margin-bottom: 4px;
+    line-height: 1.15;
+}
+
+.pres-slide-hsub {
+    font-size: clamp(12px, 1.1vw, 15px);
+    color: rgba(255,255,255,0.4);
+    margin-bottom: 0;
+}
+
+/* Progress bar for metrics slide */
+.pres-metric-rows {
+    margin-top: 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.pres-metric-row {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+}
+
+.pres-metric-label {
+    font-size: 13px;
+    font-weight: 700;
+    color: rgba(255,255,255,0.55);
+    min-width: 220px;
+}
+
+.pres-metric-bar-bg {
+    flex: 1;
+    background: rgba(255,255,255,0.06);
+    border-radius: 99px;
+    height: 12px;
+    overflow: hidden;
+}
+
+.pres-metric-bar-fill {
+    height: 100%;
+    border-radius: 99px;
+}
+
+.pres-metric-val {
+    font-size: 16px;
+    font-weight: 900;
+    color: #ffffff;
+    min-width: 56px;
+    text-align: right;
+}
+
+/* Exit button (handled by Streamlit toggle) */
+.pres-exit-hint {
+    position: fixed;
+    bottom: 24px;
+    right: 32px;
+    z-index: 10002;
+    background: rgba(255,255,255,0.07);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-size: 11px;
+    color: rgba(255,255,255,0.35);
+    letter-spacing: 0.08em;
+    pointer-events: none;
+}
+
+
+
 /* ── Responsive: narrow screens ── */
 @media (max-width: 900px) {
     .header-card { flex-direction: column; }
     .header-pills { flex-direction: row; }
-    .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+    .kpi-grid { grid-template-columns: repeat(3, 1fr); }
 }
 
 @media (max-width: 600px) {
@@ -1470,8 +1884,246 @@ block_css = {"risk-high": "conclusion-risk-high", "risk-medium": "conclusion-ris
 
 
 # ============================================================
-# ПРОГРЕС ВИКОНАННЯ: ВИСНОВОК СИСТЕМИ
+# PRESENTATION MODE — PowerPoint-style slides
 # ============================================================
+
+if presentation_mode:
+    # ── helpers ──────────────────────────────────────────────
+    verdict_class = {"risk-high": "high", "risk-medium": "medium", "risk-low": "low"}[conclusion_badge]
+    verdict_emoji = {"risk-high": "🔴", "risk-medium": "🟡", "risk-low": "🟢"}[conclusion_badge]
+
+    # goal progress data for slide
+    goal_rows_html = ""
+    if not goal_progress.empty:
+        gp_sorted = goal_progress.sort_values("Виконання", ascending=False)
+        for _, gr in gp_sorted.iterrows():
+            pct = min(max(float(gr["Виконання"]), 0), 100)
+            if pct >= 70:
+                bar_color = "#16a34a"
+            elif pct >= 35:
+                bar_color = "#d97706"
+            else:
+                bar_color = "#dc2626"
+            short_name = str(gr["strategic_goal"])[:45] + ("…" if len(str(gr["strategic_goal"])) > 45 else "")
+            goal_rows_html += f"""
+            <div class="pres-goal-row">
+                <div class="pres-goal-code">{gr['goal_code']}</div>
+                <div class="pres-goal-name" title="{gr['strategic_goal']}">{short_name}</div>
+                <div class="pres-goal-bar-bg">
+                    <div class="pres-goal-bar-fill" style="width:{pct}%;background:{bar_color};"></div>
+                </div>
+                <div class="pres-goal-pct">{pct:.0f}%</div>
+            </div>"""
+
+    # risk counts for slide
+    risk_map = active.groupby("auto_risk").size().to_dict()
+    count_high = risk_map.get("Критичний ризик", 0)
+    count_medium = risk_map.get("Середній ризик", 0)
+    count_low = risk_map.get("Низький ризик", 0)
+
+    # filter context label
+    filter_parts = []
+    if selected_years:
+        filter_parts.append(f"📅 {', '.join(str(y) for y in selected_years)}")
+    else:
+        filter_parts.append("📅 Усі роки")
+    if selected_quarters:
+        filter_parts.append(f"🗓 {', '.join(selected_quarters)} кв.")
+    else:
+        filter_parts.append("🗓 Усі квартали")
+    if selected_department_indices:
+        filter_parts.append(f"🏢 ССП: {', '.join(selected_department_indices)}")
+    else:
+        filter_parts.append("🏢 Усі підрозділи")
+
+    filter_pills_html = "".join(
+        f'<span class="pres-filter-pill">{p}</span>' for p in filter_parts
+    )
+
+    # metric bar helper
+    def pres_bar(label, value, color):
+        pct = min(max(float(value), 0), 100)
+        return f"""
+        <div class="pres-metric-row">
+            <div class="pres-metric-label">{label}</div>
+            <div class="pres-metric-bar-bg">
+                <div class="pres-metric-bar-fill" style="width:{pct}%;background:{color};"></div>
+            </div>
+            <div class="pres-metric-val">{value}%</div>
+        </div>"""
+
+    # ── render slides ─────────────────────────────────────────
+    st.markdown(f"""
+    <div class="pres-overlay">
+        <div class="pres-ua-bar"></div>
+
+        <!-- NAV BAR -->
+        <div class="pres-nav">
+            <div class="pres-nav-title">Стратегічний моніторинг · Презентаційний режим</div>
+            <div class="pres-nav-dots">
+                <div class="pres-dot active"></div>
+                <div class="pres-dot"></div>
+                <div class="pres-dot"></div>
+                <div class="pres-dot"></div>
+                <div class="pres-dot"></div>
+            </div>
+            <div style="font-size:11px;color:rgba(255,255,255,0.3);letter-spacing:.08em;">
+                ⬆ прокрутіть для перегляду слайдів
+            </div>
+        </div>
+
+        <!-- ══ SLIDE 1 — TITLE ══ -->
+        <div class="pres-slide pres-slide-title">
+            <div class="pres-slide-num">01 / 05</div>
+            <div class="pres-title-eyebrow">🇺🇦 Міністерство економіки, довкілля та сільського господарства України</div>
+            <div class="pres-title-h1">Аналітичний дашборд результативності стратегічного плану</div>
+            <div class="pres-title-sub">
+                Комплексна панель моніторингу та оцінювання стратегічних результатів —
+                в розрізі стратегічних цілей, завдань та самостійних структурних підрозділів.
+            </div>
+            <div class="pres-filter-pills">
+                {filter_pills_html}
+                <span class="pres-filter-pill">📌 {total_active} активних заходів</span>
+                <span class="pres-filter-pill">🕐 {datetime.now().strftime('%d.%m.%Y %H:%M')}</span>
+            </div>
+        </div>
+
+        <!-- ══ SLIDE 2 — VERDICT ══ -->
+        <div class="pres-slide pres-slide-conclusion {verdict_class}">
+            <div class="pres-slide-num">02 / 05</div>
+            <div class="pres-section-label">Висновок системи</div>
+            <div class="pres-verdict-badge {verdict_class}">{verdict_emoji} {conclusion_title}</div>
+            <div class="pres-verdict-text">{conclusion_text}</div>
+
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:20px;max-width:680px;">
+                <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:20px 18px;">
+                    <div style="font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.35);margin-bottom:8px;">Виконання СП</div>
+                    <div style="font-size:44px;font-weight:900;color:#fff;line-height:1;">{completion}%</div>
+                    <div style="font-size:12px;color:rgba(255,255,255,.35);margin-top:4px;">Середнє по активних заходах</div>
+                </div>
+                <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:20px 18px;">
+                    <div style="font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.35);margin-bottom:8px;">Покриття</div>
+                    <div style="font-size:44px;font-weight:900;color:#fff;line-height:1;">{coverage}%</div>
+                    <div style="font-size:12px;color:rgba(255,255,255,.35);margin-top:4px;">Заходів з поданими даними</div>
+                </div>
+                <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:20px 18px;">
+                    <div style="font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.35);margin-bottom:8px;">Відхилення</div>
+                    <div style="font-size:44px;font-weight:900;color:{'#f87171' if deviation_current < 0 else '#4ade80'};line-height:1;">{deviation_current:+.1f}</div>
+                    <div style="font-size:12px;color:rgba(255,255,255,.35);margin-top:4px;">В.п. від планового рівня</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ══ SLIDE 3 — KEY METRICS ══ -->
+        <div class="pres-slide pres-slide-kpis">
+            <div class="pres-slide-num">03 / 05</div>
+            <div class="pres-section-label">Ключові показники</div>
+            <div class="pres-slide-h2">Статистика виконання заходів</div>
+            <div class="pres-slide-hsub">{period_label} · {total_active} активних заходів</div>
+
+            <div class="pres-kpi-grid">
+                <div class="pres-kpi-card blue">
+                    <div class="pres-kpi-label">Всього заходів</div>
+                    <div class="pres-kpi-value">{total_active}</div>
+                    <div class="pres-kpi-sub">100%</div>
+                </div>
+                <div class="pres-kpi-card green">
+                    <div class="pres-kpi-label">Виконано</div>
+                    <div class="pres-kpi-value">{completed_count}</div>
+                    <div class="pres-kpi-sub">{pct_value(completed_count, total_active)}</div>
+                </div>
+                <div class="pres-kpi-card green">
+                    <div class="pres-kpi-label">Погоджено</div>
+                    <div class="pres-kpi-value">{approved_requests_count}</div>
+                    <div class="pres-kpi-sub">{pct_value(approved_requests_count, total_active)}</div>
+                </div>
+                <div class="pres-kpi-card yellow">
+                    <div class="pres-kpi-label">Частково виконано</div>
+                    <div class="pres-kpi-value">{partly_count}</div>
+                    <div class="pres-kpi-sub">{pct_value(partly_count, total_active)}</div>
+                </div>
+                <div class="pres-kpi-card red">
+                    <div class="pres-kpi-label">Не враховано</div>
+                    <div class="pres-kpi-value">{not_counted_count}</div>
+                    <div class="pres-kpi-sub">{pct_value(not_counted_count, total_active)}</div>
+                </div>
+                <div class="pres-kpi-card red">
+                    <div class="pres-kpi-label">Не виконано</div>
+                    <div class="pres-kpi-value">{not_done_count}</div>
+                    <div class="pres-kpi-sub">{pct_value(not_done_count, total_active)}</div>
+                </div>
+                <div class="pres-kpi-card blue">
+                    <div class="pres-kpi-label">Виконується</div>
+                    <div class="pres-kpi-value">{in_progress_count}</div>
+                    <div class="pres-kpi-sub">{pct_value(in_progress_count, total_active)}</div>
+                </div>
+                <div class="pres-kpi-card gray">
+                    <div class="pres-kpi-label">Термін не настав</div>
+                    <div class="pres-kpi-value">{not_time_count}</div>
+                    <div class="pres-kpi-sub">{pct_value(not_time_count, total_active)}</div>
+                </div>
+            </div>
+
+            <div class="pres-metric-rows" style="max-width:680px;margin-top:40px;">
+                {pres_bar('Виконання СП', completion, '#005BBB')}
+                {pres_bar('Покриття моніторингом', coverage, '#0891b2')}
+                {pres_bar('Частка без ризику', round(100 - risk_share, 1), '#16a34a')}
+            </div>
+        </div>
+
+        <!-- ══ SLIDE 4 — STRATEGIC GOALS ══ -->
+        <div class="pres-slide pres-slide-goals">
+            <div class="pres-slide-num">04 / 05</div>
+            <div class="pres-section-label">Стратегічні цілі</div>
+            <div class="pres-slide-h2">Виконання за стратегічними цілями</div>
+            <div class="pres-slide-hsub">Відсоток виконання по кожній стратегічній цілі · {period_label}</div>
+            <div class="pres-goal-bar-wrap">
+                {goal_rows_html if goal_rows_html else '<div style="color:rgba(255,255,255,0.3);margin-top:24px;">Дані відсутні за обраними фільтрами</div>'}
+            </div>
+        </div>
+
+        <!-- ══ SLIDE 5 — RISKS ══ -->
+        <div class="pres-slide pres-slide-risks">
+            <div class="pres-slide-num">05 / 05</div>
+            <div class="pres-section-label">Автоматична оцінка ризиків</div>
+            <div class="pres-slide-h2">Розподіл ризиків недосягнення</div>
+            <div class="pres-slide-hsub">{total_active} активних заходів · {period_label}</div>
+
+            <div class="pres-risk-grid">
+                <div class="pres-risk-card high">
+                    <div class="pres-risk-label">🔴 Критичний ризик</div>
+                    <div class="pres-risk-val">{count_high}</div>
+                    <div class="pres-risk-sub">{pct_value(count_high, total_active)} від усіх заходів</div>
+                </div>
+                <div class="pres-risk-card medium">
+                    <div class="pres-risk-label">🟡 Середній ризик</div>
+                    <div class="pres-risk-val">{count_medium}</div>
+                    <div class="pres-risk-sub">{pct_value(count_medium, total_active)} від усіх заходів</div>
+                </div>
+                <div class="pres-risk-card low">
+                    <div class="pres-risk-label">🟢 Низький ризик</div>
+                    <div class="pres-risk-val">{count_low}</div>
+                    <div class="pres-risk-sub">{pct_value(count_low, total_active)} від усіх заходів</div>
+                </div>
+            </div>
+
+            <div style="margin-top:48px;padding:24px 28px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:14px;max-width:640px;">
+                <div style="font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.3);margin-bottom:12px;">Загальний висновок системи</div>
+                <div style="font-size:15px;color:rgba(255,255,255,.7);line-height:1.7;">{conclusion_text}</div>
+                <div style="margin-top:16px;display:flex;gap:12px;flex-wrap:wrap;">
+                    <span style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:6px;padding:5px 12px;font-size:11px;color:rgba(255,255,255,.5);font-weight:600;">Частка з ризиком: {risk_share}%</span>
+                    <span style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:6px;padding:5px 12px;font-size:11px;color:rgba(255,255,255,.5);font-weight:600;">Без даних: {without_data} заходів</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="pres-exit-hint">↑ прокрутіть вверх · вимкніть тумблер щоб вийти</div>
+    </div>
+    """, unsafe_allow_html=True)
+    st.stop()
+
+
+
 
 st.markdown('<div class="section-card">', unsafe_allow_html=True)
 st.markdown('<div class="section-title">Прогрес виконання: висновок системи</div>', unsafe_allow_html=True)

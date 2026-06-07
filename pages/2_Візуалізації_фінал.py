@@ -817,17 +817,19 @@ def pct_value(count, total):
 
 
 def render_kpi_grid(items):
-    """Renders a responsive KPI grid using HTML — 5 items per visual row, wraps on small screens."""
-    cards_html = ""
-    for item in items:
-        cards_html += f"""
-        <div class="kpi-card {item['color']}">
-            <div class="kpi-title">{item['title']}</div>
-            <div class="kpi-value">{item['count']}</div>
-            <div class="kpi-pct">{item['percent']}</div>
-        </div>
-        """
-    st.markdown(f'<div class="kpi-grid">{cards_html}</div>', unsafe_allow_html=True)
+    cards_html = "".join([
+        f'<div class="kpi-card {item["color"]}">'
+        f'<div class="kpi-title">{item["title"]}</div>'
+        f'<div class="kpi-value">{item["count"]}</div>'
+        f'<div class="kpi-pct">{item["percent"]}</div>'
+        f'</div>'
+        for item in items
+    ])
+
+    st.markdown(
+        f'<div class="kpi-grid">{cards_html}</div>',
+        unsafe_allow_html=True
+    )
 
 
 def render_insight(text, kind="default"):
@@ -1151,13 +1153,7 @@ TRAFFIC_COLORS = {
 CHART_LAYOUT = dict(
     paper_bgcolor="rgba(0,0,0,0)",
     plot_bgcolor="rgba(0,0,0,0)",
-    font=dict(family="Helvetica Neue, Arial, sans-serif", size=12, color="#334155"),
-    legend=dict(
-        bgcolor="rgba(255,255,255,0.9)",
-        bordercolor="#e2e8f0",
-        borderwidth=1,
-        font=dict(size=11)
-    )
+    font=dict(family="Helvetica Neue, Arial, sans-serif", size=12, color="#334155")
 )
 
 

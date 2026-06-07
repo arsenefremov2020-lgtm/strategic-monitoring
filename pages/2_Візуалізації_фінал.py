@@ -1,16 +1,10 @@
-import re
-from datetime import datetime
-
+import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-import streamlit as st
 from supabase import create_client
-
-
-# ============================================================
-# CONFIG
-# ============================================================
+from datetime import datetime
+import re
 
 st.set_page_config(page_title="Dashboard", layout="wide")
 
@@ -22,306 +16,435 @@ supabase = create_client(
     st.secrets["SUPABASE_KEY"]
 )
 
-
 # ============================================================
 # STYLE
 # ============================================================
 
-st.markdown(
-    """
+st.markdown("""
 <style>
-:root {
-    --bg-1: #eef4ff;
-    --bg-2: #f7fafc;
-    --ink: #0f172a;
-    --muted: #64748b;
-    --line: rgba(148, 163, 184, 0.34);
-    --card: rgba(255,255,255,0.88);
-    --blue: #2563eb;
-    --blue-dark: #1e3a8a;
-    --green: #16a34a;
-    --yellow: #d97706;
-    --red: #dc2626;
+@import url('https://fonts.googleapis.com/css2?family=e-Ukraine:wght@300;400;500;700&display=swap');
+
+/* ── Base ── */
+html, body, [class*="css"] {
+    font-family: 'Helvetica Neue', 'Arial', sans-serif;
 }
 
 .stApp {
-    background:
-        radial-gradient(circle at 10% 10%, rgba(37,99,235,0.16), transparent 28%),
-        radial-gradient(circle at 92% 12%, rgba(14,165,233,0.15), transparent 24%),
-        radial-gradient(circle at 16% 88%, rgba(22,163,74,0.12), transparent 25%),
-        linear-gradient(180deg, #f8fbff 0%, #eef4ff 45%, #f8fafc 100%);
+    background: #f0f4f9;
+}
+
+/* Subtle geometric background pattern */
+.stApp::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background-image:
+        radial-gradient(circle at 15% 15%, rgba(0,91,187,0.06) 0%, transparent 40%),
+        radial-gradient(circle at 85% 80%, rgba(255,213,0,0.06) 0%, transparent 40%),
+        radial-gradient(circle at 50% 50%, rgba(0,91,187,0.02) 0%, transparent 60%);
+    pointer-events: none;
+    z-index: 0;
 }
 
 .main .block-container {
-    max-width: 1480px;
-    padding-top: 1.25rem;
-    padding-bottom: 2rem;
+    max-width: min(1500px, 98vw);
+    padding: clamp(0.5rem, 2vw, 1.5rem) clamp(0.5rem, 2vw, 2rem);
+    position: relative;
+    z-index: 1;
 }
 
-.ua-line {
-    height: 6px;
-    border-radius: 999px;
-    background: linear-gradient(90deg, #005BBB 0%, #005BBB 50%, #FFD500 50%, #FFD500 100%);
-    margin: 0 0 16px 0;
+/* ── UA accent stripe ── */
+.ua-stripe {
+    height: 5px;
+    border-radius: 0 0 6px 6px;
+    background: linear-gradient(90deg, #005BBB 50%, #FFD700 50%);
+    margin-bottom: 16px;
+    box-shadow: 0 2px 8px rgba(0,91,187,0.15);
 }
 
-.top-label {
+/* ── Ministry label ── */
+.ministry-label {
     text-align: right;
-    color: var(--muted);
-    font-size: 13px;
-    font-weight: 750;
-    margin-bottom: 8px;
-}
-
-.hero {
-    background:
-        linear-gradient(135deg, rgba(255,255,255,0.95), rgba(239,246,255,0.88)),
-        radial-gradient(circle at 85% 25%, rgba(37,99,235,0.12), transparent 28%);
-    border: 1px solid rgba(148, 163, 184, 0.32);
-    border-radius: 24px;
-    padding: 28px 30px;
-    margin-bottom: 18px;
-    box-shadow: 0 18px 48px rgba(15, 23, 42, 0.08);
-}
-
-.hero-title {
-    font-size: 34px;
-    line-height: 1.12;
-    font-weight: 950;
-    letter-spacing: -0.03em;
-    color: var(--ink);
+    color: #334155;
+    font-size: clamp(11px, 1.1vw, 14px);
+    font-weight: 700;
     margin-bottom: 10px;
+    letter-spacing: 0.01em;
 }
 
-.hero-subtitle {
-    max-width: 980px;
-    color: #475569;
-    font-size: 15px;
-    line-height: 1.62;
-}
-
-.pill-row {
+/* ── Header card ── */
+.header-card {
+    background: linear-gradient(135deg, #ffffff 0%, #f8faff 100%);
+    border: 1px solid #dde3ed;
+    border-left: 5px solid #005BBB;
+    border-radius: 12px;
+    padding: clamp(16px, 2.5vw, 28px) clamp(16px, 2.5vw, 32px);
+    margin-bottom: 20px;
+    box-shadow: 0 4px 20px rgba(0,91,187,0.08), 0 1px 4px rgba(0,0,0,0.04);
     display: flex;
     flex-wrap: wrap;
-    gap: 9px;
-    margin-top: 16px;
+    align-items: flex-start;
+    gap: 16px;
+}
+
+.header-main {
+    flex: 1 1 60%;
+    min-width: 200px;
+}
+
+.header-title {
+    font-size: clamp(20px, 2.5vw, 30px);
+    font-weight: 900;
+    color: #0c1a3a;
+    margin: 0 0 6px 0;
+    line-height: 1.2;
+}
+
+.header-subtitle {
+    font-size: clamp(12px, 1.1vw, 14px);
+    color: #475569;
+    line-height: 1.6;
+    max-width: 680px;
+}
+
+.header-pills {
+    flex: 0 1 auto;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: flex-start;
+    padding-top: 4px;
 }
 
 .pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    background: rgba(255,255,255,0.74);
-    color: #334155;
-    border: 1px solid rgba(148, 163, 184, 0.35);
-    border-radius: 999px;
-    padding: 8px 12px;
-    font-size: 12.5px;
-    font-weight: 720;
+    background: #eef3fb;
+    border: 1px solid #c2d4f0;
+    border-radius: 20px;
+    padding: 5px 12px;
+    font-size: clamp(10px, 0.9vw, 12px);
+    color: #1e3a6e;
+    font-weight: 600;
+    white-space: nowrap;
 }
 
-.panel {
-    background: var(--card);
-    border: 1px solid rgba(148, 163, 184, 0.32);
-    border-radius: 22px;
-    padding: 20px 22px;
-    margin: 16px 0;
-    box-shadow: 0 14px 36px rgba(15, 23, 42, 0.065);
-    backdrop-filter: blur(10px);
+/* ── Section card ── */
+.section-card {
+    background: #ffffff;
+    border: 1px solid #dde3ed;
+    border-radius: 12px;
+    padding: clamp(14px, 2vw, 22px) clamp(14px, 2vw, 24px);
+    margin-bottom: 18px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.04);
 }
 
-.panel-tight {
-    padding: 16px 18px;
+.section-title {
+    font-size: clamp(15px, 1.4vw, 19px);
+    font-weight: 800;
+    color: #0c1a3a;
+    margin: 0 0 4px 0;
 }
 
-.panel-title {
-    color: var(--ink);
-    font-size: 20px;
-    font-weight: 920;
-    letter-spacing: -0.02em;
-    margin-bottom: 5px;
-}
-
-.panel-subtitle {
-    color: var(--muted);
-    font-size: 13.5px;
-    line-height: 1.55;
-    margin-bottom: 10px;
-}
-
-.kpi-grid {
-    display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: 13px;
-    margin: 10px 0 4px 0;
-}
-
-.kpi {
-    background: rgba(255,255,255,0.72);
-    border: 1px solid rgba(148, 163, 184, 0.28);
-    border-radius: 18px;
-    padding: 15px 16px;
-    min-height: 116px;
-}
-
-.kpi-label {
+.section-subtitle {
+    font-size: clamp(11px, 0.95vw, 13px);
     color: #64748b;
-    font-size: 12.5px;
-    line-height: 1.3;
-    font-weight: 820;
-    min-height: 32px;
+    margin: 0 0 14px 0;
 }
 
-.kpi-value {
-    color: var(--ink);
-    font-size: 29px;
-    line-height: 1;
-    font-weight: 950;
-    margin-top: 8px;
-}
-
-.kpi-note {
-    color: #64748b;
-    font-size: 12px;
-    margin-top: 8px;
-}
-
-.kpi-blue { background: linear-gradient(180deg, #eff6ff, #ffffff); border-color: #bfdbfe; }
-.kpi-green { background: linear-gradient(180deg, #ecfdf5, #ffffff); border-color: #bbf7d0; }
-.kpi-yellow { background: linear-gradient(180deg, #fffbeb, #ffffff); border-color: #fde68a; }
-.kpi-red { background: linear-gradient(180deg, #fef2f2, #ffffff); border-color: #fecaca; }
-.kpi-gray { background: linear-gradient(180deg, #f8fafc, #ffffff); border-color: #e2e8f0; }
-
-.insight-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    gap: 12px;
-    margin-top: 10px;
-}
-
-.insight {
-    border-radius: 16px;
-    padding: 14px 15px;
-    border: 1px solid rgba(148,163,184,0.30);
-    background: rgba(255,255,255,0.68);
-    color: #334155;
-    font-size: 13.5px;
-    line-height: 1.45;
-}
-
-.insight strong {
-    display: block;
-    color: var(--ink);
-    font-size: 14px;
-    margin-bottom: 5px;
-}
-
-.badge-risk-high { border-color: #fecaca; background: #fef2f2; }
-.badge-risk-mid { border-color: #fed7aa; background: #fff7ed; }
-.badge-risk-low { border-color: #bbf7d0; background: #ecfdf5; }
-
-.filter-shell {
-    background: rgba(255,255,255,0.72);
-    border: 1px solid rgba(148, 163, 184, 0.30);
-    border-radius: 22px;
-    padding: 16px 18px 8px 18px;
-    margin: 16px 0;
-    box-shadow: 0 10px 28px rgba(15, 23, 42, 0.055);
+/* ── Filter panel ── */
+.filter-panel {
+    background: linear-gradient(135deg, #f8fbff 0%, #eef3fb 100%);
+    border: 1px solid #c2d4f0;
+    border-radius: 12px;
+    padding: clamp(14px, 2vw, 20px) clamp(14px, 2vw, 22px);
+    margin-bottom: 20px;
+    box-shadow: 0 2px 10px rgba(0,91,187,0.06);
 }
 
 .filter-header {
     display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 16px;
-    margin-bottom: 8px;
-}
-
-.filter-title {
-    color: var(--ink);
-    font-size: 19px;
-    font-weight: 920;
-    letter-spacing: -0.02em;
-}
-
-.filter-hint {
-    color: var(--muted);
-    font-size: 13px;
-    margin-top: 3px;
-}
-
-.filter-chip-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin: 8px 0 12px 0;
-}
-
-.filter-chip {
-    background: #eff6ff;
-    color: #1d4ed8;
-    border: 1px solid #bfdbfe;
-    border-radius: 999px;
-    padding: 6px 10px;
-    font-size: 12px;
-    font-weight: 760;
-}
-
-div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div,
-div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
-div[data-testid="stTextInput"] input {
-    background-color: rgba(255,255,255,0.86) !important;
-    border: 1px solid rgba(148, 163, 184, 0.55) !important;
-    border-radius: 13px !important;
-    min-height: 43px !important;
-    box-shadow: none !important;
-}
-
-div[data-testid="stMultiSelect"] label,
-div[data-testid="stSelectbox"] label,
-div[data-testid="stTextInput"] label {
-    font-weight: 800 !important;
-    color: #1e293b !important;
-    font-size: 13px !important;
-}
-
-div[data-testid="stTabs"] button p {
-    font-weight: 850 !important;
-}
-
-.plot-card {
-    background: rgba(255,255,255,0.72);
-    border: 1px solid rgba(148,163,184,0.30);
-    border-radius: 20px;
-    padding: 16px 16px 8px 16px;
+    align-items: center;
+    gap: 10px;
     margin-bottom: 14px;
 }
 
-.table-note {
-    color: #64748b;
-    font-size: 13px;
-    line-height: 1.5;
-    margin: 5px 0 12px 0;
+.filter-title {
+    font-size: clamp(14px, 1.3vw, 17px);
+    font-weight: 800;
+    color: #0c1a3a;
 }
 
+.filter-hint {
+    font-size: clamp(10px, 0.9vw, 12px);
+    color: #64748b;
+    background: #e9f0fb;
+    border-radius: 6px;
+    padding: 3px 8px;
+}
+
+.filter-group-label {
+    font-size: clamp(10px, 0.85vw, 11.5px);
+    font-weight: 700;
+    color: #475569;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin: 10px 0 6px 2px;
+}
+
+/* ── Streamlit widget overrides ── */
+div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div,
+div[data-testid="stSelectbox"] div[data-baseweb="select"] > div {
+    background-color: #ffffff !important;
+    border: 1.5px solid #c2d4f0 !important;
+    border-radius: 8px !important;
+    min-height: 38px !important;
+    font-size: clamp(11px, 1vw, 13px) !important;
+}
+
+div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div:focus-within,
+div[data-testid="stSelectbox"] div[data-baseweb="select"] > div:focus-within {
+    border-color: #005BBB !important;
+    box-shadow: 0 0 0 3px rgba(0,91,187,0.12) !important;
+}
+
+div[data-testid="stMultiSelect"] label,
+div[data-testid="stSelectbox"] label {
+    font-weight: 700 !important;
+    color: #1e3a6e !important;
+    font-size: clamp(11px, 0.95vw, 13px) !important;
+}
+
+/* toggle */
+div[data-testid="stToggle"] label {
+    font-weight: 700 !important;
+    color: #1e3a6e !important;
+    font-size: clamp(11px, 0.95vw, 13px) !important;
+}
+
+/* Reset button */
+div[data-testid="stButton"] button {
+    border-radius: 8px !important;
+    font-weight: 700 !important;
+    font-size: clamp(11px, 0.95vw, 13px) !important;
+    padding: 6px 14px !important;
+}
+
+/* ── Conclusion block ── */
+.conclusion-block {
+    border-radius: 10px;
+    padding: clamp(12px, 1.5vw, 18px) clamp(14px, 2vw, 22px);
+    margin: 8px 0 14px 0;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+}
+
+.conclusion-risk-high {
+    background: linear-gradient(135deg, #fff1f1 0%, #fee2e2 100%);
+    border-left: 5px solid #dc2626;
+    border: 1px solid #fecaca;
+    border-left: 5px solid #dc2626;
+}
+
+.conclusion-risk-medium {
+    background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+    border: 1px solid #fde68a;
+    border-left: 5px solid #d97706;
+}
+
+.conclusion-risk-low {
+    background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+    border: 1px solid #bbf7d0;
+    border-left: 5px solid #16a34a;
+}
+
+.conclusion-badge {
+    font-size: clamp(13px, 1.2vw, 16px);
+    font-weight: 900;
+    padding: 6px 14px;
+    border-radius: 8px;
+    white-space: nowrap;
+}
+
+.badge-red { background: #dc2626; color: #fff; }
+.badge-yellow { background: #d97706; color: #fff; }
+.badge-green { background: #16a34a; color: #fff; }
+
+.conclusion-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.meta-chip {
+    background: rgba(255,255,255,0.7);
+    border: 1px solid rgba(0,0,0,0.1);
+    border-radius: 20px;
+    padding: 4px 11px;
+    font-size: clamp(10px, 0.9vw, 12px);
+    font-weight: 600;
+    color: #334155;
+}
+
+.conclusion-text {
+    font-size: clamp(12px, 1vw, 14px);
+    color: #475569;
+    margin-top: 6px;
+    width: 100%;
+}
+
+/* ── KPI status grid ── */
+.kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
+    gap: clamp(8px, 1.2vw, 14px);
+    margin: 6px 0 4px 0;
+}
+
+.kpi-card {
+    border-radius: 10px;
+    padding: clamp(10px, 1.4vw, 16px);
+    border: 1px solid transparent;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.kpi-title {
+    font-size: clamp(10px, 0.85vw, 12px);
+    font-weight: 700;
+    color: #475569;
+    min-height: 28px;
+    line-height: 1.3;
+}
+
+.kpi-value {
+    font-size: clamp(22px, 2.5vw, 32px);
+    font-weight: 900;
+    color: #0c1a3a;
+    line-height: 1;
+    margin-top: 2px;
+}
+
+.kpi-pct {
+    font-size: clamp(11px, 0.95vw, 13px);
+    font-weight: 700;
+    color: #64748b;
+    margin-top: 4px;
+}
+
+.kpi-blue  { background: #eff6ff; border-color: #bfdbfe; }
+.kpi-green { background: #f0fdf4; border-color: #bbf7d0; }
+.kpi-red   { background: #fef2f2; border-color: #fecaca; }
+.kpi-yellow{ background: #fffbeb; border-color: #fde68a; }
+.kpi-gray  { background: #f8fafc; border-color: #e2e8f0; }
+
+/* ── Insight items ── */
+.insight-item {
+    background: #f8fafc;
+    border-left: 4px solid #005BBB;
+    border-radius: 0 8px 8px 0;
+    padding: clamp(8px, 1vw, 12px) clamp(12px, 1.5vw, 16px);
+    margin-bottom: 8px;
+    font-size: clamp(12px, 1vw, 14px);
+    color: #1e293b;
+    line-height: 1.5;
+}
+
+.insight-item.warn { border-left-color: #d97706; background: #fffbeb; }
+.insight-item.danger { border-left-color: #dc2626; background: #fef2f2; }
+.insight-item.info { border-left-color: #0891b2; background: #ecfeff; }
+
+/* ── Linear indicator rows ── */
+.indicator-row {
+    margin-bottom: 10px;
+}
+
+.indicator-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: clamp(11px, 0.95vw, 13px);
+    font-weight: 600;
+    color: #334155;
+    margin-bottom: 4px;
+}
+
+.indicator-bar-bg {
+    background: #e2e8f0;
+    border-radius: 99px;
+    height: 8px;
+    overflow: hidden;
+}
+
+.indicator-bar-fill {
+    height: 100%;
+    border-radius: 99px;
+    transition: width 0.4s ease;
+}
+
+/* ── Chart container ── */
+.chart-wrap {
+    background: #ffffff;
+    border: 1px solid #e9eef5;
+    border-radius: 10px;
+    padding: clamp(10px, 1.5vw, 16px);
+    margin-bottom: 10px;
+}
+
+.chart-title {
+    font-size: clamp(12px, 1.1vw, 15px);
+    font-weight: 800;
+    color: #0c1a3a;
+    margin-bottom: 6px;
+}
+
+/* ── Rank table ── */
+div[data-testid="stDataFrame"] {
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid #dde3ed !important;
+}
+
+/* ── Methodology ── */
+.methodology-box {
+    background: #f8fafc;
+    border: 1px solid #dde3ed;
+    border-radius: 10px;
+    padding: 16px 20px;
+    font-size: clamp(11px, 0.95vw, 13px);
+    color: #334155;
+    line-height: 1.7;
+}
+
+/* ── Footer ── */
 .footer {
     text-align: center;
-    color: #64748b;
-    font-size: 13px;
-    margin-top: 46px;
-    padding: 22px 0 12px 0;
-    border-top: 1px solid rgba(148, 163, 184, 0.35);
+    color: #94a3b8;
+    font-size: clamp(10px, 0.9vw, 12px);
+    margin-top: 40px;
+    padding: 18px 0 10px;
+    border-top: 1px solid #e2e8f0;
 }
 
-@media (max-width: 1100px) {
-    .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .insight-grid { grid-template-columns: 1fr; }
-    .hero-title { font-size: 27px; }
+/* ── Separator ── */
+.vis-separator {
+    border: none;
+    border-top: 1px solid #e2e8f0;
+    margin: 22px 0;
+}
+
+/* ── Responsive: narrow screens ── */
+@media (max-width: 900px) {
+    .header-card { flex-direction: column; }
+    .header-pills { flex-direction: row; }
+    .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 600px) {
+    .kpi-grid { grid-template-columns: repeat(2, 1fr); }
 }
 </style>
-""",
-    unsafe_allow_html=True
-)
+""", unsafe_allow_html=True)
 
 
 # ============================================================
@@ -418,8 +541,8 @@ def parse_period(value):
     text = str(value).lower().strip()
     if text in ["", "nan", "none", "н.д.", "нд"]:
         return None
-
     q = None
+    year = None
     if "1 квартал" in text or "i квартал" in text or " і квартал" in text:
         q = 1
     elif "2 квартал" in text or "ii квартал" in text or " іі квартал" in text:
@@ -428,9 +551,9 @@ def parse_period(value):
         q = 3
     elif "4 квартал" in text or "iv квартал" in text:
         q = 4
-
     year_match = re.search(r"20\d{2}", text)
-    year = int(year_match.group()) if year_match else None
+    if year_match:
+        year = int(year_match.group())
     if year and q:
         return year * 10 + q
     return None
@@ -438,12 +561,14 @@ def parse_period(value):
 
 def quarter_to_number(q):
     q = str(q).strip()
-    return {"I": 1, "II": 2, "III": 3, "IV": 4, "1": 1, "2": 2, "3": 3, "4": 4}.get(q, 1)
+    mapping = {"I": 1, "II": 2, "III": 3, "IV": 4, "1": 1, "2": 2, "3": 3, "4": 4}
+    return mapping.get(q, 1)
 
 
 def quarter_to_roman(q):
     q = str(q).strip()
-    return {"1": "I", "2": "II", "3": "III", "4": "IV", "I": "I", "II": "II", "III": "III", "IV": "IV"}.get(q, "I")
+    mapping = {"1": "I", "2": "II", "3": "III", "4": "IV", "I": "I", "II": "II", "III": "III", "IV": "IV"}
+    return mapping.get(q, "I")
 
 
 def get_goal_code(code):
@@ -469,13 +594,6 @@ def strip_code_from_name(code, name):
     if code and name.startswith(code):
         return name[len(code):].lstrip(" .—-–|:")
     return name
-
-
-def short_label(value, limit=58):
-    value = clean(value)
-    if len(value) <= limit:
-        return value
-    return value[:limit - 1].rstrip() + "…"
 
 
 def unique_clean_values(series):
@@ -531,6 +649,10 @@ def status_display(status):
     return mapping.get(status, status if status else "Не виконано")
 
 
+def is_excluded_status(status):
+    return status_display(status) in ["Термін не настав", "Втратив актуальність"]
+
+
 def status_score(status):
     status = clean(status)
     if status == "Виконано":
@@ -551,10 +673,8 @@ def plan_fact_percent(actual, target):
     target_num = to_number(target)
     actual_text = normalize_text(actual)
     target_text = normalize_text(target)
-
     if actual_num is not None and target_num is not None and target_num != 0:
         return round(min((actual_num / target_num) * 100, 150), 1)
-
     if target_text in ["так", "yes"] or actual_text in ["так", "ні", "yes", "no"]:
         if actual_text in ["так", "yes"]:
             return 100
@@ -571,12 +691,12 @@ def is_quantitative_plan_fact(row):
 
 def traffic_light(score):
     if score is None or pd.isna(score):
-        return "Не оцінюється"
+        return "⚪ Не оцінюється"
     if score >= 100:
-        return "У графіку"
+        return "🟢 У графіку"
     if score >= 75:
-        return "Часткове виконання"
-    return "Відстає"
+        return "🟡 Часткове виконання"
+    return "🔴 Відстає"
 
 
 def risk_level_from_score(score):
@@ -595,7 +715,6 @@ def risk_score_calc(row, selected_quarter_num, selected_period_num):
     actual = row.get("numeric_value", "")
     target = row.get("selected_target", "")
     end_num = row.get("end_num", None)
-
     score = 0
     reasons = []
 
@@ -606,19 +725,21 @@ def risk_score_calc(row, selected_quarter_num, selected_period_num):
 
     if status == "Не подано":
         score += 45
-        reasons.append("за активним заходом не подано погоджені моніторингові дані")
+        reasons.append("за активним заходом не подано моніторингові дані")
 
     if pf is not None:
         if pf >= 100:
+            score += 0
             reasons.append("фактичне значення досягло або перевищило планове")
         elif pf >= 75:
             score += 25
-            reasons.append("фактичне значення становить 75–99% плану")
+            reasons.append("фактичне значення становить від 75% до 99% плану")
         else:
             score += 45
             reasons.append("значне відставання фактичного значення від планового")
     else:
         if display_status == "Виконано":
+            score += 0
             reasons.append("захід позначено як виконаний")
         elif display_status == "Частково виконано":
             score += 25
@@ -637,32 +758,119 @@ def risk_score_calc(row, selected_quarter_num, selected_period_num):
     score = min(score, 100)
     if not reasons:
         reasons.append("критичних відхилень не виявлено")
+
     return score, "; ".join(reasons)
 
 
 def dashboard_conclusion(completion, risk_share, coverage):
     if completion >= 75 and risk_share <= 15 and coverage >= 70:
-        return "План переважно виконується", "Поточний стан виглядає контрольованим: виконання та покриття моніторингом достатні, частка ризиків низька.", "badge-risk-low"
+        return "План переважно виконується", "Поточний стан виконання виглядає контрольованим.", "risk-low"
     if completion >= 45 and risk_share <= 35:
-        return "Є помірні відхилення", "Потрібна увага до окремих заходів, структурних підрозділів або стратегічних цілей.", "badge-risk-mid"
-    return "Високий ризик невиконання", "Дані вказують на недостатній рівень погодженого моніторингу або суттєві відхилення від планових показників.", "badge-risk-high"
+        return "Є помірні відхилення", "Потрібна увага до окремих заходів, самостійних структурних підрозділів або стратегічних цілей.", "risk-medium"
+    return (
+        "Високий ризик невиконання",
+        "Поточні дані вказують на недостатній рівень подання та погодження відомостей або на суттєві відхилення від планових показників.",
+        "risk-high"
+    )
 
 
 def deviation_for_period(completion):
     return round(completion - 100, 1)
 
 
+def gauge_chart(value, title):
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=value,
+        number={"suffix": "%", "font": {"size": 28, "color": "#0c1a3a"}},
+        title={"text": title, "font": {"size": 14, "color": "#475569"}},
+        gauge={
+            "axis": {"range": [0, 100], "tickcolor": "#94a3b8", "tickfont": {"size": 11}},
+            "bar": {"color": "#005BBB", "thickness": 0.3},
+            "bgcolor": "white",
+            "borderwidth": 0,
+            "steps": [
+                {"range": [0, 35], "color": "#fee2e2"},
+                {"range": [35, 70], "color": "#fef3c7"},
+                {"range": [70, 100], "color": "#dcfce7"},
+            ],
+            "threshold": {
+                "line": {"color": "#0c1a3a", "width": 3},
+                "thickness": 0.75,
+                "value": value
+            }
+        }
+    ))
+    fig.update_layout(
+        height=260,
+        margin=dict(l=20, r=20, t=50, b=10),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)"
+    )
+    return fig
+
+
+def pct_value(count, total):
+    if total == 0:
+        return "0.0%"
+    return f"{round(count / total * 100, 1)}%"
+
+
+def render_kpi_grid(items):
+    """Renders a responsive KPI grid using HTML — 5 items per visual row, wraps on small screens."""
+    cards_html = ""
+    for item in items:
+        cards_html += f"""
+        <div class="kpi-card {item['color']}">
+            <div class="kpi-title">{item['title']}</div>
+            <div class="kpi-value">{item['count']}</div>
+            <div class="kpi-pct">{item['percent']}</div>
+        </div>
+        """
+    st.markdown(f'<div class="kpi-grid">{cards_html}</div>', unsafe_allow_html=True)
+
+
+def render_insight(text, kind="default"):
+    css_class = "insight-item"
+    if kind == "warn":
+        css_class += " warn"
+    elif kind == "danger":
+        css_class += " danger"
+    elif kind == "info":
+        css_class += " info"
+    st.markdown(f'<div class="{css_class}">{text}</div>', unsafe_allow_html=True)
+
+
+def render_indicator_bar(label, value, max_val=100, color="#005BBB"):
+    pct = min(max(value / max_val * 100, 0), 100)
+    st.markdown(f"""
+    <div class="indicator-row">
+        <div class="indicator-label">
+            <span>{label}</span>
+            <span style="color:{color};font-weight:800;">{value}{'%' if max_val == 100 else ''}</span>
+        </div>
+        <div class="indicator-bar-bg">
+            <div class="indicator-bar-fill" style="width:{pct}%;background:{color};"></div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
 def reset_filters():
     keys = [
         "dash_years", "dash_quarters", "dash_department_indices",
-        "dash_goals", "dash_tasks", "dash_measures", "dash_product_types",
-        "dash_deputies", "dash_statuses", "dash_sources", "dash_focus",
-        "dash_presentation_mode"
+        "dash_goals", "dash_tasks", "dash_measures",
+        "dash_product_types", "dash_deputies", "dash_statuses",
+        "dash_financing", "dash_sources", "dash_view_mode", "dash_presentation_mode"
     ]
     for key in keys:
         if key in st.session_state:
             del st.session_state[key]
 
+
+# ============================================================
+# CORE DATA FUNCTIONS
+# ============================================================
 
 def prepare_period_data(strat_df, requests_df, year, quarter, department="Усі"):
     measures = strat_df[strat_df["object_type"] == "measure"].copy()
@@ -679,8 +887,8 @@ def prepare_period_data(strat_df, requests_df, year, quarter, department="Усі
     selected_period_num = int(year) * 10 + selected_q_num
 
     active = measures[
-        ((measures["start_num"].isna()) | (measures["start_num"] <= selected_period_num))
-        & ((measures["end_num"].isna()) | (measures["end_num"] >= selected_period_num))
+        (measures["start_num"].isna() | (measures["start_num"] <= selected_period_num)) &
+        (measures["end_num"].isna() | (measures["end_num"] >= selected_period_num))
     ].copy()
 
     if department != "Усі":
@@ -703,20 +911,29 @@ def prepare_period_data(strat_df, requests_df, year, quarter, department="Усі
     approved_requests = requests_df[requests_df["approval_status"].astype(str) == "Погоджено"].copy()
 
     if approved_requests.empty:
-        period_requests = pd.DataFrame(columns=["strat_code", "status", "numeric_value", "risks", "progress_text", "submitted_at"])
+        period_requests = pd.DataFrame(columns=[
+            "strat_code", "status", "numeric_value", "risks", "progress_text", "submitted_at"
+        ])
     else:
         quarter_num = str(quarter_to_number(quarter))
         quarter_roman = quarter_to_roman(quarter)
+
         period_requests = approved_requests[
-            (approved_requests["year"].astype(str) == str(year))
-            & (
-                (approved_requests["quarter"].astype(str) == str(quarter))
-                | (approved_requests["quarter"].astype(str) == quarter_num)
-                | (approved_requests["quarter"].astype(str) == quarter_roman)
+            (approved_requests["year"].astype(str) == str(year)) &
+            (
+                (approved_requests["quarter"].astype(str) == str(quarter)) |
+                (approved_requests["quarter"].astype(str) == quarter_num) |
+                (approved_requests["quarter"].astype(str) == quarter_roman)
             )
         ].copy()
+
         if not period_requests.empty:
-            period_requests = period_requests.sort_values("submitted_at").groupby("strat_code").tail(1)
+            period_requests = (
+                period_requests
+                .sort_values("submitted_at")
+                .groupby("strat_code")
+                .tail(1)
+            )
 
     active = active.merge(
         period_requests[["strat_code", "status", "numeric_value", "risks", "progress_text"]],
@@ -733,25 +950,33 @@ def prepare_period_data(strat_df, requests_df, year, quarter, department="Усі
 
     active["status_display"] = active["status"].apply(status_display)
     active["status_score"] = active["status"].apply(status_score)
-    active["plan_fact_percent"] = active.apply(lambda r: plan_fact_percent(r["numeric_value"], r["selected_target"]), axis=1)
+    active["plan_fact_percent"] = active.apply(
+        lambda r: plan_fact_percent(r["numeric_value"], r["selected_target"]), axis=1
+    )
     active["is_quantitative_pf"] = active.apply(is_quantitative_plan_fact, axis=1)
     active["performance_score"] = active.apply(
         lambda r: r["plan_fact_percent"] if pd.notna(r["plan_fact_percent"]) else r["status_score"],
         axis=1
     )
-    active["included_in_assessment"] = ~active["status_display"].isin(["Термін не настав", "Втратив актуальність"])
+    active["included_in_assessment"] = ~active["status_display"].isin([
+        "Термін не настав", "Втратив актуальність"
+    ])
 
-    risk_results = active.apply(lambda r: risk_score_calc(r, selected_q_num, selected_period_num), axis=1)
+    risk_results = active.apply(
+        lambda r: risk_score_calc(r, selected_q_num, selected_period_num), axis=1
+    )
     active["risk_score"] = [x[0] for x in risk_results]
     active["risk_reason"] = [x[1] for x in risk_results]
     active["auto_risk"] = active["risk_score"].apply(risk_level_from_score)
     active.loc[~active["included_in_assessment"], "auto_risk"] = "Не оцінюється"
+
     active["traffic_light"] = active["performance_score"].apply(traffic_light)
-    active.loc[~active["included_in_assessment"], "traffic_light"] = "Не оцінюється"
+    active.loc[~active["included_in_assessment"], "traffic_light"] = "⚪ Не оцінюється"
 
     active["period_year"] = int(year)
     active["period_quarter"] = quarter_to_roman(quarter)
     active["period_label"] = active["period_year"].astype(str) + " " + active["period_quarter"].astype(str)
+
     return active
 
 
@@ -782,19 +1007,10 @@ def apply_dashboard_filters(active, department_indices, goals, tasks, measures, 
     if deputies:
         data = data[data["deputy_minister"].fillna("").astype(str).isin(deputies)]
     if statuses:
-        data = data[data["status"].isin(statuses) | data["status_display"].isin(statuses)]
+        data = data[data["status_display"].isin(statuses)]
     if sources:
         data = data[data["source_national"].isin(sources)]
     return data.copy()
-
-
-def collapse_to_latest_measure_rows(df):
-    if df.empty:
-        return df
-    data = df.copy()
-    data["_period_sort"] = data["period_year"].astype(int) * 10 + data["period_quarter"].apply(quarter_to_number)
-    data = data.sort_values(["code", "_period_sort"]).groupby("code", as_index=False).tail(1).drop(columns=["_period_sort"])
-    return data
 
 
 def assessment_subset(active):
@@ -823,69 +1039,12 @@ def calc_submitted(active):
     return len(active[active["status"] != "Не подано"])
 
 
-def calc_approval_counts(requests_df, active_codes, years, quarters):
-    result = {"Погоджено": 0, "На розгляді": 0, "Не враховано": 0}
-    if requests_df is None or requests_df.empty or not active_codes:
-        return result
-    required = ["year", "quarter", "strat_code", "approval_status", "submitted_at"]
-    data = requests_df.copy()
-    for col in required:
-        if col not in data.columns:
-            data[col] = ""
-    q_values = set()
-    for q in quarters:
-        q_values.add(str(q))
-        q_values.add(str(quarter_to_number(q)))
-        q_values.add(quarter_to_roman(q))
-    data = data[
-        data["strat_code"].astype(str).isin(set(map(str, active_codes)))
-        & data["year"].astype(str).isin(set(map(str, years)))
-        & data["quarter"].astype(str).isin(q_values)
-    ].copy()
-    if data.empty:
-        return result
-    data = data.sort_values("submitted_at").groupby("strat_code", as_index=False).tail(1)
-    counts = data["approval_status"].fillna("").astype(str).value_counts().to_dict()
-    for key in result:
-        result[key] = int(counts.get(key, 0))
-    return result
-
-
 def calc_risk_share(active):
     assessed = assessment_subset(active)
     if assessed.empty:
         return 0
     risk_count = len(assessed[assessed["auto_risk"].isin(["Критичний ризик", "Середній ризик"])])
     return round(risk_count / len(assessed) * 100, 1)
-
-
-def pct_value(count, total):
-    if total == 0:
-        return "0.0%"
-    return f"{round(count / total * 100, 1)}%"
-
-
-def kpi_card(label, value, note, color="kpi-gray"):
-    return f"""
-    <div class="kpi {color}">
-        <div class="kpi-label">{label}</div>
-        <div class="kpi-value">{value}</div>
-        <div class="kpi-note">{note}</div>
-    </div>
-    """
-
-
-def explode_departments(active):
-    rows = []
-    for _, row in active.iterrows():
-        departments = get_all_department_values(row)
-        if not departments:
-            departments = ["Не визначено"]
-        for dep in departments:
-            item = row.to_dict()
-            item["ssp_department"] = dep
-            rows.append(item)
-    return pd.DataFrame(rows)
 
 
 def is_failed_for_weight(row):
@@ -904,12 +1063,14 @@ def is_failed_for_weight(row):
 def weighted_failure_group(active, group_cols):
     if active.empty:
         return pd.DataFrame()
-    data = active[active["included_in_assessment"] == True].copy()
+    data = active.copy()
+    data = data[data["included_in_assessment"] == True].copy()
     if data.empty:
         return pd.DataFrame()
     data["failed_weight_flag"] = data.apply(is_failed_for_weight, axis=1)
     grouped = (
-        data.groupby(group_cols, dropna=False)
+        data
+        .groupby(group_cols, dropna=False)
         .agg(
             Активних_заходів=("code", "count"),
             Невиконаних=("failed_weight_flag", "sum"),
@@ -919,70 +1080,128 @@ def weighted_failure_group(active, group_cols):
         .reset_index()
     )
     grouped["Вага_невиконання"] = grouped["Невиконаних"] / len(data) * 100
-    for col in ["Виконання", "Ризик", "Вага_невиконання"]:
-        grouped[col] = grouped[col].fillna(0).round(1)
-    return grouped.sort_values(["Вага_невиконання", "Невиконаних", "Активних_заходів"], ascending=[False, False, False])
-
-
-def apply_plot_theme(fig, height=390, legend_orientation="h"):
-    fig.update_layout(
-        height=height,
-        margin=dict(l=10, r=10, t=42, b=20),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Arial", size=12, color="#334155"),
-        title=dict(font=dict(size=15, color="#0f172a"), x=0.02, xanchor="left"),
-        legend=dict(orientation=legend_orientation, yanchor="bottom", y=1.02, xanchor="right", x=1),
+    grouped["Виконання"] = grouped["Виконання"].fillna(0).round(1)
+    grouped["Ризик"] = grouped["Ризик"].fillna(0).round(1)
+    grouped["Вага_невиконання"] = grouped["Вага_невиконання"].fillna(0).round(1)
+    return grouped.sort_values(
+        ["Вага_невиконання", "Невиконаних", "Активних_заходів"],
+        ascending=[False, False, False]
     )
-    fig.update_xaxes(showgrid=False, zeroline=False)
-    fig.update_yaxes(gridcolor="rgba(148,163,184,0.24)", zeroline=False)
-    return fig
 
 
-def status_color_map():
-    return {
-        "Виконано": "#16a34a",
-        "Частково виконано": "#d97706",
-        "Виконується": "#2563eb",
-        "Не виконано": "#dc2626",
-        "Термін не настав": "#94a3b8",
-        "Втратив актуальність": "#64748b",
-        "У графіку": "#16a34a",
-        "Відстає": "#dc2626",
-        "Не оцінюється": "#94a3b8",
-        "Критичний ризик": "#dc2626",
-        "Середній ризик": "#d97706",
-        "Низький ризик": "#16a34a",
-    }
+def explode_departments(active):
+    rows = []
+    for _, row in active.iterrows():
+        departments = get_all_department_values(row)
+        if not departments:
+            departments = ["Не визначено"]
+        for dep in departments:
+            item = row.to_dict()
+            item["ssp_department"] = dep
+            rows.append(item)
+    return pd.DataFrame(rows)
+
+
+def style_rank_table(row, total_rows):
+    place = row["Місце"]
+    if place <= 3:
+        return ["background-color: #dcfce7; color: #14532d; font-weight: 800; text-align: center"] * len(row)
+    if place <= 10:
+        return ["background-color: #e0f2fe; color: #0c4a6e; text-align: center"] * len(row)
+    if place > max(total_rows - 7, 10):
+        return ["background-color: #fee2e2; color: #7f1d1d; text-align: center"] * len(row)
+    return ["background-color: #f8fafc; color: #334155; text-align: center"] * len(row)
+
+
+def collapse_to_latest_measure_rows(df):
+    if df.empty:
+        return df
+    data = df.copy()
+    data["_period_sort"] = (
+        data["period_year"].astype(int) * 10
+        + data["period_quarter"].apply(quarter_to_number)
+    )
+    data = (
+        data
+        .sort_values(["code", "_period_sort"])
+        .groupby("code", as_index=False)
+        .tail(1)
+        .drop(columns=["_period_sort"])
+    )
+    return data
+
+
+# ─── Plotly theme helper ───────────────────────────────────────────────────────
+CHART_COLORS = ["#005BBB", "#FFD700", "#0891b2", "#16a34a", "#d97706", "#9333ea", "#dc2626", "#64748b"]
+
+RISK_COLORS = {
+    "Критичний ризик": "#dc2626",
+    "Середній ризик": "#d97706",
+    "Низький ризик": "#16a34a",
+    "Не оцінюється": "#94a3b8"
+}
+
+TRAFFIC_COLORS = {
+    "🟢 У графіку": "#16a34a",
+    "🟡 Часткове виконання": "#d97706",
+    "🔴 Відстає": "#dc2626",
+    "⚪ Не оцінюється": "#94a3b8"
+}
+
+CHART_LAYOUT = dict(
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)",
+    font=dict(family="Helvetica Neue, Arial, sans-serif", size=12, color="#334155"),
+    margin=dict(l=10, r=10, t=40, b=10),
+    legend=dict(
+        bgcolor="rgba(255,255,255,0.9)",
+        bordercolor="#e2e8f0",
+        borderwidth=1,
+        font=dict(size=11)
+    )
+)
+
+
+def make_chart_frame(title, subtitle=""):
+    st.markdown(
+        f'<div class="chart-wrap"><div class="chart-title">{title}</div>'
+        + (f'<div class="section-subtitle">{subtitle}</div>' if subtitle else ""),
+        unsafe_allow_html=True
+    )
+
+
+def close_chart_frame():
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ============================================================
 # HEADER
 # ============================================================
 
-st.markdown('<div class="ua-line"></div>', unsafe_allow_html=True)
-st.markdown('<div class="top-label">🇺🇦 Міністерство економіки, довкілля та сільського господарства України</div>', unsafe_allow_html=True)
+st.markdown('<div class="ua-stripe"></div>', unsafe_allow_html=True)
+st.markdown("""
+<div class="ministry-label">
+🇺🇦 Міністерство економіки, довкілля та сільського господарства України
+</div>
+""", unsafe_allow_html=True)
 
-last_update = datetime.now().strftime("%d.%m.%Y %H:%M")
-
-st.markdown(
-    f"""
-<div class="hero">
-    <div class="hero-title">Аналітичний дашборд результативності стратегічного плану</div>
-    <div class="hero-subtitle">
-        Аналітична панель забезпечує комплексне представлення результатів виконання Стратегічного плану. Інфографіка та моніторинговий звіт формуються за результатами
-        проведення оцінки на основі моніторингу й оцінювання стратегічних результатів як у цілому, так і в розрізі кожного самостійного структурного підрозділу окремо.
+st.markdown(f"""
+<div class="header-card">
+    <div class="header-main">
+        <div class="header-title">Аналітичний дашборд результативності стратегічного плану</div>
+        <div class="header-subtitle">
+            Комплексна панель моніторингу та оцінювання стратегічних результатів — по кожному
+            самостійному структурному підрозділу та в розрізі стратегічних цілей і завдань.
+        </div>
     </div>
-    <div class="pill-row">
-        <div class="pill">• Сторінка: Dashboard</div>
-        <div class="pill">• Джерело: Excel + Supabase</div>
-        <div class="pill">• Факт: погоджені заявки</div>
-        <div class="pill">• Оновлено: {last_update}</div>
+    <div class="header-pills">
+        <div class="pill">📋 Dashboard</div>
+        <div class="pill">🗄 Excel + Supabase</div>
+        <div class="pill">✅ Погоджені заявки</div>
+        <div class="pill">🕐 {datetime.now().strftime("%d.%m.%Y %H:%M")}</div>
     </div>
 </div>
-""",
-    unsafe_allow_html=True
-)
+""", unsafe_allow_html=True)
 
 
 # ============================================================
@@ -1010,7 +1229,15 @@ years_options = [2026, 2027, 2028]
 quarters_options = ["I", "II", "III", "IV"]
 
 department_indices_options = sorted(
-    set(re.findall(r"\d+", " | ".join(measures_all[["department", "department_co_1", "department_co_2"]].fillna("").astype(str).agg(" | ".join, axis=1).tolist()))),
+    set(
+        re.findall(
+            r"\d+",
+            " | ".join(
+                measures_all[["department", "department_co_1", "department_co_2"]]
+                .fillna("").astype(str).agg(" | ".join, axis=1).tolist()
+            )
+        )
+    ),
     key=lambda x: int(x) if x.isdigit() else 9999
 )
 
@@ -1026,102 +1253,151 @@ product_type_options = unique_clean_values(measures_all["product_type"])
 deputy_options = unique_clean_values(measures_all["deputy_minister"])
 source_options = unique_clean_values(measures_all["source_national"])
 
-raw_status_options = unique_clean_values(requests_df["status"]) if (not requests_df.empty and "status" in requests_df.columns) else []
-base_status_options = [
-    "Виконано", "Виконано частково", "Частково виконано", "Виконується",
-    "Не виконано", "Не розпочато", "Прострочено", "Потребує уваги",
-    "Не подано", "Термін не настав", "Не настав час",
-    "Втратив актуальність", "Втратило актуальність"
+status_options = [
+    "Виконано", "Частково виконано", "Не виконано",
+    "Термін не настав", "Втратив актуальність", "Виконується"
 ]
-status_rank = {name: i for i, name in enumerate(base_status_options)}
-status_options = sorted(set(raw_status_options + base_status_options), key=lambda x: status_rank.get(x, 999))
 
 
 # ============================================================
-# FILTERS
+# FILTERS PANEL
 # ============================================================
 
-st.markdown(
-    """
-<div class="filter-shell">
-    <div class="filter-header">
-        <div>
-            <div class="filter-title">Параметри відбору</div>
-            <div class="filter-hint">Оберіть необхідні параметри: період, індекс ССП та режим перегляду даних.</div>
+with st.container():
+    st.markdown("""
+    <div class="filter-panel">
+        <div class="filter-header">
+            <span class="filter-title">🔍 Параметри відбору</span>
+            <span class="filter-hint">Оберіть фільтри — дашборд перерахується автоматично</span>
         </div>
     </div>
-</div>
-""",
-    unsafe_allow_html=True
-)
+    """, unsafe_allow_html=True)
 
-f1, f2, f3, f4 = st.columns([1.05, 1.05, 1.55, 1.2])
-with f1:
-    selected_years = st.multiselect("Рік", years_options, default=[], key="dash_years", placeholder="Усі роки")
-with f2:
-    selected_quarters = st.multiselect("Квартал", quarters_options, default=[], key="dash_quarters", placeholder="Усі квартали")
-with f3:
-    selected_department_indices = st.multiselect("Індекс ССП", department_indices_options, key="dash_department_indices", placeholder="Усі підрозділи")
-with f4:
-    focus_mode = st.selectbox(
-        "Фокус сторінки",
-        ["Огляд", "Ризики", "Самостійні структурні підрозділи", "Стратегічні цілі", "Динаміка", "Таблиці"],
-        key="dash_focus"
-    )
+    # Рядок 1: Ключові фільтри + режим
+    fa, fb, fc, fd, fe = st.columns([1, 1, 2, 1.5, 1])
 
-with st.expander("Додаткові фільтри", expanded=False):
-    a1, a2, a3 = st.columns(3)
-    with a1:
-        selected_goals = st.multiselect(
-            "Стратегічна ціль",
-            goal_options,
-            format_func=lambda x: f"{x} — {short_label(strip_code_from_name(x, goal_name_map.get(x, '')), 70)}",
-            key="dash_goals"
-        )
-    with a2:
-        selected_tasks = st.multiselect(
-            "Завдання",
-            task_options,
-            format_func=lambda x: f"{x} — {short_label(strip_code_from_name(x, task_name_map.get(x, '')), 70)}",
-            key="dash_tasks"
-        )
-    with a3:
-        selected_measures = st.multiselect(
-            "Захід",
-            measure_options,
-            format_func=lambda x: f"{x} — {short_label(strip_code_from_name(x, measure_name_map.get(x, '')), 70)}",
-            key="dash_measures"
+    with fa:
+        selected_years = st.multiselect(
+            "📅 Рік",
+            years_options,
+            default=[],
+            key="dash_years",
+            placeholder="Усі роки"
         )
 
-    b1, b2, b3 = st.columns(3)
-    with b1:
-        selected_product_types = st.multiselect("Тип продукту", product_type_options, key="dash_product_types")
-    with b2:
-        selected_deputies = st.multiselect("Заступник Міністра", deputy_options, key="dash_deputies")
-    with b3:
-        selected_statuses = st.multiselect("Статус виконання", status_options, key="dash_statuses")
+    with fb:
+        selected_quarters = st.multiselect(
+            "🗓 Квартал",
+            quarters_options,
+            default=[],
+            key="dash_quarters",
+            placeholder="Усі квартали"
+        )
 
-    c1, c2 = st.columns([2, 1])
-    with c1:
-        selected_sources = st.multiselect("Джерело даних: національний рівень", source_options, key="dash_sources")
-    with c2:
-        presentation_mode = st.toggle("Presentation mode", value=False, key="dash_presentation_mode")
+    with fc:
+        selected_department_indices = st.multiselect(
+            "🏢 Індекс ССП",
+            department_indices_options,
+            key="dash_department_indices",
+            placeholder="Усі підрозділи"
+        )
 
-r1, r2 = st.columns([1, 5])
-with r1:
-    if st.button("Скинути фільтри", use_container_width=True):
-        reset_filters()
-        st.rerun()
+    with fd:
+        view_mode = st.selectbox(
+            "📊 Режим перегляду",
+            [
+                "Усі візуалізації",
+                "Стратегічні цілі",
+                "Самостійні структурні підрозділи",
+                "Ризики",
+                "Динаміка",
+                "Heatmap",
+                "Таблиці"
+            ],
+            key="dash_view_mode"
+        )
 
-selected_labels = []
-selected_labels.append("роки: " + (", ".join(map(str, selected_years)) if selected_years else "усі"))
-selected_labels.append("квартали: " + (", ".join(selected_quarters) if selected_quarters else "усі"))
-selected_labels.append("ССП: " + (", ".join(selected_department_indices) if selected_department_indices else "усі"))
-selected_labels.append("фокус: " + focus_mode)
-st.markdown(
-    '<div class="filter-chip-row">' + ''.join([f'<div class="filter-chip">{x}</div>' for x in selected_labels]) + '</div>',
-    unsafe_allow_html=True
-)
+    with fe:
+        presentation_mode = st.toggle(
+            "🖥 Презентаційний режим",
+            value=False,
+            key="dash_presentation_mode",
+            help="Спрощений вигляд: висновок, ключові індикатори та основні графіки."
+        )
+
+    # Рядок 2: Деталізовані фільтри (у розгорнутому вигляді)
+    with st.expander("⚙️ Додаткові фільтри (ціль, завдання, захід, тип, заступник, статус, джерело)"):
+        g1, g2, g3 = st.columns(3)
+        with g1:
+            selected_goals = st.multiselect(
+                "Стратегічна ціль",
+                goal_options,
+                format_func=lambda x: f"{x} — {strip_code_from_name(x, goal_name_map.get(x, ''))}",
+                key="dash_goals"
+            )
+        with g2:
+            selected_tasks = st.multiselect(
+                "Завдання",
+                task_options,
+                format_func=lambda x: f"{x} — {strip_code_from_name(x, task_name_map.get(x, ''))}",
+                key="dash_tasks"
+            )
+        with g3:
+            selected_measures = st.multiselect(
+                "Захід",
+                measure_options,
+                format_func=lambda x: f"{x} — {strip_code_from_name(x, measure_name_map.get(x, ''))}",
+                key="dash_measures"
+            )
+
+        h1, h2, h3 = st.columns(3)
+        with h1:
+            selected_product_types = st.multiselect(
+                "Тип продукту",
+                product_type_options,
+                key="dash_product_types"
+            )
+        with h2:
+            selected_deputies = st.multiselect(
+                "Заступник Міністра",
+                deputy_options,
+                key="dash_deputies",
+                help="Фільтр підготовлено. Повноцінно запрацює після прив'язки заступників до заходів."
+            )
+        with h3:
+            selected_statuses = st.multiselect(
+                "Статус виконання",
+                status_options,
+                key="dash_statuses"
+            )
+
+        j1, j2, j3 = st.columns(3)
+        with j1:
+            selected_financing = st.multiselect(
+                "Фінансування",
+                [],
+                key="dash_financing",
+                help="Дані про фінансування поки не додані. Фільтр залишено як технічну заготовку."
+            )
+        with j2:
+            selected_sources = st.multiselect(
+                "Джерело даних: національний рівень",
+                source_options,
+                key="dash_sources"
+            )
+        with j3:
+            st.write("")
+            st.write("")
+            if st.button("↺ Скинути фільтри", use_container_width=True):
+                reset_filters()
+                st.rerun()
+
+    # Кнопка скидання поза expander (завжди доступна)
+    col_reset, _ = st.columns([1, 5])
+    with col_reset:
+        if st.button("Скинути фільтри", use_container_width=True, key="reset_main"):
+            reset_filters()
+            st.rerun()
 
 
 # ============================================================
@@ -1137,27 +1413,28 @@ if active_raw.empty:
     st.warning("Для обраного періоду активних заходів не знайдено.")
     st.stop()
 
-active_filtered_period_rows = apply_dashboard_filters(
+active = apply_dashboard_filters(
     active_raw,
     selected_department_indices,
-    selected_goals,
-    selected_tasks,
-    selected_measures,
-    selected_product_types,
-    selected_deputies,
-    selected_statuses,
-    selected_sources
+    selected_goals if "dash_goals" in st.session_state else [],
+    selected_tasks if "dash_tasks" in st.session_state else [],
+    selected_measures if "dash_measures" in st.session_state else [],
+    selected_product_types if "dash_product_types" in st.session_state else [],
+    selected_deputies if "dash_deputies" in st.session_state else [],
+    selected_statuses if "dash_statuses" in st.session_state else [],
+    selected_sources if "dash_sources" in st.session_state else []
 )
 
-if active_filtered_period_rows.empty:
+if active.empty:
     st.warning("За обраними параметрами відбору даних не знайдено.")
     st.stop()
 
-active = collapse_to_latest_measure_rows(active_filtered_period_rows)
+active_period_rows = active.copy()
+active = collapse_to_latest_measure_rows(active)
 
 
 # ============================================================
-# METRICS AND AGGREGATIONS
+# MAIN METRICS
 # ============================================================
 
 total_active = len(active)
@@ -1165,397 +1442,631 @@ submitted_count = calc_submitted(active)
 coverage = calc_coverage(active)
 completion = mean_completion(active)
 deviation_current = deviation_for_period(completion)
-risk_share = calc_risk_share(active)
 
-assessed = assessment_subset(active)
-critical_count = len(assessed[assessed["auto_risk"] == "Критичний ризик"])
-medium_count = len(assessed[assessed["auto_risk"] == "Середній ризик"])
+risk_count = len(assessment_subset(active)[assessment_subset(active)["auto_risk"].isin(["Критичний ризик", "Середній ризик"])])
+critical_count = len(assessment_subset(active)[assessment_subset(active)["auto_risk"] == "Критичний ризик"])
+risk_share = calc_risk_share(active)
 without_data = len(active[active["status"] == "Не подано"])
+
 completed_count = len(active[active["status_display"] == "Виконано"])
 partly_count = len(active[active["status_display"] == "Частково виконано"])
-in_progress_count = len(active[active["status_display"] == "Виконується"])
 not_done_count = len(active[active["status_display"] == "Не виконано"])
-not_time_count = len(active[active["status_display"] == "Термін не настав"])
 obsolete_count = len(active[active["status_display"] == "Втратив актуальність"])
-approval_counts = calc_approval_counts(requests_df, active["code"].astype(str).tolist(), years_for_calc, quarters_for_calc)
-approved_count = approval_counts.get("Погоджено", submitted_count)
-on_review_count = approval_counts.get("На розгляді", 0)
-not_counted_count = approval_counts.get("Не враховано", 0)
+not_time_count = len(active[active["status_display"] == "Термін не настав"])
+in_progress_count = len(active[active["status_display"] == "Виконується"])
+
+approved_requests_count = submitted_count
+review_count = 0
+not_counted_count = len(active[active["status"] == "Не подано"])
 
 conclusion_title, conclusion_text, conclusion_badge = dashboard_conclusion(completion, risk_share, coverage)
 
-dep_active = explode_departments(active)
+period_year_label = (
+    ", ".join([f"{y} рік" for y in selected_years]) if selected_years else "усі роки"
+)
+period_quarter_label = (
+    ", ".join([f"{q} квартал" for q in selected_quarters]) if selected_quarters else "усі квартали"
+)
+period_label = f"{period_year_label} | {period_quarter_label}"
+
+# Conclusion badge mapping
+badge_css = {"risk-high": "badge-red", "risk-medium": "badge-yellow", "risk-low": "badge-green"}
+block_css = {"risk-high": "conclusion-risk-high", "risk-medium": "conclusion-risk-medium", "risk-low": "conclusion-risk-low"}
+
+
+# ============================================================
+# ПРОГРЕС ВИКОНАННЯ: ВИСНОВОК СИСТЕМИ
+# ============================================================
+
+st.markdown('<div class="section-card">', unsafe_allow_html=True)
+st.markdown('<div class="section-title">Прогрес виконання: висновок системи</div>', unsafe_allow_html=True)
+
+st.markdown(f"""
+<div class="conclusion-block {block_css[conclusion_badge]}">
+    <span class="conclusion-badge {badge_css[conclusion_badge]}">{conclusion_title}</span>
+    <div class="conclusion-meta">
+        <span class="meta-chip">📅 {period_label}</span>
+        <span class="meta-chip">📌 {total_active} активних заходів</span>
+        <span class="meta-chip">📉 Відхилення: {deviation_current} в.п.</span>
+        <span class="meta-chip">📊 Виконання: {completion}%</span>
+        <span class="meta-chip">📋 Покриття: {coverage}%</span>
+    </div>
+    <div class="conclusion-text">{conclusion_text}</div>
+</div>
+""", unsafe_allow_html=True)
+
+render_kpi_grid([
+    {"title": "Заходів", "count": total_active, "percent": "100.0%", "color": "kpi-blue"},
+    {"title": "Виконано", "count": completed_count, "percent": pct_value(completed_count, total_active), "color": "kpi-green"},
+    {"title": "Погоджено", "count": approved_requests_count, "percent": pct_value(approved_requests_count, total_active), "color": "kpi-green"},
+    {"title": "На розгляді", "count": review_count, "percent": pct_value(review_count, total_active), "color": "kpi-yellow"},
+    {"title": "Не враховано", "count": not_counted_count, "percent": pct_value(not_counted_count, total_active), "color": "kpi-red"},
+    {"title": "Не виконано", "count": not_done_count, "percent": pct_value(not_done_count, total_active), "color": "kpi-red"},
+    {"title": "Втратив актуальність", "count": obsolete_count, "percent": pct_value(obsolete_count, total_active), "color": "kpi-gray"},
+    {"title": "Термін не настав", "count": not_time_count, "percent": pct_value(not_time_count, total_active), "color": "kpi-gray"},
+    {"title": "Частково виконано", "count": partly_count, "percent": pct_value(partly_count, total_active), "color": "kpi-yellow"},
+    {"title": "Виконується", "count": in_progress_count, "percent": pct_value(in_progress_count, total_active), "color": "kpi-blue"},
+])
+
+st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ============================================================
+# АВТОМАТИЧНІ ІНСАЙТИ
+# ============================================================
+
+if not presentation_mode:
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Автоматичні інсайти</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-subtitle">Система автоматично виявляє відхилення та концентрації ризиків</div>', unsafe_allow_html=True)
+
+    goal_failure = weighted_failure_group(active, ["goal_code", "strategic_goal"])
+    dep_exploded_for_insights = explode_departments(active)
+    dep_failure = weighted_failure_group(dep_exploded_for_insights, ["ssp_department"])
+
+    if without_data > 0:
+        render_insight(f"⚠️ {without_data} активних заходів не мають поданого погодженого моніторингу.", "warn")
+    if critical_count > 0:
+        render_insight(f"🔴 {critical_count} заходів мають критичний ризик недосягнення.", "danger")
+    if not goal_failure.empty:
+        row = goal_failure.iloc[0]
+        render_insight(
+            f"📉 Найбільша концентрація невиконаних заходів у СЦ {row['goal_code']} — "
+            f"{int(row['Невиконаних'])} із {int(row['Активних_заходів'])}; "
+            f"вага в обраному портфелі — {row['Вага_невиконання']}%.",
+            "warn"
+        )
+    if not dep_failure.empty:
+        row = dep_failure.iloc[0]
+        render_insight(
+            f"🏢 Самостійний структурний підрозділ із найвищою концентрацією невиконання: "
+            f"{row['ssp_department']} — {int(row['Невиконаних'])} із {int(row['Активних_заходів'])}; "
+            f"вага в обраному портфелі — {row['Вага_невиконання']}%.",
+            "info"
+        )
+    render_insight(f"📌 Відхилення за звітний період: {deviation_current} в.п. від планового рівня.")
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ============================================================
+# ПОКАЗНИКИ ВИКОНАННЯ СТРАТЕГІЧНОГО ПЛАНУ
+# ============================================================
+
+st.markdown('<div class="section-card">', unsafe_allow_html=True)
+st.markdown('<div class="section-title">Показники виконання стратегічного плану</div>', unsafe_allow_html=True)
+
+ind_col1, ind_col2 = st.columns([1, 1.3])
+
+with ind_col1:
+    st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
+    fig_gauge = gauge_chart(completion, "Виконання СП")
+    st.plotly_chart(fig_gauge, use_container_width=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+with ind_col2:
+    st.markdown('<div class="chart-wrap" style="height:100%;padding-top:20px;">', unsafe_allow_html=True)
+    render_indicator_bar("Виконання СП", completion, 100, "#005BBB")
+    render_indicator_bar("Покриття моніторингом", coverage, 100, "#0891b2")
+    dev_display = round(100 + deviation_current, 1)
+    render_indicator_bar("Відхилення за звітний період", round(100 + deviation_current, 1), 100, "#d97706")
+    render_indicator_bar("Частка заходів без ризику", round(100 - risk_share, 1), 100, "#16a34a")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ============================================================
+# AGGREGATIONS
+# ============================================================
 
 status_counts = active.groupby("status_display").size().reset_index(name="Кількість")
 risk_counts = active.groupby("auto_risk").size().reset_index(name="Кількість")
 traffic_counts = active.groupby("traffic_light").size().reset_index(name="Кількість")
 
 goal_progress = (
-    active.groupby(["goal_code", "strategic_goal"])
+    active
+    .groupby(["goal_code", "strategic_goal"])
     .agg(
         Активних_заходів=("code", "count"),
         Виконання=("performance_score", "mean"),
-        Погоджено=("status", lambda x: (x != "Не подано").sum()),
+        Покриття=("status", lambda x: (x != "Не подано").sum()),
         Ризикових=("auto_risk", lambda x: x.isin(["Критичний ризик", "Середній ризик"]).sum()),
-        Критичних=("auto_risk", lambda x: (x == "Критичний ризик").sum()),
         Середній_ризик=("risk_score", "mean")
     )
     .reset_index()
 )
-
 goal_progress["Виконання"] = goal_progress["Виконання"].fillna(0).round(1)
-goal_progress["Покриття_%"] = (goal_progress["Погоджено"] / goal_progress["Активних_заходів"] * 100).round(1)
+goal_progress["Покриття_%"] = (goal_progress["Покриття"] / goal_progress["Активних_заходів"] * 100).round(1)
 goal_progress["Середній_ризик"] = goal_progress["Середній_ризик"].fillna(0).round(1)
-goal_progress["Відхилення"] = (goal_progress["Виконання"] - 100).round(1)
-goal_progress["Ціль"] = goal_progress.apply(lambda r: f"СЦ {r['goal_code']} — {short_label(strip_code_from_name(r['goal_code'], r['strategic_goal']), 72)}", axis=1)
 
+dep_active = explode_departments(active)
 dep_progress = (
-    dep_active.groupby("ssp_department")
+    dep_active
+    .groupby("ssp_department")
     .agg(
         Активних_заходів=("code", "count"),
         Виконання=("performance_score", "mean"),
-        Погоджено=("status", lambda x: (x != "Не подано").sum()),
+        Подано=("status", lambda x: (x != "Не подано").sum()),
         Ризикових=("auto_risk", lambda x: x.isin(["Критичний ризик", "Середній ризик"]).sum()),
         Критичних=("auto_risk", lambda x: (x == "Критичний ризик").sum()),
         Середній_ризик=("risk_score", "mean")
     )
     .reset_index()
 )
-
 dep_progress["Виконання"] = dep_progress["Виконання"].fillna(0).round(1)
-dep_progress["Покриття_%"] = (dep_progress["Погоджено"] / dep_progress["Активних_заходів"] * 100).round(1)
+dep_progress["Покриття_%"] = (dep_progress["Подано"] / dep_progress["Активних_заходів"] * 100).round(1)
 dep_progress["Середній_ризик"] = dep_progress["Середній_ризик"].fillna(0).round(1)
-dep_progress["Підрозділ"] = dep_progress["ssp_department"].apply(lambda x: short_label(x, 44))
-
-goal_failure = weighted_failure_group(active, ["goal_code", "strategic_goal"])
-dep_failure = weighted_failure_group(dep_active, ["ssp_department"])
 
 
 # ============================================================
-# EXECUTIVE SUMMARY
+# VISUALIZATIONS: СТРАТЕГІЧНІ ЦІЛІ (Статуси + Цілі)
 # ============================================================
 
-period_text = f"Період: {'/'.join(map(str, selected_years)) if selected_years else 'усі роки'} | {', '.join(selected_quarters) if selected_quarters else 'усі квартали'}"
+if view_mode in ["Усі візуалізації", "Стратегічні цілі"] or presentation_mode:
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Статуси виконання за принципом світлофора</div>', unsafe_allow_html=True)
 
-st.markdown(
-    f"""
-<div class="panel">
-    <div class="panel-title">Прогрес виконання: висновок системи</div>
-    <div class="pill-row">
-        <div class="pill {conclusion_badge}">{conclusion_title}</div>
-        <div class="pill">{period_text}</div>
-        <div class="pill">Активних заходів: {total_active}</div>
-        <div class="pill">Відхилення за звітний період: {deviation_current} в.п.</div>
-    </div>
-    <div style="color:#475569;font-size:14px;line-height:1.55;margin-top:10px;">{conclusion_text}</div>
-</div>
-""",
-    unsafe_allow_html=True
-)
+    sc1, sc2 = st.columns([1, 1.6])
 
-kpi_html = "".join([
-    kpi_card("Заходів", total_active, "100.0%", "kpi-blue"),
-    kpi_card("Виконано", completed_count, pct_value(completed_count, total_active), "kpi-green"),
-    kpi_card("Погоджено", approved_count, pct_value(approved_count, total_active), "kpi-green"),
-    kpi_card("На розгляді", on_review_count, pct_value(on_review_count, total_active), "kpi-yellow"),
-    kpi_card("Не враховано", not_counted_count, pct_value(not_counted_count, total_active), "kpi-red"),
-    kpi_card("Не виконано", not_done_count, pct_value(not_done_count, total_active), "kpi-red"),
-    kpi_card("Втратили актуальність", obsolete_count, pct_value(obsolete_count, total_active), "kpi-gray"),
-    kpi_card("Термін не настав", not_time_count, pct_value(not_time_count, total_active), "kpi-gray"),
-    kpi_card("Частково виконано", partly_count, pct_value(partly_count, total_active), "kpi-yellow"),
-    kpi_card("Виконується", in_progress_count, pct_value(in_progress_count, total_active), "kpi-blue"),
-])
-st.markdown(f'<div class="kpi-grid">{kpi_html}</div>', unsafe_allow_html=True)
-
-insight_lines = []
-insight_lines.append(f"⚠️ {without_data} активних заходів не мають поданого погодженого моніторингу.")
-insight_lines.append(f"🔴 {critical_count} заходів мають критичний ризик недосягнення.")
-if not goal_failure.empty:
-    row = goal_failure.iloc[0]
-    insight_lines.append(f"📉 Найбільша концентрація невиконаних заходів у СЦ {row['goal_code']} — {int(row['Невиконаних'])} із {int(row['Активних_заходів'])}; вага в обраному портфелі — {row['Вага_невиконання']}%.")
-if not dep_failure.empty:
-    row = dep_failure.iloc[0]
-    insight_lines.append(f"🏢 Самостійний структурний підрозділ із найвищою концентрацією невиконання: {row['ssp_department']} — {int(row['Невиконаних'])} із {int(row['Активних_заходів'])}; вага в обраному портфелі — {row['Вага_невиконання']}%.")
-insight_lines.append(f"📌 Відхилення за звітний період: {deviation_current} в.п. від планового рівня.")
-
-st.markdown('<div class="panel"><div class="panel-title">Автоматичні інсайти</div>', unsafe_allow_html=True)
-for line in insight_lines:
-    st.markdown(line)
-st.markdown('</div>', unsafe_allow_html=True)
-
-st.markdown('<div class="panel"><div class="panel-title">Показники виконання стратегічного плану</div>', unsafe_allow_html=True)
-g1, g2 = st.columns([1, 1])
-with g1:
-    gauge = go.Figure(go.Indicator(
-        mode="gauge+number",
-        value=completion,
-        number={"suffix": "%", "font": {"size": 54, "color": "#0f172a"}},
-        title={"text": "Виконання СП", "font": {"size": 20}},
-        gauge={
-            "axis": {"range": [0, 100], "tickwidth": 1, "tickcolor": "#64748b"},
-            "bar": {"color": "#0f172a", "thickness": 0.22},
-            "bgcolor": "rgba(0,0,0,0)",
-            "borderwidth": 1,
-            "bordercolor": "#cbd5e1",
-            "steps": [
-                {"range": [0, 30], "color": "#fee2e2"},
-                {"range": [30, 70], "color": "#fef3c7"},
-                {"range": [70, 100], "color": "#dcfce7"},
-            ],
-            "threshold": {"line": {"color": "#111827", "width": 4}, "thickness": 0.75, "value": completion},
-        },
-    ))
-    gauge.update_layout(height=390, margin=dict(l=10, r=10, t=45, b=10), paper_bgcolor="rgba(0,0,0,0)")
-    st.plotly_chart(gauge, use_container_width=True)
-with g2:
-    st.markdown("**Лінійні індикатори стану**")
-    st.markdown(f"Виконання СП: {completion}%")
-    st.progress(min(max(completion / 100, 0), 1))
-    st.markdown(f"Покриття моніторингом: {coverage}%")
-    st.progress(min(max(coverage / 100, 0), 1))
-    st.markdown(f"Відхилення за звітний період: {deviation_current} в.п.")
-    st.progress(min(max((deviation_current + 100) / 100, 0), 1))
-    auto_share = round((1 - calc_risk_share(active) / 100), 3) * 100 if total_active else 0
-    st.markdown(f"Частка заходів без автоматично визначеного ризику: {auto_share:.1f}%")
-    st.progress(min(max(auto_share / 100, 0), 1))
-st.markdown('</div>', unsafe_allow_html=True)
-
-# ============================================================
-# CHART TABS
-# ============================================================
-
-show_overview = focus_mode == "Огляд" or presentation_mode
-show_risks = focus_mode in ["Огляд", "Ризики"] and not presentation_mode
-show_departments = focus_mode in ["Огляд", "Самостійні структурні підрозділи"] and not presentation_mode
-show_goals = focus_mode in ["Огляд", "Стратегічні цілі"] or presentation_mode
-show_dynamics = focus_mode in ["Огляд", "Динаміка"] and not presentation_mode
-show_tables = focus_mode == "Таблиці" and not presentation_mode
-
-if show_overview or show_goals:
-    st.markdown('<div class="panel"><div class="panel-title">Ключова картина виконання</div><div class="panel-subtitle">Менше графіків, але більше управлінського змісту: статуси, цілі та основні джерела відхилення.</div>', unsafe_allow_html=True)
-    c1, c2 = st.columns([0.9, 1.35])
-
-    with c1:
-        status_chart = active.copy()
-        status_chart["Статус"] = status_chart["status"].apply(lambda x: clean(x) if clean(x) else "Не подано")
-        status_counts_full = status_chart.groupby("Статус").size().reset_index(name="Кількість")
-        status_counts_full["sort"] = status_counts_full["Статус"].apply(lambda x: status_rank.get(x, 999))
-        status_counts_full = status_counts_full.sort_values(["sort", "Статус"]).drop(columns="sort")
-        fig = px.bar(
-            status_counts_full,
-            x="Кількість",
-            y="Статус",
-            orientation="h",
-            text="Кількість",
-            color="Статус",
-            color_discrete_map=status_color_map(),
-            title="Розподіл заходів за статусом",
-            labels={"Статус": "Статус", "Кількість": "Кількість"}
+    with sc1:
+        st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
+        st.markdown('<div class="chart-title">Розподіл активних заходів за станом виконання</div>', unsafe_allow_html=True)
+        fig_tl = px.pie(
+            traffic_counts,
+            names="traffic_light",
+            values="Кількість",
+            hole=0.52,
+            color="traffic_light",
+            color_discrete_map=TRAFFIC_COLORS
         )
-        fig.update_layout(showlegend=False)
-        st.plotly_chart(apply_plot_theme(fig, height=360), use_container_width=True)
+        fig_tl.update_traces(
+            textfont_size=13,
+            marker=dict(line=dict(color="#ffffff", width=2))
+        )
+        fig_tl.update_layout(
+            **CHART_LAYOUT,
+            height=300,
+            showlegend=True,
+            legend=dict(orientation="v", x=1, y=0.5),
+            margin=dict(l=10, r=10, t=10, b=10)
+        )
+        st.plotly_chart(fig_tl, use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    with c2:
-        goal_for_chart = goal_progress.sort_values(["Відхилення", "Активних_заходів"], ascending=[True, False]).copy()
-        fig = px.bar(
-            goal_for_chart,
+    with sc2:
+        st.markdown('<div class="section-title" style="margin-top:0">Виконання за стратегічними цілями</div>', unsafe_allow_html=True)
+        st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
+        st.markdown('<div class="chart-title">Відсоток виконання по кожній стратегічній цілі</div>', unsafe_allow_html=True)
+
+        goal_sorted = goal_progress.sort_values("Виконання", ascending=True)
+        goal_sorted["label"] = goal_sorted["goal_code"].astype(str) + " " + goal_sorted["strategic_goal"].astype(str).str[:40]
+
+        fig_goals = px.bar(
+            goal_sorted,
             x="Виконання",
-            y="Ціль",
+            y="label",
             orientation="h",
-            text="Виконання",
-            color="Відхилення",
-            color_continuous_scale="RdYlGn",
-            hover_data=["Активних_заходів", "Покриття_%", "Відхилення", "Ризикових", "Критичних"],
-            title="Стратегічні цілі: виконання і відхилення",
-            labels={"Виконання": "Виконання, %", "Ціль": "Стратегічна ціль", "Відхилення": "Відхилення, в.п."}
+            text=goal_sorted["Виконання"].apply(lambda x: f"{x:.1f}%"),
+            hover_data={"Активних_заходів": True, "Покриття_%": True, "Ризикових": True},
+            color="Виконання",
+            color_continuous_scale=["#dc2626", "#fef08a", "#16a34a"],
+            range_color=[0, 100],
         )
-        fig.update_layout(yaxis={"categoryorder": "total ascending"}, xaxis_range=[0, 100])
-        st.plotly_chart(apply_plot_theme(fig, height=420), use_container_width=True)
-
-    st.markdown('</div>', unsafe_allow_html=True)
-
-if show_risks:
-    st.markdown('<div class="panel"><div class="panel-title">Автоматична оцінка ризиків</div><div class="panel-subtitle">Блок показує рівень ризику недосягнення та структуру ризиків за самостійними структурними підрозділами.</div>', unsafe_allow_html=True)
-    c1, c2 = st.columns([0.8, 1.2])
-
-    with c1:
-        risk_order = ["Критичний ризик", "Середній ризик", "Низький ризик", "Не оцінюється"]
-        risk_counts["auto_risk"] = pd.Categorical(risk_counts["auto_risk"], categories=risk_order, ordered=True)
-        risk_counts = risk_counts.sort_values("auto_risk")
-        fig = px.bar(
-            risk_counts,
-            x="Кількість",
-            y="auto_risk",
-            orientation="h",
-            text="Кількість",
-            color="auto_risk",
-            color_discrete_map=status_color_map(),
-            title="Рівень ризику недосягнення",
-            labels={"auto_risk": "Ризик"}
+        fig_goals.update_traces(
+            textposition="outside",
+            textfont_size=11,
+            marker_line_width=0
         )
-        fig.update_layout(showlegend=False)
-        st.plotly_chart(apply_plot_theme(fig, height=330), use_container_width=True)
-
-    with c2:
-        dep_risk = dep_progress.sort_values(["Критичних", "Ризикових", "Активних_заходів"], ascending=[False, False, False]).head(15)
-        fig = px.scatter(
-            dep_risk,
-            x="Виконання",
-            y="Середній_ризик",
-            size="Активних_заходів",
-            color="Критичних",
-            hover_name="ssp_department",
-            hover_data=["Покриття_%", "Ризикових", "Критичних", "Активних_заходів"],
-            color_continuous_scale="Reds",
-            title="Ризики за самостійними структурними підрозділами",
-            labels={"Виконання": "Виконання, %", "Середній_ризик": "Risk score", "ssp_department": "Самостійний структурний підрозділ"}
+        fig_goals.update_layout(
+            **CHART_LAYOUT,
+            height=max(200, len(goal_sorted) * 38 + 40),
+            xaxis=dict(range=[0, 115], showgrid=True, gridcolor="#f1f5f9", ticksuffix="%"),
+            yaxis=dict(showgrid=False),
+            coloraxis_showscale=False,
+            margin=dict(l=10, r=60, t=10, b=10)
         )
-        fig.update_layout(xaxis_range=[0, 100], yaxis_range=[0, 100])
-        st.plotly_chart(apply_plot_theme(fig, height=390), use_container_width=True)
+        st.plotly_chart(fig_goals, use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
-if show_departments:
-    st.markdown('<div class="panel"><div class="panel-title">Самостійні структурні підрозділи</div><div class="panel-subtitle">Рейтинг показує не тільки виконання, а й покриття погодженими даними та ризиковість.</div>', unsafe_allow_html=True)
 
-    rank_df = dep_progress.sort_values(["Виконання", "Покриття_%", "Активних_заходів"], ascending=[False, False, False]).copy()
+# ============================================================
+# VISUALIZATIONS: САМОСТІЙНІ СТРУКТУРНІ ПІДРОЗДІЛИ
+# ============================================================
+
+if not presentation_mode and view_mode in ["Усі візуалізації", "Самостійні структурні підрозділи"]:
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Рейтинг самостійних структурних підрозділів</div>', unsafe_allow_html=True)
+
+    rank_df = dep_progress.sort_values("Виконання", ascending=False).copy()
     rank_df["Місце"] = range(1, len(rank_df) + 1)
-    rank_display = rank_df[["Місце", "ssp_department", "Виконання", "Покриття_%", "Ризикових", "Критичних", "Активних_заходів"]].rename(columns={
+
+    rank_display = rank_df[[
+        "Місце", "ssp_department", "Виконання", "Покриття_%",
+        "Ризикових", "Критичних", "Активних_заходів"
+    ]].rename(columns={
         "ssp_department": "Самостійний структурний підрозділ",
         "Покриття_%": "Покриття, %",
         "Активних_заходів": "Активних заходів"
     })
-    st.dataframe(rank_display, use_container_width=True, hide_index=True, height=360)
 
-    top_dep = rank_df.sort_values(["Ризикових", "Активних_заходів"], ascending=[False, False]).head(18)
-    fig = px.bar(
-        top_dep,
-        x="Ризикових",
-        y="Підрозділ",
-        orientation="h",
-        text="Ризикових",
-        color="Виконання",
-        color_continuous_scale="Blues",
-        hover_data=["Активних_заходів", "Покриття_%", "Критичних", "Середній_ризик"],
-        title="Підрозділи з найбільшою кількістю ризикових заходів",
-        labels={"Підрозділ": "Підрозділ", "Ризикових": "Ризикові заходи"}
+    styled_rank = (
+        rank_display.style
+        .apply(lambda row: style_rank_table(row, len(rank_display)), axis=1)
+        .set_properties(**{"text-align": "center"})
+        .set_table_styles([{
+            "selector": "th",
+            "props": [
+                ("text-align", "center"), ("background-color", "#e9eef7"),
+                ("color", "#111827"), ("font-weight", "900"), ("border", "1px solid #d8dee9")
+            ]
+        }])
     )
-    fig.update_layout(yaxis={"categoryorder": "total ascending"})
-    st.plotly_chart(apply_plot_theme(fig, height=470), use_container_width=True)
 
-    perf_dep = rank_df.sort_values("Виконання", ascending=False).copy()
-    fig = px.bar(
-        perf_dep,
-        x="Підрозділ",
+    st.dataframe(styled_rank, use_container_width=True, hide_index=True)
+
+    st.markdown("<hr class='vis-separator'>", unsafe_allow_html=True)
+
+    # Chart: top 20 departments for readability
+    top_n = min(30, len(rank_df))
+    top_deps = rank_df.head(top_n)
+
+    st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
+    st.markdown('<div class="chart-title">Виконання за самостійними структурними підрозділами</div>', unsafe_allow_html=True)
+
+    fig_dep = px.bar(
+        top_deps,
+        x="ssp_department",
         y="Виконання",
-        text="Виконання",
-        title="Виконання за самостійними структурними підрозділами",
-        labels={"Підрозділ": "Самостійний структурний підрозділ", "Виконання": "Виконання, %"}
+        text=top_deps["Виконання"].apply(lambda x: f"{x:.1f}%"),
+        hover_data={"Активних_заходів": True, "Покриття_%": True, "Ризикових": True, "Критичних": True},
+        color="Виконання",
+        color_continuous_scale=["#dc2626", "#fef08a", "#16a34a"],
+        range_color=[0, 100],
     )
-    fig.update_layout(xaxis_tickangle=-35, yaxis_range=[0, 100])
-    st.plotly_chart(apply_plot_theme(fig, height=470), use_container_width=True)
+    fig_dep.update_traces(
+        textposition="outside",
+        textfont_size=10,
+        marker_line_width=0
+    )
+    fig_dep.update_layout(
+        **CHART_LAYOUT,
+        height=380,
+        xaxis=dict(
+            tickangle=-35,
+            tickfont=dict(size=10),
+            showgrid=False
+        ),
+        yaxis=dict(
+            range=[0, 115],
+            showgrid=True,
+            gridcolor="#f1f5f9",
+            ticksuffix="%"
+        ),
+        coloraxis_showscale=False,
+        margin=dict(l=10, r=10, t=30, b=100)
+    )
+    st.plotly_chart(fig_dep, use_container_width=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown("<hr class='vis-separator'>", unsafe_allow_html=True)
 
-if show_dynamics:
-    st.markdown('<div class="panel"><div class="panel-title">Динаміка</div><div class="panel-subtitle">Динаміка очищена від зайвого шуму: показуються лише періоди, де є активні заходи після фільтрів.</div>', unsafe_allow_html=True)
+    # Виконання за Заступниками Міністра
+    st.markdown('<div class="section-title">Виконання за Заступниками Міністра</div>', unsafe_allow_html=True)
+
+    deputy_data = active.copy()
+    deputy_data["deputy_minister"] = (
+        deputy_data["deputy_minister"].fillna("").astype(str)
+        .replace("", "Не визначено")
+    )
+
+    deputy_progress = (
+        deputy_data
+        .groupby("deputy_minister")
+        .agg(Активних_заходів=("code", "count"), Виконання=("performance_score", "mean"))
+        .reset_index()
+    )
+    deputy_progress["Виконання"] = deputy_progress["Виконання"].fillna(0).round(1)
+    deputy_progress["Dep_short"] = deputy_progress["deputy_minister"].str[:30]
+
+    st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
+    st.markdown('<div class="chart-title">Виконання за Заступниками Міністра</div>', unsafe_allow_html=True)
+
+    fig_dep2 = px.bar(
+        deputy_progress.sort_values("Виконання", ascending=False),
+        x="Dep_short",
+        y="Виконання",
+        text=deputy_progress.sort_values("Виконання", ascending=False)["Виконання"].apply(lambda x: f"{x:.1f}%"),
+        hover_data={"Активних_заходів": True},
+        color="Виконання",
+        color_continuous_scale=["#dc2626", "#fef08a", "#16a34a"],
+        range_color=[0, 100],
+        custom_data=["deputy_minister"]
+    )
+    fig_dep2.update_traces(
+        textposition="outside",
+        textfont_size=10,
+        hovertemplate="<b>%{customdata[0]}</b><br>Виконання: %{y:.1f}%<br>Активних заходів: %{customdata}<extra></extra>",
+        marker_line_width=0
+    )
+    fig_dep2.update_layout(
+        **CHART_LAYOUT,
+        height=360,
+        xaxis=dict(
+            tickangle=-30,
+            tickfont=dict(size=9),
+            showgrid=False
+        ),
+        yaxis=dict(
+            range=[0, 115],
+            showgrid=True,
+            gridcolor="#f1f5f9",
+            ticksuffix="%"
+        ),
+        coloraxis_showscale=False,
+        margin=dict(l=10, r=10, t=30, b=120)
+    )
+    st.plotly_chart(fig_dep2, use_container_width=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ============================================================
+# VISUALIZATIONS: РИЗИКИ
+# ============================================================
+
+if not presentation_mode and view_mode in ["Усі візуалізації", "Ризики"]:
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Автоматична оцінка ризиків</div>', unsafe_allow_html=True)
+
+    r1, r2 = st.columns([1, 1.6])
+
+    with r1:
+        st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
+        st.markdown('<div class="chart-title">Рівень ризику недосягнення</div>', unsafe_allow_html=True)
+
+        fig_risk_pie = px.pie(
+            risk_counts,
+            names="auto_risk",
+            values="Кількість",
+            hole=0.52,
+            color="auto_risk",
+            color_discrete_map=RISK_COLORS
+        )
+        fig_risk_pie.update_traces(
+            textfont_size=12,
+            marker=dict(line=dict(color="#ffffff", width=2))
+        )
+        fig_risk_pie.update_layout(
+            **CHART_LAYOUT,
+            height=280,
+            margin=dict(l=10, r=10, t=10, b=10),
+            showlegend=True,
+            legend=dict(orientation="v", x=1, y=0.5)
+        )
+        st.plotly_chart(fig_risk_pie, use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with r2:
+        st.markdown('<div class="section-title" style="margin-top:0;">Структура ризиків за самостійними структурними підрозділами</div>', unsafe_allow_html=True)
+        st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
+        st.markdown('<div class="chart-title">Ризики за самостійними структурними підрозділами</div>', unsafe_allow_html=True)
+
+        stacked = dep_active.groupby(["ssp_department", "auto_risk"]).size().reset_index(name="Кількість")
+        # Filter out "Не оцінюється" for cleaner view
+        stacked_vis = stacked[stacked["auto_risk"] != "Не оцінюється"].copy()
+
+        fig_risk_bar = px.bar(
+            stacked_vis,
+            x="ssp_department",
+            y="Кількість",
+            color="auto_risk",
+            color_discrete_map=RISK_COLORS,
+            barmode="stack",
+            labels={
+                "ssp_department": "Самостійний структурний підрозділ",
+                "auto_risk": "Ризик"
+            }
+        )
+        fig_risk_bar.update_layout(
+            **CHART_LAYOUT,
+            height=310,
+            xaxis=dict(tickangle=-35, tickfont=dict(size=9), showgrid=False),
+            yaxis=dict(showgrid=True, gridcolor="#f1f5f9"),
+            legend=dict(orientation="h", x=0, y=-0.25),
+            margin=dict(l=10, r=10, t=10, b=80)
+        )
+        st.plotly_chart(fig_risk_bar, use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ============================================================
+# VISUALIZATIONS: ДИНАМІКА
+# ============================================================
+
+if not presentation_mode and view_mode in ["Усі візуалізації", "Динаміка"]:
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Динаміка виконання</div>', unsafe_allow_html=True)
 
     trend_rows = []
+
     for y in years_for_calc:
         for q in quarters_for_calc:
             temp_raw = build_period_data(strat_df, requests_df, [y], [q])
             temp = apply_dashboard_filters(
                 temp_raw,
                 selected_department_indices,
-                selected_goals,
-                selected_tasks,
-                selected_measures,
-                selected_product_types,
-                selected_deputies,
-                selected_statuses,
-                selected_sources
+                selected_goals if "dash_goals" in st.session_state else [],
+                selected_tasks if "dash_tasks" in st.session_state else [],
+                selected_measures if "dash_measures" in st.session_state else [],
+                selected_product_types if "dash_product_types" in st.session_state else [],
+                selected_deputies if "dash_deputies" in st.session_state else [],
+                selected_statuses if "dash_statuses" in st.session_state else [],
+                selected_sources if "dash_sources" in st.session_state else []
             )
+
             if temp.empty:
-                continue
+                value, cov, dev = 0, 0, -100
+            else:
+                value = mean_completion(temp)
+                cov = calc_coverage(temp)
+                dev = deviation_for_period(value)
+
             trend_rows.append({
                 "Період": f"{y} {q}",
-                "Виконання": mean_completion(temp),
-                "Покриття погодженими даними": calc_coverage(temp),
-                "Відхилення за звітний період": deviation_for_period(mean_completion(temp))
+                "Рік": y,
+                "Квартал": q,
+                "Виконання": value,
+                "Покриття": cov,
+                "Відхилення за звітний період": dev
             })
 
     trend_df = pd.DataFrame(trend_rows)
-    if not trend_df.empty:
-        fig = px.line(
-            trend_df,
-            x="Період",
-            y=["Виконання", "Покриття погодженими даними", "Відхилення за звітний період"],
-            markers=True,
-            title="Тренд виконання, покриття та відхилення",
-            labels={"value": "Значення, %", "variable": "Показник"}
-        )
-        fig.update_yaxes(range=[-100, 100])
-        st.plotly_chart(apply_plot_theme(fig, height=400), use_container_width=True)
 
-        heat_source = []
-        for y in years_for_calc:
-            for q in quarters_for_calc:
-                temp_raw = build_period_data(strat_df, requests_df, [y], [q])
-                temp = apply_dashboard_filters(
-                    temp_raw,
-                    selected_department_indices,
-                    selected_goals,
-                    selected_tasks,
-                    selected_measures,
-                    selected_product_types,
-                    selected_deputies,
-                    selected_statuses,
-                    selected_sources
-                )
-                if temp.empty:
-                    continue
-                temp_dep = explode_departments(temp)
-                dep_heat = temp_dep.groupby("ssp_department").agg(Виконання=("performance_score", "mean"), Активних=("code", "count")).reset_index()
-                for _, row in dep_heat.iterrows():
-                    heat_source.append({
-                        "Самостійний структурний підрозділ": row["ssp_department"],
-                        "Період": f"{y} {q}",
-                        "Виконання": round(row["Виконання"], 1) if pd.notna(row["Виконання"]) else 0,
-                        "Активних": int(row["Активних"])
-                    })
+    st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
+    st.markdown('<div class="chart-title">Тренд виконання, покриття і відхилення</div>', unsafe_allow_html=True)
 
-        heat_df = pd.DataFrame(heat_source)
-        if not heat_df.empty:
-            top_heat_deps = dep_progress.sort_values("Активних_заходів", ascending=False).head(18)["ssp_department"].tolist()
-            heat_df = heat_df[heat_df["Самостійний структурний підрозділ"].isin(top_heat_deps)]
-            fig = px.density_heatmap(
-                heat_df,
-                x="Період",
-                y="Самостійний структурний підрозділ",
-                z="Виконання",
-                histfunc="avg",
-                color_continuous_scale="Blues",
-                title="Теплова карта виконання: топ підрозділів за кількістю активних заходів"
+    fig_trend = px.line(
+        trend_df,
+        x="Період",
+        y=["Виконання", "Покриття", "Відхилення за звітний період"],
+        markers=True,
+        color_discrete_map={
+            "Виконання": "#005BBB",
+            "Покриття": "#0891b2",
+            "Відхилення за звітний період": "#dc2626"
+        }
+    )
+    fig_trend.update_traces(line_width=2.5, marker_size=7)
+    fig_trend.update_layout(
+        **CHART_LAYOUT,
+        height=340,
+        xaxis=dict(showgrid=False, tickangle=-20),
+        yaxis=dict(showgrid=True, gridcolor="#f1f5f9", ticksuffix="%"),
+        legend=dict(orientation="h", x=0, y=1.12),
+        margin=dict(l=10, r=10, t=40, b=30)
+    )
+    st.plotly_chart(fig_trend, use_container_width=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ============================================================
+# VISUALIZATIONS: HEATMAP
+# ============================================================
+
+if not presentation_mode and view_mode in ["Усі візуалізації", "Heatmap"]:
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Heatmap: самостійний структурний підрозділ × квартал</div>', unsafe_allow_html=True)
+
+    heat_rows = []
+
+    for y in years_for_calc:
+        for q in quarters_for_calc:
+            temp_raw = build_period_data(strat_df, requests_df, [y], [q])
+            temp = apply_dashboard_filters(
+                temp_raw,
+                selected_department_indices,
+                selected_goals if "dash_goals" in st.session_state else [],
+                selected_tasks if "dash_tasks" in st.session_state else [],
+                selected_measures if "dash_measures" in st.session_state else [],
+                selected_product_types if "dash_product_types" in st.session_state else [],
+                selected_deputies if "dash_deputies" in st.session_state else [],
+                selected_statuses if "dash_statuses" in st.session_state else [],
+                selected_sources if "dash_sources" in st.session_state else []
             )
-            st.plotly_chart(apply_plot_theme(fig, height=520), use_container_width=True)
-    else:
-        st.info("Недостатньо даних для побудови динаміки.")
 
-    st.markdown('</div>', unsafe_allow_html=True)
+            if temp.empty:
+                continue
+
+            temp_dep = explode_departments(temp)
+            dep_heat = temp_dep.groupby("ssp_department").agg(
+                Виконання=("performance_score", "mean")
+            ).reset_index()
+
+            for _, row in dep_heat.iterrows():
+                heat_rows.append({
+                    "Самостійний структурний підрозділ": row["ssp_department"],
+                    "Період": f"{y} {q}",
+                    "Виконання": round(row["Виконання"], 1) if pd.notna(row["Виконання"]) else 0
+                })
+
+    heat_df = pd.DataFrame(heat_rows)
+
+    if not heat_df.empty:
+        st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
+        st.markdown('<div class="chart-title">Теплова карта виконання</div>', unsafe_allow_html=True)
+
+        pivot = heat_df.pivot_table(
+            index="Самостійний структурний підрозділ",
+            columns="Період",
+            values="Виконання",
+            aggfunc="mean"
+        ).fillna(0)
+
+        fig_heat = px.imshow(
+            pivot,
+            color_continuous_scale=["#fee2e2", "#fef9c3", "#dcfce7"],
+            zmin=0, zmax=100,
+            aspect="auto",
+            text_auto=".0f",
+            labels=dict(x="Період", y="Підрозділ", color="Виконання, %")
+        )
+        fig_heat.update_layout(
+            **CHART_LAYOUT,
+            height=max(300, len(pivot) * 22 + 80),
+            coloraxis_colorbar=dict(title="Викон., %", ticksuffix="%"),
+            xaxis=dict(side="top", tickfont=dict(size=10)),
+            yaxis=dict(tickfont=dict(size=9)),
+            margin=dict(l=10, r=60, t=60, b=10)
+        )
+        st.plotly_chart(fig_heat, use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+    else:
+        st.info("Недостатньо даних для побудови теплової карти.")
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ============================================================
 # PROBLEM MEASURES
 # ============================================================
 
-if not presentation_mode and focus_mode in ["Огляд", "Ризики", "Таблиці"]:
-    st.markdown('<div class="panel"><div class="panel-title">Проблемні заходи</div><div class="panel-subtitle">Тут залишені тільки ті заходи, які реально потребують уваги: немає погоджених даних, низьке виконання або середній/критичний ризик.</div>', unsafe_allow_html=True)
+if not presentation_mode:
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Проблемні заходи</div>', unsafe_allow_html=True)
 
     risk_table = active[
         (
-            active["auto_risk"].isin(["Критичний ризик", "Середній ризик"])
-            | (active["status"] == "Не подано")
-            | (active["performance_score"].fillna(0) < 75)
+            active["auto_risk"].isin(["Критичний ризик", "Середній ризик"]) |
+            (active["status"] == "Не подано") |
+            (active["performance_score"].fillna(0) < 75)
         )
         & (active["included_in_assessment"] == True)
     ].copy()
@@ -1563,10 +2074,9 @@ if not presentation_mode and focus_mode in ["Огляд", "Ризики", "Та�
     if risk_table.empty:
         st.success("Ризикових заходів за обраний період не виявлено.")
     else:
-        risk_table["Захід"] = risk_table["name"].apply(lambda x: short_label(x, 130))
         risk_table = risk_table.rename(columns={
-            "period_label": "Період",
             "code": "Код",
+            "name": "Захід",
             "indicator": "Індикатор",
             "department": "Головний ССП",
             "status_display": "Статус виконання",
@@ -1574,25 +2084,32 @@ if not presentation_mode and focus_mode in ["Огляд", "Ризики", "Та�
             "numeric_value": "Фактичне значення",
             "auto_risk": "Рівень ризику",
             "risk_score": "Risk score",
+            "traffic_light": "Traffic light",
             "risk_reason": "Причина ризику",
-            "progress_text": "Опис прогресу"
+            "progress_text": "Опис прогресу",
+            "period_label": "Період"
         })
+
         st.dataframe(
-            risk_table[["Період", "Код", "Захід", "Індикатор", "Головний ССП", "Статус виконання", "Планове значення", "Фактичне значення", "Рівень ризику", "Risk score", "Причина ризику", "Опис прогресу"]],
+            risk_table[[
+                "Період", "Код", "Захід", "Індикатор", "Головний ССП",
+                "Статус виконання", "Планове значення", "Фактичне значення",
+                "Traffic light", "Рівень ризику", "Risk score", "Причина ризику", "Опис прогресу"
+            ]],
             use_container_width=True,
-            hide_index=True,
-            height=430
+            hide_index=True
         )
 
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ============================================================
 # FULL TABLE
 # ============================================================
 
-if show_tables:
-    st.markdown('<div class="panel"><div class="panel-title">Повна таблиця активних заходів</div><div class="panel-subtitle">Детальна таблиця для перевірки даних та експорту.</div>', unsafe_allow_html=True)
+if not presentation_mode and view_mode == "Таблиці":
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Повна таблиця активних заходів</div>', unsafe_allow_html=True)
 
     full = active.rename(columns={
         "period_label": "Період",
@@ -1615,14 +2132,18 @@ if show_tables:
         "risk_reason": "Причина ризику"
     })
 
-    table_cols = [
-        "Період", "Код", "Захід", "Індикатор", "Одиниця виміру", "Тип продукту",
-        "Головний ССП", "Джерело даних", "Початок", "Кінець", "Планове значення",
-        "Фактичне значення", "Статус виконання", "Оцінка виконання, %", "Traffic light",
-        "Ризик", "Risk score", "Причина ризику"
-    ]
-    st.dataframe(full[table_cols], use_container_width=True, hide_index=True, height=600)
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.dataframe(
+        full[[
+            "Період", "Код", "Захід", "Індикатор", "Одиниця виміру", "Тип продукту",
+            "Головний ССП", "Джерело даних", "Початок", "Кінець",
+            "Планове значення", "Фактичне значення", "Статус виконання",
+            "Оцінка виконання, %", "Traffic light", "Ризик", "Risk score", "Причина ризику"
+        ]],
+        use_container_width=True,
+        hide_index=True
+    )
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ============================================================
@@ -1630,37 +2151,38 @@ if show_tables:
 # ============================================================
 
 if not presentation_mode:
-    with st.expander("Методологія розрахунку", expanded=False):
-        st.markdown(
-            """
-            **Активні заходи** — заходи, період виконання яких охоплює обраний рік і квартал.
+    with st.expander("Методологія розрахунку"):
+        st.markdown("""
+        <div class="methodology-box">
+        <strong>Активні заходи</strong> — заходи, період виконання яких охоплює обраний рік і квартал.<br><br>
 
-            **Погоджені дані** — дані із Supabase, де `approval_status = "Погоджено"`. Саме вони включаються до фактичної оцінки виконання.
+        <strong>Виконання СП</strong> рахується як середня оцінка виконання активних заходів:
+        <ul>
+            <li>якщо є планове та фактичне значення — використовується співвідношення факт / план;</li>
+            <li>якщо план / факт не можна порахувати числово — використовується статус виконання;</li>
+            <li>«Виконано» = 100%; «Частково виконано» = 75%; «Виконується» = 50%;</li>
+            <li>«Не виконано», «Не подано», «Не розпочато», «Прострочено», «Потребує уваги» = 0%;</li>
+            <li>«Термін не настав» та «Втратив актуальність» не включаються до оцінки ризику.</li>
+        </ul>
 
-            **Виконання СП** рахується як середня оцінка активних заходів:
-            - якщо є числовий план і факт — використовується співвідношення факт / план;
-            - якщо числове співвідношення неможливе — використовується статус;
-            - «Виконано» = 100%;
-            - «Частково виконано» = 75%;
-            - «Виконується» = 50%;
-            - «Не виконано», «Не подано», «Не розпочато», «Прострочено», «Потребує уваги» = 0%;
-            - «Термін не настав» і «Втратив актуальність» не включаються до ризикової оцінки.
+        <strong>Risk score</strong> визначається автоматично на основі стану виконання:
+        відсутність погоджених даних, відставання від плану, прострочення строку, проблемний статус.<br><br>
 
-            **Risk score** визначається автоматично за відсутністю погоджених даних, відставанням факт/план, проблемним статусом і простроченням строку.
-            """
-        )
+        <strong>Traffic light:</strong>
+        🟢 100%+ — у графіку | 🟡 75–99% — часткове | 🔴 &lt;75% — відставання | ⚪ не оцінюється.<br><br>
+
+        <strong>Відхилення за звітний період</strong> = середній відсоток виконання мінус 100%.
+        </div>
+        """, unsafe_allow_html=True)
 
 
 # ============================================================
 # FOOTER
 # ============================================================
 
-st.markdown(
-    """
+st.markdown("""
 <div class="footer">
     <strong>Розроблено департаментом стратегічного планування та макроекономічного прогнозування</strong><br>
     Версія DEMO 1.4 | 2026 | Внутрішня система моніторингу стратегічного плану
 </div>
-""",
-    unsafe_allow_html=True
-)
+""", unsafe_allow_html=True)

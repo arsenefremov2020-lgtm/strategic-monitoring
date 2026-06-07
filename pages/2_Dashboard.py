@@ -1676,7 +1676,7 @@ with st.container():
     <div class="filter-panel">
         <div class="filter-header">
             <span class="filter-title">🔍 Параметри відбору</span>
-            <span class="filter-hint">Оберіть фільтри — дашборд перерахується автоматично</span>
+            <span class="filter-hint">Оберіть необхідні параметри: період, індекс ССП та режим перегляду даних</span>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -1704,7 +1704,7 @@ with st.container():
 
     with fc:
         selected_department_indices = st.multiselect(
-            "🏢 Індекс ССП",
+            "🏢 Індекс самостійного струкутрного підрозділу",
             department_indices_options,
             key="dash_department_indices",
             placeholder="Усі підрозділи"
@@ -1712,7 +1712,7 @@ with st.container():
 
     with fd:
         view_mode = st.selectbox(
-            "📊 Режим перегляду",
+            "📊 Режим перегляду даних",
             [
                 "Усі візуалізації",
                 "Стратегічні цілі",
@@ -1727,7 +1727,7 @@ with st.container():
 
     with fe:
         presentation_mode = st.toggle(
-            "🖥 Презентаційний режим",
+            "🖥 Presentation mode",
             value=False,
             key="dash_presentation_mode",
             help="Спрощений вигляд: висновок, ключові індикатори та основні графіки."
@@ -2086,7 +2086,7 @@ if presentation_mode:
 
         <!-- NAV BAR -->
         <div class="pres-nav">
-            <div class="pres-nav-title">Стратегічний моніторинг · Презентаційний режим</div>
+            <div class="pres-nav-title">Стратегічний моніторинг · Presentation mode</div>
             <div class="pres-nav-dots">
                 <div class="pres-dot active"></div>
                 <div class="pres-dot"></div>

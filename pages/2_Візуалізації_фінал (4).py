@@ -1882,6 +1882,30 @@ period_label = f"{period_year_label} | {period_quarter_label}"
 badge_css = {"risk-high": "badge-red", "risk-medium": "badge-yellow", "risk-low": "badge-green"}
 block_css = {"risk-high": "conclusion-risk-high", "risk-medium": "conclusion-risk-medium", "risk-low": "conclusion-risk-low"}
 
+# ============================================================
+# AGGREGATIONS
+# ============================================================
+
+status_counts = active.groupby("status_display").size().reset_index(name="Кількість")
+risk_counts = active.groupby("auto_risk").size().reset_index(name="Кількість")
+traffic_counts = active.groupby("traffic_light").size().reset_index(name="Кількість")
+
+goal_progress = (
+    active
+    .groupby(["goal_code", "strategic_goal"])
+    .agg(
+        Активних_заходів=("code", "count"),
+        Виконання=("performance_score", "mean"),
+        Покриття=("status", lambda x: (x != "Не подано").sum()),
+        Ризикових=("auto_risk", lambda x: x.isin(["Критичний ризик", "Середній ризик"]).sum()),
+        Середній_ризик=("risk_score", "mean")
+    )
+    .reset_index()
+)
+goal_progress["Виконання"] = goal_progress["Виконання"].fillna(0).round(1)
+goal_progress["Покриття_%"] = (goal_progress["Покриття"] / goal_progress["Активних_заходів"] * 100).round(1)
+goal_progress["Середній_ризик"] = goal_progress["Середній_ризик"].fillna(0).round(1)
+
 
 # ============================================================
 # PRESENTATION MODE — PowerPoint-style slides
@@ -2221,31 +2245,6 @@ with ind_col2:
     st.markdown("</div>", unsafe_allow_html=True)
 
 st.markdown("</div>", unsafe_allow_html=True)
-
-
-# ============================================================
-# AGGREGATIONS
-# ============================================================
-
-status_counts = active.groupby("status_display").size().reset_index(name="Кількість")
-risk_counts = active.groupby("auto_risk").size().reset_index(name="Кількість")
-traffic_counts = active.groupby("traffic_light").size().reset_index(name="Кількість")
-
-goal_progress = (
-    active
-    .groupby(["goal_code", "strategic_goal"])
-    .agg(
-        Активних_заходів=("code", "count"),
-        Виконання=("performance_score", "mean"),
-        Покриття=("status", lambda x: (x != "Не подано").sum()),
-        Ризикових=("auto_risk", lambda x: x.isin(["Критичний ризик", "Середній ризик"]).sum()),
-        Середній_ризик=("risk_score", "mean")
-    )
-    .reset_index()
-)
-goal_progress["Виконання"] = goal_progress["Виконання"].fillna(0).round(1)
-goal_progress["Покриття_%"] = (goal_progress["Покриття"] / goal_progress["Активних_заходів"] * 100).round(1)
-goal_progress["Середній_ризик"] = goal_progress["Середній_ризик"].fillna(0).round(1)
 
 dep_active = explode_departments(active)
 dep_progress = (

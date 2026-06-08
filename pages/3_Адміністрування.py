@@ -1340,7 +1340,7 @@ if not chart_df.empty:
     }
     fig = px.pie(
         chart_df, names="Статус", values="Кількість", hole=0.48,
-        title="Розподіл заявок за статусом погодження",
+        title="Розподіл заявок за статусом виконання",
         color="Статус", color_discrete_map=color_map
     )
     fig.update_layout(

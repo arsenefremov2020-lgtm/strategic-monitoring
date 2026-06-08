@@ -1547,7 +1547,7 @@ st.markdown(
 k1, k2, k3, k4, k5 = st.columns(5)
 
 with k1:
-    admin_kpi_card("Самостійний структурний підрозділ", clean(selected_row.get("department", "")))
+    admin_kpi_card("Індекс самостійного структурного підрозділу", clean(selected_row.get("department", "")))
 with k2:
     admin_kpi_card("Рік / Квартал", f"{clean(selected_row.get('year', ''))} / {clean(selected_row.get('quarter', ''))}")
 with k3:

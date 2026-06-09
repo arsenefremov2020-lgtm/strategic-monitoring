@@ -137,6 +137,10 @@ html, body, [class*="css"] {
     box-shadow: 0 2px 12px rgba(0,0,0,0.04);
 }
 
+div[data-testid="stMarkdownContainer"] .section-card:empty {
+    display: none !important;
+}
+
 .section-title {
     font-size: clamp(15px, 1.4vw, 19px);
     font-weight: 800;

@@ -508,7 +508,9 @@ div[data-testid="stPageLink"] a:hover {
 # ============================================================
 
 def render_html(html):
-    st.markdown(dedent(html).strip(), unsafe_allow_html=True)
+    html = str(html)
+    html = "\n".join(line.lstrip() for line in html.splitlines() if line.strip())
+    st.markdown(html, unsafe_allow_html=True)
 
 
 def clean(value):

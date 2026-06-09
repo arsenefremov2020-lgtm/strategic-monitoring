@@ -1078,7 +1078,7 @@ with n1:
 
 with n2:
     st.page_link(
-        "pages/2_Візуалізації.py",
+        "pages/2_Dashboard.py",
         label="Перейти до аналітики",
         icon="📊"
     )

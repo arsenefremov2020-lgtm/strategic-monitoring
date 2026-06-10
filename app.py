@@ -32,6 +32,70 @@ st.markdown(
 <style>
 header[data-testid="stHeader"] {
     background: transparent !important;
+    box-shadow: none !important;
+    border: none !important;
+}
+
+header[data-testid="stHeader"]::before {
+    content: "";
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 6px;
+    z-index: 999999;
+
+    background: linear-gradient(
+        90deg,
+        #005BBB 0%,
+        #005BBB 50%,
+        #FFD500 50%,
+        #FFD500 100%
+    );
+
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.16);
+}
+
+div[data-testid="stStatusWidget"]::before {
+    content: "🤸";
+    position: fixed;
+    top: -8px;
+    left: -50px;
+    z-index: 1000000;
+
+    font-size: 25px;
+    line-height: 1;
+
+    animation:
+        acrobatMove 3.2s linear infinite,
+        acrobatFlip 0.55s ease-in-out infinite;
+}
+
+@keyframes acrobatMove {
+    0% {
+        left: -55px;
+    }
+    100% {
+        left: calc(100vw + 55px);
+    }
+}
+
+@keyframes acrobatFlip {
+    0% {
+        transform: rotate(0deg) translateY(0);
+    }
+    25% {
+        transform: rotate(90deg) translateY(-5px);
+    }
+    50% {
+        transform: rotate(180deg) translateY(0);
+    }
+    75% {
+        transform: rotate(270deg) translateY(5px);
+    }
+    100% {
+        transform: rotate(360deg) translateY(0);
+    }
 }
 .stApp {
     background:

@@ -12,7 +12,7 @@ st.set_page_config(page_title="Стратегічний план", layout="wide"
 with st.sidebar:
     st.image(
         "assets/Мінекономіки.png",
-        width=185
+        width=205
     )
 
 FILE_PATH = "Під моніторинг СП.xlsx"

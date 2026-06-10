@@ -1319,7 +1319,7 @@ render_html(f"""
         <div class="passport-value">{display_value(deputy_minister)}</div>
     </div>
 
-    <div class="passport-cell col-3">
+    <div class="passport-cell col-2">
         <div class="passport-label">Тип продукту</div>
         <div class="passport-value">{display_value(selected_measure.get("product_type", ""))}</div>
     </div>
@@ -1334,7 +1334,7 @@ render_html(f"""
         <div class="passport-value">{escape(end_period_display)}</div>
     </div>
 
-    <div class="passport-cell col-1">
+    <div class="passport-cell col-2">
         <div class="passport-label">Одиниця виміру</div>
         <div class="passport-value">{display_value(selected_measure.get("unit", ""))}</div>
     </div>

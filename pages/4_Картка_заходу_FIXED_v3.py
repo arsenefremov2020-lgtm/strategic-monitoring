@@ -1751,7 +1751,7 @@ if view_mode in ["Огляд", "Історія подання відомосте
 
 render_html('<div class="card"><div class="card-title">Швидкі переходи</div>')
 
-n1, spacer, n2 = st.columns([1, 1, 1], gap="large")
+n1, spacer, n2 = st.columns([1, 1,5, 1], gap="large")
 
 with n1:
     st.page_link(

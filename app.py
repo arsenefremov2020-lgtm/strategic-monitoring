@@ -31,8 +31,7 @@ st.markdown(
     """
 <style>
 header[data-testid="stHeader"] {
-    background: #eef2f7 !important;
-    border-bottom: 1px solid rgba(203, 213, 225, 0.6) !important;
+    background: transparent !important;
 }
 .stApp {
     background:

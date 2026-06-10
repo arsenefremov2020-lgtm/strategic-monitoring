@@ -59,7 +59,7 @@ header[data-testid="stHeader"]::before {
 div[data-testid="stStatusWidget"]::before {
     content: "🤸";
     position: fixed;
-    top: -8px;
+    top: 4px;
     left: -50px;
     z-index: 1000000;
 

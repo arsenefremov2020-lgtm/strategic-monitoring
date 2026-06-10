@@ -1922,12 +1922,9 @@ st.markdown('</div>', unsafe_allow_html=True)
 with st.expander("Технічна таблиця заявок"):
     st.dataframe(filtered, use_container_width=True, hide_index=True)
 
-st.markdown(
-    """
-    <div class="footer">
-        Розроблено департаментом стратегічного планування та макроекономічного прогнозування<br>
-        Версія DEMO 1.4 | 2026 | Внутрішня система моніторингу стратегічного плану
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+st.markdown("""
+<div class="footer">
+    <strong>Розроблено департаментом стратегічного планування та макроекономічного прогнозування</strong><br>
+    Версія DEMO 1.4 | 2026 | Внутрішня система моніторингу стратегічного плану
+</div>
+""", unsafe_allow_html=True)

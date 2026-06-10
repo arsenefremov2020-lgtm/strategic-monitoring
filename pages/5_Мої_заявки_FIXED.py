@@ -565,7 +565,7 @@ with c3:
     selected_status = st.selectbox("Статус погодження", APPROVAL_FILTER_OPTIONS, index=0)
 
 with c4:
-    search = st.text_input("Пошук за кодом / ID / ПІБ")
+    search = st.text_input("Пошук за ID або назвою заходу")
 
 filtered = df[df["department"].astype(str) == str(selected_department)].copy()
 

@@ -9,6 +9,11 @@ from supabase import create_client
 
 st.set_page_config(page_title="Стратегічний план", layout="wide")
 
+st.logo(
+    "assets/Мінекономіки.png",
+    size="large"
+)
+
 FILE_PATH = "Під моніторинг СП.xlsx"
 SHEET_NAME = "Страт_матриця"
 

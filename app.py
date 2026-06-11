@@ -1085,7 +1085,31 @@ def measure_matches_status_mode(monitoring_df, code, selected_years, selected_qu
 # Strategic plan filtering
 # ------------------------------------------------------------
 
+def extract_year_from_text(value):
+    text = raw_value(value)
+    match = re.search(r"(20\d{2})", text)
+    return int(match.group(1)) if match else None
+
+
 def is_active_in_any_selected_year(row, selected_years):
+    if not selected_years:
+        return True
+
+    selected_years = [int(y) for y in selected_years]
+
+    start_year = extract_year_from_text(row.get("measure_start_date", ""))
+    end_year = extract_year_from_text(row.get("measure_end_date", ""))
+
+    if start_year and end_year:
+        return any(start_year <= year <= end_year for year in selected_years)
+
+    if start_year and not end_year:
+        return any(year >= start_year for year in selected_years)
+
+    if end_year and not start_year:
+        return any(year <= end_year for year in selected_years)
+
+    # fallback, якщо дати не заповнені: дивимось на річні цільові колонки
     for year in selected_years:
         col = f"target_{year}"
         if col in row and not is_empty_or_nd(row.get(col, "")):
@@ -1249,6 +1273,7 @@ def apply_measure_filters(
         & filtered["matches_product_type"]
         & filtered["matches_deputy"]
         & filtered["matches_search"]
+        & filtered["active_in_selected_years"]
         & filtered["matches_status_mode"]
     ]
 

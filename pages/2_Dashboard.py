@@ -2525,13 +2525,12 @@ dep_progress["Середній_ризик"] = dep_progress["Середній_р�
 
 if view_mode in ["Усі візуалізації", "Стратегічні цілі"] or presentation_mode:
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">Статуси виконання за принципом світлофора</div>', unsafe_allow_html=True)
 
     sc1, sc2 = st.columns([1, 1.6])
 
     with sc1:
-        st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
-        st.markdown('<div class="chart-title">Розподіл активних заходів за станом виконання</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Статуси виконання за принципом світлофора</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-subtitle">Розподіл активних заходів за станом виконання</div>', unsafe_allow_html=True)
         fig_tl = px.pie(
             traffic_counts,
             names="traffic_light",
@@ -2552,12 +2551,10 @@ if view_mode in ["Усі візуалізації", "Стратегічні ці
             margin=dict(l=10, r=10, t=10, b=10)
         )
         st.plotly_chart(fig_tl, use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
 
     with sc2:
-        st.markdown('<div class="section-title" style="margin-top:0">Виконання за стратегічними цілями</div>', unsafe_allow_html=True)
-        st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
-        st.markdown('<div class="chart-title">Відсоток виконання по кожній стратегічній цілі</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Виконання за стратегічними цілями</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-subtitle">Відсоток виконання по кожній стратегічній цілі</div>', unsafe_allow_html=True)
 
         goal_sorted = goal_progress.sort_values("Виконання", ascending=True)
         goal_sorted["label"] = goal_sorted["goal_code"].astype(str) + " " + goal_sorted["strategic_goal"].astype(str).str[:40]
@@ -2587,7 +2584,6 @@ if view_mode in ["Усі візуалізації", "Стратегічні ці
             margin=dict(l=10, r=60, t=10, b=10)
         )
         st.plotly_chart(fig_goals, use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("</div>", unsafe_allow_html=True)
 

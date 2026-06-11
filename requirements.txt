@@ -6,3 +6,4 @@ supabase
 matplotlib
 python-docx
 xlsxwriter
+streamlit-aggrid==1.0.5

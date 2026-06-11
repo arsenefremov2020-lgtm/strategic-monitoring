@@ -6,6 +6,11 @@ from datetime import datetime
 
 st.set_page_config(page_title="Журнал дій", layout="wide")
 
+st.logo(
+    "assets/Мінекономіки.png",
+    size="large"
+)
+
 supabase = create_client(
     st.secrets["SUPABASE_URL"],
     st.secrets["SUPABASE_KEY"]

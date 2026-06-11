@@ -2024,7 +2024,9 @@ if presentation_mode:
     # goal progress data for slide
     goal_rows_html = ""
     if not goal_progress.empty:
-        gp_sorted = goal_progress.sort_values("Виконання", ascending=False)
+        gp_sorted = goal_progress.copy()
+        gp_sorted["_goal_sort"] = gp_sorted["goal_code"].apply(code_sort_key)
+        gp_sorted = gp_sorted.sort_values("_goal_sort")
         for _, gr in gp_sorted.iterrows():
             pct = min(max(float(gr["Виконання"]), 0), 100)
             if pct >= 70:

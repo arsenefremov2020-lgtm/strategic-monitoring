@@ -1064,7 +1064,7 @@ def has_measure_risks(monitoring_df, code, selected_years, selected_quarters):
 def measure_matches_status_mode(monitoring_df, code, selected_years, selected_quarters, mode):
     status = get_measure_status(monitoring_df, code, selected_years, selected_quarters)
 
-    if mode == "Усі відомості":
+    if mode == "Усі заходи стратегічного плану":
         return True
 
     if mode == "Лише погоджені":
@@ -1685,7 +1685,7 @@ def default_state():
         "ssp_filter": [],
         "selected_years_main": [2026],
         "selected_quarters_main": ["I"],
-        "status_mode_main": "Усі відомості",
+        "status_mode_main": "Усі заходи стратегічного плану",
         "selected_goal_codes_main": [],
         "selected_product_types_main": [],
         "search_main": ""
@@ -1700,7 +1700,7 @@ def reset_main_filters():
     st.session_state.ssp_filter = []
     st.session_state.selected_years_main = [2026]
     st.session_state.selected_quarters_main = ["I"]
-    st.session_state.status_mode_main = "Усі відомості"
+    st.session_state.status_mode_main = "Усі заходи стратегічного плану"
     st.session_state.selected_goal_codes_main = []
     st.session_state.selected_product_types_main = []
     st.session_state.search_main = ""
@@ -1751,7 +1751,7 @@ year_options = list(range(2026, 2035))
 quarter_options = ["I", "II", "III", "IV"]
 
 status_options = [
-    "Усі відомості",
+    "Усі заходи стратегічного плану",
     "Лише погоджені",
     "Лише на розгляді",
     "Лише на доопрацюванні",

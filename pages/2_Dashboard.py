@@ -96,7 +96,8 @@ html, body, [class*="css"] {
 }
 
 .header-main {
-    flex: 1 1 60%;
+    flex: 1 1 100%;
+    width: 100%;
     min-width: 200px;
 }
 
@@ -112,7 +113,8 @@ html, body, [class*="css"] {
     font-size: clamp(12px, 1.1vw, 14px);
     color: #475569;
     line-height: 1.6;
-    max-width: 680px;
+    max-width: none;
+    width: 100%;
 }
 
 .header-pills {

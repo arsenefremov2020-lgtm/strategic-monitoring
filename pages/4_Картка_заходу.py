@@ -28,6 +28,9 @@ supabase = create_client(
 
 st.markdown("""
 <style>
+header[data-testid="stHeader"] {
+    background: transparent !important;
+}
 html, body, [class*="css"] {
     font-family: 'Helvetica Neue', 'Arial', sans-serif;
 }

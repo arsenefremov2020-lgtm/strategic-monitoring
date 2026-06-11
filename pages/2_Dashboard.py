@@ -2408,45 +2408,6 @@ render_kpi_grid([
     {"title": "Виконується", "count": in_progress_count, "percent": pct_value(in_progress_count, total_active), "color": "kpi-blue"},
 ])
 
-# ── DELTA-КАРТКИ: відхилення від планового рівня ──────────────
-def _delta_card(label, value, suffix="%", good_direction="up"):
-    if good_direction == "up":
-        positive_color, negative_color = "#16a34a", "#dc2626"
-        positive_bg, negative_bg = "#f0fdf4", "#fef2f2"
-        positive_border, negative_border = "#86efac", "#fca5a5"
-    else:
-        positive_color, negative_color = "#dc2626", "#16a34a"
-        positive_bg, negative_bg = "#fef2f2", "#f0fdf4"
-        positive_border, negative_border = "#fca5a5", "#86efac"
-    if value > 0:
-        arrow, color, bg, border = "↑", positive_color, positive_bg, positive_border
-    elif value < 0:
-        arrow, color, bg, border = "↓", negative_color, negative_bg, negative_border
-    else:
-        arrow, color, bg, border = "→", "#64748b", "#f8fafc", "#e2e8f0"
-    return (
-        f'<div style="background:{bg};border:1px solid {border};border-radius:10px;'
-        f'padding:14px 18px;flex:1;min-width:160px;">'
-        f'<div style="font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;'
-        f'letter-spacing:.06em;margin-bottom:6px;">{label}</div>'
-        f'<div style="font-size:26px;font-weight:900;color:{color};line-height:1;">'
-        f'{arrow} {value:+.1f}{suffix}</div>'
-        f'<div style="font-size:11px;color:#94a3b8;margin-top:4px;">відхилення від плану</div>'
-        f'</div>'
-    )
-
-st.markdown(
-    '<div style="display:flex;flex-wrap:wrap;gap:12px;margin:14px 0 4px 0;">'
-    + _delta_card("Виконання СП", deviation_current, "%", "up")
-    + _delta_card("Покриття моніторингом", round(coverage - 100, 1), "в.п.", "up")
-    + _delta_card("Частка без ризику", round((100 - risk_share) - 100, 1), "в.п.", "up")
-    + _delta_card("Критичний ризик", round(critical_count / total_active * 100 if total_active else 0, 1), "%", "down")
-    + '</div>',
-    unsafe_allow_html=True
-)
-
-st.markdown("</div>", unsafe_allow_html=True)
-
 
 # ============================================================
 # АВТОМАТИЧНІ ІНСАЙТИ

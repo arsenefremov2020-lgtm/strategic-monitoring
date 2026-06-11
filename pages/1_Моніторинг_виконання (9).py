@@ -1221,8 +1221,7 @@ for _, row in filtered_measures.iterrows():
         "Національний\nрівень":  raw_value(row.get("source_national", "")),
 
         "Головний\nвиконавець":  raw_value(row.get("resp_main", "")),
-        "Співвиконавець 1":       raw_value(row.get("resp_co_1", "")),
-        "Співвиконавець 2":       raw_value(row.get("resp_co_2", "")),
+        "Співвиконавець":       raw_value(row.get("resp_co_1", "")),
 
         "Початкова\nдата":  raw_value(row.get("measure_start_date", "")),
         "Кінцева\nдата":    raw_value(row.get("measure_end_date", "")),

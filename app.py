@@ -30,6 +30,9 @@ supabase = create_client(
 st.markdown(
     """
 <style>
+header[data-testid="stHeader"] {
+    background: transparent !important;
+}
 .stApp {
     background:
         radial-gradient(circle at top right, rgba(37,99,235,0.08), transparent 28%),

@@ -524,17 +524,29 @@ def apply_common_filters(df, selected_departments, selected_actions, selected_ch
 
 def apply_date_filter(df, dt_col, start_date, end_date):
     if df.empty or dt_col not in df.columns:
-        return df.copy()
+        return df
 
     filtered = df.copy()
-    start_ts = pd.Timestamp(start_date)
-    end_ts = pd.Timestamp(end_date) + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
+
+    filtered[dt_col] = pd.to_datetime(
+        filtered[dt_col],
+        errors="coerce",
+        utc=True
+    )
+
+    filtered = filtered[filtered[dt_col].notna()].copy()
+
+    if filtered.empty:
+        return filtered
+
+    start_ts = pd.Timestamp(start_date).tz_localize("UTC")
+    end_ts = pd.Timestamp(end_date).tz_localize("UTC") + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
 
     filtered = filtered[
-        filtered[dt_col].notna()
-        & (filtered[dt_col] >= start_ts)
-        & (filtered[dt_col] <= end_ts)
-    ]
+        (filtered[dt_col] >= start_ts)
+        &
+        (filtered[dt_col] <= end_ts)
+    ].copy()
 
     return filtered
 

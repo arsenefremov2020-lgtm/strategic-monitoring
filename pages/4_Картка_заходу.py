@@ -13,6 +13,11 @@ st.set_page_config(
     layout="wide"
 )
 
+st.logo(
+    "assets/Мінекономіки.png",
+    size="large"
+)
+
 FILE_PATH = "Під моніторинг СП.xlsx"
 SHEET_NAME = "Страт_матриця"
 

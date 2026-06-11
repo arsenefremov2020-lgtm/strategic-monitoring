@@ -613,7 +613,7 @@ def display_logs_table(filtered):
     rename_map = {
         "id": "ID запису",
         "request_id": "ID заявки",
-        "department": "Департамент",
+        "department": "Самостійний структурний підрозділ",
         "strat_code": "Код заходу",
         "year": "Рік",
         "quarter": "Квартал",
@@ -632,7 +632,7 @@ def display_logs_table(filtered):
     cols = [
         "Дата зміни",
         "ID заявки",
-        "Департамент",
+        "Самостійний структурний підрозділ",
         "Код заходу",
         "Рік",
         "Квартал",
@@ -664,7 +664,7 @@ def display_requests_table(df):
 
     rename_map = {
         "id": "ID заявки",
-        "department": "Департамент",
+        "department": "Самостійний структурний підрозділ",
         "strat_code": "Код заходу",
         "year": "Рік",
         "quarter": "Квартал",
@@ -689,7 +689,7 @@ def display_requests_table(df):
         "Дата створення",
         "Дата оновлення",
         "ID заявки",
-        "Департамент",
+        "Самостійний структруний підрозділ",
         "Код заходу",
         "Рік",
         "Квартал",
@@ -736,7 +736,7 @@ def display_versions_table(versions_df, selected_departments, selected_years, se
         "version_number": "Версія",
         "created_at": "Дата версії",
         "created_by": "Ким створено",
-        "department": "Департамент",
+        "department": "Самостійний структурний підрозділ",
         "strat_code": "Код заходу",
         "year": "Рік",
         "quarter": "Квартал",
@@ -752,7 +752,7 @@ def display_versions_table(versions_df, selected_departments, selected_years, se
         "ID заявки",
         "Версія",
         "Ким створено",
-        "Департамент",
+        "Самостійний структурний підрозділ",
         "Код заходу",
         "Рік",
         "Квартал",
@@ -876,14 +876,14 @@ if selected_start_date > selected_end_date:
 p4, p5, p6 = st.columns(3)
 
 with p4:
-    st.markdown('<div class="parameter-box"><div class="parameter-label">Департамент</div>', unsafe_allow_html=True)
+    st.markdown('<div class="parameter-box"><div class="parameter-label">Самостійний структурний підрозділ</div>', unsafe_allow_html=True)
     departments = ["Усі"]
     dep_sources = []
     for df in [logs_df, requests_df, versions_df]:
         if "department" in df.columns:
             dep_sources += df["department"].dropna().astype(str).tolist()
     departments += sorted(list(set([d for d in dep_sources if d and d.lower() != "nan"])), key=natural_sort_key)
-    selected_departments = st.multiselect("Департамент", departments, default=["Усі"], label_visibility="collapsed")
+    selected_departments = st.multiselect("Самостійний структурний підрозділ", departments, default=["Усі"], label_visibility="collapsed")
     st.markdown('</div>', unsafe_allow_html=True)
 
 with p5:

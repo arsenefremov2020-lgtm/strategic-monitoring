@@ -2526,7 +2526,7 @@ dep_progress["Середній_ризик"] = dep_progress["Середній_р�
 if view_mode in ["Усі візуалізації", "Стратегічні цілі"] or presentation_mode:
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
 
-    sc1, sc2 = st.columns([1, 1.6])
+    sc1, gap_col, sc2 = st.columns([1, 0.18, 1.6])
 
     with sc1:
         st.markdown('<div class="section-title">Статуси виконання за принципом світлофора</div>', unsafe_allow_html=True)
@@ -2556,8 +2556,14 @@ if view_mode in ["Усі візуалізації", "Стратегічні ці
         st.markdown('<div class="section-title">Виконання за стратегічними цілями</div>', unsafe_allow_html=True)
         st.markdown('<div class="section-subtitle">Відсоток виконання по кожній стратегічній цілі</div>', unsafe_allow_html=True)
 
-        goal_sorted = goal_progress.sort_values("Виконання", ascending=True)
-        goal_sorted["label"] = goal_sorted["goal_code"].astype(str) + " " + goal_sorted["strategic_goal"].astype(str).str[:40]
+    goal_sorted = goal_progress.copy()
+    goal_sorted["_goal_sort"] = goal_sorted["goal_code"].apply(code_sort_key)
+    goal_sorted = goal_sorted.sort_values("_goal_sort")
+    goal_sorted["label"] = (
+        goal_sorted["goal_code"].astype(str)
+        + " "
+        + goal_sorted["strategic_goal"].astype(str).str[:40]
+    )
 
         fig_goals = px.bar(
             goal_sorted,
@@ -2579,7 +2585,7 @@ if view_mode in ["Усі візуалізації", "Стратегічні ці
             **CHART_LAYOUT,
             height=max(200, len(goal_sorted) * 38 + 40),
             xaxis=dict(range=[0, 115], showgrid=True, gridcolor="#f1f5f9", ticksuffix="%"),
-            yaxis=dict(showgrid=False),
+            yaxis=dict(showgrid=False, categoryorder="array", categoryarray=goal_sorted["label"].tolist()[::-1]),
             coloraxis_showscale=False,
             margin=dict(l=10, r=60, t=10, b=10)
         )

@@ -27,6 +27,9 @@ supabase = create_client(
 
 st.markdown("""
 <style>
+header[data-testid="stHeader"] {
+    background: transparent !important;
+}
 @import url('https://fonts.googleapis.com/css2?family=e-Ukraine:wght@300;400;500;700&display=swap');
 
 /* ── Base ── */

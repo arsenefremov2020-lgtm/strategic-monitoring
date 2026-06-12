@@ -2633,10 +2633,13 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
 
     # Chart: top 20 departments for readability
     top_n = min(30, len(rank_df))
-    top_deps = rank_df.head(top_n)
+    top_deps = rank_df.copy()
+    top_deps["_ssp_sort"] = top_deps["ssp_department"].apply(
+        lambda x: int(re.search(r"\d+", str(x)).group()) if re.search(r"\d+", str(x)) else 9999
+    )
+    top_deps = top_deps.sort_values("_ssp_sort").head(top_n)
 
-    st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
-    st.markdown('<div class="chart-title">Виконання за самостійними структурними підрозділами</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Виконання за самостійними структурними підрозділами</div>', unsafe_allow_html=True)
 
     fig_dep = px.bar(
         top_deps,
@@ -2657,9 +2660,12 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
         **CHART_LAYOUT,
         height=380,
         xaxis=dict(
+            title="Самостійний структурний підрозділ",
             tickangle=-35,
             tickfont=dict(size=10),
-            showgrid=False
+            showgrid=False,
+            categoryorder="array",
+            categoryarray=top_deps["ssp_department"].tolist()
         ),
         yaxis=dict(
             range=[0, 115],
@@ -2671,7 +2677,6 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
         margin=dict(l=10, r=10, t=30, b=100)
     )
     st.plotly_chart(fig_dep, use_container_width=True)
-    st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("<hr class='vis-separator'>", unsafe_allow_html=True)
 

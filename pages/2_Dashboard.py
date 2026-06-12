@@ -2526,7 +2526,7 @@ dep_progress["Середній_ризик"] = dep_progress["Середній_р�
 if view_mode in ["Усі візуалізації", "Стратегічні цілі"] or presentation_mode:
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
 
-    sc1, gap_col, sc2 = st.columns([1, 0.18, 1.6])
+    sc1, sc2 = st.columns([1, 1.6])
 
     with sc1:
         st.markdown('<div class="section-title">Статуси виконання за принципом світлофора</div>', unsafe_allow_html=True)

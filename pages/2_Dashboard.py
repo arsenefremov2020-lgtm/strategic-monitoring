@@ -2565,32 +2565,31 @@ if view_mode in ["Усі візуалізації", "Стратегічні ці
         + goal_sorted["strategic_goal"].astype(str).str[:40]
     )
 
-        fig_goals = px.bar(
-            goal_sorted,
-            x="Виконання",
-            y="label",
-            orientation="h",
-            text=goal_sorted["Виконання"].apply(lambda x: f"{x:.1f}%"),
-            hover_data={"Активних_заходів": True, "Покриття_%": True, "Ризикових": True},
-            color="Виконання",
-            color_continuous_scale=["#dc2626", "#fef08a", "#16a34a"],
-            range_color=[0, 100],
-        )
-        fig_goals.update_traces(
-            textposition="outside",
-            textfont_size=11,
-            marker_line_width=0
-        )
-        fig_goals.update_layout(
-            **CHART_LAYOUT,
-            height=max(200, len(goal_sorted) * 38 + 40),
-            xaxis=dict(range=[0, 115], showgrid=True, gridcolor="#f1f5f9", ticksuffix="%"),
-            yaxis=dict(showgrid=False, categoryorder="array", categoryarray=goal_sorted["label"].tolist()[::-1]),
-            coloraxis_showscale=False,
-            margin=dict(l=10, r=60, t=10, b=10)
-        )
-        st.plotly_chart(fig_goals, use_container_width=True)
-
+    fig_goals = px.bar(
+        goal_sorted,
+        x="Виконання",
+        y="label",
+        orientation="h",
+        text=goal_sorted["Виконання"].apply(lambda x: f"{x:.1f}%"),
+        hover_data={"Активних_заходів": True, "Покриття_%": True, "Ризикових": True},
+        color="Виконання",
+        color_continuous_scale=["#dc2626", "#fef08a", "#16a34a"],
+        range_color=[0, 100],
+    )
+    fig_goals.update_traces(
+        textposition="outside",
+        textfont_size=11,
+        marker_line_width=0
+     )
+    fig_goals.update_layout(
+        **CHART_LAYOUT,
+        height=max(200, len(goal_sorted) * 38 + 40),
+        xaxis=dict(range=[0, 115], showgrid=True, gridcolor="#f1f5f9", ticksuffix="%"),
+        yaxis=dict(showgrid=False, categoryorder="array", categoryarray=goal_sorted["label"].tolist()[::-1]),
+        coloraxis_showscale=False,
+        margin=dict(l=10, r=60, t=10, b=10)
+    )
+    st.plotly_chart(fig_goals, use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
 

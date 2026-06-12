@@ -2704,9 +2704,8 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
         deputy_progress["Покриття"] / deputy_progress["Активних_заходів"] * 100
     ).fillna(0).round(1)
     deputy_progress["Dep_short"] = deputy_progress["Заступник_Міністра"].str[:30]
-    deputy_progress_sorted = deputy_progress.sort_values("Виконання", ascending=False)
-
-    st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
+    deputy_progress_sorted = deputy_progress.sort_values("Заступник_Міністра", ascending=True)
+    
     st.markdown('<div class="chart-title">Виконання за Заступниками Міністра</div>', unsafe_allow_html=True)
 
     fig_dep2 = px.bar(
@@ -2737,9 +2736,12 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
         **CHART_LAYOUT,
         height=360,
         xaxis=dict(
+            title="Заступник Міністра",
             tickangle=-30,
             tickfont=dict(size=9),
-            showgrid=False
+            showgrid=False,
+            categoryorder="array",
+            categoryarray=deputy_progress_sorted["Dep_short"].tolist()
         ),
         yaxis=dict(
             range=[0, 115],
@@ -2751,7 +2753,6 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
         margin=dict(l=10, r=10, t=30, b=120)
     )
     st.plotly_chart(fig_dep2, use_container_width=True)
-    st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("</div>", unsafe_allow_html=True)
 

@@ -9,6 +9,9 @@ from core.deputies import DEPUTY_MINISTER_BY_SSP
 from core.ui import load_css
 from core.config import FILE_PATH, SHEET_NAME
 
+from core.auth import init_auth_state, render_login_form
+from core.navigation import require_page_access
+
 
 # ------------------------------------------------------------
 # Page config
@@ -18,6 +21,12 @@ st.set_page_config(
     page_title="Моніторинг (внесення відомостей)",
     layout="wide"
 )
+
+init_auth_state()
+render_login_form()
+
+if not require_page_access("Моніторинг виконання"):
+    st.stop()
 
 st.logo(
     "assets/Мінекономіки.png",

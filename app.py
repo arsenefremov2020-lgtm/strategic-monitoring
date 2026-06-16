@@ -9,6 +9,7 @@ from core.deputies import DEPUTY_MINISTER_BY_SSP
 from core.ui import load_css
 from core.config import FILE_PATH, SHEET_NAME
 from core.auth import init_auth_state, render_login_form
+from core.navigation import render_role_page_links
 
 
 st.set_page_config(page_title="Стратегічний план", layout="wide")
@@ -23,6 +24,7 @@ supabase = get_supabase_client()
 load_css()
 init_auth_state()
 current_user = render_login_form()
+render_role_page_links()
 # ------------------------------------------------------------
 # CSS
 # ------------------------------------------------------------

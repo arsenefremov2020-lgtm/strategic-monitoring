@@ -4,23 +4,28 @@
 Авторизація користувача в системі моніторингу стратегічного плану.
 
 Цей файл відповідає за:
-1. визначення поточного користувача;
-2. тестовий вхід через email;
-3. збереження користувача в st.session_state;
-4. вихід із системи;
-5. повернення guest-користувача, якщо користувач не зареєстрований.
+1. повноцінний вхід через email і пароль;
+2. перевірку користувача за config/users.py;
+3. перевірку пароля через st.secrets;
+4. збереження поточного користувача в st.session_state;
+5. вихід із системи;
+6. гостьовий режим для незареєстрованих користувачів.
 
-Тут не має бути логіки розрахунків, Excel, Supabase або відображення конкретних сторінок.
+Важливо:
+- паролі не зберігаємо у config/users.py;
+- паролі тимчасово зберігаємо у .streamlit/secrets.toml або в Secrets Streamlit Cloud;
+- локальний файл secrets.toml не потрібно завантажувати в GitHub.
 """
 
+from __future__ import annotations
 
 import streamlit as st
 
 from config.users import (
-    USERS,
     GUEST_USER,
     get_user_by_email,
     normalize_email,
+    user_exists,
 )
 
 from config.roles import (
@@ -36,16 +41,17 @@ from config.roles import (
 SESSION_USER_KEY = "current_user"
 SESSION_AUTH_EMAIL_KEY = "auth_email"
 SESSION_IS_AUTHENTICATED_KEY = "is_authenticated"
+SESSION_LOGIN_ERROR_KEY = "login_error"
 
 
 # -----------------------------
-# Базові функції session_state
+# Ініціалізація авторизації
 # -----------------------------
 
 def init_auth_state() -> None:
     """
-    Ініціалізує стан авторизації в session_state.
-    Викликати один раз на старті app.py.
+    Ініціалізує стан авторизації.
+    Викликати на старті app.py або сторінки, яка використовує доступи.
     """
 
     if SESSION_USER_KEY not in st.session_state:
@@ -57,11 +63,18 @@ def init_auth_state() -> None:
     if SESSION_IS_AUTHENTICATED_KEY not in st.session_state:
         st.session_state[SESSION_IS_AUTHENTICATED_KEY] = False
 
+    if SESSION_LOGIN_ERROR_KEY not in st.session_state:
+        st.session_state[SESSION_LOGIN_ERROR_KEY] = None
+
+
+# -----------------------------
+# Поточний користувач
+# -----------------------------
 
 def get_current_user() -> dict:
     """
     Повертає поточного користувача.
-    Якщо користувач не встановлений — повертає guest.
+    Якщо користувач не увійшов — повертає guest.
     """
 
     init_auth_state()
@@ -74,7 +87,7 @@ def get_current_user() -> dict:
     return user
 
 
-def set_current_user(user: dict) -> None:
+def set_current_user(user: dict | None) -> None:
     """
     Записує користувача в session_state.
     """
@@ -90,32 +103,13 @@ def set_current_user(user: dict) -> None:
 def logout_user() -> None:
     """
     Вихід із системи.
-    Після виходу користувач стає guest.
+    Після виходу користувач переходить у режим guest.
     """
 
     st.session_state[SESSION_USER_KEY] = GUEST_USER.copy()
     st.session_state[SESSION_AUTH_EMAIL_KEY] = None
     st.session_state[SESSION_IS_AUTHENTICATED_KEY] = False
-
-
-# -----------------------------
-# Авторизація через email
-# -----------------------------
-
-def login_by_email(email: str | None) -> dict:
-    """
-    Авторизує користувача за email.
-
-    Якщо email є у USERS і користувач активний — повертає його профіль.
-    Якщо email немає — повертає guest.
-    """
-
-    email = normalize_email(email)
-    user = get_user_by_email(email)
-
-    set_current_user(user)
-
-    return user
+    st.session_state[SESSION_LOGIN_ERROR_KEY] = None
 
 
 def is_authenticated() -> bool:
@@ -191,56 +185,166 @@ def is_current_user_owner() -> bool:
 
 
 # -----------------------------
-# Тестовий блок входу
+# Перевірка пароля
 # -----------------------------
 
-def render_test_login_block() -> dict:
+def get_password_from_secrets(email: str | None) -> str | None:
     """
-    Тимчасовий тестовий блок входу.
+    Дістає пароль користувача з secrets.
 
-    Його використовуємо на етапі розробки, щоб швидко перемикатися
-    між ролями: ССП, керівник ССП, адмін, супер-адмін, guest.
+    Очікувана структура:
 
-    Пізніше цей блок можна буде замінити на реальну авторизацію.
+    [passwords]
+    user@example.com = "password"
+    """
+
+    email = normalize_email(email)
+
+    if not email:
+        return None
+
+    try:
+        passwords = st.secrets.get("passwords", {})
+    except Exception:
+        return None
+
+    if not passwords:
+        return None
+
+    return passwords.get(email)
+
+
+def check_password(email: str | None, password: str | None) -> bool:
+    """
+    Перевіряє пароль користувача.
+
+    Для першої версії пароль звіряється напряму зі st.secrets.
+    Пізніше це можна замінити на хешування або Supabase Auth.
+    """
+
+    email = normalize_email(email)
+
+    if not email or not password:
+        return False
+
+    expected_password = get_password_from_secrets(email)
+
+    if not expected_password:
+        return False
+
+    return str(password) == str(expected_password)
+
+
+# -----------------------------
+# Login
+# -----------------------------
+
+def login_by_email_and_password(
+    email: str | None,
+    password: str | None,
+) -> tuple[bool, dict, str | None]:
+    """
+    Авторизує користувача через email і пароль.
+
+    Повертає:
+    - success: True / False;
+    - user: профіль користувача або guest;
+    - error_message: текст помилки або None.
+    """
+
+    email = normalize_email(email)
+
+    if not email:
+        return False, GUEST_USER.copy(), "Введіть електронну пошту."
+
+    if not password:
+        return False, GUEST_USER.copy(), "Введіть пароль."
+
+    if not user_exists(email):
+        return False, GUEST_USER.copy(), "Користувача з такою електронною поштою не знайдено."
+
+    user = get_user_by_email(email)
+
+    if user.get("role") == ROLE_GUEST:
+        return False, GUEST_USER.copy(), "Користувач неактивний або не має доступу до системи."
+
+    if not check_password(email, password):
+        return False, GUEST_USER.copy(), "Невірний пароль."
+
+    set_current_user(user)
+
+    return True, user, None
+
+
+# -----------------------------
+# Форма входу
+# -----------------------------
+
+def render_login_form() -> dict:
+    """
+    Виводить форму входу в sidebar.
+
+    Якщо користувач уже увійшов — показує дані користувача і кнопку виходу.
+    Якщо не увійшов — показує поля email/password.
     """
 
     init_auth_state()
 
+    user = get_current_user()
+
     st.sidebar.markdown("### Вхід до системи")
 
-    user_options = ["Користувач без реєстрації"] + list(USERS.keys())
+    if is_authenticated():
+        full_name = user.get("full_name") or "Користувач"
+        role_label = user.get("role_label") or get_role_label(user.get("role"))
 
-    current_email = st.session_state.get(SESSION_AUTH_EMAIL_KEY)
+        st.sidebar.success("Вхід виконано")
+        st.sidebar.caption(f"Користувач: {full_name}")
+        st.sidebar.caption(f"Роль: {role_label}")
 
-    if current_email in USERS:
-        default_index = user_options.index(current_email)
-    else:
-        default_index = 0
+        if user.get("email"):
+            st.sidebar.caption(f"Email: {user.get('email')}")
 
-    selected_option = st.sidebar.selectbox(
-        "Оберіть користувача",
-        user_options,
-        index=default_index,
-        key="test_login_user_selectbox",
-    )
+        if user.get("ssp"):
+            st.sidebar.caption(f"ССП: {user.get('ssp')}")
 
-    if selected_option == "Користувач без реєстрації":
-        selected_user = GUEST_USER.copy()
-    else:
-        selected_user = get_user_by_email(selected_option)
+        if st.sidebar.button("Вийти з системи", key="logout_button"):
+            logout_user()
+            st.rerun()
 
-    set_current_user(selected_user)
+        return user
 
-    st.sidebar.caption(
-        f"Роль: {selected_user.get('role_label', 'Користувач без реєстрації')}"
-    )
-
-    if selected_user.get("ssp"):
-        st.sidebar.caption(
-            f"ССП: {selected_user.get('ssp')}"
+    with st.sidebar.form("login_form"):
+        email = st.text_input(
+            "Електронна пошта",
+            placeholder="name@example.com",
+            key="login_email_input",
         )
 
-    return selected_user
+        password = st.text_input(
+            "Пароль",
+            type="password",
+            key="login_password_input",
+        )
+
+        submitted = st.form_submit_button("Увійти")
+
+    if submitted:
+        success, logged_user, error_message = login_by_email_and_password(email, password)
+
+        if success:
+            st.session_state[SESSION_LOGIN_ERROR_KEY] = None
+            st.rerun()
+        else:
+            logout_user()
+            st.session_state[SESSION_LOGIN_ERROR_KEY] = error_message
+
+    login_error = st.session_state.get(SESSION_LOGIN_ERROR_KEY)
+
+    if login_error:
+        st.sidebar.error(login_error)
+
+    return get_current_user()
 
 
 # -----------------------------
@@ -250,6 +354,8 @@ def render_test_login_block() -> dict:
 def render_current_user_info() -> None:
     """
     Виводить коротку інформацію про поточного користувача в sidebar.
+
+    Якщо render_login_form() вже показує користувача, цей блок не обов'язковий.
     """
 
     user = get_current_user()

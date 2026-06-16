@@ -5,8 +5,16 @@ from core.ui import load_css
 from datetime import datetime, date, timedelta
 from io import BytesIO
 import re
+from core.auth import init_auth_state, render_login_form
+from core.navigation import require_page_access
 
 st.set_page_config(page_title="Журнал дій", layout="wide")
+
+init_auth_state()
+render_login_form()
+
+if not require_page_access("Журнал дій"):
+    st.stop()
 
 st.logo(
     "assets/Мінекономіки.png",

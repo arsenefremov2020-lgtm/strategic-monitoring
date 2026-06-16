@@ -188,3 +188,62 @@ def get_blocked_pages_for_current_user() -> list[str]:
         for page in ALL_PAGES
         if page not in available_pages
     ]
+
+# -----------------------------
+# Рольове меню через st.page_link
+# -----------------------------
+
+PAGE_FILE_PATHS = {
+    "app": "app.py",
+    "Моніторинг виконання": "pages/1_Моніторинг_виконання.py",
+    "Мій кабінет": "pages/1_Мій_кабінет.py",
+    "Dashboard": "pages/2_Dashboard.py",
+    "Адміністрування": "pages/3_Адміністрування.py",
+    "Оцінка МіО": "pages/3_Оцінка_МіО.py",
+    "Картка заходу": "pages/4_Картка_заходу.py",
+    "Мої заявки": "pages/5_Мої_заявки.py",
+    "Журнал дій": "pages/6_Журнал_дій.py",
+    "Аналітика": "pages/7_Аналітика.py",
+}
+
+
+PAGE_ICONS = {
+    "app": "🏠",
+    "Моніторинг виконання": "📝",
+    "Мій кабінет": "👤",
+    "Dashboard": "📊",
+    "Адміністрування": "⚙️",
+    "Оцінка МіО": "✅",
+    "Картка заходу": "📄",
+    "Мої заявки": "📬",
+    "Журнал дій": "🕓",
+    "Аналітика": "📈",
+}
+
+
+def render_role_page_links() -> None:
+    """
+    Виводить у sidebar тільки ті сторінки, які доступні поточній ролі.
+    Використовує st.page_link, тому працює зі Streamlit multipage-структурою.
+    """
+
+    user = get_current_user()
+    role = user.get("role", ROLE_GUEST)
+
+    available_pages = get_pages_for_role(role)
+
+    st.sidebar.markdown("### Навігація")
+
+    for page_name in available_pages:
+        page_path = PAGE_FILE_PATHS.get(page_name)
+
+        if not page_path:
+            continue
+
+        icon = PAGE_ICONS.get(page_name, "📌")
+
+        st.sidebar.page_link(
+            page_path,
+            label=page_name,
+            icon=icon,
+        )

@@ -8,11 +8,19 @@ from core.notifications import render_notifications_panel
 from core.chat_widget import render_bird_chat
 from core.config import FILE_PATH, SHEET_NAME
 from datetime import datetime, timezone
+from core.auth import init_auth_state, render_login_form
+from core.navigation import require_page_access
 
 st.set_page_config(
     page_title="Адміністрування",
     layout="wide"
 )
+
+init_auth_state()
+render_login_form()
+
+if not require_page_access("Адміністрування"):
+    st.stop()
 
 st.logo(
     "assets/Мінекономіки.png",

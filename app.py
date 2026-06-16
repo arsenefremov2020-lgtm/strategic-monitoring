@@ -8,6 +8,7 @@ from core.db import get_supabase_client
 from core.deputies import DEPUTY_MINISTER_BY_SSP
 from core.ui import load_css
 from core.config import FILE_PATH, SHEET_NAME
+from core.auth import init_auth_state, render_login_form
 
 
 st.set_page_config(page_title="Стратегічний план", layout="wide")
@@ -20,6 +21,8 @@ st.logo(
 
 supabase = get_supabase_client()
 load_css()
+init_auth_state()
+current_user = render_login_form()
 # ------------------------------------------------------------
 # CSS
 # ------------------------------------------------------------

@@ -317,50 +317,52 @@ div[data-testid="stTextInput"] label {
     color: #1e293b !important;
 }
 
-div[data-testid="stPageLink"] {
+section[data-testid="stSidebar"] div[data-testid="stPageLink"] {
     width: 100% !important;
     display: block !important;
-    margin-top: 16px !important;
-    margin-bottom: 28px !important;
+    margin-top: 3px !important;
+    margin-bottom: 5px !important;
 }
 
-div[data-testid="stPageLink"] a {
+section[data-testid="stSidebar"] div[data-testid="stPageLink"] a {
     width: 100% !important;
-    min-height: 68px !important;
+    min-height: 36px !important;
     display: flex !important;
     align-items: center !important;
-    justify-content: center !important;
+    justify-content: flex-start !important;
 
-    background: linear-gradient(135deg, #047857 0%, #16a34a 55%, #22c55e 100%) !important;
-    color: #ffffff !important;
+    background: rgba(255, 255, 255, 0.78) !important;
+    color: #0f172a !important;
 
-    border-radius: 18px !important;
-    padding: 20px 28px !important;
-    border: 1px solid rgba(255,255,255,0.28) !important;
+    border-radius: 9px !important;
+    padding: 7px 10px !important;
+    border: 1px solid rgba(148, 163, 184, 0.35) !important;
 
-    font-size: 18px !important;
-    font-weight: 950 !important;
-    letter-spacing: 0.3px !important;
+    font-size: 14px !important;
+    font-weight: 700 !important;
+    letter-spacing: 0 !important;
     text-decoration: none !important;
 
-    box-shadow: 0 16px 32px rgba(22,163,74,0.34), inset 0 1px 0 rgba(255,255,255,0.22) !important;
+    box-shadow: 0 1px 5px rgba(15, 23, 42, 0.05) !important;
 }
 
-div[data-testid="stPageLink"] a p {
-    color: #ffffff !important;
-    font-size: 18px !important;
-    font-weight: 950 !important;
+section[data-testid="stSidebar"] div[data-testid="stPageLink"] a p {
+    color: #0f172a !important;
+    font-size: 14px !important;
+    font-weight: 700 !important;
     margin: 0 !important;
 }
 
-div[data-testid="stPageLink"] a svg {
-    color: #ffffff !important;
-    fill: #ffffff !important;
+section[data-testid="stSidebar"] div[data-testid="stPageLink"] a svg {
+    color: #334155 !important;
+    fill: #334155 !important;
 }
 
-div[data-testid="stPageLink"] a:hover {
-    filter: brightness(1.05);
-    transform: translateY(-1px);
+section[data-testid="stSidebar"] div[data-testid="stPageLink"] a:hover {
+    background: rgba(241, 245, 249, 0.95) !important;
+    border-color: rgba(22, 163, 74, 0.35) !important;
+    transform: none !important;
+    filter: none !important;
 }
 
 div[data-testid="stExpander"] {

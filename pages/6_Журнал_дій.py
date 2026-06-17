@@ -6,12 +6,13 @@ from datetime import datetime, date, timedelta
 from io import BytesIO
 import re
 from core.auth import init_auth_state, render_login_form
-from core.navigation import require_page_access
+from core.navigation import require_page_access, render_role_page_links
 
 st.set_page_config(page_title="Журнал дій", layout="wide")
 
 init_auth_state()
 render_login_form()
+render_role_page_links()
 
 if not require_page_access("Журнал дій"):
     st.stop()

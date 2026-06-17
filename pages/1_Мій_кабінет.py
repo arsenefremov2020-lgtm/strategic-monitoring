@@ -10,12 +10,13 @@ from datetime import datetime
 from html import escape
 import re
 from core.auth import init_auth_state, render_login_form
-from core.navigation import require_page_access
+from core.navigation import require_page_access, render_role_page_links
 
 st.set_page_config(page_title="Мій кабінет", layout="wide")
 
 init_auth_state()
 render_login_form()
+render_role_page_links()
 
 if not require_page_access("Мій кабінет"):
     st.stop()

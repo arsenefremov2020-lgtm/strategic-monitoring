@@ -17,6 +17,13 @@ st.set_page_config(
     layout="wide"
 )
 
+init_auth_state()
+render_login_form()
+render_role_page_links()
+
+if not require_page_access("Картка заходу"):
+    st.stop()
+
 st.logo(
     "assets/Мінекономіки.png",
     size="large"

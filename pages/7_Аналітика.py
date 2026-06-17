@@ -16,7 +16,7 @@ from docx.shared import Pt, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 from core.auth import init_auth_state, render_login_form
-from core.navigation import require_page_access
+from core.navigation import require_page_access, render_role_page_links
 
 
 # ============================================================
@@ -27,6 +27,7 @@ st.set_page_config(page_title="Аналітика", layout="wide")
 
 init_auth_state()
 render_login_form()
+render_role_page_links()
 
 if not require_page_access("Аналітика"):
     st.stop()

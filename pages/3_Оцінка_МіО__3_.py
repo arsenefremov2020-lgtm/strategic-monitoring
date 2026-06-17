@@ -10,12 +10,13 @@ import streamlit as st
 from supabase import create_client
 
 from core.auth import init_auth_state, render_login_form
-from core.navigation import require_page_access
+from core.navigation import require_page_access, render_role_page_links
 
 st.set_page_config(page_title="Оцінка МіО", layout="wide")
 
 init_auth_state()
 render_login_form()
+render_role_page_links()
 
 if not require_page_access("Оцінка МіО"):
     st.stop()

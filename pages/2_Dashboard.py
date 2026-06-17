@@ -12,6 +12,13 @@ import re
 
 st.set_page_config(page_title="Dashboard", layout="wide")
 
+init_auth_state()
+render_login_form()
+render_role_page_links()
+
+if not require_page_access("Dashboard"):
+    st.stop()
+
 st.logo(
     "assets/Мінекономіки.png",
     size="large"

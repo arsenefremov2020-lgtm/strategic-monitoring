@@ -10,7 +10,7 @@ from core.ui import load_css
 from core.config import FILE_PATH, SHEET_NAME
 
 from core.auth import init_auth_state, render_login_form
-from core.navigation import require_page_access
+from core.navigation import require_page_access, render_role_page_links
 
 
 # ------------------------------------------------------------
@@ -24,6 +24,7 @@ st.set_page_config(
 
 init_auth_state()
 render_login_form()
+render_role_page_links()
 
 if not require_page_access("Моніторинг виконання"):
     st.stop()

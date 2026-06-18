@@ -12,10 +12,17 @@ import re
 from core.auth import init_auth_state, render_login_form
 from core.navigation import require_page_access, render_role_page_links
 
+from core.access import (
+    filter_requests_for_user,
+    get_available_ssp_options_for_user,
+    should_lock_ssp_fields,
+    user_has_all_ssp_access,
+)
+
 st.set_page_config(page_title="Мій кабінет", layout="wide")
 
 init_auth_state()
-render_login_form()
+current_user = render_login_form()
 render_role_page_links()
 
 if not require_page_access("Мій кабінет"):
@@ -398,6 +405,26 @@ def write_log(request_id, action, old_status, new_status, comment, changed_by="�
 df = load_requests()
 strat_df = load_strat_matrix()
 
+required_cols = [
+    "id", "year", "quarter", "department", "responsible_person", "phone", "email",
+    "strat_code", "status", "progress_text", "numeric_value", "risks",
+    "submitted_at", "approval_status", "admin_comment", "file_names", "file_urls",
+    "start_date", "end_date"
+]
+for col in required_cols:
+    if col not in df.columns:
+        df[col] = ""
+
+df = filter_requests_for_user(
+    df,
+    current_user,
+    ssp_columns=["department"]
+)
+
+if df.empty:
+    st.warning("Для цього користувача немає доступних відомостей за закріпленим ССП.")
+    st.stop()
+
 st.markdown('<div class="ua-line"></div>', unsafe_allow_html=True)
 st.markdown("""
 <div class="ministry-label">
@@ -423,20 +450,6 @@ st.markdown("""
 
 render_notifications_panel(df, mode="cabinet")
 
-required_cols = [
-    "id", "year", "quarter", "department", "responsible_person", "phone", "email",
-    "strat_code", "status", "progress_text", "numeric_value", "risks",
-    "submitted_at", "approval_status", "admin_comment", "file_names", "file_urls",
-    "start_date", "end_date"
-]
-for col in required_cols:
-    if col not in df.columns:
-        df[col] = ""
-
-if df.empty:
-    st.warning("Поки що немає поданих відомостей.")
-    st.stop()
-
 # ============================================================
 # FILTERS
 # ============================================================
@@ -452,7 +465,32 @@ c1, c2, c3, c4 = st.columns(4)
 
 with c1:
     departments = sorted(df["department"].dropna().astype(str).unique().tolist())
-    selected_department = st.selectbox("Самостійний структурний підрозділ", departments)
+
+    if user_has_all_ssp_access(current_user):
+        available_departments = departments
+    else:
+        available_departments = get_available_ssp_options_for_user(
+            current_user,
+            all_options=departments
+        )
+
+        allowed_indexes = current_user.get("allowed_ssp_indexes", [])
+        available_departments = [
+            department
+            for department in departments
+            if any(str(index) in str(department) for index in allowed_indexes)
+        ] or available_departments
+
+    if not available_departments:
+        st.warning("Для цього користувача немає доступних ССП.")
+        st.stop()
+
+    selected_department = st.selectbox(
+        "Самостійний структурний підрозділ",
+        available_departments,
+        index=0,
+        disabled=should_lock_ssp_fields(current_user),
+    )
 
 with c2:
     years = ["Усі"] + sorted(df["year"].dropna().astype(str).unique().tolist())

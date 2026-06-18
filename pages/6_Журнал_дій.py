@@ -8,7 +8,7 @@ import re
 from core.auth import init_auth_state, render_login_form
 from core.navigation import require_page_access, render_role_page_links
 from config.users import get_active_users
-from config.roles import ROLE_ADMIN
+from config.roles import ROLE_ADMIN, ROLE_SSP, ROLE_SSP_HEAD
 from core.access import normalize_ssp_index
 
 st.set_page_config(page_title="Журнал дій", layout="wide")
@@ -453,19 +453,23 @@ def get_assigned_admin_for_department(department_value):
     }
 
 
-def resolve_changed_by_user(changed_by_value):
+def resolve_changed_by_user(row):
     """
-    Розкладає поле 'Ким змінено' на:
+    Розкладає поле changed_by на:
     - роль;
     - ПІБ;
     - телефон.
 
-    Якщо в changed_by зберігається email — шукаємо користувача за email.
-    Якщо там ПІБ або текст — пробуємо знайти за входженням ПІБ.
-    Якщо не знайшли — залишаємо вихідний текст у ПІБ.
+    Логіка:
+    - якщо changed_by = "Адміністратор" — шукаємо адміна, закріпленого за ССП заявки;
+    - якщо changed_by = "Департамент" або "ССП" — беремо відповідальну особу від ССП із заявки;
+    - якщо changed_by = "Керівник ССП" — шукаємо керівника ССП за індексом ССП;
+    - якщо changed_by містить email або ПІБ — пробуємо знайти користувача в config/users.py.
     """
 
-    raw_value = clean_text(changed_by_value)
+    raw_value = clean_text(row.get("changed_by"))
+    department_value = row.get("department")
+    department_index = normalize_ssp_index(department_value)
 
     if not raw_value:
         return {
@@ -477,6 +481,62 @@ def resolve_changed_by_user(changed_by_value):
     raw_lower = raw_value.lower()
     active_users = get_active_users()
 
+    # 1. Адміністратор
+    if "адміністратор" in raw_lower or raw_lower == "admin":
+        assigned_admin = get_assigned_admin_for_department(department_value)
+
+        return {
+            "changed_by_role": "Адміністратор",
+            "changed_by_name": assigned_admin.get("admin_name", ""),
+            "changed_by_phone": assigned_admin.get("admin_phone", ""),
+        }
+
+    # 2. Департамент / ССП
+    if raw_lower in ["департамент", "ссп", "кабінет ссп"]:
+        responsible_name = (
+            clean_text(row.get("responsible_person"))
+            or clean_text(row.get("responsible_person_request"))
+        )
+
+        responsible_phone = (
+            clean_text(row.get("phone"))
+            or clean_text(row.get("phone_request"))
+        )
+
+        return {
+            "changed_by_role": "Департамент",
+            "changed_by_name": responsible_name,
+            "changed_by_phone": responsible_phone,
+        }
+
+    # 3. Керівник ССП
+    if "керівник" in raw_lower:
+        for _, user in active_users.items():
+            if user.get("role") != ROLE_SSP_HEAD:
+                continue
+
+            allowed_indexes = user.get("allowed_ssp_indexes", [])
+
+            normalized_allowed_indexes = [
+                normalize_ssp_index(index)
+                for index in allowed_indexes
+                if index != "*"
+            ]
+
+            if department_index and department_index in normalized_allowed_indexes:
+                return {
+                    "changed_by_role": "Керівник ССП",
+                    "changed_by_name": clean_text(user.get("full_name")),
+                    "changed_by_phone": clean_text(user.get("phone")),
+                }
+
+        return {
+            "changed_by_role": "Керівник ССП",
+            "changed_by_name": "",
+            "changed_by_phone": "",
+        }
+
+    # 4. Якщо changed_by містить email або ПІБ
     for _, user in active_users.items():
         email = clean_text(user.get("email")).lower()
         full_name = clean_text(user.get("full_name")).lower()
@@ -495,9 +555,10 @@ def resolve_changed_by_user(changed_by_value):
                 "changed_by_phone": clean_text(user.get("phone")),
             }
 
+    # 5. fallback
     return {
-        "changed_by_role": "",
-        "changed_by_name": raw_value,
+        "changed_by_role": raw_value,
+        "changed_by_name": "",
         "changed_by_phone": "",
     }
 
@@ -559,7 +620,8 @@ def prepare_logs(logs_df, requests_df):
         req_cols = [
             c for c in [
                 "id", "department", "strat_code", "year", "quarter",
-                "responsible_person", "approval_status", "submitted_at", "created_at"
+                "responsible_person", "phone", "email",
+                "approval_status", "submitted_at", "created_at"
             ]
             if c in requests_df.columns
         ]
@@ -572,9 +634,12 @@ def prepare_logs(logs_df, requests_df):
             "year": "year_request",
             "quarter": "quarter_request",
             "responsible_person": "responsible_person_request",
+            "phone": "phone_request",
+            "email": "email_request",
             "approval_status": "approval_status_request",
             "submitted_at": "submitted_at_request",
             "created_at": "created_at_request"
+            
         })
 
         prepared = prepared.merge(
@@ -590,6 +655,8 @@ def prepare_logs(logs_df, requests_df):
             ("year", "year_request"),
             ("quarter", "quarter_request"),
             ("responsible_person", "responsible_person_request"),
+            ("phone", "phone_request"),
+            ("email", "email_request"),
             ("approval_status", "approval_status_request")
         ]:
             if left_col not in prepared.columns:
@@ -736,7 +803,7 @@ def display_logs_table(filtered):
 
     show = filtered.copy()
 
-    changed_by_data = show["changed_by"].apply(resolve_changed_by_user)
+    changed_by_data = show.apply(resolve_changed_by_user, axis=1)
 
     show["changed_by_role"] = changed_by_data.apply(
         lambda item: item.get("changed_by_role", "")

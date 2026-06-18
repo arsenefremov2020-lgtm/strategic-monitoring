@@ -11,13 +11,19 @@ from datetime import datetime, timezone
 from core.auth import init_auth_state, render_login_form
 from core.navigation import require_page_access, render_role_page_links
 
+from core.access import (
+    filter_requests_for_user,
+    get_user_allowed_ssp_indexes,
+    user_has_all_ssp_access,
+)
+
 st.set_page_config(
     page_title="Адміністрування",
     layout="wide"
 )
 
 init_auth_state()
-render_login_form()
+current_user = render_login_form()
 render_role_page_links()
 
 if not require_page_access("Адміністрування"):
@@ -1220,8 +1226,6 @@ if df.empty:
     st.warning("Поки що немає поданих заявок.")
     st.stop()
 
-render_notifications_panel(df, mode="admin")
-
 required_cols = [
     "id", "department", "year", "quarter", "approval_status", "status",
     "strat_code", "responsible_person", "phone", "email",
@@ -1232,6 +1236,18 @@ required_cols = [
 for col in required_cols:
     if col not in df.columns:
         df[col] = ""
+
+df = filter_requests_for_user(
+    df,
+    current_user,
+    ssp_columns=["department"]
+)
+
+if df.empty:
+    st.warning("Для цього користувача немає доступних заявок за закріпленими ССП.")
+    st.stop()
+
+render_notifications_panel(df, mode="admin")
 
 attention = build_attention_summary(df)
 
@@ -1386,9 +1402,22 @@ all_ssp_raw = sorted(
     key=lambda x: int(x) if str(x).isdigit() else 9999
 )
 
+if user_has_all_ssp_access(current_user):
+    available_ssp_raw = all_ssp_raw
+else:
+    allowed_ssp_indexes = get_user_allowed_ssp_indexes(current_user)
+    available_ssp_raw = [
+        index
+        for index in all_ssp_raw
+        if index in allowed_ssp_indexes
+    ]
+
 f1, f2, f3, f4 = st.columns(4)
 with f1:
-    selected_ssp = st.selectbox("Самостійний структурний підрозділ", ["Усі"] + all_ssp_raw)
+    selected_ssp = st.selectbox(
+        "Самостійний структурний підрозділ",
+        ["Усі"] + available_ssp_raw
+    )
 with f2:
     years = sorted(df["year"].dropna().astype(str).unique().tolist())
     selected_year = st.selectbox("Рік", ["Усі"] + years)

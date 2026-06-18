@@ -11,10 +11,18 @@ import re
 from core.auth import init_auth_state, render_login_form
 from core.navigation import require_page_access, render_role_page_links
 
+from core.access import (
+    filter_requests_for_user,
+    get_available_ssp_options_for_user,
+    get_prefilled_user_contacts,
+    should_lock_ssp_fields,
+    user_has_all_ssp_access,
+)
+
 st.set_page_config(page_title="Мої заявки", layout="wide")
 
 init_auth_state()
-render_login_form()
+current_user = render_login_form()
 render_role_page_links()
 
 if not require_page_access("Мої заявки"):
@@ -517,6 +525,14 @@ def load_versions(request_id):
 df = load_requests()
 strat_df = load_strat_matrix()
 
+df = filter_requests_for_user(
+    df,
+    current_user,
+    ssp_columns=["department"]
+)
+
+prefilled_contacts = get_prefilled_user_contacts(current_user)
+
 st.markdown('<div class="ua-line"></div>', unsafe_allow_html=True)
 
 st.markdown("""
@@ -574,7 +590,34 @@ c1, c2, c3, c4 = st.columns(4)
 
 with c1:
     departments = sorted(df["department"].dropna().astype(str).unique().tolist())
-    selected_department = st.selectbox("Самостійний структурний підрозділ", departments)
+
+    if user_has_all_ssp_access(current_user):
+        available_departments = departments
+    else:
+        available_departments = get_available_ssp_options_for_user(
+            current_user,
+            all_options=departments
+        )
+
+        # Для випадку, коли в заявках department записаний просто як "30",
+        # а в профілі користувача label стоїть як "деп. 30".
+        allowed_indexes = current_user.get("allowed_ssp_indexes", [])
+        available_departments = [
+            department
+            for department in departments
+            if any(str(index) in str(department) for index in allowed_indexes)
+        ] or available_departments
+
+    if not available_departments:
+        st.warning("Для цього користувача немає доступних заявок за ССП.")
+        st.stop()
+
+    selected_department = st.selectbox(
+        "Самостійний структурний підрозділ",
+        available_departments,
+        index=0,
+        disabled=should_lock_ssp_fields(current_user),
+    )
 
 with c2:
     years = ["Усі"] + sorted(df["year"].dropna().astype(str).unique().tolist())
@@ -937,22 +980,25 @@ if approval == "Повернуто на доопрацювання":
     with e1:
         new_responsible = st.text_input(
             "ПІБ відповідальної особи",
-            value=clean(selected_row["responsible_person"]),
-            key=f"edit_responsible_{selected_id}"
+            value=prefilled_contacts.get("full_name") or clean(selected_row["responsible_person"]),
+            key=f"edit_responsible_{selected_id}",
+            disabled=True,
         )
 
     with e2:
         new_phone = st.text_input(
             "Телефон",
-            value=clean(selected_row["phone"]),
-            key=f"edit_phone_{selected_id}"
+            value=prefilled_contacts.get("phone") or clean(selected_row["phone"]),
+            key=f"edit_phone_{selected_id}",
+            disabled=True,
         )
 
     with e3:
         new_email = st.text_input(
             "Email",
-            value=clean(selected_row["email"]),
-            key=f"edit_email_{selected_id}"
+            value=prefilled_contacts.get("email") or clean(selected_row["email"]),
+            key=f"edit_email_{selected_id}",
+            disabled=True,
         )
 
     resubmit = st.button(

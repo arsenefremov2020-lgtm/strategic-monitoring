@@ -12,6 +12,15 @@ from core.config import FILE_PATH, SHEET_NAME
 from core.auth import init_auth_state, render_login_form
 from core.navigation import require_page_access, render_role_page_links
 
+from core.access import (
+    filter_actions_for_user,
+    get_prefilled_user_contacts,
+    get_user_allowed_ssp_indexes,
+    should_lock_ssp_fields,
+    should_prefill_contact_fields,
+    user_has_all_ssp_access,
+)
+
 
 # ------------------------------------------------------------
 # Page config
@@ -23,7 +32,7 @@ st.set_page_config(
 )
 
 init_auth_state()
-render_login_form()
+current_user = render_login_form()
 render_role_page_links()
 
 if not require_page_access("Моніторинг виконання"):
@@ -806,10 +815,29 @@ all_ssp_indices = sorted(
     {
         index
         for _, row in all_measures.iterrows()
-        for index in split_ssp_values(row.get("resp_main", ""))
+        for column in ["resp_main", "resp_co_1"]
+        for index in split_ssp_values(row.get(column, ""))
     },
     key=lambda x: int(x) if str(x).isdigit() else 9999
 )
+
+user_allowed_ssp_indexes = get_user_allowed_ssp_indexes(current_user)
+
+if user_has_all_ssp_access(current_user):
+    available_ssp_indices = all_ssp_indices
+else:
+    available_ssp_indices = [
+        index
+        for index in user_allowed_ssp_indexes
+        if index in all_ssp_indices
+    ]
+
+    # Якщо в матриці поки не знайдено цей індекс, але він прописаний користувачу,
+    # все одно показуємо його, щоб форма не падала.
+    if not available_ssp_indices:
+        available_ssp_indices = user_allowed_ssp_indexes
+
+ssp_select_disabled = should_lock_ssp_fields(current_user)
 
 year_options = list(range(2026, 2035))
 quarter_options = ["I", "II", "III", "IV"]
@@ -855,6 +883,8 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+prefilled_contacts = get_prefilled_user_contacts(current_user)
+contact_fields_disabled = should_prefill_contact_fields(current_user)
 
 # ------------------------------------------------------------
 # User info fields
@@ -873,22 +903,28 @@ u1, u2, u3 = st.columns([1.2, 0.85, 1.1])
 with u1:
     responsible_person = st.text_input(
         "ПІБ відповідальної особи",
+        value=prefilled_contacts.get("full_name", ""),
         key="responsible_person_input",
-        placeholder="Введіть ПІБ"
+        placeholder="Введіть ПІБ",
+        disabled=contact_fields_disabled,
     )
 
 with u2:
     responsible_phone = st.text_input(
         "Контактний номер телефону",
+        value=prefilled_contacts.get("phone", ""),
         key="responsible_phone_input",
-        placeholder="+380..."
+        placeholder="+380...",
+        disabled=contact_fields_disabled,
     )
 
 with u3:
     responsible_email = st.text_input(
         "Електронна пошта відповідальної особи",
+        value=prefilled_contacts.get("email", ""),
         key="responsible_email_input",
-        placeholder="name@me.gov.ua"
+        placeholder="name@me.gov.ua",
+        disabled=contact_fields_disabled,
     )
 
 st.markdown("</div>", unsafe_allow_html=True)
@@ -945,12 +981,18 @@ st.markdown(
 f1, f2, f3, f4 = st.columns([1.25, 0.7, 0.7, 1.6])
 
 with f1:
-    selected_ssp_index = st.selectbox(
-        "Індекс самостійного структурного підрозділу",
-        [""] + all_ssp_indices,
-        key="ssp_submit_filter",
-        placeholder="Оберіть індекс ССП"
-    )
+    if available_ssp_indices:
+        selected_ssp_index = st.selectbox(
+            "Індекс самостійного структурного підрозділу",
+            available_ssp_indices,
+            index=0,
+            key="ssp_submit_filter",
+            placeholder="Оберіть індекс ССП",
+            disabled=ssp_select_disabled,
+        )
+    else:
+        selected_ssp_index = ""
+        st.warning("Для цього користувача не визначено доступний індекс ССП.")
 
 with f2:
     selected_year = st.selectbox(
@@ -982,11 +1024,21 @@ st.markdown("</div>", unsafe_allow_html=True)
 # Filtering
 # ------------------------------------------------------------
 
-filtered_measures = all_measures.copy()
+filtered_measures = filter_actions_for_user(
+    all_measures,
+    current_user,
+    executor_columns=["resp_main", "resp_co_1"],
+)
 
 if selected_ssp_index:
     filtered_measures = filtered_measures[
-        filtered_measures["resp_main"].apply(lambda value: value_contains_ssp(value, selected_ssp_index))
+        filtered_measures.apply(
+            lambda row: (
+                value_contains_ssp(row.get("resp_main", ""), selected_ssp_index)
+                or value_contains_ssp(row.get("resp_co_1", ""), selected_ssp_index)
+            ),
+            axis=1,
+        )
     ]
 
 filtered_measures = filtered_measures[

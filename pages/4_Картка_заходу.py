@@ -11,6 +11,9 @@ from html import escape
 from textwrap import dedent
 import re
 
+from core.auth import init_auth_state, render_login_form
+from core.navigation import require_page_access, render_role_page_links
+
 
 st.set_page_config(
     page_title="Картка заходу",

@@ -13,6 +13,7 @@ import re
 
 from core.auth import init_auth_state, render_login_form
 from core.navigation import require_page_access, render_role_page_links
+from config.roles import ROLE_SSP, ROLE_ADMIN, ROLE_SUPER_ADMIN
 
 
 st.set_page_config(
@@ -21,11 +22,15 @@ st.set_page_config(
 )
 
 init_auth_state()
-render_login_form()
+current_user = render_login_form()
 render_role_page_links()
 
 if not require_page_access("Картка заходу"):
     st.stop()
+
+current_role = current_user.get("role")
+can_view_submission_history = current_role in [ROLE_ADMIN, ROLE_SUPER_ADMIN]
+can_submit_monitoring_data = current_role == ROLE_SSP
 
 st.logo(
     "assets/Мінекономіки.png",
@@ -1594,14 +1599,18 @@ render_html('</div>')
 # VISUALIZATIONS
 # ============================================================
 
+view_mode_options = [
+    "Огляд",
+    "Індикатор прогресу",
+    "Квартальна динаміка",
+]
+
+if can_view_submission_history:
+    view_mode_options.append("Історія подання відомостей")
+
 view_mode = st.selectbox(
     "Тип візуалізації",
-    [
-        "Огляд",
-        "Індикатор прогресу",
-        "Квартальна динаміка",
-        "Історія подання відомостей"
-    ]
+    view_mode_options
 )
 
 if view_mode in ["Огляд", "Індикатор прогресу"]:
@@ -1760,7 +1769,7 @@ if view_mode in ["Огляд", "Квартальна динаміка"]:
 
     render_html('</div>')
 
-if view_mode in ["Огляд", "Історія подання відомостей"]:
+if can_view_submission_history and view_mode in ["Огляд", "Історія подання відомостей"]:
     render_html('<div class="card"><div class="card-title">Історія подання відомостей</div>')
 
     if measure_requests.empty:
@@ -1796,21 +1805,31 @@ if view_mode in ["Огляд", "Історія подання відомосте
 
 render_html('<div class="card"><div class="card-title">Швидкі переходи</div>')
 
-n1, spacer, n2 = st.columns([1, 1.5, 1], gap="large")
+if can_submit_monitoring_data:
+    n1, spacer, n2 = st.columns([1, 1.5, 1], gap="large")
 
-with n1:
-    st.page_link(
-        "pages/1_Моніторинг_виконання.py",
-        label="&#9998; Подати відомості",
-        icon="🖊️"
-    )
+    with n1:
+        st.page_link(
+            "pages/1_Моніторинг_виконання.py",
+            label="&#9998; Подати відомості",
+            icon="🖊️"
+        )
 
-with n2:
-    st.page_link(
-        "pages/2_Dashboard.py",
-        label="&#128202; Перейти до аналітики",
-        icon="📊"
-    )
+    with n2:
+        st.page_link(
+            "pages/2_Dashboard.py",
+            label="&#128202; Перейти до аналітики",
+            icon="📊"
+        )
+else:
+    _, n2, _ = st.columns([1, 1, 1], gap="large")
+
+    with n2:
+        st.page_link(
+            "pages/2_Dashboard.py",
+            label="&#128202; Перейти до аналітики",
+            icon="📊"
+        )
 
 render_html('</div>')
 

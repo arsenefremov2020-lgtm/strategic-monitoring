@@ -7,6 +7,9 @@ from io import BytesIO
 import re
 from core.auth import init_auth_state, render_login_form
 from core.navigation import require_page_access, render_role_page_links
+from config.users import get_active_users
+from config.roles import ROLE_ADMIN
+from core.access import normalize_ssp_index
 
 st.set_page_config(page_title="Журнал дій", layout="wide")
 
@@ -387,6 +390,118 @@ def load_versions():
     return pd.DataFrame(response.data or [])
 
 
+def clean_text(value):
+    if value is None or pd.isna(value):
+        return ""
+
+    text = str(value).strip()
+
+    if text.lower() in ["nan", "none", "null"]:
+        return ""
+
+    return text
+
+
+def get_assigned_admin_for_department(department_value):
+    """
+    Визначає відповідального адміністратора за ССП.
+
+    Логіка:
+    - беремо індекс із department, наприклад "деп. 30" -> "30";
+    - шукаємо активного користувача з роллю ROLE_ADMIN;
+    - якщо цей індекс є в allowed_ssp_indexes адміністратора — повертаємо його ПІБ і телефон.
+    """
+
+    department_index = normalize_ssp_index(department_value)
+
+    if not department_index:
+        return {
+            "admin_name": "",
+            "admin_phone": "",
+        }
+
+    active_users = get_active_users()
+    matched_admins = []
+
+    for _, user in active_users.items():
+        if user.get("role") != ROLE_ADMIN:
+            continue
+
+        allowed_indexes = user.get("allowed_ssp_indexes", [])
+
+        normalized_allowed_indexes = [
+            normalize_ssp_index(index)
+            for index in allowed_indexes
+            if index != "*"
+        ]
+
+        if department_index in normalized_allowed_indexes:
+            matched_admins.append({
+                "name": clean_text(user.get("full_name")),
+                "phone": clean_text(user.get("phone")),
+            })
+
+    if not matched_admins:
+        return {
+            "admin_name": "",
+            "admin_phone": "",
+        }
+
+    return {
+        "admin_name": "; ".join([item["name"] for item in matched_admins if item["name"]]),
+        "admin_phone": "; ".join([item["phone"] for item in matched_admins if item["phone"]]),
+    }
+
+
+def resolve_changed_by_user(changed_by_value):
+    """
+    Розкладає поле 'Ким змінено' на:
+    - роль;
+    - ПІБ;
+    - телефон.
+
+    Якщо в changed_by зберігається email — шукаємо користувача за email.
+    Якщо там ПІБ або текст — пробуємо знайти за входженням ПІБ.
+    Якщо не знайшли — залишаємо вихідний текст у ПІБ.
+    """
+
+    raw_value = clean_text(changed_by_value)
+
+    if not raw_value:
+        return {
+            "changed_by_role": "",
+            "changed_by_name": "",
+            "changed_by_phone": "",
+        }
+
+    raw_lower = raw_value.lower()
+    active_users = get_active_users()
+
+    for _, user in active_users.items():
+        email = clean_text(user.get("email")).lower()
+        full_name = clean_text(user.get("full_name")).lower()
+
+        if email and email == raw_lower:
+            return {
+                "changed_by_role": clean_text(user.get("role_label")),
+                "changed_by_name": clean_text(user.get("full_name")),
+                "changed_by_phone": clean_text(user.get("phone")),
+            }
+
+        if full_name and full_name in raw_lower:
+            return {
+                "changed_by_role": clean_text(user.get("role_label")),
+                "changed_by_name": clean_text(user.get("full_name")),
+                "changed_by_phone": clean_text(user.get("phone")),
+            }
+
+    return {
+        "changed_by_role": "",
+        "changed_by_name": raw_value,
+        "changed_by_phone": "",
+    }
+
+
 def first_existing_column(df, candidates):
     for col in candidates:
         if col in df.columns:
@@ -615,31 +730,48 @@ def render_metric_cards(total_logs, unique_requests, unique_actions, total_versi
 
 
 def display_logs_table(filtered):
+    if filtered.empty:
+        st.info("За обраними параметрами відбору записів журналу не знайдено.")
+        return pd.DataFrame()
+
     show = filtered.copy()
+
+    changed_by_data = show["changed_by"].apply(resolve_changed_by_user)
+
+    show["changed_by_role"] = changed_by_data.apply(
+        lambda item: item.get("changed_by_role", "")
+    )
+    show["changed_by_name"] = changed_by_data.apply(
+        lambda item: item.get("changed_by_name", "")
+    )
+    show["changed_by_phone"] = changed_by_data.apply(
+        lambda item: item.get("changed_by_phone", "")
+    )
 
     rename_map = {
         "id": "ID запису",
         "request_id": "ID заявки",
-        "department": "Самостійний структурний підрозділ",
+        "department": "ССП",
         "strat_code": "Код заходу",
         "year": "Рік",
         "quarter": "Квартал",
-        "responsible_person": "Відповідальна особа",
         "changed_at": "Дата зміни",
         "action": "Дія",
         "old_status": "Попередній статус",
         "new_status": "Новий статус",
         "approval_status": "Статус модерації",
         "admin_comment": "Коментар",
-        "changed_by": "Ким змінено"
+        "changed_by": "Ким змінено",
+        "changed_by_role": "Роль",
+        "changed_by_name": "ПІБ",
+        "changed_by_phone": "Номер",
     }
 
     show = show.rename(columns=rename_map)
 
     cols = [
-        "Дата зміни",
         "ID заявки",
-        "Самостійний структурний підрозділ",
+        "ССП",
         "Код заходу",
         "Рік",
         "Квартал",
@@ -648,17 +780,16 @@ def display_logs_table(filtered):
         "Новий статус",
         "Статус модерації",
         "Коментар",
-        "Ким змінено",
-        "Відповідальна особа"
+        "Роль",
+        "ПІБ",
+        "Номер",
+        "Дата зміни",
     ]
 
     available = [c for c in cols if c in show.columns]
 
-    if filtered.empty:
-        st.info("За обраними параметрами відбору записів журналу не знайдено.")
-        return pd.DataFrame()
-
     st.dataframe(show[available], use_container_width=True, hide_index=True)
+
     return show[available]
 
 
@@ -669,13 +800,22 @@ def display_requests_table(df):
 
     show = df.copy()
 
+    assigned_admin_data = show["department"].apply(get_assigned_admin_for_department)
+
+    show["assigned_admin_name"] = assigned_admin_data.apply(
+        lambda item: item.get("admin_name", "")
+    )
+    show["assigned_admin_phone"] = assigned_admin_data.apply(
+        lambda item: item.get("admin_phone", "")
+    )
+
     rename_map = {
         "id": "ID заявки",
         "department": "Самостійний структурний підрозділ",
         "strat_code": "Код заходу",
         "year": "Рік",
         "quarter": "Квартал",
-        "responsible_person": "Відповідальна особа",
+        "responsible_person": "Відповідальна особа від ССП",
         "phone": "Телефон",
         "email": "Email",
         "approval_status": "Статус модерації",
@@ -686,17 +826,15 @@ def display_requests_table(df):
         "submitted_at": "Дата подання",
         "created_at": "Дата створення",
         "updated_at": "Дата оновлення",
-        "admin_comment": "Коментар адміністратора"
+        "admin_comment": "Коментар адміністратора",
+        "assigned_admin_name": "Відповідальний адміністратор",
+        "assigned_admin_phone": "Телефон адміністратора",
     }
 
     show = show.rename(columns=rename_map)
 
     cols = [
-        "Дата подання",
-        "Дата створення",
-        "Дата оновлення",
         "ID заявки",
-        "Самостійний структруний підрозділ",
         "Код заходу",
         "Рік",
         "Квартал",
@@ -705,14 +843,19 @@ def display_requests_table(df):
         "Фактичне значення",
         "Опис прогресу",
         "Ризики",
+        "Відповідальний адміністратор",
+        "Телефон адміністратора",
         "Коментар адміністратора",
-        "Відповідальна особа",
+        "Відповідальна особа від ССП",
         "Телефон",
-        "Email"
+        "Email",
+        "Дата подання",
+        "Дата створення",
     ]
 
     available = [c for c in cols if c in show.columns]
     st.dataframe(show[available], use_container_width=True, hide_index=True)
+
     return show[available]
 
 

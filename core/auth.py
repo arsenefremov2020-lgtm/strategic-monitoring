@@ -188,6 +188,30 @@ def is_current_user_owner() -> bool:
 # Перевірка пароля
 # -----------------------------
 
+def get_password_from_user_profile(email: str | None) -> str | None:
+    """
+    Дістає пароль користувача з профілю, який завантажений із Excel.
+    """
+
+    email = normalize_email(email)
+
+    if not email:
+        return None
+
+    user = get_user_by_email(email)
+
+    password = user.get("password")
+
+    if not password:
+        return None
+
+    password = str(password).strip()
+
+    if password.endswith(".0"):
+        password = password[:-2]
+
+    return password
+
 def get_password_from_secrets(email: str | None) -> str | None:
     """
     Дістає пароль користувача з secrets.
@@ -218,8 +242,9 @@ def check_password(email: str | None, password: str | None) -> bool:
     """
     Перевіряє пароль користувача.
 
-    Для першої версії пароль звіряється напряму зі st.secrets.
-    Пізніше це можна замінити на хешування або Supabase Auth.
+    Пріоритет:
+    1. пароль із Excel-профілю користувача;
+    2. пароль зі Streamlit Secrets як fallback.
     """
 
     email = normalize_email(email)
@@ -227,12 +252,20 @@ def check_password(email: str | None, password: str | None) -> bool:
     if not email or not password:
         return False
 
-    expected_password = get_password_from_secrets(email)
+    expected_password = get_password_from_user_profile(email)
+
+    if not expected_password:
+        expected_password = get_password_from_secrets(email)
 
     if not expected_password:
         return False
 
-    return str(password) == str(expected_password)
+    entered_password = str(password).strip()
+
+    if entered_password.endswith(".0"):
+        entered_password = entered_password[:-2]
+
+    return entered_password == str(expected_password).strip()
 
 
 # -----------------------------

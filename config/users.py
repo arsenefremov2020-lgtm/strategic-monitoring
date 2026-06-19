@@ -1,19 +1,18 @@
 # config/users.py
 
 """
-Список користувачів системи моніторингу стратегічного плану.
+Користувачі системи моніторингу стратегічного плану.
 
-Цей файл відповідає за:
-1. перелік користувачів;
-2. їхні ролі;
-3. контактні дані користувачів;
-4. прив'язку користувачів до ССП;
-5. перелік ССП, доступних конкретному користувачу;
-6. службові функції для пошуку користувача за email.
+Основне джерело користувачів:
+- users_access.xlsx
 
-Тут не має бути логіки Streamlit, Supabase, Excel або розрахунків.
+Файл Excel має лежати в корені репозиторію поруч з app.py.
+
+Якщо Excel не знайдено або він порожній, система використовує мінімальний fallback,
+щоб застосунок не падав.
 """
 
+from __future__ import annotations
 
 from config.roles import (
     ROLE_SSP,
@@ -25,200 +24,7 @@ from config.roles import (
     get_role_label,
 )
 
-
-# ------------------------------------------------------------
-# Важлива логіка
-# ------------------------------------------------------------
-#
-# ssp_index:
-#   Основний індекс ССП користувача.
-#   Для ССП і керівника ССП це конкретний номер, наприклад "30".
-#   Для адміна і супер-адміна — None.
-#
-# ssp_label:
-#   Людський підпис ССП у форматі, який зручно показувати в інтерфейсі.
-#   Наприклад: "деп. 30", "упр. 26".
-#
-# allowed_ssp_indexes:
-#   Перелік індексів ССП, до яких користувач має доступ.
-#   Для ССП: тільки власний індекс.
-#   Для керівника ССП: тільки власний індекс.
-#   Для адміна: перелік закріплених за ним ССП.
-#   Для супер-адміна: ["*"] — доступ до всіх ССП.
-#
-# allowed_ssp_labels:
-#   Людські назви для відображення у випадних списках.
-#
-# phone:
-#   Контактний номер користувача.
-#   Зараз може бути порожній, потім заповниш реальними номерами.
-#
-# ssp:
-#   Старе поле для сумісності з уже наявним кодом.
-#   Поки залишаємо, щоб нічого не зламати.
-# ------------------------------------------------------------
-
-
-USERS = {
-    "vperun80@gmail.com": {
-        "email": "vperun80@gmail.com",
-        "full_name": "Вікторія Перун",
-        "phone": "+380 66 322 5628",
-        "role": ROLE_SUPER_ADMIN,
-        "role_label": "Супер-адмін",
-
-        "ssp_index": None,
-        "ssp_label": None,
-        "ssp_name": None,
-        "ssp": None,
-
-        "allowed_ssp_indexes": ["*"],
-        "allowed_ssp_labels": ["*"],
-
-        "is_active": True,
-        "is_owner": False,
-    },
-
-    "arsen.efremov.2020@gmail.com": {
-        "email": "arsen.efremov.2020@gmail.com",
-        "full_name": "Арсен Єфремов",
-        "phone": "+380 50 764 9372",
-        "role": ROLE_SUPER_ADMIN,
-        "role_label": "Власник",
-
-        "ssp_index": None,
-        "ssp_label": None,
-        "ssp_name": None,
-        "ssp": None,
-
-        "allowed_ssp_indexes": ["*"],
-        "allowed_ssp_labels": ["*"],
-
-        "is_active": True,
-        "is_owner": True,
-    },
-
-    "chemodanovayuliya123@gmail.com": {
-        "email": "chemodanovayuliya123@gmail.com",
-        "full_name": "Юлія Чемоданова",
-        "phone": "+380 66 917 2801",
-        "role": ROLE_ADMIN,
-        "role_label": "Адміністратор",
-
-        "ssp_index": None,
-        "ssp_label": None,
-        "ssp_name": None,
-        "ssp": None,
-
-        # Тимчасово для тесту.
-        # Потім тут пропишеш реальні закріплені ССП цього адміністратора.
-        "allowed_ssp_indexes": ["30"],
-        "allowed_ssp_labels": ["деп. 30"],
-
-        "is_active": True,
-        "is_owner": False,
-    },
-
-    "kanevska150881@gmail.com": {
-        "email": "kanevska150881@gmail.com",
-        "full_name": "Каневська",
-        "phone": "+380 97 701 7291",
-        "role": ROLE_SUPER_ADMIN,
-        "role_label": "Супер-адмін",
-
-        "ssp_index": None,
-        "ssp_label": None,
-        "ssp_name": None,
-        "ssp": None,
-
-        "allowed_ssp_indexes": ["*"],
-        "allowed_ssp_labels": ["*"],
-
-        "is_active": True,
-        "is_owner": False,
-    },
-
-    "t.kovalchuk1979@gmail.com": {
-        "email": "t.kovalchuk1979@gmail.com",
-        "full_name": "Тетяна Ковальчук",
-        "phone": "+380 99 908 7025",
-        "role": ROLE_ADMIN,
-        "role_label": "Адміністратор",
-
-        "ssp_index": None,
-        "ssp_label": None,
-        "ssp_name": None,
-        "ssp": None,
-
-        # Тимчасово для тесту.
-        # Потім тут пропишеш реальні закріплені ССП цього адміністратора.
-        "allowed_ssp_indexes": ["26"],
-        "allowed_ssp_labels": ["упр. 26"],
-
-        "is_active": True,
-        "is_owner": False,
-    },
-
-    "arsen.yefremov.25@kse.org.ua": {
-        "email": "arsen.yefremov.25@kse.org.ua",
-        "full_name": "Тестовий користувач ССП",
-        "phone": "",
-        "role": ROLE_SSP,
-        "role_label": "Кабінет ССП",
-
-        # Тестовий ССП.
-        # Потім заміниш на реальний індекс і назву.
-        "ssp_index": "30",
-        "ssp_label": "деп. 30",
-        "ssp_name": "Тестовий ССП",
-        "ssp": "Тестовий ССП",
-
-        "allowed_ssp_indexes": ["30"],
-        "allowed_ssp_labels": ["деп. 30"],
-
-        "is_active": True,
-        "is_owner": False,
-    },
-
-    "inna.mogilat@gmail.com": {
-        "email": "inna.mogilat@gmail.com",
-        "full_name": "Інна Могилат",
-        "phone": "+380 50 409 2929",
-        "role": ROLE_SUPER_ADMIN,
-        "role_label": "Супер-адмін",
-
-        "ssp_index": None,
-        "ssp_label": None,
-        "ssp_name": None,
-        "ssp": None,
-
-        "allowed_ssp_indexes": ["*"],
-        "allowed_ssp_labels": ["*"],
-
-        "is_active": True,
-        "is_owner": False,
-    },
-
-    "test.ssp.head@example.com": {
-        "email": "test.ssp.head@example.com",
-        "full_name": "Тестовий керівник ССП",
-        "phone": "",
-        "role": ROLE_SSP_HEAD,
-        "role_label": "Керівник ССП",
-
-        # Тестовий керівник того самого ССП, що й тестовий користувач ССП.
-        "ssp_index": "30",
-        "ssp_label": "деп. 30",
-        "ssp_name": "Тестовий ССП",
-        "ssp": "Тестовий ССП",
-
-        "allowed_ssp_indexes": ["30"],
-        "allowed_ssp_labels": ["деп. 30"],
-
-        "is_active": True,
-        "is_owner": False,
-    },
-}
+from core.users_access_loader import load_users_from_excel
 
 
 # ------------------------------------------------------------
@@ -227,6 +33,7 @@ USERS = {
 
 GUEST_USER = {
     "email": None,
+    "password": "",
     "full_name": "Користувач без реєстрації",
     "phone": "",
     "role": ROLE_GUEST,
@@ -242,7 +49,48 @@ GUEST_USER = {
 
     "is_active": True,
     "is_owner": False,
+    "comment": "",
 }
+
+
+# ------------------------------------------------------------
+# Мінімальний fallback
+# ------------------------------------------------------------
+
+FALLBACK_USERS = {
+    "arsen.efremov.2020@gmail.com": {
+        "email": "arsen.efremov.2020@gmail.com",
+        "password": "123456",
+        "full_name": "Арсен Єфремов",
+        "phone": "",
+        "role": ROLE_SUPER_ADMIN,
+        "role_label": "Власник",
+
+        "ssp_index": None,
+        "ssp_label": None,
+        "ssp_name": None,
+        "ssp": None,
+
+        "allowed_ssp_indexes": ["*"],
+        "allowed_ssp_labels": ["*"],
+
+        "is_active": True,
+        "is_owner": True,
+        "comment": "Fallback user",
+    }
+}
+
+
+# ------------------------------------------------------------
+# Завантаження користувачів
+# ------------------------------------------------------------
+
+EXCEL_USERS = load_users_from_excel("users_access.xlsx")
+
+if EXCEL_USERS:
+    USERS = EXCEL_USERS
+else:
+    USERS = FALLBACK_USERS
 
 
 # ------------------------------------------------------------
@@ -251,10 +99,7 @@ GUEST_USER = {
 
 def normalize_email(email: str | None) -> str | None:
     """
-    Нормалізує email:
-    - прибирає пробіли;
-    - переводить у нижній регістр;
-    - якщо email порожній — повертає None.
+    Нормалізує email.
     """
 
     if not email:
@@ -320,11 +165,7 @@ def normalize_ssp_indexes(values: list | tuple | set | None) -> list[str]:
 
 def normalize_user_record(user: dict | None) -> dict:
     """
-    Нормалізує запис користувача:
-    - роль;
-    - role_label;
-    - ssp_index;
-    - allowed_ssp_indexes.
+    Нормалізує запис користувача.
     """
 
     if not user:
@@ -340,14 +181,16 @@ def normalize_user_record(user: dict | None) -> dict:
 
     user_data["ssp_index"] = normalize_ssp_index(user_data.get("ssp_index"))
 
-    allowed_indexes = user_data.get("allowed_ssp_indexes", [])
-
-    # Супер-адмін завжди має доступ до всіх ССП.
     if role == ROLE_SUPER_ADMIN or user_data.get("is_owner", False):
         user_data["allowed_ssp_indexes"] = ["*"]
         user_data["allowed_ssp_labels"] = ["*"]
     else:
-        user_data["allowed_ssp_indexes"] = normalize_ssp_indexes(allowed_indexes)
+        user_data["allowed_ssp_indexes"] = normalize_ssp_indexes(
+            user_data.get("allowed_ssp_indexes", [])
+        )
+
+    if "password" not in user_data:
+        user_data["password"] = ""
 
     if "phone" not in user_data:
         user_data["phone"] = ""
@@ -361,13 +204,16 @@ def normalize_user_record(user: dict | None) -> dict:
     if "ssp" not in user_data:
         user_data["ssp"] = user_data.get("ssp_name")
 
+    if "comment" not in user_data:
+        user_data["comment"] = ""
+
     return user_data
 
 
 def get_user_by_email(email: str | None) -> dict:
     """
     Повертає користувача за email.
-    Якщо email не знайдено — повертає гостьового користувача.
+    Якщо email не знайдено — повертає guest.
     """
 
     email = normalize_email(email)
@@ -420,7 +266,6 @@ def is_active_user(email: str | None) -> bool:
 def get_user_role(email: str | None) -> str:
     """
     Повертає роль користувача.
-    Якщо користувача немає — повертає guest.
     """
 
     user = get_user_by_email(email)
@@ -456,7 +301,7 @@ def get_user_allowed_ssp_indexes(email: str | None) -> list[str]:
 
 def get_all_users() -> dict:
     """
-    Повертає копію всіх користувачів.
+    Повертає всіх користувачів.
     """
 
     return {

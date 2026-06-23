@@ -29,6 +29,7 @@ from config.roles import (
     ROLE_ADMIN,
     ROLE_SUPER_ADMIN,
     ROLE_GUEST,
+    ENABLE_PERSONAL_CABINETS,
     normalize_role,
 )
 
@@ -194,6 +195,9 @@ def get_user_allowed_ssp_indexes(user: dict | None) -> list[str]:
     if not user:
         return []
 
+    if not ENABLE_PERSONAL_CABINETS:
+        return ["*"]
+
     role = get_user_role(user)
 
     if role == ROLE_SUPER_ADMIN or user.get("is_owner", False):
@@ -214,6 +218,9 @@ def get_user_allowed_ssp_labels(user: dict | None) -> list[str]:
 
     if not user:
         return []
+
+    if not ENABLE_PERSONAL_CABINETS:
+        return ["*"]
 
     role = get_user_role(user)
 
@@ -327,6 +334,9 @@ def should_lock_ssp_fields(user: dict | None) -> bool:
     - гість: заблоковано.
     """
 
+    if not ENABLE_PERSONAL_CABINETS:
+        return False
+
     role = get_user_role(user)
 
     if role in [ROLE_SSP, ROLE_SSP_HEAD, ROLE_GUEST]:
@@ -383,6 +393,9 @@ def filter_actions_for_user(
         return df
 
     if df.empty:
+        return df.copy()
+
+    if not ENABLE_PERSONAL_CABINETS:
         return df.copy()
 
     role = get_user_role(user)
@@ -444,6 +457,9 @@ def filter_requests_for_user(
         return df
 
     if df.empty:
+        return df.copy()
+
+    if not ENABLE_PERSONAL_CABINETS:
         return df.copy()
 
     role = get_user_role(user)
@@ -540,6 +556,11 @@ def get_available_ssp_options_for_user(
     if not user:
         return []
 
+    if not ENABLE_PERSONAL_CABINETS:
+        if all_options is not None:
+            return list(all_options)
+        return ["*"]
+
     role = get_user_role(user)
 
     if role == ROLE_GUEST:
@@ -576,6 +597,9 @@ def get_single_locked_ssp_value(user: dict | None) -> str | None:
     """
 
     if not user:
+        return None
+
+    if not ENABLE_PERSONAL_CABINETS:
         return None
 
     if is_super_admin_user(user):

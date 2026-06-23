@@ -13,7 +13,7 @@ import re
 
 from core.auth import init_auth_state, render_login_form
 from core.navigation import require_page_access, render_role_page_links
-from config.roles import ROLE_SSP, ROLE_ADMIN, ROLE_SUPER_ADMIN
+from config.roles import ROLE_SSP, ROLE_ADMIN, ROLE_SUPER_ADMIN, ENABLE_PERSONAL_CABINETS
 
 
 st.set_page_config(
@@ -29,8 +29,12 @@ if not require_page_access("Картка заходу"):
     st.stop()
 
 current_role = current_user.get("role")
-can_view_submission_history = current_role in [ROLE_ADMIN, ROLE_SUPER_ADMIN]
-can_submit_monitoring_data = current_role == ROLE_SSP
+can_view_submission_history = (
+    not ENABLE_PERSONAL_CABINETS or current_role in [ROLE_ADMIN, ROLE_SUPER_ADMIN]
+)
+can_submit_monitoring_data = (
+    not ENABLE_PERSONAL_CABINETS or current_role == ROLE_SSP
+)
 
 st.logo(
     "assets/Мінекономіки.png",

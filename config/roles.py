@@ -28,7 +28,8 @@ ROLE_GUEST = "guest"
 # -----------------------------
 
 # False = рольові обмеження та особисті кабінети тимчасово вимкнені:
-# усі вкладки показуються для всіх користувачів.
+# усі вкладки показуються для всіх користувачів,
+# а guard-перевірки сторінок не блокують доступ.
 # True = повернення до логіки особистих кабінетів і доступів за ролями.
 ENABLE_PERSONAL_CABINETS = False
 
@@ -177,14 +178,14 @@ def get_default_page_for_role(role: str | None) -> str:
 def can_access_page(role: str | None, page_name: str) -> bool:
     """
     Перевіряє, чи має роль доступ до конкретної вкладки.
-    Якщо особисті кабінети вимкнені — пропускає всі сторінки з ALL_PAGES.
+    Якщо особисті кабінети вимкнені — не блокує жодну сторінку.
     """
+
+    if not ENABLE_PERSONAL_CABINETS:
+        return True
 
     if not page_name:
         return False
-
-    if not ENABLE_PERSONAL_CABINETS:
-        return page_name in ALL_PAGES
 
     allowed_pages = get_pages_for_role(role)
     return page_name in allowed_pages
@@ -219,6 +220,7 @@ def is_super_admin(role: str | None) -> bool:
 def is_ssp_role(role: str | None) -> bool:
     """
     Перевіряє, чи є користувач представником ССП або керівником ССП.
+    Якщо особисті кабінети вимкнені — не вмикає режим персонального ССП.
     """
 
     if not ENABLE_PERSONAL_CABINETS:

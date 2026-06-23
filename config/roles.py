@@ -24,6 +24,16 @@ ROLE_GUEST = "guest"
 
 
 # -----------------------------
+# Тимчасове вимкнення особистих кабінетів
+# -----------------------------
+
+# False = рольові обмеження та особисті кабінети тимчасово вимкнені:
+# усі вкладки показуються для всіх користувачів.
+# True = повернення до логіки особистих кабінетів і доступів за ролями.
+ENABLE_PERSONAL_CABINETS = False
+
+
+# -----------------------------
 # Людські назви ролей
 # -----------------------------
 
@@ -145,7 +155,11 @@ def get_role_label(role: str | None) -> str:
 def get_pages_for_role(role: str | None) -> list[str]:
     """
     Повертає список вкладок, доступних для конкретної ролі.
+    Якщо особисті кабінети вимкнені — повертає всі вкладки.
     """
+
+    if not ENABLE_PERSONAL_CABINETS:
+        return ALL_PAGES.copy()
 
     role = normalize_role(role)
     return ROLE_PAGES.get(role, ROLE_PAGES[ROLE_GUEST])
@@ -163,10 +177,14 @@ def get_default_page_for_role(role: str | None) -> str:
 def can_access_page(role: str | None, page_name: str) -> bool:
     """
     Перевіряє, чи має роль доступ до конкретної вкладки.
+    Якщо особисті кабінети вимкнені — пропускає всі сторінки з ALL_PAGES.
     """
 
     if not page_name:
         return False
+
+    if not ENABLE_PERSONAL_CABINETS:
+        return page_name in ALL_PAGES
 
     allowed_pages = get_pages_for_role(role)
     return page_name in allowed_pages
@@ -175,7 +193,11 @@ def can_access_page(role: str | None, page_name: str) -> bool:
 def is_admin_role(role: str | None) -> bool:
     """
     Перевіряє, чи є користувач адміністратором або супер-адміном.
+    Якщо особисті кабінети вимкнені — адміністративні перевірки не блокують інтерфейс.
     """
+
+    if not ENABLE_PERSONAL_CABINETS:
+        return True
 
     role = normalize_role(role)
     return role in [ROLE_ADMIN, ROLE_SUPER_ADMIN]
@@ -184,7 +206,11 @@ def is_admin_role(role: str | None) -> bool:
 def is_super_admin(role: str | None) -> bool:
     """
     Перевіряє, чи є користувач супер-адміном.
+    Якщо особисті кабінети вимкнені — повертає True для сумісності з адмін-сторінками.
     """
+
+    if not ENABLE_PERSONAL_CABINETS:
+        return True
 
     role = normalize_role(role)
     return role == ROLE_SUPER_ADMIN
@@ -194,6 +220,9 @@ def is_ssp_role(role: str | None) -> bool:
     """
     Перевіряє, чи є користувач представником ССП або керівником ССП.
     """
+
+    if not ENABLE_PERSONAL_CABINETS:
+        return False
 
     role = normalize_role(role)
     return role in [ROLE_SSP, ROLE_SSP_HEAD]

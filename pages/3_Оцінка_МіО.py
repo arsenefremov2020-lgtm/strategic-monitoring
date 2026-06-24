@@ -4402,14 +4402,228 @@ def render_mode_financing(strat_df, monitoring_df, years):
     st.markdown('</div>', unsafe_allow_html=True)
 
 
+def render_mode_infogr_sc(strat_df, monitoring_df, years):
+    """Режим «Інфограф СЦ» — зведена візуалізація прогресу за стратегічними цілями.
+
+    Підв'язаний до всіх попередніх режимів: жодних власних обчислень —
+    лише агрегація вже готових даних з build_integral_table (Інтеграл),
+    build_rv_measures_table (стан заходів), build_financing_table/
+    load_financing_data (фінансування) і load_strat_matrix (ієрархія).
+    """
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="section-title">Інфограф СЦ · зведена візуалізація прогресу за стратегічними цілями</div>',
+        unsafe_allow_html=True
+    )
+    st.markdown(
+        "<div style='font-size:13px;color:#475569;margin-bottom:8px;line-height:1.5;'>"
+        "Зведена картина за обраний рік: кількість цілей/завдань/заходів/"
+        "бюджетних програм, загальний прогрес виконання стратплану, "
+        "фінансування бюджетних програм та інтегральна оцінка по кожній "
+        "стратегічній цілі. Дані беруться з режимів «Інт_Оцінка», "
+        "«РВ (Заходи)» і «МіО Фінансування» — без перерахунку методики."
+        "</div>",
+        unsafe_allow_html=True
+    )
+
+    year_options = [2026, 2027, 2028]
+    default_year = years[0] if years else year_options[0]
+    sel_year = st.selectbox(
+        "Рік", year_options,
+        index=year_options.index(default_year) if default_year in year_options else 0,
+        key="infogr_sc_year",
+    )
+
+    goals = strat_df[strat_df["object_type"] == "goal"].copy()
+    tasks = strat_df[strat_df["object_type"] == "task"].copy()
+    measures = strat_df[strat_df["object_type"] == "measure"].copy()
+    goals["__code"] = goals["code"].map(raw_value)
+    tasks["__code"] = tasks["code"].map(raw_value)
+    measures["__code"] = measures["code"].map(raw_value)
+    goal_codes_sorted = sorted(goals["__code"].unique(), key=code_sort_key)
+
+    n_goals = len(goal_codes_sorted)
+    n_tasks = tasks["__code"].nunique()
+    n_measures = measures["__code"].nunique()
+
+    kpkvk_clean = measures["kpkvk"].map(raw_value)
+    n_budget_progs = kpkvk_clean[kpkvk_clean.str.strip() != ""].nunique()
+
+    fin_index = load_financing_data()
+    fin_df = build_financing_table(strat_df, monitoring_df, fin_index, sel_year)
+    total_plan_bln = fin_df["План, млрд грн"].dropna().sum() if not fin_df.empty else 0.0
+    total_fact_bln = fin_df["Факт, млрд грн"].dropna().sum() if not fin_df.empty else 0.0
+    budget_mln = total_plan_bln * 1000.0
+
+    st.markdown(
+        f"""
+        <div class="kpi-grid" style="grid-template-columns:repeat(5,1fr);">
+            {kpi_card("Цілей", n_goals, "blue")}
+            {kpi_card("Завдань", n_tasks, "blue")}
+            {kpi_card("Заходів", n_measures, "blue")}
+            {kpi_card("Бюджетних програм", n_budget_progs, "indigo")}
+            {kpi_card("Бюджетні кошти", f"{budget_mln:,.0f} млн грн".replace(",", " "), "indigo")}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    rv_df = build_rv_measures_table(strat_df, monitoring_df, sel_year)
+    done_by_goal = {}
+    total_by_goal = {}
+    if not rv_df.empty:
+        rv_df["__goal_code"] = rv_df["Захід"].map(
+            lambda c: next((g for g in goal_codes_sorted if raw_value(c).startswith(g)), "")
+        )
+        for gcode, grp in rv_df.groupby("__goal_code"):
+            total_by_goal[gcode] = len(grp)
+            done_by_goal[gcode] = int((grp["Кінцевий результат"] == "Виконано").sum())
+
+    _, goals_int_df = build_integral_table(strat_df, monitoring_df)
+    int_col = f"Інтеграл {sel_year}"
+    int_by_goal = {}
+    if not goals_int_df.empty and int_col in goals_int_df.columns:
+        for _, r in goals_int_df.iterrows():
+            int_by_goal[raw_value(r["Код"])] = r[int_col]
+
+    avg_progress = (
+        sum(v for v in int_by_goal.values() if isinstance(v, (int, float)))
+        / max(1, sum(1 for v in int_by_goal.values() if isinstance(v, (int, float))))
+    ) if int_by_goal else 0.0
+
+    fin_pct = (total_fact_bln / total_plan_bln * 100.0) if total_plan_bln else 0.0
+
+    col1, col2 = st.columns(2, gap="medium")
+    with col1:
+        st.markdown(
+            '<div style="font-weight:800;font-size:13px;color:#0f172a;text-align:center;">'
+            'ЗАГАЛЬНИЙ ПРОГРЕС ВИКОНАННЯ СТРАТПЛАНУ</div>',
+            unsafe_allow_html=True,
+        )
+        donut_df = pd.DataFrame({
+            "Статус": ["Виконано", "Залишок"],
+            "Значення": [avg_progress, max(0.0, 100.0 - avg_progress)],
+        })
+        fig = px.pie(
+            donut_df, names="Статус", values="Значення", color="Статус",
+            color_discrete_map={"Виконано": "#005BBB", "Залишок": "#e2e8f0"},
+            hole=0.62,
+        )
+        fig.update_traces(textinfo="none")
+        fig.add_annotation(text=f"{avg_progress:.1f}%", showarrow=False,
+                            font=dict(size=22, color="#0f172a"))
+        fig.update_layout(height=300, margin=dict(l=10, r=10, t=10, b=10),
+                           paper_bgcolor="white", showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
+    with col2:
+        st.markdown(
+            '<div style="font-weight:800;font-size:13px;color:#0f172a;text-align:center;">'
+            'ФІНАНСУВАННЯ ВИКОНАННЯ БЮДЖЕТНИХ ПРОГРАМ</div>',
+            unsafe_allow_html=True,
+        )
+        fin_donut_df = pd.DataFrame({
+            "Статус": ["Профінансовано", "Залишок"],
+            "Значення": [fin_pct, max(0.0, 100.0 - fin_pct)],
+        })
+        fig = px.pie(
+            fin_donut_df, names="Статус", values="Значення", color="Статус",
+            color_discrete_map={"Профінансовано": "#16a34a", "Залишок": "#e2e8f0"},
+            hole=0.62,
+        )
+        fig.update_traces(textinfo="none")
+        fig.add_annotation(text=f"{fin_pct:.1f}%", showarrow=False,
+                            font=dict(size=22, color="#0f172a"))
+        fig.update_layout(height=300, margin=dict(l=10, r=10, t=10, b=10),
+                           paper_bgcolor="white", showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown(
+        '<div style="font-weight:800;font-size:13px;color:#0f172a;text-align:center;margin-top:8px;">'
+        f'ІНТЕГРАЛЬНА ОЦІНКА за {sel_year} рік</div>',
+        unsafe_allow_html=True,
+    )
+    cats = [f"СЦ{i+1}" for i in range(len(goal_codes_sorted))]
+    vals = [int_by_goal.get(g) if isinstance(int_by_goal.get(g), (int, float)) else 0.0
+            for g in goal_codes_sorted]
+    if cats:
+        cats_closed = cats + [cats[0]]
+        vals_closed = vals + [vals[0]]
+        fig = go.Figure(go.Scatterpolar(
+            r=vals_closed, theta=cats_closed, fill="toself",
+            fillcolor="rgba(0,91,187,0.12)", line=dict(color="#005BBB", width=2),
+            name=str(sel_year),
+        ))
+        fig.add_trace(go.Scatterpolar(
+            r=[100] * len(cats_closed), theta=cats_closed, mode="lines",
+            line=dict(color="#e2e8f0", width=1.5, dash="dot"), name="100% (план)",
+            showlegend=True,
+        ))
+        fig.update_layout(
+            polar=dict(radialaxis=dict(visible=True, range=[0, 120], tickfont=dict(size=9)),
+                       angularaxis=dict(tickfont=dict(size=9))),
+            height=340, paper_bgcolor="white", margin=dict(l=20, r=20, t=20, b=20),
+            legend=dict(font=dict(size=10)),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        bar_cells = []
+        for g, c in zip(goal_codes_sorted, cats):
+            v = int_by_goal.get(g)
+            v = v if isinstance(v, (int, float)) else 0.0
+            bar_cells.append(
+                '<div style="text-align:center;flex:1;min-width:0;">'
+                f'<div style="font-size:11px;font-weight:700;color:#475569;">{c}</div>'
+                f'{progress_bar_html(v, level_color(v))}'
+                f'<div style="font-size:11px;font-weight:800;color:{level_color(v)};">{v:.1f}% 🚩100%</div>'
+                '</div>'
+            )
+        st.markdown(
+            f'<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">{"".join(bar_cells)}</div>',
+            unsafe_allow_html=True,
+        )
+
+    st.markdown(
+        '<div style="font-weight:800;font-size:14px;color:#0f172a;margin-top:18px;margin-bottom:8px;">'
+        'СТРАТЕГІЧНІ ЦІЛІ — ЗВЕДЕННЯ</div>',
+        unsafe_allow_html=True,
+    )
+    goal_name_by_code = {raw_value(r["code"]): raw_value(r["name"]) for _, r in goals.iterrows()}
+    rows_html = []
+    for g in goal_codes_sorted:
+        n_g_tasks = tasks[tasks["__code"].str.startswith(g)]["__code"].nunique()
+        n_g_measures = measures[measures["__code"].str.startswith(g)]["__code"].nunique()
+        n_g_done = done_by_goal.get(g, 0)
+        kpkvk_g = kpkvk_clean[measures["__code"].str.startswith(g)]
+        n_g_budget = kpkvk_g[kpkvk_g.str.strip() != ""].nunique()
+        score = int_by_goal.get(g)
+        score = score if isinstance(score, (int, float)) else 0.0
+        rows_html.append(
+            '<div style="display:flex;align-items:center;gap:14px;padding:10px 12px;'
+            'border:1px solid #e2e8f0;border-radius:12px;margin-bottom:8px;background:#f8fafc;">'
+            '<div style="flex:2;min-width:0;font-weight:700;font-size:13px;color:#0f172a;">'
+            f'{g} {goal_name_by_code.get(g, "")}</div>'
+            f'<div style="flex:1;text-align:center;font-size:12px;color:#475569;">Завдань<br>'
+            f'<b style="font-size:15px;color:#0f172a;">{n_g_tasks}</b></div>'
+            f'<div style="flex:1;text-align:center;font-size:12px;color:#475569;">Заходів<br>'
+            f'<b style="font-size:15px;color:#0f172a;">{n_g_measures}</b> '
+            f'(вик. {n_g_done})</div>'
+            f'<div style="flex:1;text-align:center;font-size:12px;color:#475569;">Бюджетних<br>програм<br>'
+            f'<b style="font-size:15px;color:#0f172a;">{n_g_budget}</b></div>'
+            f'<div style="flex:2;min-width:120px;">{progress_bar_html(score, level_color(score))}'
+            f'<div style="text-align:right;font-size:11px;font-weight:800;color:{level_color(score)};">{score:.1f}%</div></div>'
+            '</div>'
+        )
+    st.markdown("".join(rows_html), unsafe_allow_html=True)
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
 def render_mode_placeholder(mode_label):
     sheet_map = {
         MODE_RV_MEAS:  ("РВ (Заходи)", "Розрахунок виконання на рівні заходів."),
         MODE_RV_GOALS: ("РВ (СЦ, Завдання)_РОЗРАХ", "Розрахунок виконання за стратегічними цілями та завданнями."),
         MODE_MIO_GT:   ("МіО_цілі_завдан", "Моніторинг та оцінка індикаторів цілей і завдань."),
         MODE_INTEGRAL: ("Інт_Оцінка", "Інтегральна оцінка (зважена 20/30/50)."),
-        MODE_INFOGR_SC: ("Інфограф СЦ",
-                         "Інфографіка за стратегічними цілями (зведена візуалізація прогресу СЦ)."),
         MODE_INFOGR_SCZZ: ("Інфограф_СЦ.З.з",
                            "Інфографіка за стратегічними цілями, завданнями та заходами (деталізований розріз)."),
     }
@@ -4442,6 +4656,8 @@ if active_mode in MIO_MODES and active_mode != MODE_LEGACY:
         render_mode_integral(strat_df, monitoring_df, mio_years)
     elif active_mode == MODE_FINANCING:
         render_mode_financing(strat_df, monitoring_df, mio_years)
+    elif active_mode == MODE_INFOGR_SC:
+        render_mode_infogr_sc(strat_df, monitoring_df, mio_years)
     else:
         render_mode_placeholder(active_mode)
     st.stop()

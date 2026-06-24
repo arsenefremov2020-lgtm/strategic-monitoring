@@ -4470,19 +4470,16 @@ def render_mode_infogr_sc(strat_df, monitoring_df, years):
 
     goals = strat_df[strat_df["object_type"] == "goal"].copy()
     tasks = strat_df[strat_df["object_type"] == "task"].copy()
-    measures = strat_df[strat_df["object_type"] == "measure"].copy()
+    measures_all = strat_df[strat_df["object_type"] == "measure"].copy()
     goals["__code"] = goals["code"].map(raw_value)
     tasks["__code"] = tasks["code"].map(raw_value)
-    measures["__code"] = measures["code"].map(raw_value)
+    measures_all["__code"] = measures_all["code"].map(raw_value)
     goal_codes_sorted = sorted(goals["__code"].unique(), key=code_sort_key)
     goal_name_by_code = {raw_value(r["code"]): raw_value(r["name"]) for _, r in goals.iterrows()}
     goal_icons = ["🏭", "⚙️", "🛡️", "💡", "👥", "📈", "🌐", "🇪🇺"]
 
     n_goals = len(goal_codes_sorted)
     n_tasks = tasks["__code"].nunique()
-    n_measures = measures["__code"].nunique()
-    kpkvk_clean = measures["kpkvk"].map(raw_value)
-    n_budget_progs = kpkvk_clean[kpkvk_clean.str.strip() != ""].nunique()
 
     # ── Шапка (як на еталонному аркуші «Інфограф_СЦ») ──
     st.markdown(
@@ -4499,12 +4496,22 @@ def render_mode_infogr_sc(strat_df, monitoring_df, years):
             return 25
         return int(25 + 67 * (math.sqrt(value) / math.sqrt(vmax)))
 
-    vmax = max(n_goals, n_tasks, n_measures, 1)
-
     head_l, head_r = st.columns([6, 1])
     with head_r:
         sel_year = st.selectbox("Рік", year_options, index=sel_idx, key="infogr_sc_year",
                                  label_visibility="collapsed")
+
+    # ── Заходи, «активні» в обраному році — мають ціль/орієнтир (target_{рік})
+    # на цей рік. Заходи, що стартують пізніше або вже завершили дію раніше,
+    # не входять до підрахунку «Заходів» саме цього року.
+    target_col = f"target_{sel_year}"
+    active_mask = measures_all[target_col].map(raw_value).str.strip() != ""
+    measures = measures_all[active_mask].copy()
+    n_measures = measures["__code"].nunique()
+    kpkvk_clean = measures["kpkvk"].map(raw_value)
+    n_budget_progs = kpkvk_clean[kpkvk_clean.str.strip() != ""].nunique()
+
+    vmax = max(n_goals, n_tasks, n_measures, 1)
 
     fin_index = load_financing_data()
     fin_df = build_financing_table(strat_df, monitoring_df, fin_index, sel_year)
@@ -4533,9 +4540,11 @@ def render_mode_infogr_sc(strat_df, monitoring_df, years):
             unsafe_allow_html=True,
         )
 
+    active_codes = set(measures["__code"])
     rv_df = build_rv_measures_table(strat_df, monitoring_df, sel_year)
     done_by_goal = {}
     if not rv_df.empty:
+        rv_df = rv_df[rv_df["Захід"].map(raw_value).isin(active_codes)].copy()
         rv_df["__goal_code"] = rv_df["Захід"].map(
             lambda c: next((g for g in goal_codes_sorted if raw_value(c).startswith(g)), "")
         )

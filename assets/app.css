@@ -93,8 +93,11 @@ html, body, .stApp {
 
 /* Таблиці та зображення не повинні ширшати за контейнер,
    а якщо контент справді широкий — даємо горизонтальний скрол
-   замість "виливання" за межі картки */
-img {
+   замість "виливання" за межі картки.
+   Логотип у sidebar (st.logo) і аватари виключені — Streamlit
+   сам контролює їхній розмір. */
+div[data-testid="stMain"] img,
+div[data-testid="stMarkdownContainer"] img {
     max-width: 100% !important;
     height: auto !important;
 }

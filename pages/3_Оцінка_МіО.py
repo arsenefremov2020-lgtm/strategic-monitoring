@@ -11,6 +11,7 @@ from supabase import create_client
 
 from core.auth import init_auth_state, render_login_form
 from core.navigation import require_page_access, render_role_page_links
+from core.ui import load_css
 
 st.set_page_config(page_title="Оцінка МіО", layout="wide")
 
@@ -20,6 +21,8 @@ render_role_page_links()
 
 if not require_page_access("Оцінка МіО"):
     st.stop()
+
+load_css()
 
 st.logo(
     "assets/Мінекономіки.png",

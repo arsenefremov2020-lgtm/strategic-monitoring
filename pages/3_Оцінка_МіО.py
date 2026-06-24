@@ -4542,6 +4542,15 @@ def render_mode_infogr_sc(strat_df, monitoring_df, years):
         for gcode, grp in rv_df.groupby("__goal_code"):
             done_by_goal[gcode] = int((grp["Кінцевий результат"] == "Виконано").sum())
 
+    def _num0(v):
+        """0.0 для None/NaN/тексту («х», «в/а») — лише скінченні числа лишаються як є."""
+        if isinstance(v, (int, float)) and not (isinstance(v, float) and math.isnan(v)):
+            return float(v)
+        return 0.0
+
+    def _is_finite_num(v):
+        return isinstance(v, (int, float)) and not (isinstance(v, float) and math.isnan(v))
+
     _, goals_int_df = build_integral_table(strat_df, monitoring_df)
     int_col = f"Інтеграл {sel_year}"
     int_by_goal = {}
@@ -4549,11 +4558,9 @@ def render_mode_infogr_sc(strat_df, monitoring_df, years):
         for _, r in goals_int_df.iterrows():
             int_by_goal[raw_value(r["Код"])] = r[int_col]
 
-    avg_progress = (
-        sum(v for v in int_by_goal.values() if isinstance(v, (int, float)))
-        / max(1, sum(1 for v in int_by_goal.values() if isinstance(v, (int, float))))
-    ) if int_by_goal else 0.0
-    fin_pct = (total_fact_bln / total_plan_bln * 100.0) if total_plan_bln else 0.0
+    finite_vals = [v for v in int_by_goal.values() if _is_finite_num(v)]
+    avg_progress = (sum(finite_vals) / len(finite_vals)) if finite_vals else 0.0
+    fin_pct = _num0(total_fact_bln / total_plan_bln * 100.0) if total_plan_bln else 0.0
 
     # ── Два донати: загальний прогрес і фінансування ──
     st.markdown("<div style='height:14px;'></div>", unsafe_allow_html=True)
@@ -4621,8 +4628,7 @@ def render_mode_infogr_sc(strat_df, monitoring_df, years):
         if cats:
             fig = go.Figure()
             for y in radar_years:
-                vals = [int_by_goal_year[y].get(g) if isinstance(int_by_goal_year[y].get(g), (int, float)) else 0.0
-                        for g in goal_codes_sorted]
+                vals = [_num0(int_by_goal_year[y].get(g)) for g in goal_codes_sorted]
                 cats_closed = cats + [cats[0]]
                 vals_closed = vals + [vals[0]]
                 fig.add_trace(go.Scatterpolar(
@@ -4646,8 +4652,7 @@ def render_mode_infogr_sc(strat_df, monitoring_df, years):
             unsafe_allow_html=True,
         )
         for g, c in zip(goal_codes_sorted, cats):
-            v = int_by_goal.get(g)
-            v = v if isinstance(v, (int, float)) else 0.0
+            v = _num0(int_by_goal.get(g))
             color = "#16a34a" if v >= 80 else "#dc2626"
             st.markdown(
                 '<div class="infogr-axis-row">'

@@ -4449,6 +4449,32 @@ _INFOGR_CSS = """
 .infogr-goal-num { text-align:center; font-weight:800; font-size:13.5px; color:#0f172a; }
 .infogr-goal-meas-bar { height:7px; border-radius:4px; background:#e2e8f0; margin-top:3px; }
 .infogr-goal-meas-fill { height:100%; border-radius:4px; background:#0c5db5; }
+
+/* ── Інфограф_СЦ.З.з ── */
+.iz-goaltitle { font-weight:800; font-size:14px; color:#0f172a; text-transform:uppercase;
+  padding:10px 4px 4px; }
+.iz-kpi-row { display:flex; align-items:center; gap:26px; background:#fff; border:1px solid #d8dee9;
+  border-radius:0 0 10px 10px; padding:16px 22px; flex-wrap:wrap; }
+.iz-kpi { text-align:center; min-width:90px; }
+.iz-kpi .kl { font-size:11px; font-weight:800; color:#475569; }
+.iz-kpi .kv { font-size:24px; font-weight:900; color:#0f172a; }
+.iz-ind-table { width:100%; border-collapse:collapse; margin-top:8px; font-size:12px; }
+.iz-ind-table th { background:#1c3f63; color:#fff; font-size:10.5px; font-weight:800;
+  text-transform:uppercase; padding:6px 8px; text-align:center; }
+.iz-ind-table th.iz-left { text-align:left; }
+.iz-ind-table td { padding:6px 8px; border-bottom:1px solid #e2e8f0; text-align:center; }
+.iz-ind-table td.iz-left { text-align:left; font-weight:600; color:#0f172a; }
+.iz-task-card { background:#fff; border:1px solid #d8dee9; border-radius:8px; padding:14px;
+  margin-bottom:14px; }
+.iz-task-title { font-weight:800; font-size:12.5px; color:#1c3f63; text-transform:uppercase; }
+.iz-task-name { font-size:11.5px; color:#475569; margin-bottom:8px; }
+.iz-task-score-bar { height:18px; border-radius:4px; background:#e2e8f0; position:relative;
+  margin-bottom:10px; }
+.iz-task-score-fill { height:100%; border-radius:4px; display:flex; align-items:center;
+  justify-content:flex-end; padding-right:8px; color:#fff; font-weight:800; font-size:11px; }
+.iz-status-row { display:flex; justify-content:space-between; gap:6px; flex-wrap:wrap;
+  margin-top:6px; font-size:11px; }
+.iz-status-chip { padding:3px 8px; border-radius:12px; font-weight:700; white-space:nowrap; }
 </style>
 """
 
@@ -4715,6 +4741,276 @@ def render_mode_infogr_sc(strat_df, monitoring_df, years):
         )
 
 
+def render_mode_infogr_sczz(strat_df, monitoring_df, years):
+    """Режим «Інфограф_СЦ.З.з» — деталізація стратегічної цілі за завданнями.
+
+    Підв'язаний до тих самих джерел, що й «Інфограф СЦ»: build_mio_goals_tasks_table/
+    build_integral_table (показники й інтеграл цілі/завдань), build_rv_measures_table
+    (стан виконання заходів), load_strat_matrix (ієрархія). Дизайн відтворює аркуш
+    «Інфограф_СЦ.З.з» еталонної моделі МіО — у розрізі завдань обраної стратегічної цілі.
+    """
+    st.markdown(_INFOGR_CSS, unsafe_allow_html=True)
+
+    year_options = [2026, 2027, 2028]
+    default_year = years[0] if years else year_options[0]
+    sel_idx = year_options.index(default_year) if default_year in year_options else 0
+
+    goals = strat_df[strat_df["object_type"] == "goal"].copy()
+    tasks = strat_df[strat_df["object_type"] == "task"].copy()
+    measures_all = strat_df[strat_df["object_type"] == "measure"].copy()
+    goals["__code"] = goals["code"].map(raw_value)
+    tasks["__code"] = tasks["code"].map(raw_value)
+    measures_all["__code"] = measures_all["code"].map(raw_value)
+    goal_codes_sorted = sorted(goals["__code"].unique(), key=code_sort_key)
+    goal_name_by_code = {raw_value(r["code"]): raw_value(r["name"]) for _, r in goals.iterrows()}
+
+    if not goal_codes_sorted:
+        st.info("Немає даних стратегічних цілей.")
+        return
+
+    st.markdown(
+        '<div class="infogr-header">'
+        '<div class="ih-title">СТРАТЕГІЧНИЙ ПЛАН ДІЯЛЬНОСТІ МІНІСТЕРСТВА ЕКОНОМІКИ,<br>'
+        'ДОВКІЛЛЯ ТА СІЛЬСЬКОГО ГОСПОДАРСТВА УКРАЇНИ НА 2026-2028 РОКИ</div>'
+        '<div class="ih-subtitle">ІНФОРГАФІКА СТРАТЕГІЧНИХ ЗАВДАНЬ</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    head_l, head_m, head_r = st.columns([2.2, 4.4, 1])
+    with head_l:
+        gsel_idx = st.selectbox(
+            "Стратегічна ціль", list(range(len(goal_codes_sorted))), index=0,
+            format_func=lambda i: f"Стратегічна ціль {goal_codes_sorted[i].rstrip('.')}",
+            key="infogr_sczz_goal", label_visibility="collapsed",
+        )
+    sel_goal = goal_codes_sorted[gsel_idx]
+    with head_m:
+        st.markdown(
+            f'<div class="iz-goaltitle">{goal_name_by_code.get(sel_goal, "")}</div>',
+            unsafe_allow_html=True,
+        )
+    with head_r:
+        sel_year = st.selectbox("Рік", year_options, index=sel_idx, key="infogr_sczz_year",
+                                 label_visibility="collapsed")
+
+    def _target_active(v):
+        t = raw_value(v).strip().lower()
+        return t not in ("", "х")
+
+    target_col = f"target_{sel_year}"
+    active_mask = measures_all[target_col].map(_target_active)
+    measures_active = measures_all[active_mask].copy()
+    g_measures = measures_active[measures_active["__code"].str.startswith(sel_goal)].copy()
+    g_tasks = tasks[tasks["__code"].str.startswith(sel_goal)].copy()
+
+    n_measures = g_measures["__code"].nunique()
+    depts = g_measures["department"].map(raw_value)
+    n_depts = depts[depts.str.strip() != ""].nunique()
+
+    rv_df_goal = build_rv_measures_table(strat_df, monitoring_df, sel_year)
+    if not rv_df_goal.empty:
+        rv_df_goal = rv_df_goal[rv_df_goal["Захід"].map(raw_value).isin(set(g_measures["__code"]))]
+
+    _, goals_int_df = build_integral_table(strat_df, monitoring_df)
+    int_col = f"Інтеграл {sel_year}"
+    int_val = None
+    if not goals_int_df.empty and int_col in goals_int_df.columns:
+        match = goals_int_df[goals_int_df["Код"].map(raw_value) == sel_goal]
+        if not match.empty:
+            int_val = match.iloc[0][int_col]
+
+    def _num0(v):
+        if isinstance(v, (int, float)) and not (isinstance(v, float) and math.isnan(v)):
+            return float(v)
+        return 0.0
+
+    int_pct = _num0(int_val)
+
+    measures_score_pct = None
+    if not rv_df_goal.empty:
+        nums = [v for v in rv_df_goal["Бал · РІК"] if isinstance(v, (int, float))]
+        if nums:
+            measures_score_pct = sum(nums) / len(nums) * 100.0
+    measures_score_pct = _num0(measures_score_pct)
+
+    mio_table = build_mio_goals_tasks_table(strat_df, monitoring_df)
+    goal_ind_rows = pd.DataFrame()
+    if not mio_table.empty:
+        goal_ind_rows = mio_table[(mio_table["Рівень"] == "goal")
+                                   & (mio_table["Код"].map(raw_value) == sel_goal)]
+    ind_scores = []
+    if not goal_ind_rows.empty and f"Оцінка {sel_year}" in goal_ind_rows.columns:
+        ind_scores = [v for v in goal_ind_rows[f"Оцінка {sel_year}"] if isinstance(v, (int, float))]
+    indicators_score_pct = _num0(sum(ind_scores) / len(ind_scores)) if ind_scores else 0.0
+
+    st.markdown(
+        '<div class="iz-kpi-row">'
+        f'<div class="iz-kpi"><div class="kv">{n_measures}</div><div class="kl">ЗАПЛАНОВАНО<br>ЗАХОДІВ</div></div>'
+        f'<div class="iz-kpi"><div class="kv">{n_depts}</div><div class="kl">ЗАЛУЧЕНО<br>СТРУКТУРНИХ ПІДРОЗДІЛІВ</div></div>'
+        f'<div class="iz-kpi"><div class="kv">{measures_score_pct:.0f}%</div>'
+        '<div class="kl">ЗВЕДЕНА ОЦІНКА<br>ВИКОНАННЯ ЗАХОДІВ</div></div>'
+        f'<div class="iz-kpi"><div class="kv">{indicators_score_pct:.0f}%</div>'
+        '<div class="kl">ЗВЕДЕНА ОЦІНКА ПРОГРЕСУ<br>ПО ІНДИКАТОРАХ ЦІЛІ</div></div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    gcol1, gcol2 = st.columns([2, 1])
+    with gcol1:
+        if not goal_ind_rows.empty:
+            head = ("<tr><th class='iz-left'>Індикатор</th>"
+                    f"<th>Факт {sel_year}</th><th>Оцінка прогресу, %</th><th>Ціль 2028</th></tr>")
+            body = ""
+            for _, r in goal_ind_rows.iterrows():
+                fact_y = r.get(f"Факт {sel_year}", "")
+                score_y = r.get(f"Оцінка {sel_year}", "")
+                score_str = f"{score_y:.1f}" if isinstance(score_y, (int, float)) else raw_value(score_y)
+                body += (f"<tr><td class='iz-left'>{raw_value(r['Індикатор'])}</td>"
+                         f"<td>{raw_value(fact_y)}</td><td>{score_str}</td>"
+                         f"<td>{raw_value(r['Ціль 2028'])}</td></tr>")
+            st.markdown(f"<table class='iz-ind-table'>{head}{body}</table>", unsafe_allow_html=True)
+        else:
+            st.info("Немає показників цілі.")
+    with gcol2:
+        fig = go.Figure(go.Indicator(
+            mode="gauge+number",
+            value=int_pct,
+            number={"suffix": "%", "font": {"size": 26}},
+            gauge={
+                "axis": {"range": [0, 100]},
+                "bar": {"color": "#1c3f63"},
+                "steps": [
+                    {"range": [0, 50], "color": "#fca5a5"},
+                    {"range": [50, 90], "color": "#fde68a"},
+                    {"range": [90, 100], "color": "#86efac"},
+                ],
+            },
+            title={"text": "ІНТЕГРАЛЬНА<br>ОЦІНКА", "font": {"size": 12}},
+        ))
+        fig.update_layout(height=190, margin=dict(l=18, r=18, t=40, b=4), paper_bgcolor="white")
+        st.plotly_chart(fig, use_container_width=True)
+
+    # ── Картки завдань ──
+    st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
+    task_codes_sorted = sorted(g_tasks["__code"].unique(), key=code_sort_key)
+    task_name_by_code = {raw_value(r["code"]): raw_value(r["name"]) for _, r in g_tasks.iterrows()}
+
+    cols_per_row = 2
+    for start in range(0, len(task_codes_sorted), cols_per_row):
+        row_codes = task_codes_sorted[start:start + cols_per_row]
+        row_cols = st.columns(cols_per_row, gap="large")
+        for col, tcode in zip(row_cols, row_codes):
+            with col:
+                t_measures = g_measures[g_measures["__code"].str.startswith(tcode)].copy()
+                t_rv = rv_df_goal[rv_df_goal["Захід"].map(raw_value).isin(set(t_measures["__code"]))] \
+                    if not rv_df_goal.empty else pd.DataFrame()
+
+                t_score = None
+                if not t_rv.empty:
+                    nums = [v for v in t_rv["Бал · РІК"] if isinstance(v, (int, float))]
+                    if nums:
+                        t_score = sum(nums) / len(nums) * 100.0
+                t_score = _num0(t_score)
+                t_color = "#16a34a" if t_score >= 80 else ("#f59e0b" if t_score >= 50 else "#dc2626")
+
+                t_ind_rows = pd.DataFrame()
+                if not mio_table.empty:
+                    t_ind_rows = mio_table[(mio_table["Рівень"] == "task")
+                                            & (mio_table["Код"].map(raw_value) == tcode)]
+
+                ind_html = ""
+                if not t_ind_rows.empty:
+                    for _, r in t_ind_rows.iterrows():
+                        fact_y = r.get(f"Факт {sel_year}", "")
+                        score_y = r.get(f"Оцінка {sel_year}", "")
+                        score_str = f"{score_y:.0f}%" if isinstance(score_y, (int, float)) else raw_value(score_y)
+                        ind_html += (
+                            '<div style="display:flex;justify-content:space-between;font-size:11px;'
+                            'padding:4px 0;border-bottom:1px solid #f1f5f9;">'
+                            f'<span style="color:#334155;">{raw_value(r["Індикатор"])}</span>'
+                            f'<span style="font-weight:800;color:#0f172a;white-space:nowrap;'
+                            f'padding-left:10px;">{raw_value(fact_y)} · {score_str}</span></div>'
+                        )
+
+                n_t_measures = t_measures["__code"].nunique()
+                st.markdown(
+                    '<div class="iz-task-card">'
+                    f'<div class="iz-task-title">ЗАВДАННЯ {tcode.rstrip(".")}</div>'
+                    f'<div class="iz-task-name">{task_name_by_code.get(tcode, "")} '
+                    f'· {n_t_measures} заходів</div>'
+                    '<div class="iz-task-score-bar">'
+                    f'<div class="iz-task-score-fill" style="width:{min(100, t_score):.0f}%;'
+                    f'background:{t_color};">{t_score:.0f}%</div></div>'
+                    f'{ind_html}'
+                    '</div>',
+                    unsafe_allow_html=True,
+                )
+
+    # ── Стан виконання заходів по завданнях ──
+    st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
+    for tcode in task_codes_sorted:
+        t_measures = g_measures[g_measures["__code"].str.startswith(tcode)].copy()
+        n_t_measures = t_measures["__code"].nunique()
+        if n_t_measures == 0:
+            continue
+        t_rv = rv_df_goal[rv_df_goal["Захід"].map(raw_value).isin(set(t_measures["__code"]))] \
+            if not rv_df_goal.empty else pd.DataFrame()
+
+        t_score = None
+        if not t_rv.empty:
+            nums = [v for v in t_rv["Бал · РІК"] if isinstance(v, (int, float))]
+            if nums:
+                t_score = sum(nums) / len(nums) * 100.0
+        t_score = _num0(t_score)
+
+        result_counts = {ST_DONE: 0, ST_PARTIAL: 0, ST_NOTDONE: 0, ST_NOTYET: 0}
+        bucket_counts = {">=90%": 0, "50-90%": 0, "<50%": 0, '"в/а"/"х"': 0}
+        if not t_rv.empty:
+            for _, rr in t_rv.iterrows():
+                res = rr["Кінцевий результат"]
+                if res in result_counts:
+                    result_counts[res] += 1
+                bal = rr["Бал · РІК"]
+                if isinstance(bal, (int, float)):
+                    pct = bal * 100.0
+                    if pct >= 90:
+                        bucket_counts[">=90%"] += 1
+                    elif pct >= 50:
+                        bucket_counts["50-90%"] += 1
+                    else:
+                        bucket_counts["<50%"] += 1
+                else:
+                    bucket_counts['"в/а"/"х"'] += 1
+
+        st.markdown(
+            f"<div style='font-weight:800;font-size:12.5px;color:#1c3f63;margin-top:10px;'>"
+            f"СТАН ВИКОНАННЯ ЗАХОДІВ ЗАВДАННЯ {tcode.rstrip('.')}</div>",
+            unsafe_allow_html=True,
+        )
+        scol1, scol2 = st.columns([2, 1.4])
+        with scol1:
+            st.markdown(
+                f"<div style='font-size:12px;color:#334155;margin-bottom:4px;'>"
+                f"Заплановано: <b>{n_t_measures}</b> заходів &nbsp;·&nbsp; "
+                f"Зведена оцінка виконання заходів: <b>{t_score:.0f}%</b></div>",
+                unsafe_allow_html=True,
+            )
+            chips = "".join(
+                f'<span class="iz-status-chip" style="background:#eef2f7;color:#0f172a;">'
+                f'{label} {cnt} з {n_t_measures}</span>'
+                for label, cnt in result_counts.items()
+            )
+            st.markdown(f"<div class='iz-status-row'>{chips}</div>", unsafe_allow_html=True)
+        with scol2:
+            bucket_str = " · ".join(f"{k}: {v}" for k, v in bucket_counts.items())
+            st.markdown(
+                f"<div style='font-size:11px;color:#475569;'>Розподіл заходів за оцінкою "
+                f"виконання:<br>{bucket_str}</div>",
+                unsafe_allow_html=True,
+            )
+
+
 def render_mode_placeholder(mode_label):
     sheet_map = {
         MODE_RV_MEAS:  ("РВ (Заходи)", "Розрахунок виконання на рівні заходів."),
@@ -4755,6 +5051,8 @@ if active_mode in MIO_MODES and active_mode != MODE_LEGACY:
         render_mode_financing(strat_df, monitoring_df, mio_years)
     elif active_mode == MODE_INFOGR_SC:
         render_mode_infogr_sc(strat_df, monitoring_df, mio_years)
+    elif active_mode == MODE_INFOGR_SCZZ:
+        render_mode_infogr_sczz(strat_df, monitoring_df, mio_years)
     else:
         render_mode_placeholder(active_mode)
     st.stop()

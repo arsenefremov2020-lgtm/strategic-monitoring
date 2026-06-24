@@ -4504,8 +4504,12 @@ def render_mode_infogr_sc(strat_df, monitoring_df, years):
     # ── Заходи, «активні» в обраному році — мають ціль/орієнтир (target_{рік})
     # на цей рік. Заходи, що стартують пізніше або вже завершили дію раніше,
     # не входять до підрахунку «Заходів» саме цього року.
+    def _target_active(v):
+        t = raw_value(v).strip().lower()
+        return t not in ("", "х")
+
     target_col = f"target_{sel_year}"
-    active_mask = measures_all[target_col].map(raw_value).str.strip() != ""
+    active_mask = measures_all[target_col].map(_target_active)
     measures = measures_all[active_mask].copy()
     n_measures = measures["__code"].nunique()
     kpkvk_clean = measures["kpkvk"].map(raw_value)
@@ -4513,8 +4517,11 @@ def render_mode_infogr_sc(strat_df, monitoring_df, years):
 
     vmax = max(n_goals, n_tasks, n_measures, 1)
 
+    active_codes = set(measures["__code"])
     fin_index = load_financing_data()
     fin_df = build_financing_table(strat_df, monitoring_df, fin_index, sel_year)
+    if not fin_df.empty:
+        fin_df = fin_df[fin_df["Захід"].map(raw_value).isin(active_codes)]
     total_plan_bln = fin_df["План, млрд грн"].dropna().sum() if not fin_df.empty else 0.0
     total_fact_bln = fin_df["Факт, млрд грн"].dropna().sum() if not fin_df.empty else 0.0
     budget_mln = total_plan_bln * 1000.0
@@ -4540,7 +4547,6 @@ def render_mode_infogr_sc(strat_df, monitoring_df, years):
             unsafe_allow_html=True,
         )
 
-    active_codes = set(measures["__code"])
     rv_df = build_rv_measures_table(strat_df, monitoring_df, sel_year)
     done_by_goal = {}
     if not rv_df.empty:

@@ -4,7 +4,6 @@ from core.db import get_supabase_client
 from core.ui import load_css
 from core.errors import log_exception
 from core.notifications import render_notifications_panel
-from core.chat_widget import render_bird_chat
 from core.config import FILE_PATH, SHEET_NAME
 from datetime import datetime
 from html import escape
@@ -36,7 +35,6 @@ st.logo(
 
 supabase = get_supabase_client()
 load_css()
-render_bird_chat("Мій кабінет", sender="Керівник ССП")
 # ============================================================
 # STYLE
 # ============================================================
@@ -443,7 +441,6 @@ st.markdown("""
     <div class="badge-wrap">
         <div class="badge badge-purple">● Роль: Керівник ССП</div>
         <div class="badge">● Дія: підписання / повернення</div>
-        <div class="badge">● Суперечки: чат з пташкою →</div>
     </div>
 </div>
 """, unsafe_allow_html=True)

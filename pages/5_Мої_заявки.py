@@ -3,7 +3,6 @@ import pandas as pd
 from core.db import get_supabase_client
 from core.ui import load_css
 from core.notifications import render_notifications_panel
-from core.chat_widget import render_bird_chat
 from core.config import FILE_PATH, SHEET_NAME
 from datetime import datetime
 from html import escape
@@ -36,7 +35,6 @@ st.logo(
 
 supabase = get_supabase_client()
 load_css()
-render_bird_chat("Мої заявки", sender="ССП")
 # ============================================================
 # STYLE
 # ============================================================

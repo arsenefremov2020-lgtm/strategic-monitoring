@@ -5,7 +5,6 @@ import plotly.express as px
 from core.db import get_supabase_client
 from core.ui import load_css
 from core.notifications import render_notifications_panel
-from core.chat_widget import render_bird_chat
 from core.config import FILE_PATH, SHEET_NAME
 from datetime import datetime, timezone
 from core.auth import init_auth_state, render_login_form
@@ -37,7 +36,6 @@ st.logo(
 
 supabase = get_supabase_client()
 load_css()
-render_bird_chat("Адміністрування", sender="Адміністратор")
 st.markdown("""
 <style>
 header[data-testid="stHeader"] {

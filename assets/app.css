@@ -42,3 +42,129 @@
 @media (max-width: 700px) {
     .app-notification-grid { grid-template-columns: 1fr; }
 }
+
+/* ============================================================
+   ГЛОБАЛЬНА АДАПТИВНІСТЬ ДЛЯ ВСІХ СТОРІНОК
+   Застосовується через load_css() на кожній сторінці,
+   тому правила нижче діють у всій системі, незалежно від
+   того, на якій сторінці інжектовано власну верстку.
+   ============================================================ */
+
+html, body, .stApp {
+    overflow-x: hidden !important;
+}
+
+/* Streamlit-контейнер не повинен ширшати за екран */
+.main .block-container {
+    max-width: 100% !important;
+    padding-left: clamp(0.6rem, 3vw, 2rem) !important;
+    padding-right: clamp(0.6rem, 3vw, 2rem) !important;
+}
+
+/* Будь-які grid/flex блоки не повинні "виливатися" за межі картки */
+[class*="grid"],
+[class*="-wrap"],
+[class*="-panel"] {
+    max-width: 100% !important;
+}
+
+/* Дочірні елементи grid/flex повинні мати змогу стискатися,
+   інакше довгий текст/числа "плавають" поза контейнером */
+[class*="grid"] > *,
+[class*="-row"] > *,
+[class*="-card"],
+[class*="-box"] {
+    min-width: 0 !important;
+    box-sizing: border-box !important;
+}
+
+/* Текст у картках/бейджах переноситься, а не виходить за межі */
+[class*="-card"],
+[class*="-box"],
+[class*="badge"],
+[class*="-label"],
+[class*="-value"],
+[class*="-title"],
+[class*="-subtitle"],
+[class*="-note"] {
+    overflow-wrap: anywhere !important;
+    word-break: break-word !important;
+}
+
+/* Таблиці та зображення не повинні ширшати за контейнер,
+   а якщо контент справді широкий — даємо горизонтальний скрол
+   замість "виливання" за межі картки.
+   Логотип у sidebar (st.logo) і аватари виключені — Streamlit
+   сам контролює їхній розмір. */
+div[data-testid="stMain"] img,
+div[data-testid="stMarkdownContainer"] img {
+    max-width: 100% !important;
+    height: auto !important;
+}
+table {
+    display: block !important;
+    max-width: 100% !important;
+    overflow-x: auto !important;
+}
+
+/* ── Планшет ── */
+@media (max-width: 1100px) {
+    [class*="grid"] {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+    .info-grid,
+    [class*="kpi-grid"],
+    [class*="quality-grid"],
+    [class*="attention-grid"],
+    [class*="pres-kpi-grid"],
+    [class*="pres-risk-grid"] {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+}
+
+/* ── Планшет/малий ноутбук ── */
+@media (max-width: 900px) {
+    .header-box, .card,
+    [class*="-panel"] {
+        padding: 16px !important;
+    }
+}
+
+/* ── Мобільний ── */
+@media (max-width: 700px) {
+    [class*="grid"],
+    .info-grid,
+    [class*="kpi-grid"],
+    [class*="quality-grid"],
+    [class*="attention-grid"],
+    [class*="pres-kpi-grid"],
+    [class*="pres-risk-grid"] {
+        grid-template-columns: 1fr !important;
+    }
+    .badge-wrap, [class*="badge-wrap"] {
+        flex-direction: column !important;
+        align-items: flex-start !important;
+    }
+    [class*="-label"][style*="nowrap"],
+    [class*="white-space: nowrap"] {
+        white-space: normal !important;
+    }
+}
+
+/* Streamlit керує власним стеком колонок st.columns() на вузьких
+   екранах, але інпути/селекти всередині них також не повинні
+   виходити за межі своєї колонки */
+div[data-testid="stSelectbox"],
+div[data-testid="stTextInput"],
+div[data-testid="stTextArea"],
+div[data-testid="stDateInput"],
+div[data-testid="stNumberInput"] {
+    max-width: 100% !important;
+    min-width: 0 !important;
+}
+div[data-testid="stSelectbox"] div[data-baseweb="select"] {
+    max-width: 100% !important;
+}
+div[data-testid="column"] {
+    min-width: 0 !important;
+}

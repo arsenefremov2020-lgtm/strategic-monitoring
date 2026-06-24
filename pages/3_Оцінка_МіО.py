@@ -4405,6 +4405,54 @@ def render_mode_financing(strat_df, monitoring_df, years):
     st.markdown('</div>', unsafe_allow_html=True)
 
 
+_INFOGR_CSS = """
+<style>
+.infogr-header { background:linear-gradient(135deg,#1c3f63,#15314f); border-bottom:4px solid #d4a017;
+  border-radius:10px 10px 0 0; padding:14px 22px; display:flex; justify-content:space-between;
+  align-items:center; gap:16px; }
+.infogr-header .ih-title { color:#fff; font-size:13px; font-weight:800; line-height:1.45; }
+.infogr-header .ih-subtitle { color:#f3c95a; font-size:13px; font-weight:800; white-space:nowrap; }
+.infogr-planned-wrap { display:flex; align-items:center; gap:22px; background:#fff;
+  border:1px solid #d8dee9; border-top:none; border-radius:0 0 10px 10px; padding:18px 22px; }
+.ip-icon { font-size:42px; line-height:1; }
+.infogr-planned-label { font-weight:800; color:#0f172a; font-size:13px; white-space:nowrap; }
+.ip-bars { flex:2; display:flex; flex-direction:column; gap:7px; min-width:0; }
+.ip-row { display:flex; align-items:center; gap:8px; }
+.ip-label { width:74px; font-size:11px; font-weight:800; color:#334155; text-align:right; flex-shrink:0; }
+.ip-bar { height:28px; border-radius:4px; display:flex; align-items:center; justify-content:flex-end;
+  padding-right:12px; color:#fff; font-weight:900; font-size:16px; }
+.infogr-stat { text-align:center; flex-shrink:0; min-width:90px; }
+.infogr-stat .is-icon { font-size:36px; line-height:1; }
+.infogr-stat .is-val { font-size:19px; font-weight:900; color:#0f172a; margin-top:2px; }
+.infogr-stat .is-lbl { font-size:10.5px; font-weight:800; color:#475569; letter-spacing:.2px; }
+.infogr-year-wrap { text-align:right; flex-shrink:0; }
+.infogr-year-wrap .iy-lbl { font-size:11px; font-weight:800; color:#475569; margin-bottom:2px; }
+.infogr-donut-title { font-weight:800; font-size:12.5px; color:#0f172a; text-align:center;
+  text-transform:uppercase; margin-bottom:2px; }
+.infogr-target-mark { text-align:center; font-size:11px; font-weight:800; color:#0f172a;
+  border-top:2px solid #0f172a; padding-top:4px; margin-top:46px; }
+.infogr-radar-title { font-weight:800; font-size:13px; color:#0f172a; text-transform:uppercase; }
+.infogr-radar-sub { font-size:11px; font-weight:800; color:#c2860b; }
+.infogr-axis-row { display:flex; align-items:center; gap:8px; margin-bottom:5px; }
+.infogr-axis-label { width:42px; font-size:11px; font-weight:800; color:#334155; flex-shrink:0; }
+.infogr-axis-pct { width:50px; font-size:11.5px; font-weight:800; flex-shrink:0; }
+.infogr-axis-bar-bg { flex:1; height:9px; background:#f1f5f9; border-radius:5px; position:relative; min-width:0; }
+.infogr-axis-bar-fill { height:100%; border-radius:5px; }
+.infogr-axis-flag { width:54px; font-size:11px; font-weight:700; color:#64748b; flex-shrink:0; }
+.infogr-goal-row { display:grid; grid-template-columns:38px 2.3fr 0.7fr 1.1fr 1.3fr 0.9fr;
+  align-items:center; gap:8px; padding:9px 10px; border-bottom:1px solid #e2e8f0; }
+.infogr-goal-row.head { font-size:10.5px; font-weight:800; color:#64748b; text-transform:uppercase;
+  border-bottom:2px solid #0f172a; text-align:center; }
+.infogr-goal-row.head .igr-name { text-align:left; }
+.infogr-goal-icon { font-size:22px; text-align:center; }
+.infogr-goal-name { font-weight:800; font-size:12px; color:#0f172a; }
+.infogr-goal-num { text-align:center; font-weight:800; font-size:13.5px; color:#0f172a; }
+.infogr-goal-meas-bar { height:7px; border-radius:4px; background:#e2e8f0; margin-top:3px; }
+.infogr-goal-meas-fill { height:100%; border-radius:4px; background:#0c5db5; }
+</style>
+"""
+
+
 def render_mode_infogr_sc(strat_df, monitoring_df, years):
     """Режим «Інфограф СЦ» — зведена візуалізація прогресу за стратегічними цілями.
 
@@ -4412,30 +4460,13 @@ def render_mode_infogr_sc(strat_df, monitoring_df, years):
     лише агрегація вже готових даних з build_integral_table (Інтеграл),
     build_rv_measures_table (стан заходів), build_financing_table/
     load_financing_data (фінансування) і load_strat_matrix (ієрархія).
+    Дизайн відтворює аркуш «Інфограф_СЦ» еталонної моделі МіО.
     """
-    st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="section-title">Інфограф СЦ · зведена візуалізація прогресу за стратегічними цілями</div>',
-        unsafe_allow_html=True
-    )
-    st.markdown(
-        "<div style='font-size:13px;color:#475569;margin-bottom:8px;line-height:1.5;'>"
-        "Зведена картина за обраний рік: кількість цілей/завдань/заходів/"
-        "бюджетних програм, загальний прогрес виконання стратплану, "
-        "фінансування бюджетних програм та інтегральна оцінка по кожній "
-        "стратегічній цілі. Дані беруться з режимів «Інт_Оцінка», "
-        "«РВ (Заходи)» і «МіО Фінансування» — без перерахунку методики."
-        "</div>",
-        unsafe_allow_html=True
-    )
+    st.markdown(_INFOGR_CSS, unsafe_allow_html=True)
 
     year_options = [2026, 2027, 2028]
     default_year = years[0] if years else year_options[0]
-    sel_year = st.selectbox(
-        "Рік", year_options,
-        index=year_options.index(default_year) if default_year in year_options else 0,
-        key="infogr_sc_year",
-    )
+    sel_idx = year_options.index(default_year) if default_year in year_options else 0
 
     goals = strat_df[strat_df["object_type"] == "goal"].copy()
     tasks = strat_df[strat_df["object_type"] == "task"].copy()
@@ -4444,13 +4475,36 @@ def render_mode_infogr_sc(strat_df, monitoring_df, years):
     tasks["__code"] = tasks["code"].map(raw_value)
     measures["__code"] = measures["code"].map(raw_value)
     goal_codes_sorted = sorted(goals["__code"].unique(), key=code_sort_key)
+    goal_name_by_code = {raw_value(r["code"]): raw_value(r["name"]) for _, r in goals.iterrows()}
+    goal_icons = ["🏭", "⚙️", "🛡️", "💡", "👥", "📈", "🌐", "🇪🇺"]
 
     n_goals = len(goal_codes_sorted)
     n_tasks = tasks["__code"].nunique()
     n_measures = measures["__code"].nunique()
-
     kpkvk_clean = measures["kpkvk"].map(raw_value)
     n_budget_progs = kpkvk_clean[kpkvk_clean.str.strip() != ""].nunique()
+
+    # ── Шапка (як на еталонному аркуші «Інфограф_СЦ») ──
+    st.markdown(
+        '<div class="infogr-header">'
+        '<div class="ih-title">СТРАТЕГІЧНИЙ ПЛАН ДІЯЛЬНОСТІ МІНІСТЕРСТВА ЕКОНОМІКИ,<br>'
+        'ДОВКІЛЛЯ ТА СІЛЬСЬКОГО ГОСПОДАРСТВА УКРАЇНИ НА 2026-2028 РОКИ</div>'
+        '<div class="ih-subtitle">ІНФОГРАФІКА СТРАТЕГІЧНИХ ЦІЛЕЙ</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    def _bar_width(value, vmax):
+        if vmax <= 0:
+            return 25
+        return int(25 + 67 * (math.sqrt(value) / math.sqrt(vmax)))
+
+    vmax = max(n_goals, n_tasks, n_measures, 1)
+
+    head_l, head_r = st.columns([6, 1])
+    with head_r:
+        sel_year = st.selectbox("Рік", year_options, index=sel_idx, key="infogr_sc_year",
+                                 label_visibility="collapsed")
 
     fin_index = load_financing_data()
     fin_df = build_financing_table(strat_df, monitoring_df, fin_index, sel_year)
@@ -4458,28 +4512,34 @@ def render_mode_infogr_sc(strat_df, monitoring_df, years):
     total_fact_bln = fin_df["Факт, млрд грн"].dropna().sum() if not fin_df.empty else 0.0
     budget_mln = total_plan_bln * 1000.0
 
-    st.markdown(
-        f"""
-        <div class="kpi-grid" style="grid-template-columns:repeat(5,1fr);">
-            {kpi_card("Цілей", n_goals, "blue")}
-            {kpi_card("Завдань", n_tasks, "blue")}
-            {kpi_card("Заходів", n_measures, "blue")}
-            {kpi_card("Бюджетних програм", n_budget_progs, "indigo")}
-            {kpi_card("Бюджетні кошти", f"{budget_mln:,.0f} млн грн".replace(",", " "), "indigo")}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    with head_l:
+        st.markdown(
+            '<div class="infogr-planned-wrap">'
+            '<div class="ip-icon">📋</div>'
+            '<div class="infogr-planned-label">ЗАПЛАНОВАНО:</div>'
+            '<div class="ip-bars">'
+            f'<div class="ip-row"><span class="ip-label">ЦІЛЕЙ</span>'
+            f'<div class="ip-bar" style="width:{_bar_width(n_goals, vmax)}%;background:#aed1e8;">{n_goals}</div></div>'
+            f'<div class="ip-row"><span class="ip-label">ЗАВДАННЯ</span>'
+            f'<div class="ip-bar" style="width:{_bar_width(n_tasks, vmax)}%;background:#5a93b8;">{n_tasks}</div></div>'
+            f'<div class="ip-row"><span class="ip-label">ЗАХОДІВ</span>'
+            f'<div class="ip-bar" style="width:{_bar_width(n_measures, vmax)}%;background:#1c3f63;">{n_measures}</div></div>'
+            '</div>'
+            '<div class="infogr-stat"><div class="is-icon">🗄️</div>'
+            f'<div class="is-val">{n_budget_progs}</div><div class="is-lbl">БЮДЖЕТНИХ<br>ПРОГРАМ</div></div>'
+            '<div class="infogr-stat"><div class="is-icon">💰</div>'
+            f'<div class="is-val">{budget_mln:,.0f} млн грн</div><div class="is-lbl">БЮДЖЕТНІ<br>КОШТИ</div></div>'
+            '</div>'.replace(",", " "),
+            unsafe_allow_html=True,
+        )
 
     rv_df = build_rv_measures_table(strat_df, monitoring_df, sel_year)
     done_by_goal = {}
-    total_by_goal = {}
     if not rv_df.empty:
         rv_df["__goal_code"] = rv_df["Захід"].map(
             lambda c: next((g for g in goal_codes_sorted if raw_value(c).startswith(g)), "")
         )
         for gcode, grp in rv_df.groupby("__goal_code"):
-            total_by_goal[gcode] = len(grp)
             done_by_goal[gcode] = int((grp["Кінцевий результат"] == "Виконано").sum())
 
     _, goals_int_df = build_integral_table(strat_df, monitoring_df)
@@ -4493,132 +4553,146 @@ def render_mode_infogr_sc(strat_df, monitoring_df, years):
         sum(v for v in int_by_goal.values() if isinstance(v, (int, float)))
         / max(1, sum(1 for v in int_by_goal.values() if isinstance(v, (int, float))))
     ) if int_by_goal else 0.0
-
     fin_pct = (total_fact_bln / total_plan_bln * 100.0) if total_plan_bln else 0.0
 
-    col1, col2 = st.columns(2, gap="medium")
-    with col1:
-        st.markdown(
-            '<div style="font-weight:800;font-size:13px;color:#0f172a;text-align:center;">'
-            'ЗАГАЛЬНИЙ ПРОГРЕС ВИКОНАННЯ СТРАТПЛАНУ</div>',
-            unsafe_allow_html=True,
-        )
-        donut_df = pd.DataFrame({
-            "Статус": ["Виконано", "Залишок"],
-            "Значення": [avg_progress, max(0.0, 100.0 - avg_progress)],
-        })
-        fig = px.pie(
-            donut_df, names="Статус", values="Значення", color="Статус",
-            color_discrete_map={"Виконано": "#005BBB", "Залишок": "#e2e8f0"},
-            hole=0.62,
-        )
-        fig.update_traces(textinfo="none")
-        fig.add_annotation(text=f"{avg_progress:.1f}%", showarrow=False,
-                            font=dict(size=22, color="#0f172a"))
-        fig.update_layout(height=300, margin=dict(l=10, r=10, t=10, b=10),
-                           paper_bgcolor="white", showlegend=False)
-        st.plotly_chart(fig, use_container_width=True)
-    with col2:
-        st.markdown(
-            '<div style="font-weight:800;font-size:13px;color:#0f172a;text-align:center;">'
-            'ФІНАНСУВАННЯ ВИКОНАННЯ БЮДЖЕТНИХ ПРОГРАМ</div>',
-            unsafe_allow_html=True,
-        )
-        fin_donut_df = pd.DataFrame({
-            "Статус": ["Профінансовано", "Залишок"],
-            "Значення": [fin_pct, max(0.0, 100.0 - fin_pct)],
-        })
-        fig = px.pie(
-            fin_donut_df, names="Статус", values="Значення", color="Статус",
-            color_discrete_map={"Профінансовано": "#16a34a", "Залишок": "#e2e8f0"},
-            hole=0.62,
-        )
-        fig.update_traces(textinfo="none")
-        fig.add_annotation(text=f"{fin_pct:.1f}%", showarrow=False,
-                            font=dict(size=22, color="#0f172a"))
-        fig.update_layout(height=300, margin=dict(l=10, r=10, t=10, b=10),
-                           paper_bgcolor="white", showlegend=False)
-        st.plotly_chart(fig, use_container_width=True)
+    # ── Два донати: загальний прогрес і фінансування ──
+    st.markdown("<div style='height:14px;'></div>", unsafe_allow_html=True)
+    col1, col2 = st.columns(2, gap="large")
 
+    def _render_donut(container, title, pct, color):
+        with container:
+            st.markdown(f'<div class="infogr-donut-title">{title}</div>', unsafe_allow_html=True)
+            cA, cB = st.columns([4, 1])
+            with cA:
+                donut_df = pd.DataFrame({
+                    "Статус": ["Виконано", "Залишок"],
+                    "Значення": [pct, max(0.0, 100.0 - pct)],
+                })
+                fig = px.pie(
+                    donut_df, names="Статус", values="Значення", color="Статус",
+                    color_discrete_map={"Виконано": color, "Залишок": "#dbe6ee"},
+                    hole=0.68,
+                )
+                fig.update_traces(textinfo="none", sort=False)
+                fig.add_annotation(text=f"{pct:.1f}%", showarrow=False,
+                                    font=dict(size=22, color="#0f172a", family="Inter"))
+                fig.update_layout(height=230, margin=dict(l=6, r=6, t=6, b=6),
+                                   paper_bgcolor="white", showlegend=False)
+                st.plotly_chart(fig, use_container_width=True)
+            with cB:
+                st.markdown(
+                    '<div class="infogr-target-mark">🎯<br>100%</div>',
+                    unsafe_allow_html=True,
+                )
+
+    _render_donut(col1, "ЗАГАЛЬНИЙ ПРОГРЕС<br>ВИКОНАННЯ СТРАТПЛАНУ", avg_progress, "#1c3f63")
+    _render_donut(col2, "ФІНАНСУВАННЯ<br>ВИКОНАННЯ БЮДЖЕТНИХ ПРОГРАМ", fin_pct, "#16a34a")
+
+    # ── Радар: інтегральна оцінка за два суміжні роки ──
+    st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
+    prev_year = sel_year - 1 if (sel_year - 1) in year_options else None
+    radar_years = [y for y in [prev_year, sel_year] if y is not None]
+    years_label = f"{radar_years[0]}-{radar_years[-1]}" if len(radar_years) > 1 else str(sel_year)
     st.markdown(
-        '<div style="font-weight:800;font-size:13px;color:#0f172a;text-align:center;margin-top:8px;">'
-        f'ІНТЕГРАЛЬНА ОЦІНКА за {sel_year} рік</div>',
+        f'<div class="infogr-radar-title">ІНТЕГРАЛЬНА ОЦІНКА '
+        f'<span class="infogr-radar-sub">за {years_label} роки</span></div>',
         unsafe_allow_html=True,
     )
-    cats = [f"СЦ{i+1}" for i in range(len(goal_codes_sorted))]
-    vals = [int_by_goal.get(g) if isinstance(int_by_goal.get(g), (int, float)) else 0.0
-            for g in goal_codes_sorted]
-    if cats:
-        cats_closed = cats + [cats[0]]
-        vals_closed = vals + [vals[0]]
-        fig = go.Figure(go.Scatterpolar(
-            r=vals_closed, theta=cats_closed, fill="toself",
-            fillcolor="rgba(0,91,187,0.12)", line=dict(color="#005BBB", width=2),
-            name=str(sel_year),
-        ))
-        fig.add_trace(go.Scatterpolar(
-            r=[100] * len(cats_closed), theta=cats_closed, mode="lines",
-            line=dict(color="#e2e8f0", width=1.5, dash="dot"), name="100% (план)",
-            showlegend=True,
-        ))
-        fig.update_layout(
-            polar=dict(radialaxis=dict(visible=True, range=[0, 120], tickfont=dict(size=9)),
-                       angularaxis=dict(tickfont=dict(size=9))),
-            height=340, paper_bgcolor="white", margin=dict(l=20, r=20, t=20, b=20),
-            legend=dict(font=dict(size=10)),
-        )
-        st.plotly_chart(fig, use_container_width=True)
 
-        bar_cells = []
+    rcol1, rcol2 = st.columns([1.3, 1], gap="large")
+    cats = [f"СЦ{i+1}" for i in range(len(goal_codes_sorted))]
+    radar_colors = {radar_years[0]: "#9fc4dd"} if len(radar_years) > 1 else {}
+    radar_colors[sel_year] = "#1c3f63"
+
+    int_by_goal_year = {}
+    for y in radar_years:
+        if y == sel_year:
+            int_by_goal_year[y] = int_by_goal
+        else:
+            _, gdf_y = build_integral_table(strat_df, monitoring_df)
+            col_y = f"Інтеграл {y}"
+            d = {}
+            if not gdf_y.empty and col_y in gdf_y.columns:
+                for _, r in gdf_y.iterrows():
+                    d[raw_value(r["Код"])] = r[col_y]
+            int_by_goal_year[y] = d
+
+    with rcol1:
+        if cats:
+            fig = go.Figure()
+            for y in radar_years:
+                vals = [int_by_goal_year[y].get(g) if isinstance(int_by_goal_year[y].get(g), (int, float)) else 0.0
+                        for g in goal_codes_sorted]
+                cats_closed = cats + [cats[0]]
+                vals_closed = vals + [vals[0]]
+                fig.add_trace(go.Scatterpolar(
+                    r=vals_closed, theta=cats_closed, fill="toself",
+                    fillcolor=f"rgba(28,63,99,{0.10 if y == sel_year else 0.06})",
+                    line=dict(color=radar_colors[y], width=2), name=str(y),
+                ))
+            fig.update_layout(
+                polar=dict(radialaxis=dict(visible=True, range=[0, 100], tickfont=dict(size=9),
+                                            ticksuffix="%"),
+                           angularaxis=dict(tickfont=dict(size=10))),
+                height=330, paper_bgcolor="white", margin=dict(l=20, r=20, t=10, b=10),
+                legend=dict(orientation="h", font=dict(size=11), x=0.5, xanchor="center", y=1.08),
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+    with rcol2:
+        st.markdown(
+            '<div style="font-size:11px;font-weight:800;color:#c2860b;text-align:right;'
+            'margin-bottom:4px;">за звітний рік</div>',
+            unsafe_allow_html=True,
+        )
         for g, c in zip(goal_codes_sorted, cats):
             v = int_by_goal.get(g)
             v = v if isinstance(v, (int, float)) else 0.0
-            bar_cells.append(
-                '<div style="text-align:center;flex:1;min-width:0;">'
-                f'<div style="font-size:11px;font-weight:700;color:#475569;">{c}</div>'
-                f'{progress_bar_html(v, level_color(v))}'
-                f'<div style="font-size:11px;font-weight:800;color:{level_color(v)};">{v:.1f}% 🚩100%</div>'
-                '</div>'
+            color = "#16a34a" if v >= 80 else "#dc2626"
+            st.markdown(
+                '<div class="infogr-axis-row">'
+                f'<span class="infogr-axis-label">{c.lower()}</span>'
+                f'<span class="infogr-axis-pct" style="color:{color};">{v:.1f}%</span>'
+                f'<div class="infogr-axis-bar-bg"><div class="infogr-axis-bar-fill" '
+                f'style="width:{min(100, v):.1f}%;background:{color};"></div></div>'
+                '<span class="infogr-axis-flag">🚩 100%</span>'
+                '</div>',
+                unsafe_allow_html=True,
             )
-        st.markdown(
-            f'<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">{"".join(bar_cells)}</div>',
-            unsafe_allow_html=True,
-        )
 
+    # ── Таблиця стратегічних цілей ──
+    st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
+    st.markdown(f"<div style='font-weight:800;font-size:13px;color:#0f172a;'>{sel_year} РІК</div>",
+                unsafe_allow_html=True)
     st.markdown(
-        '<div style="font-weight:800;font-size:14px;color:#0f172a;margin-top:18px;margin-bottom:8px;">'
-        'СТРАТЕГІЧНІ ЦІЛІ — ЗВЕДЕННЯ</div>',
+        '<div class="infogr-goal-row head">'
+        '<span></span><span class="igr-name">Стратегічна ціль</span>'
+        '<span>Завдань</span><span>Заходів<br>всього</span>'
+        '<span>з них<br>виконано</span><span>Бюджетних<br>програм</span>'
+        '</div>',
         unsafe_allow_html=True,
     )
-    goal_name_by_code = {raw_value(r["code"]): raw_value(r["name"]) for _, r in goals.iterrows()}
-    rows_html = []
-    for g in goal_codes_sorted:
+    for i, g in enumerate(goal_codes_sorted):
         n_g_tasks = tasks[tasks["__code"].str.startswith(g)]["__code"].nunique()
         n_g_measures = measures[measures["__code"].str.startswith(g)]["__code"].nunique()
         n_g_done = done_by_goal.get(g, 0)
         kpkvk_g = kpkvk_clean[measures["__code"].str.startswith(g)]
         n_g_budget = kpkvk_g[kpkvk_g.str.strip() != ""].nunique()
-        score = int_by_goal.get(g)
-        score = score if isinstance(score, (int, float)) else 0.0
-        rows_html.append(
-            '<div style="display:flex;align-items:center;gap:14px;padding:10px 12px;'
-            'border:1px solid #e2e8f0;border-radius:12px;margin-bottom:8px;background:#f8fafc;">'
-            '<div style="flex:2;min-width:0;font-weight:700;font-size:13px;color:#0f172a;">'
-            f'{g} {goal_name_by_code.get(g, "")}</div>'
-            f'<div style="flex:1;text-align:center;font-size:12px;color:#475569;">Завдань<br>'
-            f'<b style="font-size:15px;color:#0f172a;">{n_g_tasks}</b></div>'
-            f'<div style="flex:1;text-align:center;font-size:12px;color:#475569;">Заходів<br>'
-            f'<b style="font-size:15px;color:#0f172a;">{n_g_measures}</b> '
-            f'(вик. {n_g_done})</div>'
-            f'<div style="flex:1;text-align:center;font-size:12px;color:#475569;">Бюджетних<br>програм<br>'
-            f'<b style="font-size:15px;color:#0f172a;">{n_g_budget}</b></div>'
-            f'<div style="flex:2;min-width:120px;">{progress_bar_html(score, level_color(score))}'
-            f'<div style="text-align:right;font-size:11px;font-weight:800;color:{level_color(score)};">{score:.1f}%</div></div>'
-            '</div>'
+        done_pct = (n_g_done / n_g_measures * 100.0) if n_g_measures else 0.0
+        icon = goal_icons[i % len(goal_icons)]
+        st.markdown(
+            '<div class="infogr-goal-row">'
+            f'<span class="infogr-goal-icon">{icon}</span>'
+            f'<span class="infogr-goal-name">{g} {goal_name_by_code.get(g, "").upper()}</span>'
+            f'<span class="infogr-goal-num">{n_g_tasks}</span>'
+            f'<span class="infogr-goal-num">{n_g_measures}</span>'
+            f'<span class="infogr-goal-num">{n_g_done} з {n_g_measures}'
+            f'<div class="infogr-goal-meas-bar"><div class="infogr-goal-meas-fill" '
+            f'style="width:{done_pct:.0f}%;"></div></div></span>'
+            f'<span class="infogr-goal-num">{n_g_budget}</span>'
+            '</div>',
+            unsafe_allow_html=True,
         )
-    st.markdown("".join(rows_html), unsafe_allow_html=True)
-
-    st.markdown('</div>', unsafe_allow_html=True)
 
 
 def render_mode_placeholder(mode_label):

@@ -1538,7 +1538,7 @@ def render_indicator_table(rows):
 
     html += "</tbody></table></div>"
 
-    st.markdown(html, unsafe_allow_html=True)
+    st.markdown(dedent(html).strip(), unsafe_allow_html=True)
 
 def build_measure_rows(measures, monitoring_df, quarter_data, selected_years, selected_quarters):
     rows = []
@@ -1725,7 +1725,7 @@ def render_measure_table(measures, monitoring_df, quarter_data, selected_years, 
 
     html += "</tbody></table></div>"
 
-    st.markdown(html, unsafe_allow_html=True)
+    st.markdown(dedent(html).strip(), unsafe_allow_html=True)
 
 # ------------------------------------------------------------
 # Interface state

@@ -2092,6 +2092,102 @@ if not closeout_df.empty:
 
 st.markdown('</div>', unsafe_allow_html=True)
 
+# ──────────────────────────────────────────────
+# АРХІВ (заморожені знімки періодів)
+# ──────────────────────────────────────────────
+
+
+def load_archive_snapshots():
+    try:
+        resp = (
+            supabase.table("archive_snapshots")
+            .select("id,year,quarter,archived_by,archived_at")
+            .order("archived_at", desc=True)
+            .execute()
+        )
+    except Exception:
+        return pd.DataFrame()
+    return pd.DataFrame(resp.data) if resp.data else pd.DataFrame()
+
+
+st.markdown(
+    '<div class="card"><div class="card-title">Архів</div>',
+    unsafe_allow_html=True
+)
+
+if is_admin_user(current_user) or is_super_admin_user(current_user):
+    st.caption(
+        "Заархівувати рік (або рік+квартал) — фіксується «заморожений» знімок поточних "
+        "даних моніторингу, який надалі не змінюється навіть якщо зміниться логіка розрахунків "
+        "чи живі дані. Перегляд знімків доступний на сторінці «Архів»."
+    )
+
+    arc_year_col, arc_quarter_col = st.columns(2)
+    with arc_year_col:
+        arc_year = st.selectbox("Рік для архівування", list(range(2026, 2035)), key="arc_year")
+    with arc_quarter_col:
+        arc_quarter = st.selectbox(
+            "Квартал (опційно — залишити «Весь рік», щоб заархівувати рік цілком)",
+            ["Весь рік", "I", "II", "III", "IV"],
+            key="arc_quarter",
+        )
+
+    arc_confirm = st.checkbox("Я підтверджую архівування цього періоду", key="arc_confirm")
+    arc_submit = st.button("Заархівувати", key="arc_submit")
+
+    if arc_submit:
+        if not arc_confirm:
+            st.error("Підтвердіть архівування, встановивши прапорець вище.")
+        else:
+            quarter_value = None if arc_quarter == "Весь рік" else arc_quarter
+            try:
+                requests_resp = supabase.table("monitoring_requests").select("*").eq(
+                    "year", str(arc_year)
+                )
+                if quarter_value:
+                    requests_resp = requests_resp.eq("quarter", quarter_value)
+                requests_data = requests_resp.execute().data or []
+
+                snapshot_data = {
+                    "measures": strat_df.to_dict(orient="records"),
+                    "monitoring": requests_data,
+                }
+
+                existing_query = supabase.table("archive_snapshots").select("id").eq("year", str(arc_year))
+                existing_query = existing_query.is_("quarter", "null") if quarter_value is None else existing_query.eq("quarter", quarter_value)
+                existing_snapshot = existing_query.execute().data or []
+
+                payload = {
+                    "year":          str(arc_year),
+                    "quarter":       quarter_value,
+                    "snapshot_data": snapshot_data,
+                    "archived_by":   current_user.get("email", ""),
+                    "archived_at":   datetime.now(timezone.utc).isoformat(),
+                }
+                if existing_snapshot:
+                    supabase.table("archive_snapshots").update(payload).eq(
+                        "id", existing_snapshot[0]["id"]
+                    ).execute()
+                else:
+                    supabase.table("archive_snapshots").insert(payload).execute()
+
+                st.success(
+                    f"Період {arc_quarter if quarter_value else 'весь рік'} {arc_year} заархівовано."
+                )
+                st.rerun()
+            except Exception as e:
+                st.error("Не вдалося заархівувати період. Перевірте, чи застосована міграція archive_snapshots.")
+                st.exception(e)
+else:
+    st.info("Архівування доступне лише адміністратору або супер-адміну.")
+
+archive_snapshots_df = load_archive_snapshots()
+if not archive_snapshots_df.empty:
+    with st.expander("Заархівовані періоди"):
+        st.dataframe(archive_snapshots_df, use_container_width=True, hide_index=True)
+
+st.markdown('</div>', unsafe_allow_html=True)
+
 with st.expander("Технічна таблиця заявок"):
     st.dataframe(filtered, use_container_width=True, hide_index=True)
 

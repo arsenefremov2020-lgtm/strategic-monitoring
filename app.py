@@ -1275,6 +1275,7 @@ def calculate_completion(filtered_measures):
 # Quarter values
 # ------------------------------------------------------------
 
+@st.cache_data(ttl=60)
 def build_quarter_data(monitoring_df):
     quarter_data = {}
 
@@ -1547,14 +1548,22 @@ def build_measure_rows(measures, monitoring_df, quarter_data, selected_years, se
     return rows
 
 
-def render_measure_table(measures, monitoring_df, quarter_data, selected_years, selected_quarters):
+def render_measure_table(measures, monitoring_df, quarter_data, selected_years, selected_quarters, show_context_codes=False):
     quarter_columns = get_quarter_columns(selected_years, selected_quarters)
 
-    html = """
+    context_headers = ""
+    if show_context_codes:
+        context_headers = """
+            <th class="col-code" rowspan="3">Код цілі</th>
+            <th class="col-code" rowspan="3">Код завдання</th>
+        """
+
+    html = f"""
     <div class="table-scroll measures-scroll">
-    <table class="custom-table" style="min-width:5350px;">
+    <table class="custom-table" style="min-width:{5350 + (220 if show_context_codes else 0)}px;">
     <thead>
         <tr>
+            {context_headers}
             <th class="col-code" rowspan="3">Код</th>
             <th class="col-measure" rowspan="3">Захід</th>
             <th class="col-product" rowspan="3">Тип продукту</th>
@@ -1608,6 +1617,9 @@ def render_measure_table(measures, monitoring_df, quarter_data, selected_years, 
         code = raw_value(measure.get("code", ""))
 
         html += "<tr>"
+        if show_context_codes:
+            html += f"<td class='col-code'>{make_cell(measure.get('parent_goal_code', ''), 'nowrap')}</td>"
+            html += f"<td class='col-code'>{make_cell(measure.get('parent_task_code', ''), 'nowrap')}</td>"
         html += f"<td class='col-code'>{make_cell(measure.get('code', ''), 'nowrap')}</td>"
         html += f"<td class='col-measure'>{make_cell(strip_leading_code(measure.get('name', ''), code), 'fixed')}</td>"
         html += f"<td class='col-product'>{make_cell(measure.get('product_type', ''), 'fixed')}</td>"
@@ -1685,6 +1697,27 @@ def reset_main_filters():
     st.session_state.selected_product_types_main = []
     st.session_state.search_main = ""
     st.session_state.expand_all_goals = False
+    st.session_state.applied_filters = {
+        "ssp_filter": [],
+        "selected_years_main": [2026],
+        "selected_quarters_main": ["I"],
+        "status_mode_main": "Усі заходи стратегічного плану",
+        "selected_goal_codes_main": [],
+        "selected_product_types_main": [],
+        "search_main": ""
+    }
+
+
+def apply_main_filters_form():
+    st.session_state.applied_filters = {
+        "ssp_filter": st.session_state.ssp_filter,
+        "selected_years_main": st.session_state.selected_years_main,
+        "selected_quarters_main": st.session_state.selected_quarters_main,
+        "status_mode_main": st.session_state.status_mode_main,
+        "selected_goal_codes_main": st.session_state.selected_goal_codes_main,
+        "selected_product_types_main": st.session_state.selected_product_types_main,
+        "search_main": st.session_state.search_main
+    }
 
 
 def expand_all_main():
@@ -1704,6 +1737,9 @@ quarter_data = build_quarter_data(monitoring_df)
 
 default_state()
 
+if "applied_filters" not in st.session_state:
+    apply_main_filters_form()
+
 all_measures = df[df["object_type"] == "measure"].copy()
 goals = df[df["object_type"] == "goal"].copy()
 tasks_all = df[df["object_type"] == "task"].copy()
@@ -1712,20 +1748,44 @@ tasks_all = df[df["object_type"] == "task"].copy()
 # Lists for filters
 # ------------------------------------------------------------
 
-all_ssp_indices = sorted(
-    {
-        index
-        for _, row in df.iterrows()
-        for value in [
-            row.get("resp_main", ""),
-            row.get("resp_co_1", ""),
-            row.get("resp_co_2", ""),
-            row.get("department", "")
+@st.cache_data
+def build_all_ssp_indices(df):
+    return sorted(
+        {
+            index
+            for _, row in df.iterrows()
+            for value in [
+                row.get("resp_main", ""),
+                row.get("resp_co_1", ""),
+                row.get("resp_co_2", ""),
+                row.get("department", "")
+            ]
+            for index in split_ssp_values(value)
+        },
+        key=lambda x: int(x) if str(x).isdigit() else 9999
+    )
+
+
+@st.cache_data
+def build_goal_options(goals):
+    return {
+        raw_value(row["code"]): f'{raw_value(row["code"])} {strip_leading_code(row["name"], row["code"])}'
+        for _, row in goals.iterrows()
+    }
+
+
+@st.cache_data
+def build_product_type_options(df):
+    return sorted(
+        [
+            raw_value(value)
+            for value in df["product_type"].dropna().unique()
+            if raw_value(value)
         ]
-        for index in split_ssp_values(value)
-    },
-    key=lambda x: int(x) if str(x).isdigit() else 9999
-)
+    )
+
+
+all_ssp_indices = build_all_ssp_indices(df)
 
 year_options = list(range(2026, 2035))
 quarter_options = ["I", "II", "III", "IV"]
@@ -1738,18 +1798,9 @@ status_options = [
     "Лише не враховані"
 ]
 
-goal_options = {
-    raw_value(row["code"]): f'{raw_value(row["code"])} {strip_leading_code(row["name"], row["code"])}'
-    for _, row in goals.iterrows()
-}
+goal_options = build_goal_options(goals)
 
-product_type_options = sorted(
-    [
-        raw_value(value)
-        for value in df["product_type"].dropna().unique()
-        if raw_value(value)
-    ]
-)
+product_type_options = build_product_type_options(df)
 
 deputy_options = sorted([
     "АРТЕМЕНКО Анна Ігорівна",
@@ -1932,75 +1983,88 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-top_1, top_2, top_3, top_4 = st.columns([1.35, 0.8, 0.8, 1.15])
+with st.form("main_filters_form"):
+    top_1, top_2, top_3, top_4 = st.columns([1.35, 0.8, 0.8, 1.15])
 
-with top_1:
-    selected_ssp_indices = st.multiselect(
-        "Індекс самостійного структурного підрозділу",
-        all_ssp_indices,
-        key="ssp_filter",
-        placeholder="Оберіть індекс ССП"
-    )
+    with top_1:
+        st.multiselect(
+            "Індекс самостійного структурного підрозділу",
+            all_ssp_indices,
+            key="ssp_filter",
+            placeholder="Оберіть індекс ССП"
+        )
 
-with top_2:
-    st.markdown(
-        "<div style='font-size:13px;font-weight:900;color:#1e293b;margin-bottom:4px;'>Звітний період (рік, квартал)</div>",
-        unsafe_allow_html=True
-    )
-    selected_years = st.multiselect(
-        "Рік",
-        year_options,
-        key="selected_years_main",
-        placeholder="Рік",
-        label_visibility="collapsed"
-    )
+    with top_2:
+        st.markdown(
+            "<div style='font-size:13px;font-weight:900;color:#1e293b;margin-bottom:4px;'>Звітний період (рік, квартал)</div>",
+            unsafe_allow_html=True
+        )
+        st.multiselect(
+            "Рік",
+            year_options,
+            key="selected_years_main",
+            placeholder="Рік",
+            label_visibility="collapsed"
+        )
 
-with top_3:
-    st.markdown(
-        "<div style='font-size:13px;font-weight:900;color:#1e293b;margin-bottom:4px;'>&nbsp;</div>",
-        unsafe_allow_html=True
-    )
-    selected_quarters = st.multiselect(
-        "Квартал",
-        quarter_options,
-        key="selected_quarters_main",
-        placeholder="Квартал",
-        label_visibility="collapsed"
-    )
+    with top_3:
+        st.markdown(
+            "<div style='font-size:13px;font-weight:900;color:#1e293b;margin-bottom:4px;'>&nbsp;</div>",
+            unsafe_allow_html=True
+        )
+        st.multiselect(
+            "Квартал",
+            quarter_options,
+            key="selected_quarters_main",
+            placeholder="Квартал",
+            label_visibility="collapsed"
+        )
 
-with top_4:
-    selected_status_mode = st.selectbox(
-        "Режим перегляду даних",
-        status_options,
-        key="status_mode_main"
-    )
+    with top_4:
+        st.selectbox(
+            "Режим перегляду даних",
+            status_options,
+            key="status_mode_main"
+        )
 
-st.markdown('<div class="filter-subtitle">Додаткові параметри</div>', unsafe_allow_html=True)
+    st.markdown('<div class="filter-subtitle">Додаткові параметри</div>', unsafe_allow_html=True)
 
-bottom_1, bottom_2, bottom_3 = st.columns([1.1, 1.0, 1.8])
+    bottom_1, bottom_2, bottom_3 = st.columns([1.1, 1.0, 1.8])
 
-with bottom_1:
-    selected_goal_labels = st.multiselect(
-        "Стратегічна ціль",
-        list(goal_options.values()),
-        key="selected_goal_codes_main",
-        placeholder="Оберіть стратегічну ціль"
-    )
+    with bottom_1:
+        st.multiselect(
+            "Стратегічна ціль",
+            list(goal_options.values()),
+            key="selected_goal_codes_main",
+            placeholder="Оберіть стратегічну ціль"
+        )
 
-with bottom_2:
-    selected_product_types = st.multiselect(
-        "Тип продукту",
-        product_type_options,
-        key="selected_product_types_main",
-        placeholder="Оберіть тип продукту"
-    )
+    with bottom_2:
+        st.multiselect(
+            "Тип продукту",
+            product_type_options,
+            key="selected_product_types_main",
+            placeholder="Оберіть тип продукту"
+        )
 
-with bottom_3:
-    search_query = st.text_input(
-        "Додаткові параметри пошуку (код завдання, заходу, ключові слова)",
-        key="search_main",
-        placeholder="Введіть код, назву або ключове слово"
-    )
+    with bottom_3:
+        st.text_input(
+            "Додаткові параметри пошуку (код завдання, заходу, ключові слова)",
+            key="search_main",
+            placeholder="Введіть код, назву або ключове слово"
+        )
+
+    form_spacer, form_submit_col = st.columns([2.4, 1])
+
+    with form_spacer:
+        st.empty()
+
+    with form_submit_col:
+        st.form_submit_button(
+            "Застосувати параметри відбору",
+            use_container_width=True,
+            on_click=apply_main_filters_form
+        )
 
 reset_spacer, reset_col = st.columns([2.4, 1])
 
@@ -2016,8 +2080,18 @@ with reset_col:
 
 
 # ------------------------------------------------------------
-# Filter processing
+# Filter processing (за останньо застосованими параметрами)
 # ------------------------------------------------------------
+
+applied = st.session_state.applied_filters
+
+selected_ssp_indices = applied["ssp_filter"]
+selected_years = applied["selected_years_main"]
+selected_quarters = applied["selected_quarters_main"]
+selected_status_mode = applied["status_mode_main"]
+selected_goal_labels = applied["selected_goal_codes_main"]
+selected_product_types = applied["selected_product_types_main"]
+search_query = applied["search_main"]
 
 selected_goal_codes = [
     code
@@ -2152,103 +2226,117 @@ if filtered_measures.empty:
     st.warning("За обраними параметрами відбору відомостей не знайдено.")
     st.stop()
 
-for _, goal in visible_goals.iterrows():
-    goal_code = raw_value(goal["code"])
-    goal_name = strip_leading_code(goal["name"], goal_code)
-
-    goal_filtered_measures = filtered_measures[
-        filtered_measures["parent_goal_code"].astype(str).str.strip() == goal_code
-    ].copy()
-
-    goal_indicator_children = df[
-        (df["object_type"] == "goal_indicator")
-        & (df["parent_goal_code"].astype(str).str.strip() == goal_code)
-        & (df["parent_task_code"].astype(str).str.strip() == "")
-    ].copy()
-
-    goal_indicators = build_indicator_rows(
-        goal,
-        goal_indicator_children,
-        selected_ssp_indices,
-        search_query
+if len(filtered_goal_codes) == 1:
+    st.markdown(
+        '<div class="section-title">Заходи (плоский перелік — звужено до однієї стратегічної цілі)</div>',
+        unsafe_allow_html=True
     )
-
-    if goal_filtered_measures.empty and not goal_indicators:
-        continue
-
-    goal_task_codes = set(goal_filtered_measures["parent_task_code"].astype(str).str.strip()) if not goal_filtered_measures.empty else set()
-    tasks = tasks_all[tasks_all["code"].astype(str).str.strip().isin(goal_task_codes)].copy()
-
-    goal_done, goal_percent = calculate_completion(goal_filtered_measures)
-
-    goal_label = (
-        f"{goal_code} {goal_name} | "
-        f"Завдань — {len(tasks)} | "
-        f"Заходів — {len(goal_filtered_measures)} | "
-        f"Виконання — {goal_percent}%"
+    render_measure_table(
+        filtered_measures,
+        monitoring_df,
+        quarter_data,
+        selected_years,
+        selected_quarters,
+        show_context_codes=True
     )
+else:
+    for _, goal in visible_goals.iterrows():
+        goal_code = raw_value(goal["code"])
+        goal_name = strip_leading_code(goal["name"], goal_code)
 
-    with st.expander(goal_label, expanded=st.session_state.expand_all_goals):
-        st.progress(min(goal_percent / 100, 1.0))
+        goal_filtered_measures = filtered_measures[
+            filtered_measures["parent_goal_code"].astype(str).str.strip() == goal_code
+        ].copy()
 
-        if goal_indicators:
-            st.markdown(
-                '<div class="section-title">Індикатори досягнення стратегічної цілі</div>',
-                unsafe_allow_html=True
-            )
-            render_indicator_table(goal_indicators)
+        goal_indicator_children = df[
+            (df["object_type"] == "goal_indicator")
+            & (df["parent_goal_code"].astype(str).str.strip() == goal_code)
+            & (df["parent_task_code"].astype(str).str.strip() == "")
+        ].copy()
 
-        for _, task in tasks.iterrows():
-            task_code = raw_value(task["code"])
-            task_name = strip_leading_code(task["name"], task_code)
+        goal_indicators = build_indicator_rows(
+            goal,
+            goal_indicator_children,
+            selected_ssp_indices,
+            search_query
+        )
 
-            task_measures = goal_filtered_measures[
-                goal_filtered_measures["parent_task_code"].astype(str).str.strip() == task_code
-            ].copy()
+        if goal_filtered_measures.empty and not goal_indicators:
+            continue
 
-            task_indicator_children = df[
-                (df["object_type"] == "task_indicator")
-                & (df["parent_task_code"].astype(str) == task_code)
-            ].copy()
+        goal_task_codes = set(goal_filtered_measures["parent_task_code"].astype(str).str.strip()) if not goal_filtered_measures.empty else set()
+        tasks = tasks_all[tasks_all["code"].astype(str).str.strip().isin(goal_task_codes)].copy()
 
-            task_indicators = build_indicator_rows(
-                task,
-                task_indicator_children,
-                selected_ssp_indices,
-                search_query
-            )
+        goal_done, goal_percent = calculate_completion(goal_filtered_measures)
 
-            if task_measures.empty and not task_indicators:
-                continue
+        goal_label = (
+            f"{goal_code} {goal_name} | "
+            f"Завдань — {len(tasks)} | "
+            f"Заходів — {len(goal_filtered_measures)} | "
+            f"Виконання — {goal_percent}%"
+        )
 
-            task_done, task_percent = calculate_completion(task_measures)
+        with st.expander(goal_label, expanded=st.session_state.expand_all_goals):
+            st.progress(min(goal_percent / 100, 1.0))
 
-            task_label = (
-                f"{task_code} {task_name} | "
-                f"Заходів — {len(task_measures)} | "
-                f"Виконання — {task_percent}%"
-            )
-
-            with st.expander(task_label, expanded=st.session_state.expand_all_goals):
-                if task_indicators:
-                    st.markdown(
-                        '<div class="section-title">Індикатори досягнення завдання</div>',
-                        unsafe_allow_html=True
-                    )
-                    render_indicator_table(task_indicators)
-
+            if goal_indicators:
                 st.markdown(
-                    '<div class="section-title">Заходи</div>',
+                    '<div class="section-title">Індикатори досягнення стратегічної цілі</div>',
                     unsafe_allow_html=True
                 )
+                render_indicator_table(goal_indicators)
 
-                render_measure_table(
-                    task_measures,
-                    monitoring_df,
-                    quarter_data,
-                    selected_years,
-                    selected_quarters
+            for _, task in tasks.iterrows():
+                task_code = raw_value(task["code"])
+                task_name = strip_leading_code(task["name"], task_code)
+
+                task_measures = goal_filtered_measures[
+                    goal_filtered_measures["parent_task_code"].astype(str).str.strip() == task_code
+                ].copy()
+
+                task_indicator_children = df[
+                    (df["object_type"] == "task_indicator")
+                    & (df["parent_task_code"].astype(str) == task_code)
+                ].copy()
+
+                task_indicators = build_indicator_rows(
+                    task,
+                    task_indicator_children,
+                    selected_ssp_indices,
+                    search_query
                 )
+
+                if task_measures.empty and not task_indicators:
+                    continue
+
+                task_done, task_percent = calculate_completion(task_measures)
+
+                task_label = (
+                    f"{task_code} {task_name} | "
+                    f"Заходів — {len(task_measures)} | "
+                    f"Виконання — {task_percent}%"
+                )
+
+                with st.expander(task_label, expanded=st.session_state.expand_all_goals):
+                    if task_indicators:
+                        st.markdown(
+                            '<div class="section-title">Індикатори досягнення завдання</div>',
+                            unsafe_allow_html=True
+                        )
+                        render_indicator_table(task_indicators)
+
+                    st.markdown(
+                        '<div class="section-title">Заходи</div>',
+                        unsafe_allow_html=True
+                    )
+
+                    render_measure_table(
+                        task_measures,
+                        monitoring_df,
+                        quarter_data,
+                        selected_years,
+                        selected_quarters
+                    )
 
 
 # ------------------------------------------------------------

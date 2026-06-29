@@ -1395,6 +1395,12 @@ def two_line_header(top, bottom):
 
     return top_text
 
+def clean_html(html: str) -> str:
+    return "\n".join(
+        line.strip()
+        for line in html.splitlines()
+        if line.strip()
+    )
 
 def render_table(headers, rows, col_classes, min_width=2200, scroll_class="table-scroll"):
     if not rows:
@@ -1436,7 +1442,7 @@ def render_table(headers, rows, col_classes, min_width=2200, scroll_class="table
 
     html += "</tbody></table></div>"
 
-    st.markdown(dedent(html).strip(), unsafe_allow_html=True)
+    st.markdown(clean_html(html), unsafe_allow_html=True)
 
 
 def build_indicator_rows(parent_row, child_rows, selected_ssp_indices=None, search_query=""):
@@ -1538,7 +1544,7 @@ def render_indicator_table(rows):
 
     html += "</tbody></table></div>"
 
-    st.markdown(dedent(html).strip(), unsafe_allow_html=True)
+    st.markdown(clean_html(html), unsafe_allow_html=True)
 
 def build_measure_rows(measures, monitoring_df, quarter_data, selected_years, selected_quarters):
     rows = []
@@ -1725,7 +1731,7 @@ def render_measure_table(measures, monitoring_df, quarter_data, selected_years, 
 
     html += "</tbody></table></div>"
 
-    st.markdown(dedent(html).strip(), unsafe_allow_html=True)
+    st.markdown(clean_html(html), unsafe_allow_html=True)
 
 # ------------------------------------------------------------
 # Interface state

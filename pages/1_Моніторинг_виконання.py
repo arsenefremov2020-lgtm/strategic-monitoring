@@ -20,6 +20,7 @@ from core.access import (
     should_prefill_contact_fields,
     user_has_all_ssp_access,
 )
+from core.closeouts import load_manual_closeouts
 
 
 # ------------------------------------------------------------
@@ -787,6 +788,7 @@ def ensure_monitoring_columns(monitoring_df):
         "numeric_value",
         "progress_text",
         "risks",
+        "npa_link",
         "file_names",
         "file_urls",
         "admin_comment",
@@ -807,7 +809,9 @@ def ensure_monitoring_columns(monitoring_df):
 # ------------------------------------------------------------
 
 df = load_strat_matrix()
-monitoring_df = ensure_monitoring_columns(load_monitoring())
+_raw_monitoring_df = load_monitoring()
+npa_link_column_exists = "npa_link" in _raw_monitoring_df.columns
+monitoring_df = ensure_monitoring_columns(_raw_monitoring_df)
 
 all_measures = df[df["object_type"] == "measure"].copy()
 
@@ -1141,6 +1145,17 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+st.markdown(
+    """
+    <div class="info-card" style="margin-bottom:14px;">
+        <div class="info-card-title">Легенда обов'язковості полів</div>
+        <div class="legend-item">🟥 Обов'язкове поле для заповнення (квартальне значення, статус виконання, опис прогресу)</div>
+        <div class="legend-item">🟨 Опційне поле, не обов'язкове (ризики/проблеми/відхилення, посилання на НПА)</div>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
 
 # ------------------------------------------------------------
 # One editable table
@@ -1177,6 +1192,8 @@ if not monitoring_df.empty:
         if code_key and code_key not in submitted_map:
             submitted_map[code_key] = mrow
 
+manual_closeouts = load_manual_closeouts()
+
 table_rows = []
 locked_cols_per_row = {}   # code -> list of column names that must be disabled
 
@@ -1188,15 +1205,23 @@ for _, row in filtered_measures.iterrows():
     existing = submitted_map.get(code)
     is_locked = existing is not None
     is_approved = is_locked and raw_value(existing.get("approval_status", "")) == "Погоджено"
+    is_manually_closed = (code, str(selected_year), str(selected_quarter)) in manual_closeouts
+
+    if is_manually_closed:
+        is_locked = True
 
     if is_locked:
-        q_fact_val   = raw_value(existing.get("numeric_value", ""))
-        status_val   = raw_value(existing.get("status", ""))
-        progress_val = raw_value(existing.get("progress_text", ""))
-        risks_val    = raw_value(existing.get("risks", ""))
-        lock_label   = "✅ Погоджено" if is_approved else "⏳ На розгляді"
+        q_fact_val   = raw_value(existing.get("numeric_value", "")) if existing is not None else ""
+        status_val   = raw_value(existing.get("status", "")) if existing is not None else ""
+        progress_val = raw_value(existing.get("progress_text", "")) if existing is not None else ""
+        risks_val    = raw_value(existing.get("risks", "")) if existing is not None else ""
+        npa_link_val = raw_value(existing.get("npa_link", "")) if existing is not None else ""
+        if is_manually_closed:
+            lock_label = "🔒 Закрито вручну"
+        else:
+            lock_label = "✅ Погоджено" if is_approved else "⏳ На розгляді"
     else:
-        q_fact_val = status_val = progress_val = risks_val = ""
+        q_fact_val = status_val = progress_val = risks_val = npa_link_val = ""
         lock_label = ""
 
     table_rows.append({
@@ -1226,6 +1251,7 @@ for _, row in filtered_measures.iterrows():
         "Статус\nвиконання":               status_val,
         "Опис\nпрогресу":                  progress_val,
         "Ризики / проблеми /\nвідхилення": risks_val,
+        "Посилання\nна НПА":               npa_link_val,
         "_locked": is_locked,
         "_lock_label": lock_label,
     })
@@ -1237,12 +1263,18 @@ always_disabled = [
     "Код", "Захід", "Тип\nпродукту", "Індикатор", "Одиниці\nвиміру",
     col_2021, col_2024, col_2025, col_target,
     "Глобальний\nрівень", "Національний\nрівень",
-    "Головний\nвиконавець", "Співвиконавець 1", "Співвиконавець 2",
+    "Головний\nвиконавець", "Співвиконавець",
     "Початкова\nдата", "Кінцева\nдата", "Заступник\nМіністра",
 ]
 
 # Колонки для редагування
-editable_cols = [quarter_label, "Статус\nвиконання", "Опис\nпрогресу", "Ризики / проблеми /\nвідхилення"]
+editable_cols = [
+    quarter_label, "Статус\nвиконання", "Опис\nпрогресу",
+    "Ризики / проблеми /\nвідхилення", "Посилання\nна НПА",
+]
+# Обов'язкові редаговані поля (опційні — не блокують подання)
+required_editable_cols = [quarter_label, "Статус\nвиконання", "Опис\nпрогресу"]
+optional_editable_cols = ["Ризики / проблеми /\nвідхилення", "Посилання\nна НПА"]
 
 # Для рядків із поданими заявками — теж блокуємо редаговані колонки
 # Робимо це через окремий DataFrame: locked і free рядки
@@ -1316,8 +1348,7 @@ else:
         "Національний\nрівень": st.column_config.TextColumn("Національний\nрівень", disabled=True, width=270),
 
         "Головний\nвиконавець": st.column_config.TextColumn("Головний\nвиконавець", disabled=True, width=180),
-        "Співвиконавець 1":      st.column_config.TextColumn("Співвиконавець 1",      disabled=True, width=160),
-        "Співвиконавець 2":      st.column_config.TextColumn("Співвиконавець 2",      disabled=True, width=160),
+        "Співвиконавець":      st.column_config.TextColumn("Співвиконавець",      disabled=True, width=160),
 
         "Початкова\nдата":  st.column_config.TextColumn("Початкова\nдата",  disabled=True, width=120),
         "Кінцева\nдата":    st.column_config.TextColumn("Кінцева\nдата",    disabled=True, width=120),
@@ -1336,13 +1367,29 @@ else:
         ),
         "Ризики / проблеми /\nвідхилення": st.column_config.TextColumn(
             "Ризики / проблеми /\nвідхилення",
-            help="Якщо ризиків немає, зазначте: відсутні",
+            help="Опційне поле. Якщо ризиків немає, зазначте: відсутні",
             width=300,
+        ),
+        "Посилання\nна НПА": st.column_config.TextColumn(
+            "Посилання\nна НПА",
+            help="Опційне поле. Посилання на нормативно-правовий акт, якщо застосовно",
+            width=220,
         ),
         # Приховані службові колонки
         "_locked":     st.column_config.CheckboxColumn("_locked",     width=1),
         "_lock_label": st.column_config.TextColumn("_lock_label", width=1),
     }
+
+    _required_header_idx = [display_cols.index(c) + 1 for c in required_editable_cols if c in display_cols]
+    _optional_header_idx = [display_cols.index(c) + 1 for c in optional_editable_cols if c in display_cols]
+    _header_tint_css = "\n".join(
+        f'div[data-testid="stDataEditor"] div[role="columnheader"]:nth-child({i}) {{ background: rgba(220,38,38,0.10) !important; }}'
+        for i in _required_header_idx
+    ) + "\n" + "\n".join(
+        f'div[data-testid="stDataEditor"] div[role="columnheader"]:nth-child({i}) {{ background: #fff8e1 !important; }}'
+        for i in _optional_header_idx
+    )
+    st.markdown(f"<style>{_header_tint_css}</style>", unsafe_allow_html=True)
 
     edited_df = st.data_editor(
         table_df,
@@ -1392,14 +1439,16 @@ def validate_submission():
 
     for _, row in selected_rows.iterrows():
         code = raw_value(row.get("Код", ""))
-        required_values = [
-            row.get(quarter_label, ""),
-            row.get("Статус\nвиконання", ""),
-            row.get("Опис\nпрогресу", ""),
-            row.get("Ризики / проблеми /\nвідхилення", ""),
+        missing_fields = [
+            field for field in required_editable_cols
+            if not raw_value(row.get(field, ""))
         ]
-        if any(not raw_value(v) for v in required_values):
-            errors.append(f"Заповніть усі обов'язкові поля для заходу {code}")
+        for field_name in missing_fields:
+            field_label = field_name.replace("\n", " ")
+            errors.append(
+                f"У заході {code} не заповнено поле «{field_label}». "
+                "Виправте це та спробуйте подати інформацію ще раз."
+            )
 
     return errors
 
@@ -1434,6 +1483,10 @@ if submit_clicked:
                 "numeric_value":      raw_value(row.get(quarter_label, "")),
                 "progress_text":      raw_value(row.get("Опис\nпрогресу", "")),
                 "risks":              raw_value(row.get("Ризики / проблеми /\nвідхилення", "")),
+                **(
+                    {"npa_link": raw_value(row.get("Посилання\nна НПА", ""))}
+                    if npa_link_column_exists else {}
+                ),
                 "file_names":         "",
                 "file_urls":          "",
                 "admin_comment":      "",

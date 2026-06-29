@@ -899,6 +899,7 @@ def ensure_monitoring_columns(monitoring_df):
         "numeric_value",
         "progress_text",
         "risks",
+        "npa_link",
         "file_names",
         "file_urls",
         "admin_comment",

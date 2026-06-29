@@ -14,6 +14,8 @@ from core.access import (
     filter_requests_for_user,
     get_user_allowed_ssp_indexes,
     user_has_all_ssp_access,
+    is_admin_user,
+    is_super_admin_user,
 )
 
 st.set_page_config(
@@ -1962,6 +1964,131 @@ else:
             show_logs[[c for c in show_cols if c in show_logs.columns]],
             use_container_width=True, hide_index=True
         )
+
+st.markdown('</div>', unsafe_allow_html=True)
+
+# ──────────────────────────────────────────────
+# ЗАКРИТТЯ ЗАХОДУ ВРУЧНУ (admin → super_admin)
+# ──────────────────────────────────────────────
+
+
+def load_closeout_requests():
+    resp = (
+        supabase.table("closeout_requests")
+        .select("*")
+        .order("requested_at", desc=True)
+        .execute()
+    )
+    return pd.DataFrame(resp.data) if resp.data else pd.DataFrame()
+
+
+measure_codes = strat_df[strat_df["code"].astype(str).str.count(r"\.") >= 3]["code"].astype(str).tolist() \
+    if "code" in strat_df.columns else []
+
+st.markdown(
+    '<div class="card"><div class="card-title">Закриття заходу вручну</div>',
+    unsafe_allow_html=True
+)
+
+if is_admin_user(current_user) or is_super_admin_user(current_user):
+    with st.form("closeout_request_form"):
+        st.caption(
+            "Подати запит на ручне закриття заходу за період. "
+            "Підтверджений запит не підмінює статус подання моніторингу — "
+            "він лише додає окрему позначку «Закрито вручну»."
+        )
+        co_code = st.selectbox("Код заходу", measure_codes)
+        co_year_col, co_quarter_col = st.columns(2)
+        with co_year_col:
+            co_year = st.selectbox("Рік", list(range(2026, 2035)))
+        with co_quarter_col:
+            co_quarter = st.selectbox("Квартал", ["I", "II", "III", "IV"])
+        co_reason = st.text_area("Підстава для закриття")
+        co_evidence = st.text_area("Додаткові пояснення (опційно)")
+        co_submit = st.form_submit_button("Надіслати на підтвердження супер-адміну")
+
+    if co_submit:
+        if not co_reason.strip():
+            st.error("Заповніть підставу для закриття заходу.")
+        else:
+            try:
+                supabase.table("closeout_requests").insert({
+                    "strat_code":     co_code,
+                    "period_year":    str(co_year),
+                    "period_quarter": co_quarter,
+                    "admin_id":       current_user.get("id", ""),
+                    "admin_email":    current_user.get("email", ""),
+                    "reason":         co_reason.strip(),
+                    "evidence_note":  co_evidence.strip(),
+                    "approval_status": "Очікує підтвердження",
+                }).execute()
+                st.success("Запит на закриття заходу надіслано на підтвердження супер-адміну.")
+                st.rerun()
+            except Exception as e:
+                st.error("Не вдалося надіслати запит на закриття заходу.")
+                st.exception(e)
+else:
+    st.info("Подання запиту на закриття заходу доступне лише адміністратору або супер-адміну.")
+
+closeout_df = load_closeout_requests()
+
+if is_super_admin_user(current_user):
+    st.markdown('<div class="card-title" style="margin-top:18px;">Підтвердження закриття заходів (супер-адмін)</div>', unsafe_allow_html=True)
+
+    pending_closeouts = closeout_df[closeout_df["approval_status"] == "Очікує підтвердження"] if not closeout_df.empty else pd.DataFrame()
+
+    if pending_closeouts.empty:
+        st.info("Запитів на закриття, що очікують підтвердження, немає.")
+    else:
+        for _, co_row in pending_closeouts.iterrows():
+            with st.container():
+                st.markdown(
+                    f"""
+                    <div class="review-box">
+                        <div class="review-title">Захід {clean(co_row.get("strat_code",""))}
+                            — {clean(co_row.get("period_quarter",""))} кв. {clean(co_row.get("period_year",""))}</div>
+                        <div><b>Підстава:</b> {clean(co_row.get("reason",""))}</div>
+                        <div><b>Пояснення:</b> {clean(co_row.get("evidence_note",""))}</div>
+                        <div><b>Подано:</b> {clean(co_row.get("admin_email",""))} о {clean(co_row.get("requested_at",""))}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+                co_decision_comment = st.text_input(
+                    "Коментар рішення (опційно)",
+                    key=f"co_decision_comment_{co_row.get('id')}"
+                )
+                co_col1, co_col2 = st.columns(2)
+                with co_col1:
+                    co_approve = st.button("Підтвердити", key=f"co_approve_{co_row.get('id')}", use_container_width=True)
+                with co_col2:
+                    co_reject = st.button("Відхилити", key=f"co_reject_{co_row.get('id')}", use_container_width=True)
+
+                if co_approve or co_reject:
+                    new_co_status = "Підтверджено" if co_approve else "Відхилено"
+                    try:
+                        supabase.table("closeout_requests").update({
+                            "approval_status":   new_co_status,
+                            "superadmin_id":      current_user.get("id", ""),
+                            "decided_at":         datetime.now(timezone.utc).isoformat(),
+                            "decision_comment":   co_decision_comment,
+                        }).eq("id", int(co_row.get("id"))).execute()
+                        write_log(
+                            co_row.get("id"),
+                            f"Закриття заходу: {new_co_status}",
+                            "Очікує підтвердження",
+                            new_co_status,
+                            co_decision_comment,
+                        )
+                        st.success(f"Запит на закриття заходу {new_co_status.lower()}.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error("Не вдалося застосувати рішення щодо закриття заходу.")
+                        st.exception(e)
+
+if not closeout_df.empty:
+    with st.expander("Усі запити на закриття заходів"):
+        st.dataframe(closeout_df, use_container_width=True, hide_index=True)
 
 st.markdown('</div>', unsafe_allow_html=True)
 

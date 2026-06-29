@@ -20,6 +20,7 @@ from core.access import (
     should_prefill_contact_fields,
     user_has_all_ssp_access,
 )
+from core.closeouts import load_manual_closeouts
 
 
 # ------------------------------------------------------------
@@ -1191,6 +1192,8 @@ if not monitoring_df.empty:
         if code_key and code_key not in submitted_map:
             submitted_map[code_key] = mrow
 
+manual_closeouts = load_manual_closeouts()
+
 table_rows = []
 locked_cols_per_row = {}   # code -> list of column names that must be disabled
 
@@ -1202,14 +1205,21 @@ for _, row in filtered_measures.iterrows():
     existing = submitted_map.get(code)
     is_locked = existing is not None
     is_approved = is_locked and raw_value(existing.get("approval_status", "")) == "Погоджено"
+    is_manually_closed = (code, str(selected_year), str(selected_quarter)) in manual_closeouts
+
+    if is_manually_closed:
+        is_locked = True
 
     if is_locked:
-        q_fact_val   = raw_value(existing.get("numeric_value", ""))
-        status_val   = raw_value(existing.get("status", ""))
-        progress_val = raw_value(existing.get("progress_text", ""))
-        risks_val    = raw_value(existing.get("risks", ""))
-        npa_link_val = raw_value(existing.get("npa_link", ""))
-        lock_label   = "✅ Погоджено" if is_approved else "⏳ На розгляді"
+        q_fact_val   = raw_value(existing.get("numeric_value", "")) if existing is not None else ""
+        status_val   = raw_value(existing.get("status", "")) if existing is not None else ""
+        progress_val = raw_value(existing.get("progress_text", "")) if existing is not None else ""
+        risks_val    = raw_value(existing.get("risks", "")) if existing is not None else ""
+        npa_link_val = raw_value(existing.get("npa_link", "")) if existing is not None else ""
+        if is_manually_closed:
+            lock_label = "🔒 Закрито вручну"
+        else:
+            lock_label = "✅ Погоджено" if is_approved else "⏳ На розгляді"
     else:
         q_fact_val = status_val = progress_val = risks_val = npa_link_val = ""
         lock_label = ""

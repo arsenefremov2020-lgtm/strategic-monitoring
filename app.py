@@ -544,6 +544,19 @@ td.status-empty {
     font-weight: 850;
 }
 
+.closeout-badge {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background-color: #1e293b;
+    color: #f8fafc !important;
+    font-size: 10px;
+    font-weight: 700;
+    white-space: nowrap;
+    vertical-align: middle;
+}
+
 td.risk-cell {
     background-color: #fee2e2 !important;
     color: #991b1b;
@@ -914,6 +927,9 @@ def ensure_monitoring_columns(monitoring_df):
             monitoring_df[col] = ""
 
     return monitoring_df
+
+
+from core.closeouts import load_manual_closeouts
 
 
 # ------------------------------------------------------------
@@ -1682,7 +1698,11 @@ def render_measure_table(measures, monitoring_df, quarter_data, selected_years, 
                 else:
                     value = item.get("value", "")
                     cell_class = item.get("class", "status-empty")
-                    html += f"<td class='col-year {cell_class}'>{make_cell(value, 'nowrap')}</td>"
+                    closeout_badge = (
+                        " <span class='closeout-badge' title='Закрито вручну адміністратором'>🔒 Закрито вручну</span>"
+                        if item.get("manual_closeout") else ""
+                    )
+                    html += f"<td class='col-year {cell_class}'>{make_cell(value, 'nowrap')}{closeout_badge}</td>"
 
         html += f"<td class='col-long'>{make_cell(measure.get('source_global', ''), 'fixed')}</td>"
         html += f"<td class='col-long'>{make_cell(measure.get('source_national', ''), 'fixed')}</td>"
@@ -1773,6 +1793,12 @@ def collapse_all_main():
 df = load_strat_matrix()
 monitoring_df = ensure_monitoring_columns(load_monitoring())
 quarter_data = build_quarter_data(monitoring_df)
+
+manual_closeouts = load_manual_closeouts()
+for closeout_code, closeout_year, closeout_quarter in manual_closeouts:
+    closeout_key = f"{closeout_year}_{closeout_quarter}"
+    quarter_data.setdefault(closeout_code, {}).setdefault(closeout_key, {"value": "", "visual_status": "", "class": "status-empty"})
+    quarter_data[closeout_code][closeout_key]["manual_closeout"] = True
 
 default_state()
 

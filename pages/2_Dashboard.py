@@ -1716,6 +1716,25 @@ CHART_LAYOUT = dict(
 )
 
 
+def apply_safe_plotly_layout(fig, has_legend=True):
+    """Ставить легенду в безпечне положення, що не накладається на сам графік."""
+    if has_legend:
+        fig.update_layout(
+            legend=dict(
+                orientation="h",
+                x=0.5,
+                xanchor="center",
+                y=-0.25,
+                yanchor="top",
+                bgcolor="rgba(0,0,0,0)",
+            ),
+            margin=dict(l=10, r=10, t=40, b=90),
+        )
+    else:
+        fig.update_layout(showlegend=False)
+    return fig
+
+
 def make_chart_frame(title, subtitle=""):
     st.markdown(
         f'<div class="chart-wrap"><div class="chart-title">{title}</div>'
@@ -2715,11 +2734,10 @@ if view_mode in ["Усі візуалізації", "Стратегічні ці
         )
         fig_tl.update_layout(
             **CHART_LAYOUT,
-            height=300,
+            height=340,
             showlegend=True,
-            legend=dict(orientation="v", x=1, y=0.5),
-            margin=dict(l=10, r=10, t=10, b=10)
         )
+        apply_safe_plotly_layout(fig_tl, has_legend=True)
         st.plotly_chart(fig_tl, use_container_width=True)
 
     with sc2:
@@ -2946,11 +2964,10 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
         )
         fig_risk_pie.update_layout(
             **CHART_LAYOUT,
-            height=280,
-            margin=dict(l=10, r=10, t=10, b=10),
+            height=320,
             showlegend=True,
-            legend=dict(orientation="v", x=1, y=0.5)
         )
+        apply_safe_plotly_layout(fig_risk_pie, has_legend=True)
         st.plotly_chart(fig_risk_pie, use_container_width=True)
 
     with r2:
@@ -2985,9 +3002,8 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
                 categoryarray=stacked_vis["ssp_department"].drop_duplicates().tolist()
             ),
             yaxis=dict(showgrid=True, gridcolor="#f1f5f9"),
-            legend=dict(orientation="h", x=0, y=-0.25),
-            margin=dict(l=10, r=10, t=10, b=80)
         )
+        apply_safe_plotly_layout(fig_risk_bar, has_legend=True)
         st.plotly_chart(fig_risk_bar, use_container_width=True)
 
     # ── SCATTER: Ризик × Виконання по ССП ────────────────────
@@ -3119,9 +3135,8 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
         height=340,
         xaxis=dict(showgrid=False, tickangle=-20),
         yaxis=dict(showgrid=True, gridcolor="#f1f5f9", ticksuffix="%"),
-        legend=dict(orientation="h", x=0, y=1.12),
-        margin=dict(l=10, r=10, t=40, b=30)
     )
+    apply_safe_plotly_layout(fig_trend, has_legend=True)
     st.plotly_chart(fig_trend, use_container_width=True)
 
     # ── WATERFALL: внесок кожної стратегічної цілі у відхилення ──
@@ -3294,12 +3309,11 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
         fig_tl2.update_traces(textfont_size=10, textposition="inside")
         fig_tl2.update_layout(
             **CHART_LAYOUT,
-            height=320,
+            height=360,
             xaxis=dict(showgrid=False, tickangle=-20),
             yaxis=dict(showgrid=True, gridcolor="#f1f5f9"),
-            legend=dict(orientation="h", x=0, y=1.1),
-            margin=dict(l=10, r=10, t=40, b=40)
         )
+        apply_safe_plotly_layout(fig_tl2, has_legend=True)
         st.plotly_chart(fig_tl2, use_container_width=True)
     else:
         st.info("Дані про терміни виконання заходів відсутні.")
@@ -3385,11 +3399,10 @@ if not presentation_mode:
             fig_donut.update_layout(
                 **CHART_LAYOUT,
                 title=dict(text="Структура джерел фінансування", font=dict(size=14, color="#0c1a3a"), x=0),
-                height=300,
+                height=340,
                 showlegend=True,
-                legend=dict(orientation="v", x=1, y=0.5),
-                margin=dict(l=10, r=10, t=40, b=10)
             )
+            apply_safe_plotly_layout(fig_donut, has_legend=True)
             st.plotly_chart(fig_donut, use_container_width=True)
         else:
             st.info("Даних про фінансування за обраними фільтрами немає.")

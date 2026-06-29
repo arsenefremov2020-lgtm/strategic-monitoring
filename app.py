@@ -426,7 +426,26 @@ div[data-testid="stExpander"] div[data-testid="stExpander"] > details > summary 
 }
 
 .table-scroll.measures-scroll {
-    max-height: 520px;
+    max-height: 325px;
+}
+
+.th-sub {
+    display: block;
+    color: #64748b;
+    font-size: 11px;
+    font-weight: 600;
+    margin-top: 2px;
+}
+
+.th-note-scroll {
+    max-height: 60px;
+    overflow-y: auto;
+    font-size: 10px;
+    line-height: 1.3;
+    color: #64748b;
+    font-weight: 500;
+    margin-top: 2px;
+    text-align: left;
 }
 
 table.custom-table {
@@ -1380,7 +1399,6 @@ def build_indicator_rows(parent_row, child_rows, selected_ssp_indices=None, sear
         "source_national",
         "resp_main",
         "resp_co_1",
-        "resp_co_2",
         "deputy_minister_raw"
     ]
 
@@ -1429,18 +1447,17 @@ def render_indicator_table(rows):
             <th class="col-year" rowspan="2">2021<br><span style='font-size:11px;color:#475569;'>базовий рівень (факт)</span></th>
             <th class="col-year" rowspan="2">2024<br><span style='font-size:11px;color:#475569;'>звіт</span></th>
             <th class="col-year" rowspan="2">2025<br><span style='font-size:11px;color:#475569;'>факт</span></th>
-            <th class="col-long" rowspan="2">Проміжний цільовий орієнтир на кінець 2028 року</th>
-            <th class="col-long" rowspan="2">Цільовий орієнтир на кінець 2034 року для цілей і завдань</th>
+            <th class="col-long" rowspan="2">Проміжний цільовий орієнтир на кінець 2028 року<span class="th-sub">(для цілей і завдань)</span></th>
+            <th class="col-long" rowspan="2">Цільовий орієнтир на кінець 2034 року для цілей і завдань<div class="th-note-scroll">ПОЯСНЮВАЛЬНИЙ_ТЕКСТ_ТУТ</div></th>
             <th class="col-long" colspan="2">Джерело даних</th>
-            <th class="col-resp" colspan="3">Відповідальні самостійні структурні підрозділи</th>
+            <th class="col-resp" colspan="2">Відповідальні самостійні структурні підрозділи</th>
             <th class="col-resp" rowspan="2">Заступник Міністра</th>
         </tr>
         <tr>
             <th class="col-long">Глобальний рівень</th>
             <th class="col-long">Національний рівень</th>
             <th class="col-resp">Головний</th>
-            <th class="col-resp">Співвиконавець 1</th>
-            <th class="col-resp">Співвиконавець 2</th>
+            <th class="col-resp">Співвиконавець</th>
         </tr>
     </thead>
     <tbody>
@@ -1460,7 +1477,6 @@ def render_indicator_table(rows):
         html += f"<td class='col-resp'>{make_cell(row[9], 'nowrap')}</td>"
         html += f"<td class='col-resp'>{make_cell(row[10], 'nowrap')}</td>"
         html += f"<td class='col-resp'>{make_cell(row[11], 'nowrap')}</td>"
-        html += f"<td class='col-resp'>{make_cell(row[12], 'nowrap')}</td>"
         html += "</tr>"
 
     html += "</tbody></table></div>"
@@ -1559,7 +1575,7 @@ def render_measure_table(measures, monitoring_df, quarter_data, selected_years, 
 
     html += """
             <th class="col-long" colspan="2">Підстава для включення до стратегічного плану</th>
-            <th class="col-resp" colspan="3">Відповідальні самостійні структурні підрозділи</th>
+            <th class="col-resp" colspan="2">Відповідальні самостійні структурні підрозділи</th>
             <th class="col-resp" rowspan="3">Заступник Міністра</th>
             <th class="col-year" rowspan="3">Період дії заходу в межах планового періоду, років</th>
             <th class="col-year" rowspan="3">Початкова дата</th>
@@ -1570,8 +1586,7 @@ def render_measure_table(measures, monitoring_df, quarter_data, selected_years, 
             <th class="col-long" rowspan="2">Глобальний рівень</th>
             <th class="col-long" rowspan="2">Національний рівень</th>
             <th class="col-resp" rowspan="2">Головний</th>
-            <th class="col-resp" rowspan="2">Співвиконавець 1</th>
-            <th class="col-resp" rowspan="2">Співвиконавець 2</th>
+            <th class="col-resp" rowspan="2">Співвиконавець</th>
             <th class="col-budget" colspan="4">Державний бюджет України</th>
             <th class="col-budget" colspan="4">Інші джерела</th>
         </tr>
@@ -1622,7 +1637,6 @@ def render_measure_table(measures, monitoring_df, quarter_data, selected_years, 
         html += f"<td class='col-long'>{make_cell(measure.get('source_national', ''), 'fixed')}</td>"
         html += f"<td class='col-resp'>{make_cell(measure.get('resp_main', ''), 'nowrap')}</td>"
         html += f"<td class='col-resp'>{make_cell(measure.get('resp_co_1', ''), 'nowrap')}</td>"
-        html += f"<td class='col-resp'>{make_cell(measure.get('resp_co_2', ''), 'nowrap')}</td>"
         html += f"<td class='col-resp'>{make_cell(measure.get('deputy_minister_raw', ''), 'nowrap')}</td>"
         html += f"<td class='col-year'>{make_cell(measure.get('measure_period_years', ''), 'nowrap')}</td>"
         html += f"<td class='col-year'>{make_cell(measure.get('measure_start_date', ''), 'nowrap')}</td>"

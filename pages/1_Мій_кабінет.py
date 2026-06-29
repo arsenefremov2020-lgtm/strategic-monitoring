@@ -440,7 +440,7 @@ st.markdown("""
     </div>
     <div class="badge-wrap">
         <div class="badge badge-purple">● Роль: Керівник ССП</div>
-        <div class="badge">● Дія: підписання / повернення</div>
+        <div class="badge">● Дія: підтвердження / повернення</div>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -572,7 +572,7 @@ st.markdown('</div>', unsafe_allow_html=True)
 # DETAILED VIEW
 # ============================================================
 
-st.markdown('<div class="card"><div class="card-title">Детальний перегляд та підписання</div>', unsafe_allow_html=True)
+st.markdown('<div class="card"><div class="card-title">Детальний перегляд та підтвердження</div>', unsafe_allow_html=True)
 
 options = []
 for _, row in filtered.iterrows():
@@ -686,7 +686,7 @@ if approval == "Направлено на підпис":
     btn_col1, btn_col2, btn_col3 = st.columns(3)
 
     with btn_col1:
-        sign_btn = st.button("✅ Підписати", use_container_width=True,
+        sign_btn = st.button("✅ Підтвердити", use_container_width=True,
                              key=f"sign_{selected_id}")
     with btn_col2:
         return_ssp_btn = st.button("↩️ На доопрацювання в межах ССП",
@@ -700,20 +700,20 @@ if approval == "Направлено на підпис":
         try:
             supabase.table("monitoring_requests").update({
                 "approval_status": "Погоджено",
-                "admin_comment": clean(leader_comment) or "Підписано керівником ССП",
+                "admin_comment": clean(leader_comment) or "Підтверджено керівником ССП",
             }).eq("id", selected_id).execute()
 
             write_log(
                 selected_id,
-                "Підписання керівником ССП",
+                "Підтвердження керівником ССП",
                 "Направлено на підпис",
                 "Погоджено",
-                clean(leader_comment) or "Підписано керівником ССП"
+                clean(leader_comment) or "Підтверджено керівником ССП"
             )
-            st.success("✅ Заявку підписано. Статус змінено на «Погоджено».")
+            st.success("✅ Заявку підтверджено. Статус змінено на «Погоджено».")
             st.rerun()
         except Exception as e:
-            st.error("Помилка при підписанні.")
+            st.error("Помилка під час підтвердження.")
             st.exception(e)
 
     # ── На доопрацювання в межах ССП ─────────────────────────
@@ -767,7 +767,7 @@ if approval == "Направлено на підпис":
 else:
     st.markdown('<div class="card">', unsafe_allow_html=True)
     if approval == "Погоджено":
-        st.success("✅ Заявку вже підписано. Жодних дій не потрібно.")
+        st.success("✅ Заявку вже підтверджено. Жодних дій не потрібно.")
     elif approval == "Очікує погодження":
         st.info("🕐 Заявка ще не надійшла на підпис — очікує погодження координатором.")
     elif approval == "Повернуто на доопрацювання":

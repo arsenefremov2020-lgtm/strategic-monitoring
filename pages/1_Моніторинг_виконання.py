@@ -1237,7 +1237,7 @@ always_disabled = [
     "Код", "Захід", "Тип\nпродукту", "Індикатор", "Одиниці\nвиміру",
     col_2021, col_2024, col_2025, col_target,
     "Глобальний\nрівень", "Національний\nрівень",
-    "Головний\nвиконавець", "Співвиконавець 1", "Співвиконавець 2",
+    "Головний\nвиконавець", "Співвиконавець",
     "Початкова\nдата", "Кінцева\nдата", "Заступник\nМіністра",
 ]
 
@@ -1316,8 +1316,7 @@ else:
         "Національний\nрівень": st.column_config.TextColumn("Національний\nрівень", disabled=True, width=270),
 
         "Головний\nвиконавець": st.column_config.TextColumn("Головний\nвиконавець", disabled=True, width=180),
-        "Співвиконавець 1":      st.column_config.TextColumn("Співвиконавець 1",      disabled=True, width=160),
-        "Співвиконавець 2":      st.column_config.TextColumn("Співвиконавець 2",      disabled=True, width=160),
+        "Співвиконавець":      st.column_config.TextColumn("Співвиконавець",      disabled=True, width=160),
 
         "Початкова\nдата":  st.column_config.TextColumn("Початкова\nдата",  disabled=True, width=120),
         "Кінцева\nдата":    st.column_config.TextColumn("Кінцева\nдата",    disabled=True, width=120),

@@ -1504,7 +1504,7 @@ def render_indicator_table(rows):
             <th class="col-year" rowspan="2">2024<br><span style='font-size:11px;color:#475569;'>звіт</span></th>
             <th class="col-year" rowspan="2">2025<br><span style='font-size:11px;color:#475569;'>факт</span></th>
             <th class="col-long" rowspan="2">Проміжний цільовий орієнтир на кінець 2028 року<span class="th-sub">(для цілей і завдань)</span></th>
-            <th class="col-long" rowspan="2">Цільовий орієнтир на кінець 2034 року для цілей і завдань<div class="th-note-scroll">ПОЯСНЮВАЛЬНИЙ_ТЕКСТ_ТУТ</div></th>
+            <th class="col-long" rowspan="2">Цільовий орієнтир на кінець 2034 року для цілей і завдань<div class="th-note-scroll">відповідає цілі, визначеній в НЕС-2030, ЦСР-2030 для показників, де це зазначено. Ціль перенесена на 2034 рік через «втрату» 4-х років — 2022-2025 внаслідок повномасштабної війни. Інші індикативні значення мають встановлюватись такими, що є кількісно узгодженими з цілями НЕС і ЦСР</div></th>
             <th class="col-long" colspan="2">Джерело даних</th>
             <th class="col-resp" colspan="2">Відповідальні самостійні структурні підрозділи</th>
             <th class="col-resp" rowspan="2">Заступник Міністра</th>

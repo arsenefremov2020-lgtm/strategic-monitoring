@@ -1,3 +1,4 @@
+from textwrap import dedent
 import re
 import io
 from datetime import datetime
@@ -1435,7 +1436,7 @@ def render_table(headers, rows, col_classes, min_width=2200, scroll_class="table
 
     html += "</tbody></table></div>"
 
-    st.markdown(html, unsafe_allow_html=True)
+    st.markdown(dedent(html).strip(), unsafe_allow_html=True)
 
 
 def build_indicator_rows(parent_row, child_rows, selected_ssp_indices=None, search_query=""):

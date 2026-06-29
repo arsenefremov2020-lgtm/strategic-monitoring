@@ -1,4 +1,5 @@
 import re
+import io
 from datetime import datetime
 from html import escape
 
@@ -1327,6 +1328,43 @@ def get_quarter_columns(selected_years, selected_quarters):
     return columns
 
 
+def build_export_dataframe(measures, quarter_data, selected_years, selected_quarters):
+    quarter_columns = get_quarter_columns(selected_years, selected_quarters)
+
+    rows = []
+    for _, measure in measures.iterrows():
+        code = raw_value(measure.get("code", ""))
+
+        row = {
+            "Код": code,
+            "Захід": strip_leading_code(measure.get("name", ""), code),
+            "Тип продукту": raw_value(measure.get("product_type", "")),
+            "Індикатор": raw_value(measure.get("indicator", "")),
+            "Одиниці виміру": raw_value(measure.get("unit", "")),
+            "Головний виконавець": raw_value(measure.get("resp_main", "")),
+            "Співвиконавець": raw_value(measure.get("resp_co_1", "")),
+        }
+
+        for year, quarter, label in quarter_columns:
+            key = f"{year}_{quarter}"
+            item = quarter_data.get(code, {}).get(key, {})
+            row[label] = item.get("value", "")
+
+        rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
+def build_export_excel(measures, quarter_data, selected_years, selected_quarters):
+    export_df = build_export_dataframe(measures, quarter_data, selected_years, selected_quarters)
+
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+        export_df.to_excel(writer, index=False, sheet_name="Заходи")
+
+    return buffer.getvalue()
+
+
 # ------------------------------------------------------------
 # HTML table rendering
 # ------------------------------------------------------------
@@ -2204,6 +2242,14 @@ st.caption(
     f"Параметри: {selected_status_mode}. "
     f"Заходів із ризиками: {risk_count}."
 )
+
+if not filtered_measures.empty:
+    st.download_button(
+        "Завантажити в Excel",
+        data=build_export_excel(filtered_measures, quarter_data, selected_years, selected_quarters),
+        file_name="strategic_monitoring_export.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 
 # ------------------------------------------------------------

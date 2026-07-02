@@ -1,0 +1,48 @@
+# Щоденна розсилка email-сповіщень системи моніторингу.
+#
+# Необхідні GitHub Secrets (Settings → Secrets and variables → Actions):
+#   SUPABASE_URL      — URL проєкту Supabase
+#   SUPABASE_KEY      — service/anon ключ (той самий, що в secrets Streamlit)
+#   SMTP_HOST         — напр. smtp.gmail.com
+#   SMTP_PORT         — 465
+#   SMTP_USER         — адреса скриньки-відправника
+#   SMTP_PASSWORD     — пароль застосунку (App password)
+#   SMTP_FROM         — (необовʼязково) адреса "Від кого"
+
+name: Email-сповіщення моніторингу
+
+on:
+  schedule:
+    # 05:30 UTC ≈ 08:30 за Києвом — ранковий дайджест у робочий час
+    - cron: "30 5 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Тестовий прогін без реальної відправки (1 = так)"
+        default: "0"
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Встановити залежності
+        run: pip install pandas openpyxl supabase
+
+      - name: Розіслати сповіщення
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          NOTIFICATIONS_DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
+        run: python scripts/send_notifications.py

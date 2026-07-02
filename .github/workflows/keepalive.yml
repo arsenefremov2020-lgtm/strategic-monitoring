@@ -1,0 +1,24 @@
+# Анти-сон для Streamlit Community Cloud.
+# Streamlit присипляє застосунок без відвідувачів; цей workflow "заходить"
+# на сторінку кожні 30 хвилин у робочі години, щоб система була завжди жива
+# (це також потрібно для коректної роботи системи у 100+ користувачів).
+#
+# Необхідний GitHub Secret:
+#   APP_URL — повна адреса застосунку, напр. https://xxxx.streamlit.app
+
+name: Підтримка застосунку активним
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping застосунку
+        run: |
+          curl -sS -o /dev/null -w "HTTP %{http_code}, %{time_total}s\n" \
+               --max-time 60 "${{ secrets.APP_URL }}" || true

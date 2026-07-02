@@ -27,7 +27,7 @@ st.caption(
 supabase = get_supabase_client()
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=60)
 def load_archive_index():
     try:
         resp = (
@@ -41,7 +41,7 @@ def load_archive_index():
     return pd.DataFrame(resp.data) if resp.data else pd.DataFrame()
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=60)
 def load_snapshot(snapshot_id):
     resp = supabase.table("archive_snapshots").select("*").eq("id", snapshot_id).execute()
     return resp.data[0] if resp.data else None

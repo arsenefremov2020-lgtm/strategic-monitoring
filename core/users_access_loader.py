@@ -164,14 +164,24 @@ def split_labels(value) -> list[str]:
 def parse_is_active(value) -> bool:
     """
     Перетворює is_active з Excel у True/False.
+    Підтримує TRUE/FALSE, 1/0, 1.0/0.0, так/ні, active/inactive.
     """
 
     if isinstance(value, bool):
         return value
 
-    text = clean_value(value).lower()
+    if value is None or pd.isna(value):
+        return False
 
-    if text in ["true", "1", "yes", "так", "активний", "active"]:
+    if isinstance(value, (int, float)):
+        return float(value) == 1.0
+
+    text = clean_value(value).lower().replace(",", ".")
+
+    if text.endswith(".0"):
+        text = text[:-2]
+
+    if text in ["true", "1", "yes", "y", "так", "да", "активний", "active"]:
         return True
 
     return False

@@ -54,8 +54,8 @@ def build_admin_notifications(requests_df: pd.DataFrame) -> list[dict[str, objec
             "label": "Повернуті на доопрацювання",
         },
         {
-            "value": int((statuses == "Направлено на підпис").sum()),
-            "label": "Направлено на підпис",
+            "value": int((statuses == "Очікує: Керівник ССП").sum()),
+            "label": "Очікує: Керівник ССП",
         },
         {
             "value": int(((statuses == "Очікує погодження") & (data["_days_waiting"] > 5)).sum()),
@@ -80,8 +80,8 @@ def build_cabinet_notifications(requests_df: pd.DataFrame) -> list[dict[str, obj
             "label": "Повернуто на доопрацювання",
         },
         {
-            "value": int((statuses == "Направлено на підпис").sum()),
-            "label": "Очікує підпису керівника",
+            "value": int((statuses == "Очікує: Керівник ССП").sum()),
+            "label": "Очікує підтвердження керівника",
         },
         {
             "value": int((statuses == "Погоджено").sum()),

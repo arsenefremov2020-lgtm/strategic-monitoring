@@ -62,7 +62,7 @@ ALTER TABLE public.monitoring_requests
     DROP CONSTRAINT IF EXISTS chk_approval_status,
     ADD CONSTRAINT chk_approval_status CHECK (approval_status IN (
         'Очікує погодження',
-        'Направлено на підпис',
+        'Очікує: Керівник ССП',
         'Очікує: Керівник управління',
         'Очікує: Заступник керівника ССП',
         'Повернуто на доопрацювання',

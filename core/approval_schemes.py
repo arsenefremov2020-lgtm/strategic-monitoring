@@ -232,17 +232,25 @@ def return_targets(chain: list[dict], stage_idx: int) -> list[dict]:
 # ------------------------------------------------------------
 
 def _admin_covers_ssp(user: dict, ssp_index: str) -> bool:
-    """Чи закріплений адміністратор саме за цим ССП.
+    """Чи закріплений адміністратор саме за цим ССП як КООРДИНАТОР.
 
-    Для координатора зірка '*' НЕ вважається закріпленням за конкретним ССП —
-    інакше «універсальний» адмін ставав координатором усіх підрозділів.
-    Береться лише явний перелік allowed_ssp_indexes / ssp_index.
+    Береться окреме поле coordinator_ssp_indexes — конкретні ССП з таблиці.
+    Широкий доступ '*' (у власника/супер-адміна) НЕ робить його
+    координатором усіх підрозділів: інакше «універсальний» адмін ставав
+    координатором геть усіх ССП, зокрема чужих.
     """
     ssp_index = str(ssp_index or "").strip()
     if not ssp_index:
         return False
+    coord = [str(a).strip() for a in (user.get("coordinator_ssp_indexes") or [])]
+    if coord:
+        return ssp_index in coord
+    # Фолбек для сумісності зі старими записами без нового поля:
+    # явний перелік allowed без '*'.
     allowed = [str(a).strip() for a in (user.get("allowed_ssp_indexes") or [])]
     own = str(user.get("ssp_index") or "").strip()
+    if "*" in allowed:
+        return ssp_index == own
     return ssp_index == own or ssp_index in allowed
 
 

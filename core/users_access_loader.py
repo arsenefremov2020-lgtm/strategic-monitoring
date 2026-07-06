@@ -226,12 +226,21 @@ def build_admin_or_super_admin(row: dict) -> dict | None:
 
     is_owner = email == "arsen.efremov.2020@gmail.com"
 
+    # Конкретні ССП, вписані в таблиці, — вони роблять адміна КООРДИНАТОРОМ
+    # саме цих підрозділів (незалежно від широкого доступу '*').
+    assigned_indexes = split_indexes(row.get("assigned_ssp_indexes"))
+    assigned_labels = split_labels(row.get("assigned_ssp_labels"))
+
     if role == ROLE_SUPER_ADMIN or is_owner:
+        # Широкий доступ до всіх сторінок/ССП…
         allowed_indexes = ["*"]
         allowed_labels = ["*"]
+        # …але координатором є лише для явно закріплених у таблиці ССП.
+        coordinator_indexes = [i for i in assigned_indexes if i != "*"]
     else:
-        allowed_indexes = split_indexes(row.get("assigned_ssp_indexes"))
-        allowed_labels = split_labels(row.get("assigned_ssp_labels"))
+        allowed_indexes = assigned_indexes
+        allowed_labels = assigned_labels
+        coordinator_indexes = [i for i in assigned_indexes if i != "*"]
 
     return {
         "email": email,
@@ -248,6 +257,8 @@ def build_admin_or_super_admin(row: dict) -> dict | None:
 
         "allowed_ssp_indexes": allowed_indexes,
         "allowed_ssp_labels": allowed_labels,
+        # Окреме поле: за якими ССП адмін є координатором (ланкою погодження).
+        "coordinator_ssp_indexes": coordinator_indexes,
 
         "is_active": parse_is_active(row.get("is_active")),
         "is_owner": is_owner,

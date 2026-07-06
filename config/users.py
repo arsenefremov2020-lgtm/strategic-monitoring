@@ -46,6 +46,7 @@ GUEST_USER = {
 
     "allowed_ssp_indexes": [],
     "allowed_ssp_labels": [],
+    "coordinator_ssp_indexes": [],
 
     "is_active": True,
     "is_owner": False,
@@ -188,6 +189,12 @@ def normalize_user_record(user: dict | None) -> dict:
         user_data["allowed_ssp_indexes"] = normalize_ssp_indexes(
             user_data.get("allowed_ssp_indexes", [])
         )
+
+    # Закріплення координатора зберігається окремо від широкого доступу '*'.
+    user_data["coordinator_ssp_indexes"] = [
+        i for i in normalize_ssp_indexes(user_data.get("coordinator_ssp_indexes", []))
+        if i != "*"
+    ]
 
     if "password" not in user_data:
         user_data["password"] = ""

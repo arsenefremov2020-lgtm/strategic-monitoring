@@ -358,7 +358,7 @@ def status_badge_class(status):
         return "badge-green"
     if status == "Повернуто на доопрацювання":
         return "badge-red"
-    if status == "Направлено на підпис":
+    if status == "Очікує: Керівник ССП":
         return "badge-blue"
     if status == "Очікує погодження":
         return "badge-yellow"
@@ -368,7 +368,7 @@ def status_badge_class(status):
 ACTIVE_APPROVAL_STATUSES = [
     "Очікує погодження",
     "Повернуто на доопрацювання",
-    "Направлено на підпис",
+    "Очікує: Керівник ССП",
 ]
 
 APPROVAL_FILTER_OPTIONS = [
@@ -376,7 +376,7 @@ APPROVAL_FILTER_OPTIONS = [
     "Усі",
     "Очікує погодження",
     "Повернуто на доопрацювання",
-    "Направлено на підпис",
+    "Очікує: Керівник ССП",
     "Погоджено",
 ]
 
@@ -648,13 +648,13 @@ total = len(filtered)
 approved = len(filtered[filtered["approval_status"] == "Погоджено"])
 waiting = len(filtered[filtered["approval_status"] == "Очікує погодження"])
 returned = len(filtered[filtered["approval_status"] == "Повернуто на доопрацювання"])
-sent_to_sign = len(filtered[filtered["approval_status"] == "Направлено на підпис"])
+sent_to_sign = len(filtered[filtered["approval_status"] == "Очікує: Керівник ССП"])
 
 m1, m2, m3, m4, m5 = st.columns(5)
 m1.metric("Усього відомостей", total)
 m2.metric("Очікує", waiting)
 m3.metric("Повернуто", returned)
-m4.metric("Направлено на підпис", sent_to_sign)
+m4.metric("Очікує: Керівник ССП", sent_to_sign)
 m5.metric("Погоджено", approved)
 
 # ============================================================
@@ -1113,6 +1113,7 @@ if approval == "Повернуто на доопрацювання":
             )
 
             st.success("Заявку повторно подано на погодження. Попередню і нову версію збережено.")
+            st.cache_data.clear()
             st.rerun()
 
         except Exception as e:
@@ -1128,8 +1129,8 @@ else:
         st.success("Заявку погоджено. Редагування недоступне.")
     elif approval == "Очікує погодження":
         st.info("Заявка очікує погодження. Редагування буде доступне, якщо її повернуть на доопрацювання.")
-    elif approval == "Направлено на підпис":
-        st.info("Заявку направлено на підпис. Редагування недоступне.")
+    elif approval == "Очікує: Керівник ССП":
+        st.info("Заявку передано на підтвердження. Редагування недоступне.")
     else:
         st.info("Редагування для цього статусу недоступне.")
 

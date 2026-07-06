@@ -197,7 +197,7 @@ div[data-testid="stTextArea"] label {
     font-weight: 750;
 }
 
-/* ── Таб підписання ── */
+/* ── Таб підтвердження ── */
 .sign-panel {
     background: linear-gradient(135deg, #f0fdf4, #dcfce7);
     border: 2px solid #16a34a;
@@ -216,7 +216,7 @@ div[data-testid="stTextArea"] label {
     color: #166534;
     margin-bottom: 16px;
 }
-/* Кнопка підписати — зелена */
+/* Кнопка підтвердити — зелена */
 div[data-testid="stButton"].sign-btn > button {
     background: linear-gradient(135deg, #16a34a, #15803d) !important;
     color: #fff !important;
@@ -305,7 +305,7 @@ def status_badge_class(status):
         return "badge-green"
     if status == "Повернуто на доопрацювання":
         return "badge-red"
-    if status == "Направлено на підпис":
+    if status == "Очікує: Керівник ССП":
         return "badge-purple"
     if status == "Очікує: Керівник управління":
         return "badge-blue"
@@ -322,7 +322,7 @@ APPROVAL_FILTER_OPTIONS = [
     "Очікує погодження",
     "Очікує: Керівник управління",
     "Очікує: Заступник керівника ССП",
-    "Направлено на підпис",
+    "Очікує: Керівник ССП",
     "Повернуто на доопрацювання",
     "Погоджено",
 ]
@@ -384,6 +384,19 @@ def write_log(request_id, action, old_status, new_status, comment, changed_by="�
 # ============================================================
 # MAIN DATA
 # ============================================================
+
+_refresh_col1, _refresh_col2 = st.columns([4, 1])
+with _refresh_col2:
+    if st.button("🔄 Оновити зараз", use_container_width=True, key="cabinet_refresh"):
+        st.cache_data.clear()
+        st.rerun()
+with _refresh_col1:
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+    _kyiv_now = _dt.now(_tz(_td(hours=3)))
+    st.caption(
+        f"🕓 Дані оновлено о {_kyiv_now.strftime('%H:%M:%S')} (Київ). "
+        "Список оновлюється автоматично; кнопкою можна оновити миттєво."
+    )
 
 df = load_requests()
 strat_df = load_strat_matrix()
@@ -517,14 +530,14 @@ if filtered.empty:
 # ============================================================
 
 total = len(filtered)
-to_sign = len(filtered[filtered["approval_status"] == "Направлено на підпис"])
+to_sign = len(filtered[filtered["approval_status"] == "Очікує: Керівник ССП"])
 approved = len(filtered[filtered["approval_status"] == "Погоджено"])
 waiting = len(filtered[filtered["approval_status"] == "Очікує погодження"])
 returned = len(filtered[filtered["approval_status"] == "Повернуто на доопрацювання"])
 
 m1, m2, m3, m4, m5 = st.columns(5)
 m1.metric("Усього відомостей", total)
-m2.metric("🟣 На підпис", to_sign)
+m2.metric("🟣 На підтвердженні", to_sign)
 m3.metric("🟡 Очікує", waiting)
 m4.metric("🔴 Повернуто", returned)
 m5.metric("🟢 Погоджено", approved)
@@ -565,7 +578,7 @@ st.markdown('<div class="card"><div class="card-title">Детальний пер
 
 options = []
 for _, row in filtered.iterrows():
-    prefix = "🟣 " if row["approval_status"] == "Направлено на підпис" else ""
+    prefix = "🟣 " if row["approval_status"] == "Очікує: Керівник ССП" else ""
     options.append(
         f"{prefix}ID {row['id']} | {row['strat_code']} | {row['year']} {row['quarter']} квартал | {row['approval_status']}"
     )
@@ -685,7 +698,7 @@ st.markdown('</div>', unsafe_allow_html=True)
 # Заявка з ланцюгом: дії доступні, коли ПОТОЧНА ланка — це саме цей
 # користувач (за email; якщо email у ланці не вказано — за роллю).
 # Успадковані заявки без ланцюга: стара поведінка — керівник ССП
-# діє за статусу «Направлено на підпис».
+# діє за статусу «Очікує: Керівник ССП».
 
 _my_email = str(current_user.get("email") or "").strip().lower()
 _my_role = current_user.get("role")
@@ -704,7 +717,7 @@ if _chain:
     )
     _stage_label = _stage.get("label", "") if _stage else ""
 else:
-    is_my_turn = (approval == "Направлено на підпис" and _my_role == ROLE_SSP_HEAD)
+    is_my_turn = (approval == "Очікує: Керівник ССП" and _my_role == ROLE_SSP_HEAD)
     _stage_label = "Керівник ССП"
 
 if is_my_turn:
@@ -801,7 +814,17 @@ if is_my_turn:
             if new_status == "Погоджено":
                 st.success("✅ Заявка пройшла всі етапи схеми. Статус: «Погоджено».")
             else:
-                st.success(f"✅ Погоджено. Заявку передано далі: «{new_status}».")
+                _next = schemes.current_stage(_chain, new_stage) if _chain else None
+                if _next:
+                    _who = _next.get("name") or _next.get("email") or _next.get("label")
+                    st.success(
+                        f"✅ Підтверджено. Заявка одразу надійшла наступній ланці — "
+                        f"**{_next.get('label','')}** ({_who}). "
+                        f"Вона вже бачить її у своєму кабінеті у списку «Активні до розгляду»."
+                    )
+                else:
+                    st.success(f"✅ Підтверджено. Новий статус: «{new_status}».")
+            st.cache_data.clear()
             st.rerun()
         except Exception as e:
             st.error("Помилка під час погодження.")
@@ -845,6 +868,7 @@ if is_my_turn:
                 except Exception:
                     pass
                 st.warning(f"↩️ Заявку повернуто: {_picked_target['label']}.")
+                st.cache_data.clear()
                 st.rerun()
             except Exception as e:
                 st.error("Помилка при поверненні.")
@@ -990,6 +1014,7 @@ if _my_role == ROLE_SSP_HEAD:
                                 clean(_ack_comment), changed_by=role_label,
                             )
                             st.success(f"Вашу реакцію зафіксовано: {_new_head_status}.")
+                            st.cache_data.clear()
                             st.rerun()
                         except Exception as e:
                             st.error("Не вдалося зберегти реакцію.")

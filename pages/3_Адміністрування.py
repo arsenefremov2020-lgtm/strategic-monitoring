@@ -798,7 +798,7 @@ def quality_assessment(row):
     pct = round(score / total_fields * 100, 1)
 
     if score >= 8 and not has_risks:
-        recommendation = "Можна направляти на підпис"
+        recommendation = "Можна підтверджувати"
         badge = "badge-green"
     elif score >= 6:
         recommendation = "Потребує перевірки"
@@ -1024,13 +1024,13 @@ def generate_resolution(row, recommendation, plan_val_str):
     )
 
     # ── ПОГОДЖЕННЯ ──
-    if recommendation == "Можна направляти на підпис":
+    if recommendation == "Можна підтверджувати":
         warn_texts = [w["text"] for w in analysis["warnings"]]
         warn_clause = ""
         if warn_texts:
             warn_clause = (
                 f" Разом із тим, звертаємо увагу на таке: {'; '.join(warn_texts)}. "
-                f"Це підлягає врахуванню при підписанні та подальшому моніторингу."
+                f"Це підлягає врахуванню при підтвердженні та подальшому моніторингу."
             )
         return (
             header
@@ -1039,7 +1039,7 @@ def generate_resolution(row, recommendation, plan_val_str):
             + (f"Прогрес: {progress}. " if has_value(progress) else "")
             + "Подані відомості визнано достатніми для погодження."
             + warn_clause
-            + " Направляємо на підпис керівнику підрозділу."
+            + " Передаємо на підтвердження керівнику підрозділу."
         )
 
     # ── ПОВЕРНЕННЯ — невідповідність статусу ──
@@ -1405,7 +1405,7 @@ with f4:
         "Статус погодження",
         ["Активні до розгляду", "Усі", "Очікує погодження",
          "Очікує: Керівник управління", "Очікує: Заступник керівника ССП",
-         "Повернуто на доопрацювання", "Направлено на підпис", "Погоджено"],
+         "Повернуто на доопрацювання", "Очікує: Керівник ССП", "Погоджено"],
         index=0
     )
 
@@ -1433,7 +1433,7 @@ if selected_approval_status == "Активні до розгляду":
     filtered = filtered[filtered["approval_status"].astype(str).isin(
         ["Очікує погодження", "Очікує: Керівник управління",
          "Очікує: Заступник керівника ССП",
-         "Повернуто на доопрацювання", "Направлено на підпис"]
+         "Повернуто на доопрацювання", "Очікує: Керівник ССП"]
     )]
 elif selected_approval_status != "Усі":
     filtered = filtered[filtered["approval_status"].astype(str) == str(selected_approval_status)]
@@ -1473,7 +1473,7 @@ if filtered.empty:
 
 queue_df = filtered[
     filtered["approval_status"].isin([
-        "Очікує погодження", "Направлено на підпис",
+        "Очікує погодження", "Очікує: Керівник ССП",
         "Очікує: Керівник управління", "Очікує: Заступник керівника ССП",
     ])
 ].copy()
@@ -1558,7 +1558,7 @@ if approval_status == "Погоджено":
     status_badge = "badge-green"
 elif approval_status == "Повернуто на доопрацювання":
     status_badge = "badge-red"
-elif approval_status == "Направлено на підпис":
+elif approval_status == "Очікує: Керівник ССП":
     status_badge = "badge"
 else:
     status_badge = "badge-yellow"
@@ -1623,7 +1623,7 @@ if row2:
     render_quality_row(row2)
 
 # Висновок системи
-if recommendation == "Можна направляти на підпис":
+if recommendation == "Можна підтверджувати":
     concl_color = "#15803d"
     concl_icon  = "✅"
 elif recommendation == "Потребує перевірки":
@@ -1882,6 +1882,7 @@ if _npa_raw or _req_chain:
                               approval_status, _new_status,
                               f"Нова схема: {_new_scheme} · {schemes.chain_route_text(_new_chain)}")
                     st.success("Схему змінено та зафіксовано в журналі.")
+                    st.cache_data.clear()
                     st.rerun()
                 except Exception as e:
                     st.error("Не вдалося змінити схему.")
@@ -1933,6 +1934,7 @@ if _is_conflict and _req_kind != "indicator":
                           approval_status, "Погоджено",
                           "Дані заявки збігаються з підтвердженим ручним закриттям.")
                 st.success("Заявку погоджено.")
+                st.cache_data.clear()
                 st.rerun()
             except Exception as e:
                 st.error("Не вдалося погодити заявку.")
@@ -1959,6 +1961,7 @@ if _is_conflict and _req_kind != "indicator":
                     write_log(selected_id, "Розбіжність із ручним закриттям — передано Супер-адміну",
                               approval_status, approval_status, clean(_dispute_note))
                     st.warning("Розбіжність зафіксовано та передано супер-адміну.")
+                    st.cache_data.clear()
                     st.rerun()
                 except Exception as e:
                     st.error("Не вдалося зафіксувати розбіжність.")
@@ -2000,7 +2003,7 @@ if _req_chain:
         "Погодити (остання ланка — статус «Погоджено»)"
     )
 else:
-    _approve_option = "Направити на підпис керівнику ССП"
+    _approve_option = "Підтвердити (передати керівнику ССП)"
 
 # Адресати повернення (подавач + попередні ланки, якщо є схема)
 if _req_chain:
@@ -2033,7 +2036,7 @@ with st.form(key=f"admin_decision_form_{selected_id}"):
             ("🖊 Заявку буде передано на наступну ланку схеми погодження"
              if _req_chain and _next_after_admin else
              ("✅ Заявка отримає статус «Погоджено»" if _req_chain else
-              "🖊 Направлено на підпис керівнику ССП — після підпису дані будуть підтверджені")),
+              "🖊 Заявка перейде до керівника ССП на підтвердження")),
         "Повернути на доопрацювання":
             "↩ Повернено на доопрацювання — адресат отримає сповіщення",
         "Залишити в очікуванні":
@@ -2077,12 +2080,22 @@ if confirm_decision:
                 _notify_action = ("approved",)
             else:
                 action_text  = f"Погодження координатором → передано далі: {new_status}"
-                success_text = f"✅ Заявку передано на наступну ланку: «{new_status}»."
+                _who_next = ""
+                if _next_after_admin:
+                    _who_next = (_next_after_admin.get("name")
+                                 or _next_after_admin.get("email")
+                                 or _next_after_admin.get("label", ""))
+                success_text = (
+                    f"✅ Підтверджено. Заявка одразу надійшла наступній ланці — "
+                    f"{_next_after_admin.get('label','') if _next_after_admin else ''}"
+                    f"{f' ({_who_next})' if _who_next else ''}. "
+                    f"Вона вже бачить її у кабінеті у списку «Активні до розгляду»."
+                )
                 _notify_action = ("stage", _next_after_admin)
         else:
-            new_status   = "Направлено на підпис"
-            action_text  = "Направлення на підпис керівнику ССП"
-            success_text = "✅ Заявку направлено на підпис керівнику ССП. Після підпису дані будуть підтверджені на головній сторінці."
+            new_status   = "Очікує: Керівник ССП"
+            action_text  = "Передано керівнику ССП на підтвердження"
+            success_text = "✅ Заявку передано керівнику ССП на підтвердження. Після підтвердження дані відобразяться на головній сторінці."
     elif decision == "Повернути на доопрацювання":
         _picked = _adm_targets[_adm_target_labels.index(return_target_label)]
         new_status   = _picked["status"]
@@ -2143,6 +2156,7 @@ if confirm_decision:
             pass
 
         st.success(success_text)
+        st.cache_data.clear()
         st.rerun()
     except Exception as e:
         st.error("Не вдалося застосувати рішення.")
@@ -2261,6 +2275,7 @@ if is_admin_user(current_user) or is_super_admin_user(current_user):
                     "approval_status": "Очікує підтвердження",
                 }).execute()
                 st.success("Запит на закриття заходу надіслано на підтвердження супер-адміну.")
+                st.cache_data.clear()
                 st.rerun()
             except Exception as e:
                 st.error("Не вдалося надіслати запит на закриття заходу.")
@@ -2350,6 +2365,7 @@ if is_super_admin_user(current_user):
                             co_decision_comment,
                         )
                         st.success(f"Запит на закриття заходу {new_co_status.lower()}.")
+                        st.cache_data.clear()
                         st.rerun()
                     except Exception as e:
                         st.error("Не вдалося застосувати рішення щодо закриття заходу.")
@@ -2409,6 +2425,7 @@ if is_super_admin_user(current_user) and not closeout_df.empty:
                                       "", "Повернуто на доопрацювання", _res_comment)
                         load_manual_closeouts.clear()
                         st.success("Закриття лишено чинним; заявку (якщо була) повернуто подавачу.")
+                        st.cache_data.clear()
                         st.rerun()
                     except Exception as e:
                         st.error("Не вдалося застосувати рішення.")
@@ -2428,6 +2445,7 @@ if is_super_admin_user(current_user) and not closeout_df.empty:
                                       "", "", _res_comment)
                         load_manual_closeouts.clear()
                         st.success("Закриття скасовано. Подана заявка проходить звичайну схему погодження.")
+                        st.cache_data.clear()
                         st.rerun()
                     except Exception as e:
                         st.error("Не вдалося скасувати закриття.")
@@ -2454,6 +2472,7 @@ if is_super_admin_user(current_user) and not closeout_df.empty:
                               "Підтверджено", "Скасовано", _rev_comment)
                     load_manual_closeouts.clear()
                     st.success("Закриття відкликано.")
+                    st.cache_data.clear()
                     st.rerun()
                 except Exception as e:
                     st.error("Не вдалося відкликати закриття.")
@@ -2547,6 +2566,7 @@ if is_admin_user(current_user) or is_super_admin_user(current_user):
                 st.success(
                     f"Період {arc_quarter if quarter_value else 'весь рік'} {arc_year} заархівовано."
                 )
+                st.cache_data.clear()
                 st.rerun()
             except Exception as e:
                 st.error("Не вдалося заархівувати період. Перевірте, чи застосована міграція archive_snapshots.")

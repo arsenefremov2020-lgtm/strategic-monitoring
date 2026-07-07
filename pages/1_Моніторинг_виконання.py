@@ -31,7 +31,7 @@ from core import notify_events
 TABLE_VISIBLE_HEIGHT_PX = 280
 
 # ВИПРАВЛЕННЯ (спроба 5, скориговано за фідбеком): +60px виявилося
-# майже достатньо, але не зовсім — трохи піднімаємо запас до +80px.
+# майже достатньо, але не зовсім — трохи піднімаємо запас до +90px.
 TABLE_CONTAINER_HEIGHT_PX = TABLE_VISIBLE_HEIGHT_PX + 80
 
 

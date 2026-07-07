@@ -24,6 +24,7 @@ from core.access import (
     is_scope_override_active,
     get_user_ssp_index,
 )
+from core.ui import render_scope_toggle
 
 current_user = page_setup("Стратегічний план", page_name="app")
 supabase = get_supabase_client()
@@ -1981,10 +1982,13 @@ with st.form("main_filters_form"):
             on_click=apply_main_filters_form
         )
 
-reset_spacer, reset_col = st.columns([2.4, 1])
+reset_spacer, reset_toggle_col, reset_col = st.columns([1.7, 1.5, 1])
 
 with reset_spacer:
     st.empty()
+
+with reset_toggle_col:
+    render_scope_toggle("app", current_user)
 
 with reset_col:
     st.button(

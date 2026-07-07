@@ -19,6 +19,11 @@ from core import monitoring_data
 from core import exports as core_exports
 from core.strategic_data import load_strat_matrix as core_load_strat_matrix
 from core.approval_schemes import ALL_WAITING_STATUSES
+from core.access import (
+    is_scope_lockable_user,
+    is_scope_override_active,
+    get_user_ssp_index,
+)
 
 current_user = page_setup("Стратегічний план", page_name="app")
 supabase = get_supabase_client()
@@ -1886,12 +1891,23 @@ with st.form("main_filters_form"):
     top_1, top_2, top_3, top_4 = st.columns([1.35, 0.8, 0.8, 1.15])
 
     with top_1:
-        st.multiselect(
-            "Індекс самостійного структурного підрозділу",
-            all_ssp_indices,
-            key="ssp_filter",
-            placeholder="Оберіть індекс ССП"
-        )
+        if is_scope_lockable_user(current_user) and not is_scope_override_active("app"):
+            _own_label = get_user_ssp_index(current_user) or "—"
+            st.markdown(
+                "<div style='font-size:13px;font-weight:900;color:#1e293b;margin-bottom:4px;'>"
+                "Індекс самостійного структурного підрозділу</div>"
+                f"<div style='background:#f1f5f9;border:1px solid #cbd5e1;border-radius:10px;"
+                f"padding:10px 12px;font-weight:800;color:#0f172a;'>деп./упр. {_own_label} "
+                f"(лише ваше ССП)</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.multiselect(
+                "Індекс самостійного структурного підрозділу",
+                all_ssp_indices,
+                key="ssp_filter",
+                placeholder="Оберіть індекс ССП"
+            )
 
     with top_2:
         st.markdown(
@@ -1985,6 +2001,20 @@ with reset_col:
 applied = st.session_state.applied_filters
 
 selected_ssp_indices = applied["ssp_filter"]
+
+# Пункт 1 нового ТЗ: ролі, звужені до власного ССП (ССП, керівник ССП,
+# керівник управління, заступник керівника ССП), за замовчуванням бачать
+# на цій вкладці лише своє ССП — без окремого фільтра (тому додаткового
+# вибору тут не показуємо, це вже враховано у виджеті нижче). Це
+# єдина точка, через яку СРАЗУ і заходи (apply_measure_filters), і
+# індикатори (build_indicator_rows) отримують звуження — обидва вже
+# використовують саме selected_ssp_indices. Кнопка "Переглянути загальну
+# інформацію" (з page_setup) знімає це звуження на цій вкладці.
+if is_scope_lockable_user(current_user) and not is_scope_override_active("app"):
+    _own_ssp_index = get_user_ssp_index(current_user)
+    if _own_ssp_index:
+        selected_ssp_indices = [_own_ssp_index]
+
 selected_years = applied["selected_years_main"]
 selected_quarters = applied["selected_quarters_main"]
 selected_status_mode = applied["status_mode_main"]
@@ -2180,18 +2210,20 @@ if not filtered_measures.empty:
                         for c in _codes
                     ]
 
-            _buf = io.BytesIO()
-            with pd.ExcelWriter(_buf, engine="xlsxwriter") as _writer:
-                _full.to_excel(_writer, index=False, sheet_name="Повні дані")
-                _params = pd.DataFrame({
-                    "Параметр": ["Роки", "Квартали", "ССП", "Режим", "Сформовано"],
-                    "Значення": [
-                        years_label, quarters_label, ssp_label, selected_status_mode,
-                        datetime.now().strftime("%d.%m.%Y %H:%M"),
-                    ],
-                })
-                _params.to_excel(_writer, index=False, sheet_name="Параметри вивантаження")
-            return _buf.getvalue()
+            _buf = core_exports.write_styled_excel(
+                {"Повні дані": _full},
+                freeze_first_col=2,  # Код + Назва завжди видно під час горизонтальної прокрутки
+                extra_sheets_no_style={
+                    "Параметри вивантаження": pd.DataFrame({
+                        "Параметр": ["Роки", "Квартали", "ССП", "Режим", "Сформовано"],
+                        "Значення": [
+                            years_label, quarters_label, ssp_label, selected_status_mode,
+                            datetime.now().strftime("%d.%m.%Y %H:%M"),
+                        ],
+                    }),
+                },
+            )
+            return _buf
 
         st.download_button(
             "⬇️ Завантажити повний Excel",

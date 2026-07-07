@@ -132,3 +132,28 @@ def notify_closeout_to_head(head_email: str, head_name: str, code: str,
     )
     _fire(head_email, subject, body, "closeout_head_ack",
           f"closeout:{code}:{year}:{quarter}:{head_email}")
+
+
+def notify_superadmin_correction(to_email: str, to_name: str, code: str, year: str,
+                                 quarter: str, reason: str, editor_name: str,
+                                 kind: str = "measure") -> None:
+    """
+    Пункт 5 нового ТЗ: супер-адмін скоригував дані ВЖЕ закритої
+    (final_locked) заявки. Лист летить саме на ту ланку, яка була
+    ОСТАННЬОЮ в маршруті погодження цієї заявки (тобто підтвердила
+    її остаточно) — з обов'язковим коментарем-обґрунтуванням.
+    """
+    subject = f"Моніторинг СП: дані закритого заходу {code} скориговано супер-адміном"
+    body = (
+        f"<p>Вітаємо, <b>{to_name or ''}</b>!</p>"
+        f"<p>{_request_line(code, year, quarter, kind)} — заявку, яку ви раніше "
+        f"погодили остаточно (статус «Погоджено»), щойно скоригував "
+        f"<b>{editor_name or 'супер-адміністратор'}</b>.</p>"
+        f"<p><b>Підстава коригування:</b> «{reason}»</p>"
+        f"<p>Маршрут погодження заявки не змінювався і статус лишається "
+        f"«Погоджено» — це повідомлення суто інформаційне, додаткової дії "
+        f"від вас не потрібно. За потреби перегляньте історію версій заявки "
+        f"у своєму кабінеті.</p>"
+    )
+    _fire(to_email, subject, body, "superadmin_correction",
+          f"{kind}:{code}:{year}:{quarter}:{to_email}")

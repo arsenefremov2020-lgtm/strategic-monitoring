@@ -30,6 +30,7 @@ chain_stage — індекс ПОТОЧНОЇ ланки, що очікує рі
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 
 from config.roles import (
     ROLE_ADMIN,
@@ -87,13 +88,50 @@ APPROVAL_SCHEMES: dict[str, list[str]] = {
         [ROLE_SSP_DEPUTY, ROLE_ADMIN, ROLE_SSP_HEAD],
     "Керівник управління → Заступник → Координатор → Керівник ССП":
         [ROLE_UNIT_HEAD, ROLE_SSP_DEPUTY, ROLE_ADMIN, ROLE_SSP_HEAD],
+
+    # Єдина схема для випадків, коли подавач сам є однією з ланок
+    # погодження (керівник ССП / керівник управління / заступник):
+    # немає сенсу, щоб особа погоджувала саму себе, тож маршрут
+    # звужується рівно до обов'язкової ланки координатора.
+    "Координатор (без додаткових ланок)":
+        [ROLE_ADMIN],
 }
 
 DEFAULT_SCHEME = "Координатор → Керівник ССП"
 
+# Схема, яка застосовується примусово (без вибору), коли заявку подає
+# роль, що сама фігурує серед ланок погодження.
+SUBMITTER_SELF_APPROVAL_SCHEME = "Координатор (без додаткових ланок)"
+
 
 def scheme_options() -> list[str]:
     return list(APPROVAL_SCHEMES.keys())
+
+
+def submitter_is_approving_role(role: str) -> bool:
+    """
+    Чи є роль подавача однією з тих, що самі можуть бути ланкою
+    погодження (керівник ССП / керівник управління / заступник).
+
+    Для звичайного «Відповідального від ССП» (ROLE_SSP) — False,
+    для нього діють усі схеми без обмежень.
+    """
+    return role in (ROLE_SSP_HEAD, ROLE_UNIT_HEAD, ROLE_SSP_DEPUTY)
+
+
+def scheme_options_for_submitter(role: str) -> list[str]:
+    """
+    Повертає список схем, доступних для вибору подавачу з урахуванням
+    його ролі.
+
+    Якщо подавач сам є однією з ланок погодження — вибору немає,
+    повертається лише вимушена схема «Координатор (без додаткових ланок)»,
+    щоб він не міг призначити самого себе ланкою власного погодження.
+    Для звичайного ССП — усі схеми, як і раніше.
+    """
+    if submitter_is_approving_role(role):
+        return [SUBMITTER_SELF_APPROVAL_SCHEME]
+    return scheme_options()
 
 
 # ------------------------------------------------------------
@@ -169,6 +207,76 @@ def status_after_approve(chain: list[dict], stage_idx: int) -> tuple[str, int]:
     if next_stage is None:
         return APPROVED_STATUS, next_idx
     return waiting_status_for_stage(next_stage), next_idx
+
+
+# ------------------------------------------------------------
+# Остаточне закриття заявки (final_locked)
+# ------------------------------------------------------------
+#
+# Правило: щойно ОСТАННЯ ланка схеми погодила заявку — вона закрита
+# НАЗАВЖДИ для звичайних дій застосунку (зокрема для зміни/перепризначення
+# схеми погодження адміністратором). Це не залежить від того, що станеться
+# зі схемою пізніше: final_locked виставляється ОДИН РАЗ і більше жодна
+# функція застосунку його не знімає.
+#
+# Додатково те саме гарантує тригер бази даних (див. migrations/010_final_lock.sql),
+# який фізично забороняє зміну approval_status / chain_stage / approval_chain
+# для рядка з final_locked = true — незалежно від того, з якого коду
+# прийшов запит на зміну.
+#
+# Право редагувати ДАНІ (не маршрут) уже закритої заявки має лише
+# супер-адмін — окремим, явним і аудованим шляхом (див. core/superadmin_edit.py,
+# наступна ітерація), який final_locked не знімає.
+
+def finalize_update_payload(update_data: dict, new_status: str) -> dict:
+    """
+    Додає до payload оновлення заявки позначку остаточного закриття,
+    якщо new_status — це APPROVED_STATUS ("Погоджено").
+
+    ВАЖЛИВО: усі місця коду, які виставляють approval_status="Погоджено"
+    (координатор у 3_Адміністрування.py, інші ланки у 1_Мій_кабінет.py),
+    мають пропускати свій update-словник через цю функцію — так є
+    рівно ОДНЕ місце, де вирішується "заявку закрито остаточно чи ні".
+    """
+    data = dict(update_data)
+    if new_status == APPROVED_STATUS:
+        data["final_locked"] = True
+        data["final_locked_at"] = datetime.now(timezone.utc).isoformat()
+    return data
+
+
+def _truthy(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    return text in ("true", "1", "t", "yes", "так")
+
+
+def is_final_locked(row) -> bool:
+    """
+    Чи заявку остаточно закрито (final_locked).
+
+    Читає колонку final_locked, якщо вона є в рядку. Якщо міграція
+    010_final_lock.sql ще не застосована (колонки немає) — фолбек на
+    порівняння approval_status == "Погоджено", щоб код не падав і
+    поводився принаймні як раніше, доки міграцію не накатили.
+    """
+    has_col = False
+    try:
+        has_col = "final_locked" in row.index
+    except AttributeError:
+        try:
+            has_col = "final_locked" in row
+        except TypeError:
+            has_col = False
+
+    if has_col:
+        value = row.get("final_locked") if hasattr(row, "get") else row["final_locked"]
+        if value is not None and str(value).strip() not in ("", "none", "nan", "None"):
+            return _truthy(value)
+
+    approval_status = row.get("approval_status") if hasattr(row, "get") else row["approval_status"]
+    return str(approval_status or "").strip() == APPROVED_STATUS
 
 
 def chain_progress_text(chain: list[dict], stage_idx: int, approval_status: str) -> str:

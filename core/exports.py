@@ -280,11 +280,151 @@ def build_measures_export_df(measures, quarter_data, quarter_columns):
 
 
 def dataframe_to_excel_bytes(df, sheet_name: str = "Заходи") -> bytes:
-    """DataFrame → байти .xlsx (одна вкладка)."""
-    import io as _io
-    import pandas as pd  # noqa: F401
+    """DataFrame → байти .xlsx (одна вкладка), з охайним оформленням.
 
-    buffer = _io.BytesIO()
-    with __import__("pandas").ExcelWriter(buffer, engine="xlsxwriter") as writer:
-        df.to_excel(writer, index=False, sheet_name=sheet_name)
+    Тонкий зручний виклик поверх write_styled_excel — лишений для
+    сумісності з існуючими викликами (app.py тощо), але тепер теж
+    видає красиво оформлений файл, а не голий df.to_excel().
+    """
+    return write_styled_excel({sheet_name: df})
+
+
+# ------------------------------------------------------------
+# Охайне оформлення Excel-вивантажень (пункт запиту:
+# "Зроби нормальні експорти в ексель... щоб воно вивантажувалося
+# так само гарно як і ексель Під моніторинг СП")
+# ------------------------------------------------------------
+#
+# Раніше практично кожне вивантаження в системі (app.py, Аналітика,
+# Журнал дій) робило голий df.to_excel(writer, ...) — без жодного
+# форматування: ані ширини колонок, ані закріпленої шапки, ані меж
+# клітинок. write_styled_excel() — єдина спільна функція, яка тепер
+# застосовується всюди: жирна темна шапка з білим текстом (той самий
+# візуальний стиль, що й у "Під моніторинг СП.xlsx" — колір #434343),
+# закріplena шапка, автофільтр, розумна ширина колонок за вмістом,
+# перенос тексту в довгих колонках, тонкі межі й легке "зебра"-заливання
+# рядків для зручного читання великих вивантажень.
+
+_HEADER_BG = "#434343"
+_HEADER_FG = "#FFFFFF"
+_BORDER_COLOR = "#D1D5DB"
+_BAND_BG = "#F8FAFC"
+
+_MIN_COL_WIDTH = 10
+_MAX_COL_WIDTH = 60
+_WRAP_WIDTH_THRESHOLD = 38
+
+
+def _estimate_column_width(series) -> int:
+    """Приблизна ширина колонки за вмістом (символи), з розумними межами."""
+    try:
+        header_len = len(str(series.name))
+    except Exception:
+        header_len = _MIN_COL_WIDTH
+
+    try:
+        non_empty = series.dropna().astype(str)
+        max_len = int(non_empty.map(len).max()) if len(non_empty) else header_len
+    except Exception:
+        max_len = header_len
+
+    width = max(header_len, max_len) + 2
+    return max(_MIN_COL_WIDTH, min(width, _MAX_COL_WIDTH))
+
+
+def write_styled_excel(
+    sheets: dict,
+    *,
+    freeze_first_col: int = 0,
+    extra_sheets_no_style: dict | None = None,
+) -> bytes:
+    """
+    Формує .xlsx з кількох аркушів із єдиним охайним оформленням.
+
+    sheets: {назва_аркуша: DataFrame} — кожен аркуш отримує:
+      - жирну темну шапку з білим текстом, по центру, з переносом;
+      - закріплений перший рядок (і, за потреби, перші freeze_first_col
+        колонок — зручно для широких таблиць на кшталт "Заходів", де
+        хочеться завжди бачити код/назву під час горизонтальної прокрутки);
+      - автофільтр на шапці;
+      - ширину колонок за вмістом (у розумних межах);
+      - тонкі межі й перенос тексту в довгих текстових колонках;
+      - легке почергове заливання рядків для зручності читання.
+
+    extra_sheets_no_style: {назва_аркуша: DataFrame} — додаткові аркуші
+    (напр. "Параметри вивантаження"), які пишуться як є, без цього
+    оформлення (короткі службові таблиці "параметр — значення").
+    """
+    import io
+    import pandas as pd
+
+    buffer = io.BytesIO()
+
+    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+        workbook = writer.book
+
+        header_fmt = workbook.add_format({
+            "bold": True, "font_color": _HEADER_FG, "bg_color": _HEADER_BG,
+            "align": "center", "valign": "vcenter", "text_wrap": True,
+            "border": 1, "border_color": "#FFFFFF",
+        })
+        cell_fmt = workbook.add_format({
+            "valign": "top", "border": 1, "border_color": _BORDER_COLOR,
+        })
+        cell_wrap_fmt = workbook.add_format({
+            "valign": "top", "text_wrap": True, "border": 1, "border_color": _BORDER_COLOR,
+        })
+        band_fmt = workbook.add_format({
+            "valign": "top", "border": 1, "border_color": _BORDER_COLOR, "bg_color": _BAND_BG,
+        })
+        band_wrap_fmt = workbook.add_format({
+            "valign": "top", "text_wrap": True, "border": 1,
+            "border_color": _BORDER_COLOR, "bg_color": _BAND_BG,
+        })
+
+        def _fmt_for(row_idx: int, wrap: bool):
+            banded = (row_idx % 2 == 0)  # парні рядки даних — легке заливання
+            if wrap:
+                return band_wrap_fmt if banded else cell_wrap_fmt
+            return band_fmt if banded else cell_fmt
+
+        for sheet_name, df in (sheets or {}).items():
+            safe_name = str(sheet_name)[:31] or "Аркуш"
+            df = df if df is not None else pd.DataFrame()
+            n_rows, n_cols = df.shape
+
+            worksheet = workbook.add_worksheet(safe_name)
+            writer.sheets[safe_name] = worksheet
+
+            if n_cols == 0:
+                worksheet.write(0, 0, "Немає даних для вивантаження", header_fmt)
+                continue
+
+            wrap_flags = []
+            for col_idx, col_name in enumerate(df.columns):
+                width = _estimate_column_width(df[col_name])
+                should_wrap = width >= _WRAP_WIDTH_THRESHOLD
+                wrap_flags.append(should_wrap)
+                worksheet.set_column(col_idx, col_idx, width)
+                worksheet.write(0, col_idx, str(col_name), header_fmt)
+
+            worksheet.set_row(0, 32)
+
+            for row_idx in range(n_rows):
+                row_values = df.iloc[row_idx]
+                for col_idx, col_name in enumerate(df.columns):
+                    value = row_values[col_name]
+                    if value is None or (isinstance(value, float) and pd.isna(value)):
+                        value = ""
+                    fmt = _fmt_for(row_idx, wrap_flags[col_idx])
+                    worksheet.write(row_idx + 1, col_idx, value, fmt)
+
+            worksheet.freeze_panes(1, max(0, min(freeze_first_col, n_cols)))
+            worksheet.autofilter(0, 0, n_rows, n_cols - 1)
+
+        for sheet_name, df in (extra_sheets_no_style or {}).items():
+            safe_name = str(sheet_name)[:31] or "Аркуш"
+            df = df if df is not None else pd.DataFrame()
+            df.to_excel(writer, index=False, sheet_name=safe_name)
+
     return buffer.getvalue()

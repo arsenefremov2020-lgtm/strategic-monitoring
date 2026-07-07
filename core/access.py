@@ -22,6 +22,7 @@ import re
 from typing import Iterable
 
 import pandas as pd
+import streamlit as st
 
 from config.roles import (
     ROLE_SSP,
@@ -375,6 +376,7 @@ def filter_actions_for_user(
     df: pd.DataFrame,
     user: dict | None,
     executor_columns: list[str] | None = None,
+    page_key: str | None = None,
 ) -> pd.DataFrame:
     """
     Фільтрує заходи відповідно до доступу користувача.
@@ -389,6 +391,10 @@ def filter_actions_for_user(
     Відбір іде по числу:
     - "деп. 30" -> "30";
     - "упр. 26" -> "26".
+
+    page_key: якщо передано і на цій вкладці натиснуто "Переглянути
+    загальну інформацію" — звуження до власного ССП знімається (як
+    для гостя), незалежно від ролі. Без page_key поведінка не змінюється.
     """
 
     if df is None:
@@ -398,6 +404,9 @@ def filter_actions_for_user(
         return df.copy()
 
     if not ENABLE_PERSONAL_CABINETS:
+        return df.copy()
+
+    if is_scope_override_active(page_key):
         return df.copy()
 
     role = get_user_role(user)
@@ -443,6 +452,7 @@ def filter_requests_for_user(
     df: pd.DataFrame,
     user: dict | None,
     ssp_columns: list[str] | None = None,
+    page_key: str | None = None,
 ) -> pd.DataFrame:
     """
     Фільтрує заявки відповідно до доступу користувача.
@@ -453,6 +463,9 @@ def filter_requests_for_user(
     - admin: бачить заявки тільки за закріпленими ССП;
     - ssp: бачить заявки тільки свого ССП;
     - ssp_head: бачить заявки тільки свого ССП.
+
+    page_key: див. filter_actions_for_user — якщо на цій вкладці активний
+    режим "Переглянути загальну інформацію", звуження знімається.
     """
 
     if df is None:
@@ -462,6 +475,9 @@ def filter_requests_for_user(
         return df.copy()
 
     if not ENABLE_PERSONAL_CABINETS:
+        return df.copy()
+
+    if is_scope_override_active(page_key):
         return df.copy()
 
     role = get_user_role(user)
@@ -613,3 +629,62 @@ def get_single_locked_ssp_value(user: dict | None) -> str | None:
         return labels[0]
 
     return None
+
+
+# ------------------------------------------------------------
+# "Переглянути загальну інформацію" — тимчасове зняття прив'язки
+# до власного ССП, окремо для КОЖНОЇ вкладки.
+# ------------------------------------------------------------
+#
+# Роль, для якої система звужує дані до власного ССП (ССП-родина),
+# на будь-якій вкладці може натиснути кнопку "Переглянути загальну
+# інформацію" — це знімає звуження і повертає повний функціонал
+# фільтрів САМЕ на тій вкладці, де кнопку натиснуто. Перемикання не
+# впливає на інші вкладки (стан зберігається окремим ключем
+# session_state для кожної page_key) і не зберігається між сесіями.
+
+SCOPE_OVERRIDE_KEY_PREFIX = "scope_override__"
+
+
+def is_scope_lockable_user(user: dict | None) -> bool:
+    """
+    Чи є користувач тим, для кого система звужує дані до власного ССП
+    (тобто для кого має сенс кнопка "Переглянути загальну інформацію").
+
+    Гість, адміністратор і супер-адмін — НЕ звужуються (гість і так бачить
+    усе; адмін/супер-адмін мають власний, ширший спосіб перегляду).
+    """
+
+    if not ENABLE_PERSONAL_CABINETS:
+        return False
+
+    role = get_user_role(user)
+    return role in (ROLE_SSP, ROLE_SSP_HEAD, ROLE_UNIT_HEAD, ROLE_SSP_DEPUTY)
+
+
+def scope_override_key(page_key: str) -> str:
+    """Ключ session_state для перемикача конкретної вкладки."""
+    return f"{SCOPE_OVERRIDE_KEY_PREFIX}{page_key}"
+
+
+def is_scope_override_active(page_key: str | None) -> bool:
+    """
+    Чи активний режим "загальна інформація" саме на вкладці page_key.
+
+    Якщо page_key не передано — звуження не знімається (це навмисний
+    безпечний дефолт: старі виклики filter_actions_for_user /
+    filter_requests_for_user без page_key поводяться рівно так само,
+    як і раніше, без жодної зміни поведінки).
+    """
+
+    if not page_key:
+        return False
+
+    return bool(st.session_state.get(scope_override_key(page_key), False))
+
+
+def set_scope_override(page_key: str, active: bool) -> None:
+    """Встановлює стан перемикача для конкретної вкладки."""
+    st.session_state[scope_override_key(page_key)] = bool(active)
+
+

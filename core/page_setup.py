@@ -21,7 +21,7 @@ import streamlit as st
 
 from core.config import APP_VERSION
 from core.theme import inject_theme, apply_plotly_theme
-from core.ui import load_css
+from core.ui import load_css, render_scope_toggle
 from core.auth import init_auth_state, render_login_form
 from core.navigation import render_role_page_links, require_page_access
 
@@ -34,6 +34,12 @@ def page_setup(page_title: str, page_name: str | None = None,
     page_name — назва вкладки в системі доступів (config/roles.ROLE_PAGES);
     якщо не передано, перевірка доступу не виконується (для app.py доступ
     відкритий усім ролям).
+
+    Для ролей, чиї дані звужені до власного ССП, одразу після перевірки
+    доступу малює кнопку "Переглянути загальну інформацію" (окремо для
+    кожної вкладки — page_name). Сторінці нічого додатково викликати не
+    треба: досить передати той самий page_name у filter_actions_for_user /
+    filter_requests_for_user під час завантаження даних.
     """
     st.set_page_config(page_title=page_title, layout=layout)
 
@@ -56,6 +62,13 @@ def page_setup(page_title: str, page_name: str | None = None,
     if page_name and not require_page_access(page_name):
         if stop_if_no_access:
             st.stop()
+
+    if page_name:
+        try:
+            render_scope_toggle(page_name, current_user)
+        except Exception:
+            # Кнопка-перемикач — допоміжна; збій у ній не має класти сторінку.
+            pass
 
     return current_user
 

@@ -36,6 +36,7 @@ MONITORING_COLUMNS = [
     "npa_link",
     "approval_chain", "chain_stage", "scheme_label",
     "object_kind", "as_of_date",
+    "final_locked", "final_locked_at",
 ]
 
 # Колонки, які сторінки перевіряють на існування (П2): тепер — константи.

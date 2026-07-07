@@ -348,3 +348,74 @@ div[data-baseweb="popover"] li {
 .app-footer strong {
     color: #475569;
 }
+
+/* ============================================================
+   6. КОНТРАСТ ПОЛІВ ВВОДУ/ФІЛЬТРІВ/ВИПАДНИХ СПИСКІВ
+   (виправлення після тестування: поля стали прозорими або синіми,
+   а текст у них — надто сірим і нежирним, майже не видно).
+   Єдиний приємно-блакитний фон (той самий, що й secondaryBackgroundColor
+   у .streamlit/config.toml) + чорний жирний текст — УСЮДИ в системі.
+   ВИНЯТОК (навмисний): st.data_editor на сторінці "Моніторинг
+   виконання" — там власний стиль, заданий окремо в самій сторінці,
+   і ці правила його не займають (селектори нижче explicitly
+   виключають stDataEditor/stDataFrame).
+   ============================================================ */
+
+div[data-testid="stTextInput"] input,
+div[data-testid="stTextArea"] textarea,
+div[data-testid="stNumberInput"] input,
+div[data-testid="stDateInput"] input,
+div[data-testid="stSelectbox"] div[data-baseweb="select"] *,
+div[data-testid="stMultiSelect"] div[data-baseweb="select"] * {
+    color: #0f172a !important;
+    font-weight: 700 !important;
+}
+
+div[data-testid="stTextInput"] input,
+div[data-testid="stTextArea"] textarea,
+div[data-testid="stNumberInput"] input,
+div[data-testid="stDateInput"] input,
+div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
+div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div {
+    background-color: #EAF2FF !important;
+    border: 1px solid #bcd6f7 !important;
+    border-radius: 10px !important;
+}
+
+/* Плейсхолдер — трохи світліший за основний текст, але все одно читабельний */
+div[data-testid="stTextInput"] input::placeholder,
+div[data-testid="stTextArea"] textarea::placeholder {
+    color: #475569 !important;
+    font-weight: 600 !important;
+    opacity: 1 !important;
+}
+
+/* Випадний список (сама панель з опціями) — той самий фон, чорний жирний текст */
+div[data-baseweb="popover"] ul[role="listbox"] {
+    background-color: #ffffff !important;
+}
+div[data-baseweb="popover"] li,
+div[data-baseweb="popover"] li * {
+    color: #0f172a !important;
+    font-weight: 700 !important;
+}
+div[data-baseweb="popover"] li[aria-selected="true"] {
+    background-color: #EAF2FF !important;
+}
+
+/* "Пігулки" обраних значень у multiselect — той самий стиль */
+div[data-testid="stMultiSelect"] span[data-baseweb="tag"] {
+    background-color: #005BBB !important;
+    color: #ffffff !important;
+    font-weight: 700 !important;
+}
+
+/* ВИНЯТОК: нічого з цього розділу не застосовується до data_editor /
+   dataframe (в т.ч. на "Моніторинг виконання") — там власний стиль. */
+div[data-testid="stDataEditor"] input,
+div[data-testid="stDataEditor"] div[data-baseweb="select"] *,
+div[data-testid="stDataFrame"] input,
+div[data-testid="stDataFrame"] div[data-baseweb="select"] * {
+    font-weight: inherit !important;
+    background-color: initial !important;
+}

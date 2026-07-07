@@ -1578,7 +1578,7 @@ else:
     # обрізати вміст (він не дає накладання). Щоб уникнути повторного
     # "другого скролу", контейнер тепер ПОМІТНО вищий за саму таблицю
     # (TABLE_CONTAINER_HEIGHT_PX), а не точно дорівнює їй.
-    _row_h = 80
+    _row_h = 90
     _header_h = 110
     _visible_rows = 2
     _visible_height = TABLE_VISIBLE_HEIGHT_PX

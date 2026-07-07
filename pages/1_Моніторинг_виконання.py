@@ -1060,23 +1060,22 @@ if submission_mode.startswith("🎯"):
         )
 
     ind_display_cols = [c for c in ind_df_table.columns if not c.startswith("_")]
-    # Виправлення (спроба 2 — надійніший механізм): st.container(height=...)
-    # замість height= на самому data_editor + CSS overflow (це не спрацювало
-    # на практиці — вміст усе одно "виливався" на текст під таблицею).
-    # Контейнер Streamlit ріже вміст по висоті на рівні самого фреймворка,
-    # надійно, без CSS-хаків. data_editor усередині отримує ПОВНУ висоту
-    # (щоб не було подвійного скролу) — скролить лише зовнішній контейнер.
+    # Виправлення (спроба 3): і зовнішній st.container(), і сам
+    # data_editor мають ОДНАКОВУ малу висоту (~2 рядки) — щоб і
+    # вертикальний, і горизонтальний скрол data_editor одразу були
+    # видні вгорі, а не в самому низу невидимої повної висоти (був
+    # такий побічний ефект у попередній спробі). Зовнішній st.container()
+    # лишається підстраховкою від "виливання" вмісту за межі.
     _ind_row_h = 72
     _ind_header_h = 110
     _ind_visible_height = _ind_header_h + _ind_row_h * 2
-    _ind_full_height = max(_ind_visible_height, _ind_header_h + len(ind_df_table) * _ind_row_h)
 
     with st.container(height=_ind_visible_height):
         ind_edited = st.data_editor(
             ind_df_table,
             key=f"indicator_editor_{ind_ssp_index}_{ind_year}",
             use_container_width=True, hide_index=True,
-            height=_ind_full_height,
+            height=_ind_visible_height,
             row_height=_ind_row_h, num_rows="fixed",
             column_order=ind_display_cols,
             disabled=[
@@ -1565,21 +1564,20 @@ else:
             unsafe_allow_html=True
         )
 
-    # Виправлення (спроба 2 — надійніший механізм): попередня спроба
-    # обмежити висоту через height= у самого st.data_editor + CSS
-    # overflow на його обгортці НЕ спрацювала на практиці (вміст
-    # усе одно "виливався" і накладався на наступний блок сторінки).
-    # Тепер обмежуємо висоту через st.container(height=...) — це
-    # офіційний, JS-рівня механізм Streamlit, який гарантовано ріже
-    # вміст по висоті й дає власний, надійний скрол, а не крихкий CSS
-    # поверх внутрішньої розмітки компонента. Сам data_editor отримує
-    # ПОВНУ (нестиснену) висоту під усі рядки — щоб не було подвійного
-    # скролу (свій + контейнера), скролить лише зовнішній контейнер.
+    # Виправлення (спроба 3): і зовнішній st.container(), і сам
+    # data_editor мають ОДНАКОВУ малу висоту (~2 рядки). Спроба 2 давала
+    # data_editor повну висоту під усі рядки, обрізану зовні контейнером —
+    # але тоді власний горизонтальний скрол data_editor опинявся в самому
+    # низу цієї великої (здебільшого невидимої) висоти, і щоб побачити
+    # його, доводилось спершу прокрутити контейнер вниз до кінця. Тепер
+    # data_editor сам знає, що видима висота — ~2 рядки, тож і вертикальний,
+    # і горизонтальний скрол в нього одразу там, де очікується — вгорі,
+    # одразу під шапкою. Зовнішній st.container() лишається підстраховкою
+    # від "виливання" вмісту за межі (те, що бачили у спробі 1).
     _row_h = 80
     _header_h = 110
     _visible_rows = 2
     _visible_height = _header_h + _row_h * _visible_rows
-    _full_height = max(_visible_height, _header_h + len(table_df) * _row_h)
 
     # Всі колонки disabled для заблокованих рядків —
     # st.data_editor не підтримує per-row disabled, тому ділимо на два editor-и
@@ -1675,7 +1673,7 @@ else:
             key=f"monitoring_editor_{selected_ssp_index}_{selected_year}_{selected_quarter}_{search_query}",
             use_container_width=True,
             hide_index=True,
-            height=_full_height,
+            height=_visible_height,
             row_height=80,
             num_rows="fixed",
             column_config=col_config,

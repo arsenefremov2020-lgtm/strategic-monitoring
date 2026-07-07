@@ -49,13 +49,17 @@ def render_scope_toggle(page_key: str, user: dict | None) -> bool:
 
     Показується тільки ролям, для яких дані звужені до власного ССП
     (ССП, керівник ССП, керівник управління, заступник керівника ССП).
-    Для гостя, адміністратора і супер-адміна нічого не малює.
+    Для гостя, адміністратора і супер-адміна нічого не малює (повертає False).
+
+    За фідбеком розміщується САМЕ поруч із кнопкою "Скинути фільтри" (як на
+    app.py) — тому ця функція більше не створює власну колонку/розкладку:
+    викликач сам розміщує її у потрібному місці (напр. в одній з колонок
+    st.columns() поруч із фільтрами) і сам вирішує ширину.
 
     Повертає True, якщо на ЦІЙ вкладці зараз активний режим "загальна
-    інформація" (без прив'язки до ССП) — сторінка може прочитати це
-    значення сама, якщо їй потрібна додаткова логіка, але зазвичай
-    достатньо просто передати page_key у filter_actions_for_user /
-    filter_requests_for_user — вони самі перевірять стан перемикача.
+    інформація" — після цього виклику досить передати той самий page_key
+    у filter_actions_for_user / filter_requests_for_user, вони самі
+    прочитають цей стан.
     """
     from core.access import (
         is_scope_lockable_user,
@@ -68,30 +72,22 @@ def render_scope_toggle(page_key: str, user: dict | None) -> bool:
 
     active = is_scope_override_active(page_key)
 
-    left, right = st.columns([5, 2])
-    with right:
-        if active:
-            if st.button(
-                "⬅ Повернутися до інформації свого ССП",
-                key=f"scope_toggle_off_{page_key}",
-                use_container_width=True,
-            ):
-                set_scope_override(page_key, False)
-                st.rerun()
-        else:
-            if st.button(
-                "🔎 Переглянути загальну інформацію",
-                key=f"scope_toggle_on_{page_key}",
-                use_container_width=True,
-            ):
-                set_scope_override(page_key, True)
-                st.rerun()
-
     if active:
-        with left:
-            st.caption(
-                "ℹ️ Показано інформацію по всіх ССП (тимчасово, лише на цій вкладці). "
-                "Натисніть «Повернутися…», щоб знову бачити тільки своє ССП."
-            )
+        if st.button(
+            "⬅ Повернутися до свого ССП",
+            key=f"scope_toggle_off_{page_key}",
+            use_container_width=True,
+        ):
+            set_scope_override(page_key, False)
+            st.rerun()
+        st.caption("ℹ️ Показано інформацію по всіх ССП (тимчасово, лише на цій вкладці).")
+    else:
+        if st.button(
+            "🔎 Переглянути загальну інформацію",
+            key=f"scope_toggle_on_{page_key}",
+            use_container_width=True,
+        ):
+            set_scope_override(page_key, True)
+            st.rerun()
 
     return active

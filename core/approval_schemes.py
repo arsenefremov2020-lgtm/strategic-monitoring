@@ -413,3 +413,114 @@ def stage_candidates(role: str, ssp_index: str) -> list[dict]:
 def candidate_label(candidate: dict) -> str:
     extra = candidate.get("extra") or ""
     return candidate["name"] + (f" — {extra}" if extra else "")
+
+
+# ------------------------------------------------------------
+# НОВА МОДЕЛЬ МАРШРУТУ (виправлення після тестування, липень 2026)
+# ------------------------------------------------------------
+#
+# Раніше маршрут ПОВНІСТЮ будувався наперед — подавач (чи адмін при зміні
+# схеми) визначав усі ланки одразу, включно з тими, кого ще навіть не
+# розглядав жоден координатор. Це призводило до збою: координатор міг
+# натиснути "погодити" за ланку, чия черга ще не настала (бо ланцюг уже
+# містив цю ланку наперед), і заявка стрибала на наступний етап "повз"
+# фактичного власника черги.
+#
+# Тепер маршрут будується ПОКРОКОВО: кожна заявка завжди починається
+# рівно з координатора (initial_chain). Коли підходить черга ланки —
+# САМЕ вона (а не подавач і не будь-хто інший) вирішує, що далі:
+# завершити заявку на собі, чи призначити наступною ланкою когось
+# СТАРШОГО за себе (не може "спуститися нижче себе" чи повернути на вже
+# пройдений рівень). Ієрархія:
+#   Координатор -> {Керівник управління, Заступник керівника ССП} -> Керівник ССП
+# Координатор може призначити будь-яку з трьох ролей далі (або завершити
+# сам). Керівник управління/Заступник можуть призначити далі лише
+# Керівника ССП (або завершити самі). Керівник ССП — завжди останній.
+
+ROLE_RANK: dict[str, int] = {
+    ROLE_UNIT_HEAD: 1,
+    ROLE_SSP_DEPUTY: 1,
+    ROLE_SSP_HEAD: 2,
+}
+
+
+def initial_chain(ssp_index: str) -> list[dict]:
+    """
+    Ланцюг заявки одразу після подання: РІВНО одна ланка — координатор,
+    закріплений за цим ССП. Порожній список, якщо координатора не
+    знайдено (подання тоді неможливе — це перевіряється у формі подання).
+    """
+    candidates = stage_candidates(ROLE_ADMIN, ssp_index)
+    if not candidates:
+        return []
+    c = candidates[0]
+    return [{
+        "role": ROLE_ADMIN,
+        "label": STAGE_LABELS[ROLE_ADMIN],
+        "email": c["email"],
+        "name": c["name"],
+    }]
+
+
+def next_stage_role_options(current_role: str) -> list[str]:
+    """
+    Ролі, які поточна ланка (current_role) МОЖЕ призначити наступною.
+    Координатор — будь-яку з трьох. Керівник управління/Заступник —
+    лише Керівника ССП (єдина роль старша за них). Керівник ССП —
+    нікого (він завжди останній, вище нікого немає).
+    """
+    if current_role == ROLE_ADMIN:
+        return [ROLE_UNIT_HEAD, ROLE_SSP_DEPUTY, ROLE_SSP_HEAD]
+    current_rank = ROLE_RANK.get(current_role, 99)
+    return [role for role, rank in ROLE_RANK.items() if rank > current_rank]
+
+
+def is_stage_role(chain: list[dict], stage_idx: int, role: str) -> bool:
+    """Чи належить ПОТОЧНА ланка ланцюга саме цій ролі (перевірка "чи моя черга")."""
+    stage = current_stage(chain, stage_idx)
+    return bool(stage) and stage.get("role") == role
+
+
+def append_stage(chain: list[dict], next_role: str, ssp_index: str,
+                  person: dict | None = None) -> list[dict] | None:
+    """
+    Додає нову ланку в кінець ланцюга і повертає НОВИЙ ланцюг (список).
+    person — конкретна обрана особа {"email":..., "name":...}, якщо
+    кандидатів на роль було кілька і хтось уже обрав; якщо не передано —
+    береться перший (єдиний) кандидат. None, якщо кандидатів немає.
+    """
+    if person and person.get("email"):
+        chosen = person
+    else:
+        candidates = stage_candidates(next_role, ssp_index)
+        if not candidates:
+            return None
+        chosen = candidates[0]
+    new_chain = list(chain)
+    new_chain.append({
+        "role": next_role,
+        "label": STAGE_LABELS.get(next_role, next_role),
+        "email": str(chosen.get("email") or "").strip().lower(),
+        "name": str(chosen.get("name") or "").strip(),
+    })
+    return new_chain
+
+
+def finalize_here(stage_idx: int) -> tuple[str, int]:
+    """Поточна ланка стає останньою — заявку погоджено остаточно."""
+    return APPROVED_STATUS, stage_idx + 1
+
+
+def advance_with_new_stage(chain: list[dict], stage_idx: int, next_role: str,
+                           ssp_index: str, person: dict | None = None):
+    """
+    Додає next_role як наступну ланку одразу після поточної й повертає
+    (new_chain, new_status, new_stage_idx). (None, None, None), якщо для
+    next_role немає жодного кандидата (наприклад, для цього ССП не
+    призначено такої ролі).
+    """
+    new_chain = append_stage(chain, next_role, ssp_index, person)
+    if new_chain is None:
+        return None, None, None
+    new_stage = current_stage(new_chain, stage_idx + 1)
+    return new_chain, waiting_status_for_stage(new_stage), stage_idx + 1

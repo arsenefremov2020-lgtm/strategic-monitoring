@@ -19,6 +19,7 @@ from core.strategic_data import load_strat_matrix as core_load_strat_matrix
 from core import monitoring_data
 from config.roles import ROLE_SSP, ROLE_SSP_HEAD, ROLE_UNIT_HEAD, ROLE_SSP_DEPUTY, ROLE_ADMIN, ROLE_SUPER_ADMIN, ENABLE_PERSONAL_CABINETS
 from core.access import filter_actions_for_user, filter_requests_for_user
+from core.ui import render_scope_toggle
 
 
 current_user = page_setup("Картка заходу", page_name="Картка заходу")
@@ -1163,7 +1164,7 @@ render_html(
     """
 )
 
-f1, f2, f3, f4 = st.columns([1.15, 1.15, 1.6, 1.1])
+f1, f2, f3, f4, f5 = st.columns([1.1, 1.1, 1.5, 1.05, 1.05])
 
 goal_options = ["Усі стратегічні цілі"] + [
     get_goal_label(row) for _, row in goals.iterrows()
@@ -1198,6 +1199,10 @@ else:
 
 with f4:
     keyword = st.text_input("За ключовими словами", value="", placeholder="Введіть слово або код")
+
+with f5:
+    st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+    render_scope_toggle("Картка заходу", current_user)
 
 if clean(keyword):
     kw = clean(keyword).lower()

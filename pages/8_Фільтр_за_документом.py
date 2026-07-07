@@ -5,6 +5,7 @@ from core.page_setup import page_setup, render_footer
 from core.filters import get_source_options, match_source, PPDU_2026
 from core.strategic_data import load_strat_matrix, strip_leading_code
 from core.access import filter_actions_for_user
+from core.ui import render_scope_toggle
 
 
 current_user = page_setup("Фільтр за документом", page_name="Фільтр за документом")
@@ -29,7 +30,7 @@ def toggle_only_ppdu():
         st.session_state.doc_filter_select = []
 
 
-col_toggle, col_select = st.columns([1, 3])
+col_toggle, col_select, col_scope = st.columns([1, 2.4, 1.2])
 
 with col_toggle:
     st.button(
@@ -44,6 +45,10 @@ with col_select:
         get_source_options(),
         key="doc_filter_select",
     )
+
+with col_scope:
+    st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+    render_scope_toggle("Фільтр за документом", current_user)
 
 if not selected_sources:
     st.info("Оберіть документ або натисніть «Тільки ППДУ-2026», щоб побачити відповідні заходи.")

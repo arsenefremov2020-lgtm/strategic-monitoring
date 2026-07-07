@@ -6,6 +6,7 @@ from core.page_setup import page_setup, render_footer
 from core.filters import match_source, PPDU_2026
 from core.strategic_data import load_strat_matrix, strip_leading_code
 from core.access import filter_actions_for_user
+from core.ui import render_scope_toggle
 
 
 current_user = page_setup("Звітність ППДУ", page_name="Звітність ППДУ")
@@ -17,6 +18,10 @@ st.info(
 )
 
 st.markdown('<div class="section-title">Звітність ППДУ-2026 (тестовий режим)</div>', unsafe_allow_html=True)
+
+_ppdu_spacer, _ppdu_scope_col = st.columns([3, 1.2])
+with _ppdu_scope_col:
+    render_scope_toggle("Звітність ППДУ", current_user)
 
 df = load_strat_matrix()
 measures = df[df["object_type"] == "measure"].copy()

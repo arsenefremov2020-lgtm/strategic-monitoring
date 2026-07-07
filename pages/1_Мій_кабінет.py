@@ -576,6 +576,12 @@ st.markdown('</div>', unsafe_allow_html=True)
 # DETAILED VIEW
 # ============================================================
 
+if st.session_state.get("cab_last_decision_notice"):
+    st.warning(st.session_state["cab_last_decision_notice"], icon="⚠️")
+    if st.button("Зрозуміло, приховати це повідомлення", key="cab_dismiss_decision_notice"):
+        st.session_state.pop("cab_last_decision_notice", None)
+        st.rerun()
+
 st.markdown('<div class="card"><div class="card-title">Детальний перегляд та підтвердження</div>', unsafe_allow_html=True)
 
 options = []
@@ -770,12 +776,83 @@ if is_my_turn:
 
     _picked_target = _targets[_target_labels.index(_picked_target_label)]
 
+    # ── Динамічний вибір наступної ланки (пункт "схеми погодження мають
+    # бути різні для кожної ланки"): якщо в ланцюга вже НЕМАЄ наперед
+    # визначеної наступної ланки, саме ЦЯ ланка (а не подавач і не
+    # координатор заздалегідь) вирішує — завершити заявку на собі, чи
+    # передати вище (лише вище — керівнику ССП; спуститися "нижче себе"
+    # чи повернутися до вже пройденого рівня не можна). Для керівника
+    # ССП варіантів немає — він завжди найвища ланка.
+    _next_after_me = schemes.current_stage(_chain, _stage_idx + 1) if _chain else None
+    _my_next_role_options = []
+    if _chain and not _next_after_me:
+        _my_next_role_options = schemes.next_stage_role_options(_my_role)
+
+    _my_chosen_next_role = None
+    _my_chosen_next_person = None
+    if _my_next_role_options:
+        _my_req_dept_nums = re.findall(r"\d+", clean(selected_row.get("department", "")))
+        _my_req_dept_idx = _my_req_dept_nums[0] if _my_req_dept_nums else ""
+        _my_next_choice_labels = [f"Завершити на «{_stage_label}» (без додаткової ланки)"] + [
+            f"Передати ланці «{schemes.STAGE_LABELS[r]}»" for r in _my_next_role_options
+        ]
+        _my_next_choice = st.selectbox(
+            "Що далі після вашого рішення",
+            _my_next_choice_labels,
+            key=f"cab_next_stage_choice_{selected_id}",
+        )
+        if _my_next_choice != _my_next_choice_labels[0]:
+            _my_chosen_next_role = _my_next_role_options[_my_next_choice_labels.index(_my_next_choice) - 1]
+            _my_next_candidates = schemes.stage_candidates(_my_chosen_next_role, _my_req_dept_idx)
+            if len(_my_next_candidates) > 1:
+                _my_cand_labels = [schemes.candidate_label(c) for c in _my_next_candidates]
+                _my_picked_cand_label = st.selectbox(
+                    f"Хто саме — {schemes.STAGE_LABELS[_my_chosen_next_role]}",
+                    _my_cand_labels,
+                    key=f"cab_next_stage_person_{selected_id}",
+                )
+                _my_chosen_next_person = _my_next_candidates[_my_cand_labels.index(_my_picked_cand_label)]
+            elif _my_next_candidates:
+                _my_chosen_next_person = _my_next_candidates[0]
+                st.caption(f"→ {schemes.candidate_label(_my_chosen_next_person)}")
+            else:
+                st.error(
+                    f"Немає користувача ролі «{schemes.STAGE_LABELS[_my_chosen_next_role]}» "
+                    f"для цього ССП. Оберіть «Завершити» або зверніться до супер-адміна."
+                )
+
     # ── Погодити та передати далі ───────────────────────────
     if sign_btn:
-        if _chain:
+        _sign_blocked = False
+        if _chain and _next_after_me:
+            # ЗАСТАРІЛИЙ ланцюг: наступна ланка вже наперед відома.
             new_status, new_stage = schemes.status_after_approve(_chain, _stage_idx)
+            _final_chain_for_notify = _chain
+        elif _chain and _my_chosen_next_role:
+            if not _my_chosen_next_person:
+                st.error("Оберіть конкретну особу для наступної ланки.")
+                _sign_blocked = True
+                new_status, new_stage, _final_chain_for_notify = approval, _stage_idx, _chain
+            else:
+                _new_chain, new_status, new_stage = schemes.advance_with_new_stage(
+                    _chain, _stage_idx, _my_chosen_next_role, _my_req_dept_idx, _my_chosen_next_person
+                )
+                if _new_chain is None:
+                    st.error("Не вдалося призначити наступну ланку.")
+                    _sign_blocked = True
+                    new_status, new_stage, _final_chain_for_notify = approval, _stage_idx, _chain
+                else:
+                    _chain = _new_chain
+                    _final_chain_for_notify = _new_chain
+        elif _chain:
+            new_status, new_stage = schemes.finalize_here(_stage_idx)
+            _final_chain_for_notify = _chain
         else:
             new_status, new_stage = "Погоджено", _stage_idx + 1
+            _final_chain_for_notify = _chain
+
+        if _sign_blocked:
+            st.stop()
 
         update_data = {
             "approval_status": new_status,
@@ -783,6 +860,8 @@ if is_my_turn:
         }
         if _chain and "chain_stage" in selected_row.index:
             update_data["chain_stage"] = int(new_stage)
+        if _chain and "approval_chain" in selected_row.index:
+            update_data["approval_chain"] = schemes.chain_to_json(_chain)
         update_data = schemes.finalize_update_payload(update_data, new_status)
 
         try:
@@ -803,8 +882,8 @@ if is_my_turn:
                         clean(selected_row.get("responsible_person", "")),
                         code, clean(selected_row.get("year", "")), clean(selected_row.get("quarter", "")),
                     )
-                elif _chain:
-                    _next = schemes.current_stage(_chain, new_stage)
+                elif _final_chain_for_notify:
+                    _next = schemes.current_stage(_final_chain_for_notify, new_stage)
                     if _next:
                         notify_events.notify_stage_assigned(
                             _next.get("email", ""), _next.get("name", ""), _next.get("label", ""),
@@ -817,7 +896,7 @@ if is_my_turn:
             if new_status == "Погоджено":
                 st.success("✅ Заявка пройшла всі етапи схеми. Статус: «Погоджено».")
             else:
-                _next = schemes.current_stage(_chain, new_stage) if _chain else None
+                _next = schemes.current_stage(_final_chain_for_notify, new_stage) if _final_chain_for_notify else None
                 if _next:
                     _who = _next.get("name") or _next.get("email") or _next.get("label")
                     st.success(
@@ -827,6 +906,11 @@ if is_my_turn:
                     )
                 else:
                     st.success(f"✅ Підтверджено. Новий статус: «{new_status}».")
+            st.session_state["cab_last_decision_notice"] = (
+                "Рішення застосовано. Якщо в черзі є ще заявки — систему щойно "
+                "переключило на НАСТУПНУ заявку. Це не помилка: перегляньте її "
+                "дані з самого початку, перш ніж ухвалювати рішення."
+            )
             st.cache_data.clear()
             st.rerun()
         except Exception as e:
@@ -871,6 +955,11 @@ if is_my_turn:
                 except Exception:
                     pass
                 st.warning(f"↩️ Заявку повернуто: {_picked_target['label']}.")
+                st.session_state["cab_last_decision_notice"] = (
+                    "Рішення застосовано. Якщо в черзі є ще заявки — систему щойно "
+                    "переключило на НАСТУПНУ заявку. Це не помилка: перегляньте її "
+                    "дані з самого початку, перш ніж ухвалювати рішення."
+                )
                 st.cache_data.clear()
                 st.rerun()
             except Exception as e:

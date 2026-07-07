@@ -23,6 +23,7 @@ from core.access import (
     is_scope_override_active,
     get_user_ssp_index,
 )
+from core.ui import render_scope_toggle
 from datetime import datetime
 import re
 
@@ -1985,11 +1986,13 @@ with st.container():
                 key="dash_sources"
             )
 
-        _r1, _r2 = st.columns([1, 5])
+        _r1, _r2 = st.columns([1, 1])
         with _r1:
             if st.button("↺ Скинути фільтри", use_container_width=True):
                 reset_filters()
                 st.rerun()
+        with _r2:
+            render_scope_toggle("Dashboard", current_user)
 
 
 # ============================================================

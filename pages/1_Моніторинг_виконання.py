@@ -822,109 +822,59 @@ st.markdown("</div>", unsafe_allow_html=True)
 
 def render_scheme_picker(ssp_index, key_prefix):
     """
-    Виводить вибір схеми погодження і конкретних осіб для кожної ланки.
+    Показує інформацію про початок маршруту погодження.
 
-    Повертає (scheme_name, chain, ready):
-    - chain — список ланок для approval_chain;
-    - ready=False, якщо для якоїсь ланки не знайдено/не обрано особу.
+    ВАЖЛИВО (виправлення після тестування): раніше тут подавач ОБИРАВ
+    усю схему погодження наперед (включно з тим, хто розглядатиме заявку
+    ПІСЛЯ координатора) — це і призводило до плутанини й помилок на
+    етапах погодження. Тепер жоден подавач наперед нічого не визначає:
+    КОЖНА заявка, незалежно від того, хто її подає, завжди починається
+    рівно з координатора. Сам координатор, коли розглядатиме заявку,
+    сам вирішить — потрібна ще одна ланка після нього (і яка саме), чи
+    заявку можна завершити одразу на ньому (core/approval_schemes.py:
+    next_stage_role_options). Так само кожна наступна ланка вирішує це
+    сама за себе — і не може призначити нікого "нижче" себе.
+
+    Повертає (scheme_name, chain, ready) — сигнатура лишена незмінною
+    заради сумісності з рештою коду подання нижче.
     """
     st.markdown(
-        '<div class="table-title" style="margin-top:14px;">Схема погодження</div>',
+        '<div class="table-title" style="margin-top:14px;">Маршрут погодження</div>',
         unsafe_allow_html=True,
     )
     st.caption(
-        "Оберіть маршрут погодження цієї подачі та конкретних осіб на кожній ланці. "
-        "Координатор — обов'язкова ланка кожної схеми. Адміністратор може "
-        "підтвердити або змінити обрану схему (зміна фіксується в журналі дій)."
+        "Кожна заявка спершу йде на розгляд координатору. Хто розглядатиме "
+        "далі (якщо це взагалі потрібно) — вирішує сам координатор під час "
+        "розгляду, а не подавач."
     )
 
-    # Пункт 2 нового ТЗ: подавати відомості може не тільки "Відповідальний
-    # від ССП", а й керівник ССП / керівник управління / заступник
-    # керівника ССП. Якщо подавач сам є однією з ланок погодження — немає
-    # сенсу, щоб він погоджував сам себе, тож маршрут звужується рівно до
-    # обов'язкової ланки координатора (без вибору).
-    _submitter_role = (current_user or {}).get("role")
-    _available_schemes = schemes.scheme_options_for_submitter(_submitter_role)
-    _forced_scheme = schemes.submitter_is_approving_role(_submitter_role)
+    chain = schemes.initial_chain(ssp_index)
+    ready = bool(chain)
 
-    if _forced_scheme:
-        st.info(
-            "ℹ️ Оскільки подання здійснює представник ланки погодження "
-            f"(«{schemes.STAGE_LABELS.get(_submitter_role, _submitter_role)}»), "
-            "маршрут автоматично звужено лише до координатора — самопогодження "
-            "не передбачене."
+    if not ready:
+        st.error(
+            f"Для ССП {ssp_index} не закріплено координатора (адміністратора). "
+            f"Зверніться до супер-адміністратора, щоб призначити відповідального "
+            f"адміністратора цьому ССП — без цього подання неможливе."
         )
-        scheme_name = st.selectbox(
-            "Маршрут погодження",
-            _available_schemes,
-            index=0,
-            key=f"{key_prefix}_scheme",
-            disabled=True,
-        )
-    else:
-        scheme_name = st.selectbox(
-            "Маршрут погодження",
-            _available_schemes,
-            index=_available_schemes.index(schemes.DEFAULT_SCHEME)
-            if schemes.DEFAULT_SCHEME in _available_schemes else 0,
-            key=f"{key_prefix}_scheme",
-        )
+        return "Координатор", [], False
 
-    roles_in_scheme = schemes.APPROVAL_SCHEMES[scheme_name]
-    persons = {}
-    ready = True
-
-    cols = st.columns(len(roles_in_scheme))
-    for i, role in enumerate(roles_in_scheme):
-        with cols[i]:
-            candidates = schemes.stage_candidates(role, ssp_index)
-            label = schemes.STAGE_LABELS.get(role, role)
-            if not candidates:
-                if role == schemes.ROLE_ADMIN:
-                    st.error(
-                        f"Для ССП {ssp_index} не закріплено координатора "
-                        f"(адміністратора). Зверніться до супер-адміністратора, "
-                        f"щоб призначити відповідального адміністратора цьому ССП."
-                    )
-                else:
-                    st.warning(
-                        f"Ланка «{label}»: у системі немає користувача цієї ролі "
-                        f"для ССП {ssp_index}."
-                    )
-                ready = False
-                continue
-            # Координатор закріплений за ССП однозначно — без вибору:
-            # показуємо єдину особу, зафіксовану автоматично.
-            if role == schemes.ROLE_ADMIN or len(candidates) == 1:
-                chosen = candidates[0]
-                st.markdown(
-                    f'<div style="background:#eef2f9;border:1px solid #d8dee9;'
-                    f'border-radius:10px;padding:8px 12px;">'
-                    f'<div style="font-size:10px;font-weight:800;letter-spacing:.04em;'
-                    f'text-transform:uppercase;color:#64748b;">{i + 1}. {label}</div>'
-                    f'<div style="font-size:13px;font-weight:700;color:#0f172a;">'
-                    f'{escape(schemes.candidate_label(chosen))}</div></div>',
-                    unsafe_allow_html=True,
-                )
-                persons[role] = {"email": chosen["email"], "name": chosen["name"]}
-                continue
-            options = [schemes.candidate_label(c) for c in candidates]
-            picked = st.selectbox(
-                f"{i + 1}. {label}",
-                options,
-                key=f"{key_prefix}_stage_{role}",
-            )
-            chosen = candidates[options.index(picked)]
-            persons[role] = {"email": chosen["email"], "name": chosen["name"]}
-
-    chain = schemes.build_chain(scheme_name, persons) if ready else []
-    if ready:
-        st.markdown(
-            f'<div class="note-box" style="background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;">'
-            f'Маршрут: <b>{schemes.chain_route_text(chain)}</b></div>',
-            unsafe_allow_html=True,
-        )
-    return scheme_name, chain, ready
+    coordinator = chain[0]
+    st.markdown(
+        f'<div style="background:#eef2f9;border:1px solid #d8dee9;'
+        f'border-radius:10px;padding:8px 12px;">'
+        f'<div style="font-size:10px;font-weight:800;letter-spacing:.04em;'
+        f'text-transform:uppercase;color:#64748b;">1. Координатор</div>'
+        f'<div style="font-size:13px;font-weight:700;color:#0f172a;">'
+        f'{escape(coordinator["name"])}</div></div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="note-box" style="background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;">'
+        'Далі маршрут визначить координатор під час розгляду.</div>',
+        unsafe_allow_html=True,
+    )
+    return "Координатор", chain, True
 
 
 def notify_first_stage(chain, codes, year_str, quarter_str, kind="measure"):
@@ -1661,7 +1611,7 @@ else:
         ),
         "Посилання\nна НПА": st.column_config.TextColumn(
             "🟡 Посилання\nна НПА",
-            help="Необов'язкове. Основне посилання на НПА; додаткові — у блоці «➕ Додаткові посилання» під таблицею",
+            help="Необов'язкове. Посилання на НПА / підтвердний документ.",
             width=220,
         ),
         # Приховані службові колонки
@@ -1753,60 +1703,6 @@ def validate_submission():
 
 
 # ------------------------------------------------------------
-# Додаткові посилання на НПА («плюсик» до основної клітинки)
-# ------------------------------------------------------------
-
-_extra_npa_state_key = f"extra_npa_{selected_ssp_index}_{selected_year}_{selected_quarter}"
-if _extra_npa_state_key not in st.session_state:
-    st.session_state[_extra_npa_state_key] = {}   # code -> [url, url, ...]
-
-extra_npa_links = st.session_state[_extra_npa_state_key]
-
-if npa_link_column_exists and not table_df.empty:
-    _free_codes = table_df.loc[table_df["_locked"] == False, "Код"].tolist()
-    with st.expander("➕ Додаткові посилання на НПА (якщо їх декілька для одного заходу)"):
-        st.caption(
-            "Основне посилання вноситься в колонку «🟡 Посилання на НПА» таблиці. "
-            "Тут можна додати до заходу будь-яку кількість додаткових посилань — "
-            "усі вони збережуться в заявці та відображатимуться клікабельними "
-            "в кабінетах і журналі дій."
-        )
-        if _free_codes:
-            add_c1, add_c2, add_c3 = st.columns([1, 2.4, 0.7])
-            with add_c1:
-                _npa_code = st.selectbox("Захід", _free_codes, key=f"{_extra_npa_state_key}_code")
-            with add_c2:
-                _npa_url = st.text_input(
-                    "Посилання (НПА, документ, гугл-док тощо)",
-                    key=f"{_extra_npa_state_key}_url",
-                    placeholder="https://zakon.rada.gov.ua/…",
-                )
-            with add_c3:
-                st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-                if st.button("➕ Додати", key=f"{_extra_npa_state_key}_add", use_container_width=True):
-                    url_clean = raw_value(_npa_url)
-                    if url_clean:
-                        extra_npa_links.setdefault(_npa_code, [])
-                        if url_clean not in extra_npa_links[_npa_code]:
-                            extra_npa_links[_npa_code].append(url_clean)
-                        st.rerun()
-
-            for _c, _links in list(extra_npa_links.items()):
-                for _j, _u in enumerate(_links):
-                    l1, l2 = st.columns([5, 0.6])
-                    with l1:
-                        st.markdown(f"• **{_c}** → {_u}")
-                    with l2:
-                        if st.button("🗑", key=f"{_extra_npa_state_key}_del_{_c}_{_j}"):
-                            extra_npa_links[_c].pop(_j)
-                            if not extra_npa_links[_c]:
-                                extra_npa_links.pop(_c)
-                            st.rerun()
-        else:
-            st.info("Немає заходів, доступних для подання в цьому періоді.")
-
-
-# ------------------------------------------------------------
 # Схема погодження для подання заходів
 # ------------------------------------------------------------
 
@@ -1854,10 +1750,7 @@ if submit_clicked:
                 "progress_text":      raw_value(row.get("Опис\nпрогресу", "")),
                 "risks":              raw_value(row.get("Ризики / проблеми /\nвідхилення", "")),
                 **(
-                    {"npa_link": "\n".join(
-                        [u for u in [raw_value(row.get("Посилання\nна НПА", ""))] if u]
-                        + extra_npa_links.get(code, [])
-                    )}
+                    {"npa_link": raw_value(row.get("Посилання\nна НПА", ""))}
                     if npa_link_column_exists else {}
                 ),
                 **(
@@ -1883,7 +1776,6 @@ if submit_clicked:
         try:
             supabase.table("monitoring_requests").insert(payload).execute()
             st.cache_data.clear()
-            st.session_state[_extra_npa_state_key] = {}
             if chain_columns_exist and measures_chain:
                 notify_first_stage(
                     measures_chain,

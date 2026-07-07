@@ -1060,42 +1060,46 @@ if submission_mode.startswith("🎯"):
         )
 
     ind_display_cols = [c for c in ind_df_table.columns if not c.startswith("_")]
-    # Виправлення: таблиця обмежена висотою РІВНО ~2 рядків — далі
-    # вертикальний і горизонтальний скрол ВСЕРЕДИНІ таблиці (як на
-    # app.py). Раніше висота "росла" аж до 760px під кількість рядків —
-    # тому таблиця виглядала як нескінченний список, а не компактний
-    # редактор зі скролом.
+    # Виправлення (спроба 2 — надійніший механізм): st.container(height=...)
+    # замість height= на самому data_editor + CSS overflow (це не спрацювало
+    # на практиці — вміст усе одно "виливався" на текст під таблицею).
+    # Контейнер Streamlit ріже вміст по висоті на рівні самого фреймворка,
+    # надійно, без CSS-хаків. data_editor усередині отримує ПОВНУ висоту
+    # (щоб не було подвійного скролу) — скролить лише зовнішній контейнер.
     _ind_row_h = 72
     _ind_header_h = 110
-    _ind_max_2_rows_height = _ind_header_h + _ind_row_h * 2
-    ind_edited = st.data_editor(
-        ind_df_table,
-        key=f"indicator_editor_{ind_ssp_index}_{ind_year}",
-        use_container_width=True, hide_index=True,
-        height=min(_ind_max_2_rows_height, max(150, _ind_header_h + len(ind_df_table) * _ind_row_h)),
-        row_height=_ind_row_h, num_rows="fixed",
-        column_order=ind_display_cols,
-        disabled=[
-            "Код", "СЦ / Завдання", "Індикатор", "Одиниці\nвиміру",
-            "2021\n(базовий)", f"{ind_year}\n(цільовий орієнтир)", "Останнє подане\nзначення",
-        ],
-        column_config={
-            "Подати": st.column_config.CheckboxColumn("Подати", width=80),
-            value_col: st.column_config.TextColumn(f"🔴 {value_col}", width=150,
-                help="Обов'язкове поле. Фактичне значення індикатора станом на обрану дату"),
-            "Статус\nвиконання": st.column_config.SelectboxColumn(
-                "🔴 Статус\nвиконання", options=execution_status_options, width=180,
-                help="Обов'язкове поле"),
-            "Опис\nпрогресу": st.column_config.TextColumn("🟡 Опис\nпрогресу", width=280,
-                help="Необов'язкове поле"),
-            "Ризики / проблеми /\nвідхилення": st.column_config.TextColumn(
-                "🟡 Ризики / проблеми /\nвідхилення", width=280, help="Необов'язкове поле"),
-            "Посилання\nна НПА": st.column_config.TextColumn(
-                "🟡 Посилання\nна НПА", width=220,
-                help="Необов'язкове. Кілька посилань — через кому або крапку з комою"),
-            "_locked": st.column_config.CheckboxColumn("_locked", width=1),
-        },
-    )
+    _ind_visible_height = _ind_header_h + _ind_row_h * 2
+    _ind_full_height = max(_ind_visible_height, _ind_header_h + len(ind_df_table) * _ind_row_h)
+
+    with st.container(height=_ind_visible_height):
+        ind_edited = st.data_editor(
+            ind_df_table,
+            key=f"indicator_editor_{ind_ssp_index}_{ind_year}",
+            use_container_width=True, hide_index=True,
+            height=_ind_full_height,
+            row_height=_ind_row_h, num_rows="fixed",
+            column_order=ind_display_cols,
+            disabled=[
+                "Код", "СЦ / Завдання", "Індикатор", "Одиниці\nвиміру",
+                "2021\n(базовий)", f"{ind_year}\n(цільовий орієнтир)", "Останнє подане\nзначення",
+            ],
+            column_config={
+                "Подати": st.column_config.CheckboxColumn("Подати", width=80),
+                value_col: st.column_config.TextColumn(f"🔴 {value_col}", width=150,
+                    help="Обов'язкове поле. Фактичне значення індикатора станом на обрану дату"),
+                "Статус\nвиконання": st.column_config.SelectboxColumn(
+                    "🔴 Статус\nвиконання", options=execution_status_options, width=180,
+                    help="Обов'язкове поле"),
+                "Опис\nпрогресу": st.column_config.TextColumn("🟡 Опис\nпрогресу", width=280,
+                    help="Необов'язкове поле"),
+                "Ризики / проблеми /\nвідхилення": st.column_config.TextColumn(
+                    "🟡 Ризики / проблеми /\nвідхилення", width=280, help="Необов'язкове поле"),
+                "Посилання\nна НПА": st.column_config.TextColumn(
+                    "🟡 Посилання\nна НПА", width=220,
+                    help="Необов'язкове. Кілька посилань — через кому або крапку з комою"),
+                "_locked": st.column_config.CheckboxColumn("_locked", width=1),
+            },
+        )
 
     ind_scheme_name, ind_chain, ind_scheme_ready = render_scheme_picker(ind_ssp_index, "ind")
 
@@ -1561,15 +1565,21 @@ else:
             unsafe_allow_html=True
         )
 
-    # Виправлення: таблиця обмежена висотою РІВНО ~2 рядків — далі
-    # вертикальний і горизонтальний скрол ВСЕРЕДИНІ таблиці (той самий
-    # принцип, що й у .measures-scroll на app.py). Раніше висота "росла"
-    # аж до 820px під кількість рядків — тому таблиця виглядала як
-    # нескінченний список замість компактного редактора зі скролом.
+    # Виправлення (спроба 2 — надійніший механізм): попередня спроба
+    # обмежити висоту через height= у самого st.data_editor + CSS
+    # overflow на його обгортці НЕ спрацювала на практиці (вміст
+    # усе одно "виливався" і накладався на наступний блок сторінки).
+    # Тепер обмежуємо висоту через st.container(height=...) — це
+    # офіційний, JS-рівня механізм Streamlit, який гарантовано ріже
+    # вміст по висоті й дає власний, надійний скрол, а не крихкий CSS
+    # поверх внутрішньої розмітки компонента. Сам data_editor отримує
+    # ПОВНУ (нестиснену) висоту під усі рядки — щоб не було подвійного
+    # скролу (свій + контейнера), скролить лише зовнішній контейнер.
     _row_h = 80
     _header_h = 110
-    _max_2_rows_height = _header_h + _row_h * 2
-    dynamic_height = min(_max_2_rows_height, max(150, _header_h + len(table_df) * _row_h))
+    _visible_rows = 2
+    _visible_height = _header_h + _row_h * _visible_rows
+    _full_height = max(_visible_height, _header_h + len(table_df) * _row_h)
 
     # Всі колонки disabled для заблокованих рядків —
     # st.data_editor не підтримує per-row disabled, тому ділимо на два editor-и
@@ -1659,18 +1669,19 @@ else:
         unsafe_allow_html=True,
     )
 
-    edited_df = st.data_editor(
-        table_df,
-        key=f"monitoring_editor_{selected_ssp_index}_{selected_year}_{selected_quarter}_{search_query}",
-        use_container_width=True,
-        hide_index=True,
-        height=dynamic_height,
-        row_height=80,
-        num_rows="fixed",
-        column_config=col_config,
-        column_order=display_cols,   # приховуємо _locked/_lock_label
-        disabled=always_disabled,
-    )
+    with st.container(height=_visible_height):
+        edited_df = st.data_editor(
+            table_df,
+            key=f"monitoring_editor_{selected_ssp_index}_{selected_year}_{selected_quarter}_{search_query}",
+            use_container_width=True,
+            hide_index=True,
+            height=_full_height,
+            row_height=80,
+            num_rows="fixed",
+            column_config=col_config,
+            column_order=display_cols,   # приховуємо _locked/_lock_label
+            disabled=always_disabled,
+        )
 
 
 # ------------------------------------------------------------

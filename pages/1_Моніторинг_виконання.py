@@ -30,9 +30,9 @@ from core import notify_events
 # редактора (~2 рядки + шапка).
 TABLE_VISIBLE_HEIGHT_PX = 280
 
-# ВИПРАВЛЕННЯ (спроба 5, скориговано за фідбеком): +60px виявилося
-# майже достатньо, але не зовсім — трохи піднімаємо запас до +90px.
-TABLE_CONTAINER_HEIGHT_PX = TABLE_VISIBLE_HEIGHT_PX + 80
+# ВИПРАВЛЕННЯ (спроба 5, скориговано за фідбеком): 60px, потім 80px —
+# майже достатньо, піднято до 100px.
+TABLE_CONTAINER_HEIGHT_PX = TABLE_VISIBLE_HEIGHT_PX + 100
 
 
 # ------------------------------------------------------------
@@ -1578,7 +1578,7 @@ else:
     # обрізати вміст (він не дає накладання). Щоб уникнути повторного
     # "другого скролу", контейнер тепер ПОМІТНО вищий за саму таблицю
     # (TABLE_CONTAINER_HEIGHT_PX), а не точно дорівнює їй.
-    _row_h = 90
+    _row_h = 80
     _header_h = 110
     _visible_rows = 2
     _visible_height = TABLE_VISIBLE_HEIGHT_PX

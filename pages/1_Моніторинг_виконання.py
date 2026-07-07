@@ -26,6 +26,14 @@ from core import monitoring_data
 from core import approval_schemes as schemes
 from core import notify_events
 
+# Спільна для обох таблиць (заходи + індикатори) висота видимої області
+# редактора (~2 рядки + шапка). ОДНАКОВЕ значення для обох — навмисно:
+# та сама CSS-фіксація (height/max-height/overflow нижче на сторінці)
+# форсує рівно це число напряму на обгортці, тож розбіжність між
+# Python-параметром height= і фактичною висотою "у пікселях", яка й
+# спричиняла накладання/подвійний скрол, більше неможлива.
+TABLE_VISIBLE_HEIGHT_PX = 280
+
 
 # ------------------------------------------------------------
 # Page config
@@ -377,19 +385,20 @@ div[data-testid="stTextArea"] label {
 }
 
 /* Центрування всієї таблиці.
-   ВАЖЛИВО (виправлення після тестування, липень 2026): тимчасова зміна
-   на overflow: visible спричинила НОВИЙ, гірший баг — таблиця з
-   обмеженою висотою (тепер ~2 рядки, див. dynamic_height нижче)
-   почала візуально "переливатися" і накладатися на наступний блок
-   сторінки ("Маршрут погодження"). Реальною причиною початкової
-   проблеми "не можна натиснути/прокрутити" був блок "Додаткові
-   посилання на НПА" під таблицею — його вже прибрано повністю окремим
-   пунктом правок. Тому тут overflow: hidden — правильний, безпечний
-   варіант: він і не дає таблиці "виливатися" за межі своєї висоти, і
-   не створює конфліктів, бо джерела того конфлікту (зайвого блоку)
-   більше немає. */
+   ВАЖЛИВО (виправлення після тестування, липень 2026 — спроба 4):
+   попередні спроби покладались ЛИШЕ на Python-параметр height=
+   st.data_editor(), сподіваючись, що він і визначає фактичну висоту
+   обгортки в пікселях. На практиці цього виявилось не досить: коробка
+   іноді "переливалася" за межі заявленої висоти (накладання на текст
+   під таблицею), а спроба виправити це ЗОВНІШНІМ st.container(height=)
+   давала другий, зайвий скрол. Тому тут — пряме форсування height/
+   max-height через CSS з !important, синхронізоване з тим самим
+   числом (TABLE_VISIBLE_HEIGHT_PX) у Python-коді сторінки. CSS має
+   останнє слово незалежно від того, що вважає сам компонент. */
 div[data-testid="stDataEditor"] {
     max-width: 1280px !important;
+    height: 280px !important;
+    max-height: 280px !important;
     margin-left: auto !important;
     margin-right: auto !important;
     border-radius: 14px !important;
@@ -1060,52 +1069,46 @@ if submission_mode.startswith("🎯"):
         )
 
     ind_display_cols = [c for c in ind_df_table.columns if not c.startswith("_")]
-    # Виправлення (спроба 3): і зовнішній st.container(), і сам
-    # data_editor мають ОДНАКОВУ малу висоту (~2 рядки) — щоб і
-    # вертикальний, і горизонтальний скрол data_editor одразу були
-    # видні вгорі, а не в самому низу невидимої повної висоти (був
-    # такий побічний ефект у попередній спробі). Зовнішній st.container()
-    # лишається підстраховкою від "виливання" вмісту за межі.
+    # Виправлення (спроба 4): прибрано зовнішній st.container() —
+    # він і спричиняв "два скроли вниз" (власний скрол data_editor +
+    # ще один в контейнера, бо їхні висоти ніколи не збігались точно
+    # день у день). Тепер скрол — РІВНО один, власний, у самого
+    # data_editor. Обрізання під межі цієї малої висоти форсується
+    # напряму через CSS на його обгортці (height/max-height/overflow
+    # у <style> вище на сторінці) — а не через ще один контейнер.
     _ind_row_h = 72
     _ind_header_h = 110
-    _ind_visible_height = _ind_header_h + _ind_row_h * 2
-    # Невеликий запас (не другий скрол!) — щоб data_editor разом зі своєю
-    # смугою горизонтального скролу внизу цілком вміщався в зовнішній
-    # контейнер БЕЗ того, щоб і сам контейнер починав скролитись (це й
-    # давало "два скроли вниз"). Скрол лишається один — власний, у
-    # data_editor; зовнішній контейнер тепер лише трохи більший, щоб
-    # нічого не зрізати й не створювати другу смугу прокрутки.
-    _ind_container_height = _ind_visible_height + 24
+    _ind_visible_height = TABLE_VISIBLE_HEIGHT_PX
 
-    with st.container(height=_ind_container_height):
-        ind_edited = st.data_editor(
-            ind_df_table,
-            key=f"indicator_editor_{ind_ssp_index}_{ind_year}",
-            use_container_width=True, hide_index=True,
-            height=_ind_visible_height,
-            row_height=_ind_row_h, num_rows="fixed",
-            column_order=ind_display_cols,
-            disabled=[
-                "Код", "СЦ / Завдання", "Індикатор", "Одиниці\nвиміру",
-                "2021\n(базовий)", f"{ind_year}\n(цільовий орієнтир)", "Останнє подане\nзначення",
-            ],
-            column_config={
-                "Подати": st.column_config.CheckboxColumn("Подати", width=80),
-                value_col: st.column_config.TextColumn(f"🔴 {value_col}", width=150,
-                    help="Обов'язкове поле. Фактичне значення індикатора станом на обрану дату"),
-                "Статус\nвиконання": st.column_config.SelectboxColumn(
-                    "🔴 Статус\nвиконання", options=execution_status_options, width=180,
-                    help="Обов'язкове поле"),
-                "Опис\nпрогресу": st.column_config.TextColumn("🟡 Опис\nпрогресу", width=280,
-                    help="Необов'язкове поле"),
-                "Ризики / проблеми /\nвідхилення": st.column_config.TextColumn(
-                    "🟡 Ризики / проблеми /\nвідхилення", width=280, help="Необов'язкове поле"),
-                "Посилання\nна НПА": st.column_config.TextColumn(
-                    "🟡 Посилання\nна НПА", width=220,
-                    help="Необов'язкове. Кілька посилань — через кому або крапку з комою"),
-                "_locked": st.column_config.CheckboxColumn("_locked", width=1),
-            },
-        )
+    ind_edited = st.data_editor(
+        ind_df_table,
+        key=f"indicator_editor_{ind_ssp_index}_{ind_year}",
+        use_container_width=True, hide_index=True,
+        height=_ind_visible_height,
+        row_height=_ind_row_h, num_rows="fixed",
+        column_order=ind_display_cols,
+        disabled=[
+            "Код", "СЦ / Завдання", "Індикатор", "Одиниці\nвиміру",
+            "2021\n(базовий)", f"{ind_year}\n(цільовий орієнтир)", "Останнє подане\nзначення",
+        ],
+        column_config={
+            "Подати": st.column_config.CheckboxColumn("Подати", width=80),
+            value_col: st.column_config.TextColumn(f"🔴 {value_col}", width=150,
+                help="Обов'язкове поле. Фактичне значення індикатора станом на обрану дату"),
+            "Статус\nвиконання": st.column_config.SelectboxColumn(
+                "🔴 Статус\nвиконання", options=execution_status_options, width=180,
+                help="Обов'язкове поле"),
+            "Опис\nпрогресу": st.column_config.TextColumn("🟡 Опис\nпрогресу", width=280,
+                help="Необов'язкове поле"),
+            "Ризики / проблеми /\nвідхилення": st.column_config.TextColumn(
+                "🟡 Ризики / проблеми /\nвідхилення", width=280, help="Необов'язкове поле"),
+            "Посилання\nна НПА": st.column_config.TextColumn(
+                "🟡 Посилання\nна НПА", width=220,
+                help="Необов'язкове. Кілька посилань — через кому або крапку з комою"),
+            "_locked": st.column_config.CheckboxColumn("_locked", width=1),
+        },
+    )
+
 
     ind_scheme_name, ind_chain, ind_scheme_ready = render_scheme_picker(ind_ssp_index, "ind")
 
@@ -1571,24 +1574,16 @@ else:
             unsafe_allow_html=True
         )
 
-    # Виправлення (спроба 3): і зовнішній st.container(), і сам
-    # data_editor мають ОДНАКОВУ малу висоту (~2 рядки). Спроба 2 давала
-    # data_editor повну висоту під усі рядки, обрізану зовні контейнером —
-    # але тоді власний горизонтальний скрол data_editor опинявся в самому
-    # низу цієї великої (здебільшого невидимої) висоти, і щоб побачити
-    # його, доводилось спершу прокрутити контейнер вниз до кінця. Тепер
-    # data_editor сам знає, що видима висота — ~2 рядки, тож і вертикальний,
-    # і горизонтальний скрол в нього одразу там, де очікується — вгорі,
-    # одразу під шапкою. Зовнішній st.container() лишається підстраховкою
-    # від "виливання" вмісту за межі (те, що бачили у спробі 1).
+    # Виправлення (спроба 4): прибрано зовнішній st.container() — він і
+    # спричиняв "два скроли вниз" (власний скрол data_editor + ще один
+    # у контейнера, бо їхні висоти не збігались точно). Тепер скрол —
+    # РІВНО один, власний, у самого data_editor. Обрізання під межі цієї
+    # малої висоти форсується напряму через CSS на його обгортці
+    # (height/max-height/overflow у <style> вище на сторінці).
     _row_h = 80
     _header_h = 110
     _visible_rows = 2
-    _visible_height = _header_h + _row_h * _visible_rows
-    # Той самий невеликий запас, що й для індикаторів — щоб не було
-    # "двох скролів вниз" (власного в data_editor і ще одного в
-    # зовнішньому контейнері).
-    _container_height = _visible_height + 24
+    _visible_height = TABLE_VISIBLE_HEIGHT_PX
 
     # Всі колонки disabled для заблокованих рядків —
     # st.data_editor не підтримує per-row disabled, тому ділимо на два editor-и
@@ -1678,19 +1673,18 @@ else:
         unsafe_allow_html=True,
     )
 
-    with st.container(height=_container_height):
-        edited_df = st.data_editor(
-            table_df,
-            key=f"monitoring_editor_{selected_ssp_index}_{selected_year}_{selected_quarter}_{search_query}",
-            use_container_width=True,
-            hide_index=True,
-            height=_visible_height,
-            row_height=80,
-            num_rows="fixed",
-            column_config=col_config,
-            column_order=display_cols,   # приховуємо _locked/_lock_label
-            disabled=always_disabled,
-        )
+    edited_df = st.data_editor(
+        table_df,
+        key=f"monitoring_editor_{selected_ssp_index}_{selected_year}_{selected_quarter}_{search_query}",
+        use_container_width=True,
+        hide_index=True,
+        height=_visible_height,
+        row_height=80,
+        num_rows="fixed",
+        column_config=col_config,
+        column_order=display_cols,   # приховуємо _locked/_lock_label
+        disabled=always_disabled,
+    )
 
 
 # ------------------------------------------------------------

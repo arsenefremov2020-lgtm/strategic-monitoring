@@ -377,21 +377,23 @@ div[data-testid="stTextArea"] label {
 }
 
 /* Центрування всієї таблиці.
-   ВАЖЛИВО (пункт 6 нового ТЗ, виправлення бага зі скролом/посиланнями):
-   раніше тут стояв overflow: hidden !important. Це обрізало не тільки
-   кути картки, а й усе, що data_editor малює ЗА межами свого контейнера
-   під час редагування клітинки (випадний список для колонки-статусу,
-   підказки тощо) — саме тому "не можна було натиснути і провести скрол":
-   спливаючий список чи скролбар виявлявся невидимим або обрізаним.
-   overflow: visible нічого не ламає в звичайному режимі (сама таблиця
-   й так не виходить за межі max-width), але більше не ховає те, що
-   data_editor малює поверх/збоку під час взаємодії. */
+   ВАЖЛИВО (виправлення після тестування, липень 2026): тимчасова зміна
+   на overflow: visible спричинила НОВИЙ, гірший баг — таблиця з
+   обмеженою висотою (тепер ~2 рядки, див. dynamic_height нижче)
+   почала візуально "переливатися" і накладатися на наступний блок
+   сторінки ("Маршрут погодження"). Реальною причиною початкової
+   проблеми "не можна натиснути/прокрутити" був блок "Додаткові
+   посилання на НПА" під таблицею — його вже прибрано повністю окремим
+   пунктом правок. Тому тут overflow: hidden — правильний, безпечний
+   варіант: він і не дає таблиці "виливатися" за межі своєї висоти, і
+   не створює конфліктів, бо джерела того конфлікту (зайвого блоку)
+   більше немає. */
 div[data-testid="stDataEditor"] {
     max-width: 1280px !important;
     margin-left: auto !important;
     margin-right: auto !important;
     border-radius: 14px !important;
-    overflow: visible !important;
+    overflow: hidden !important;
     border: 1px solid #cbd5e1 !important;
     box-shadow: 0 8px 22px rgba(15,23,42,0.06) !important;
 }
@@ -1058,12 +1060,20 @@ if submission_mode.startswith("🎯"):
         )
 
     ind_display_cols = [c for c in ind_df_table.columns if not c.startswith("_")]
+    # Виправлення: таблиця обмежена висотою РІВНО ~2 рядків — далі
+    # вертикальний і горизонтальний скрол ВСЕРЕДИНІ таблиці (як на
+    # app.py). Раніше висота "росла" аж до 760px під кількість рядків —
+    # тому таблиця виглядала як нескінченний список, а не компактний
+    # редактор зі скролом.
+    _ind_row_h = 72
+    _ind_header_h = 110
+    _ind_max_2_rows_height = _ind_header_h + _ind_row_h * 2
     ind_edited = st.data_editor(
         ind_df_table,
         key=f"indicator_editor_{ind_ssp_index}_{ind_year}",
         use_container_width=True, hide_index=True,
-        height=min(760, max(220, 110 + len(ind_df_table) * 72)),
-        row_height=72, num_rows="fixed",
+        height=min(_ind_max_2_rows_height, max(150, _ind_header_h + len(ind_df_table) * _ind_row_h)),
+        row_height=_ind_row_h, num_rows="fixed",
         column_order=ind_display_cols,
         disabled=[
             "Код", "СЦ / Завдання", "Індикатор", "Одиниці\nвиміру",
@@ -1551,7 +1561,15 @@ else:
             unsafe_allow_html=True
         )
 
-    dynamic_height = min(820, max(220, 110 + len(table_df) * 80))
+    # Виправлення: таблиця обмежена висотою РІВНО ~2 рядків — далі
+    # вертикальний і горизонтальний скрол ВСЕРЕДИНІ таблиці (той самий
+    # принцип, що й у .measures-scroll на app.py). Раніше висота "росла"
+    # аж до 820px під кількість рядків — тому таблиця виглядала як
+    # нескінченний список замість компактного редактора зі скролом.
+    _row_h = 80
+    _header_h = 110
+    _max_2_rows_height = _header_h + _row_h * 2
+    dynamic_height = min(_max_2_rows_height, max(150, _header_h + len(table_df) * _row_h))
 
     # Всі колонки disabled для заблокованих рядків —
     # st.data_editor не підтримує per-row disabled, тому ділимо на два editor-и

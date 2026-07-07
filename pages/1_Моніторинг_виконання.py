@@ -1069,8 +1069,15 @@ if submission_mode.startswith("🎯"):
     _ind_row_h = 72
     _ind_header_h = 110
     _ind_visible_height = _ind_header_h + _ind_row_h * 2
+    # Невеликий запас (не другий скрол!) — щоб data_editor разом зі своєю
+    # смугою горизонтального скролу внизу цілком вміщався в зовнішній
+    # контейнер БЕЗ того, щоб і сам контейнер починав скролитись (це й
+    # давало "два скроли вниз"). Скрол лишається один — власний, у
+    # data_editor; зовнішній контейнер тепер лише трохи більший, щоб
+    # нічого не зрізати й не створювати другу смугу прокрутки.
+    _ind_container_height = _ind_visible_height + 24
 
-    with st.container(height=_ind_visible_height):
+    with st.container(height=_ind_container_height):
         ind_edited = st.data_editor(
             ind_df_table,
             key=f"indicator_editor_{ind_ssp_index}_{ind_year}",
@@ -1578,6 +1585,10 @@ else:
     _header_h = 110
     _visible_rows = 2
     _visible_height = _header_h + _row_h * _visible_rows
+    # Той самий невеликий запас, що й для індикаторів — щоб не було
+    # "двох скролів вниз" (власного в data_editor і ще одного в
+    # зовнішньому контейнері).
+    _container_height = _visible_height + 24
 
     # Всі колонки disabled для заблокованих рядків —
     # st.data_editor не підтримує per-row disabled, тому ділимо на два editor-и
@@ -1667,7 +1678,7 @@ else:
         unsafe_allow_html=True,
     )
 
-    with st.container(height=_visible_height):
+    with st.container(height=_container_height):
         edited_df = st.data_editor(
             table_df,
             key=f"monitoring_editor_{selected_ssp_index}_{selected_year}_{selected_quarter}_{search_query}",

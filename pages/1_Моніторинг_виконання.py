@@ -1007,7 +1007,8 @@ if submission_mode.startswith("🎯"):
                 f"{raw_value(last.get('approval_status'))})"
             )
         ind_table_rows.append({
-            "Подати": not in_progress,
+            "Подати": False,   # виправлення: за замовчуванням не позначено —
+                                # людина сама обирає, які індикатори подає зараз.
             "Код": code,
             "СЦ / Завдання": strip_leading_code(row.get("name", ""), code),
             "Індикатор": raw_value(row.get("indicator", "")),
@@ -1461,7 +1462,10 @@ for _, row in filtered_measures.iterrows():
         lock_label = ""
 
     table_rows.append({
-        "Подати":      not is_locked,   # checkbox: True тільки для нових
+        "Подати":      False,   # виправлення: за замовчуванням НІЧОГО не позначено —
+                                  # людина сама обирає, які заходи подає цього разу
+                                  # (раніше було "not is_locked" — позначало ВСІ незакриті
+                                  # рядки одразу, навіть якщо даних по них ще не вносили).
         "Код":         code,
         "Захід":       strip_leading_code(row.get("name", ""), code),
         "Тип\nпродукту":   raw_value(row.get("product_type", "")),

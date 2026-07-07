@@ -4,9 +4,10 @@ from core.ui import load_css
 from core.page_setup import page_setup, render_footer
 from core.filters import get_source_options, match_source, PPDU_2026
 from core.strategic_data import load_strat_matrix, strip_leading_code
+from core.access import filter_actions_for_user
 
 
-page_setup("Фільтр за документом", page_name="Фільтр за документом")
+current_user = page_setup("Фільтр за документом", page_name="Фільтр за документом")
 
 st.markdown('<div class="section-title">Фільтр заходів за стратегічним документом</div>', unsafe_allow_html=True)
 st.caption(
@@ -49,6 +50,10 @@ if not selected_sources:
     st.stop()
 
 measures = df[df["object_type"] == "measure"].copy()
+# Пункт 1 нового ТЗ: ролі, звужені до власного ССП, бачать за
+# замовчуванням лише заходи свого ССП (кнопка "Переглянути загальну
+# інформацію" з page_setup() знімає це звуження на цій вкладці).
+measures = filter_actions_for_user(measures, current_user, page_key="Фільтр за документом")
 matched = measures[measures["source_national"].apply(lambda v: match_source(v, selected_sources))]
 
 st.markdown(f"**Знайдено заходів: {len(matched)}**")

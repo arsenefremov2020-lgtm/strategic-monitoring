@@ -22,6 +22,7 @@ from core.access import (
 from core import approval_schemes as schemes
 from core import notify_events
 from core.closeouts import load_manual_closeouts
+from core.versioning import save_request_version
 from html import escape as _esc
 
 current_user = page_setup("Адміністрування", page_name="Адміністрування")
@@ -1838,55 +1839,76 @@ if _npa_raw or _req_chain:
         )
 
         # Зміна/підтвердження схеми адміністратором (фіксується в журналі)
-        with st.expander("🧭 Підтвердити або змінити схему погодження"):
-            _sch_c1, _sch_c2 = st.columns([1, 1])
-            with _sch_c1:
-                if st.button("✔ Підтвердити обрану подавачем схему", key=f"confirm_scheme_{selected_id}", use_container_width=True):
-                    write_log(selected_id, "Схему погодження підтверджено адміністратором",
-                              approval_status, approval_status,
-                              f"Схема: {_req_scheme_label or schemes.chain_route_text(_req_chain)}")
-                    st.success("Схему підтверджено (зафіксовано в журналі).")
-            with _sch_c2:
-                _dept_idx = re.findall(r"\d+", clean(selected_row.get("department", "")))
-                _dept_idx = _dept_idx[0] if _dept_idx else ""
-                _new_scheme = st.selectbox("Нова схема", schemes.scheme_options(), key=f"new_scheme_{selected_id}")
-            _new_roles = schemes.APPROVAL_SCHEMES[_new_scheme]
-            _new_persons = {}
-            _new_ready = True
-            _pcols = st.columns(len(_new_roles))
-            for _i, _r in enumerate(_new_roles):
-                with _pcols[_i]:
-                    _cands = schemes.stage_candidates(_r, _dept_idx)
-                    if not _cands:
-                        st.warning(f"Немає користувачів ролі «{schemes.STAGE_LABELS.get(_r)}» для ССП {_dept_idx}")
-                        _new_ready = False
-                        continue
-                    _opts = [schemes.candidate_label(c) for c in _cands]
-                    _pk = st.selectbox(f"{_i+1}. {schemes.STAGE_LABELS.get(_r)}", _opts, key=f"chg_{selected_id}_{_r}")
-                    _ch = _cands[_opts.index(_pk)]
-                    _new_persons[_r] = {"email": _ch["email"], "name": _ch["name"]}
-            if st.button("🔁 Застосувати нову схему", key=f"apply_scheme_{selected_id}",
-                         use_container_width=True, disabled=not _new_ready):
-                _new_chain = schemes.build_chain(_new_scheme, _new_persons)
-                # Поточною ланкою нової схеми стає координатор (адмін якраз розглядає заявку)
-                _admin_pos = next((i for i, stg in enumerate(_new_chain) if stg["role"] == "admin"), 0)
-                _new_status = schemes.waiting_status_for_stage(_new_chain[_admin_pos])
-                try:
-                    supabase.table("monitoring_requests").update({
-                        "approval_chain": schemes.chain_to_json(_new_chain),
-                        "chain_stage": int(_admin_pos),
-                        "scheme_label": _new_scheme,
-                        "approval_status": _new_status,
-                    }).eq("id", int(selected_id)).execute()
-                    write_log(selected_id, "Схему погодження змінено адміністратором",
-                              approval_status, _new_status,
-                              f"Нова схема: {_new_scheme} · {schemes.chain_route_text(_new_chain)}")
-                    st.success("Схему змінено та зафіксовано в журналі.")
-                    st.cache_data.clear()
-                    st.rerun()
-                except Exception as e:
-                    st.error("Не вдалося змінити схему.")
-                    st.exception(e)
+        #
+        # ВАЖЛИВО (виправлення бага зі стрес-тестування): якщо заявку вже
+        # ОСТАТОЧНО закрито (final_locked = true — останню ланку схеми
+        # погоджено), змінювати чи навіть "підтверджувати" схему більше
+        # не можна. Раніше цієї перевірки не було, і зміна схеми для вже
+        # погодженої заявки знову "відкривала" її для проходження циклу
+        # погодження. Той самий захист продубльовано тригером бази даних
+        # (migrations/010_final_lock.sql) — навіть якщо цю перевірку
+        # колись випадково приберуть з коду, база все одно не дасть
+        # відкотити approval_status/chain_stage/approval_chain назад.
+        if schemes.is_final_locked(selected_row):
+            st.info(
+                "🔒 Заявку остаточно закрито — останню ланку схеми погодження "
+                "пройдено (статус «Погоджено»). Схему погодження для цієї заявки "
+                "більше не можна змінювати чи перепризначати.\n\n"
+                "Якщо з'явилася нова, актуальніша інформація по заходу — "
+                "скоригувати вже подані дані (не маршрут погодження) може "
+                "лише супер-адмін через окрему дію «Скоригувати дані після "
+                "закриття»."
+            )
+        else:
+            with st.expander("🧭 Підтвердити або змінити схему погодження"):
+                _sch_c1, _sch_c2 = st.columns([1, 1])
+                with _sch_c1:
+                    if st.button("✔ Підтвердити обрану подавачем схему", key=f"confirm_scheme_{selected_id}", use_container_width=True):
+                        write_log(selected_id, "Схему погодження підтверджено адміністратором",
+                                  approval_status, approval_status,
+                                  f"Схема: {_req_scheme_label or schemes.chain_route_text(_req_chain)}")
+                        st.success("Схему підтверджено (зафіксовано в журналі).")
+                with _sch_c2:
+                    _dept_idx = re.findall(r"\d+", clean(selected_row.get("department", "")))
+                    _dept_idx = _dept_idx[0] if _dept_idx else ""
+                    _new_scheme = st.selectbox("Нова схема", schemes.scheme_options(), key=f"new_scheme_{selected_id}")
+                _new_roles = schemes.APPROVAL_SCHEMES[_new_scheme]
+                _new_persons = {}
+                _new_ready = True
+                _pcols = st.columns(len(_new_roles))
+                for _i, _r in enumerate(_new_roles):
+                    with _pcols[_i]:
+                        _cands = schemes.stage_candidates(_r, _dept_idx)
+                        if not _cands:
+                            st.warning(f"Немає користувачів ролі «{schemes.STAGE_LABELS.get(_r)}» для ССП {_dept_idx}")
+                            _new_ready = False
+                            continue
+                        _opts = [schemes.candidate_label(c) for c in _cands]
+                        _pk = st.selectbox(f"{_i+1}. {schemes.STAGE_LABELS.get(_r)}", _opts, key=f"chg_{selected_id}_{_r}")
+                        _ch = _cands[_opts.index(_pk)]
+                        _new_persons[_r] = {"email": _ch["email"], "name": _ch["name"]}
+                if st.button("🔁 Застосувати нову схему", key=f"apply_scheme_{selected_id}",
+                             use_container_width=True, disabled=not _new_ready):
+                    _new_chain = schemes.build_chain(_new_scheme, _new_persons)
+                    # Поточною ланкою нової схеми стає координатор (адмін якраз розглядає заявку)
+                    _admin_pos = next((i for i, stg in enumerate(_new_chain) if stg["role"] == "admin"), 0)
+                    _new_status = schemes.waiting_status_for_stage(_new_chain[_admin_pos])
+                    try:
+                        supabase.table("monitoring_requests").update({
+                            "approval_chain": schemes.chain_to_json(_new_chain),
+                            "chain_stage": int(_admin_pos),
+                            "scheme_label": _new_scheme,
+                            "approval_status": _new_status,
+                        }).eq("id", int(selected_id)).execute()
+                        write_log(selected_id, "Схему погодження змінено адміністратором",
+                                  approval_status, _new_status,
+                                  f"Нова схема: {_new_scheme} · {schemes.chain_route_text(_new_chain)}")
+                        st.success("Схему змінено та зафіксовано в журналі.")
+                        st.cache_data.clear()
+                        st.rerun()
+                    except Exception as e:
+                        st.error("Не вдалося змінити схему.")
+                        st.exception(e)
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ──────────────────────────────────────────────
@@ -2013,160 +2035,300 @@ else:
                      "status": "Повернуто на доопрацювання", "new_stage": 0}]
 _adm_target_labels = [t["label"] for t in _adm_targets]
 
-with st.form(key=f"admin_decision_form_{selected_id}"):
-    decision = st.radio(
-        "Оберіть рішення",
-        [
-            _approve_option,
-            "Повернути на доопрацювання",
-            "Залишити в очікуванні"
-        ],
-        horizontal=True,
-        key=f"decision_radio_{selected_id}"
+if schemes.is_final_locked(selected_row):
+    st.info(
+        "🔒 Заявку остаточно закрито — останню ланку схеми погодження "
+        "пройдено (статус «Погоджено»). Рішення координатора (погодити / "
+        "повернути на доопрацювання / залишити в очікуванні) для цієї заявки "
+        "більше не застосовуються.\n\n"
+        "Якщо з'явилася нова, актуальніша інформація по заходу — "
+        "скоригувати вже подані дані (не маршрут погодження) може "
+        "лише супер-адмін через окрему дію «Скоригувати дані після закриття»."
     )
+else:
+    with st.form(key=f"admin_decision_form_{selected_id}"):
+        decision = st.radio(
+            "Оберіть рішення",
+            [
+                _approve_option,
+                "Повернути на доопрацювання",
+                "Залишити в очікуванні"
+            ],
+            horizontal=True,
+            key=f"decision_radio_{selected_id}"
+        )
 
-    return_target_label = st.selectbox(
-        "Кому повернути (якщо обрано повернення)",
-        _adm_target_labels,
-        key=f"adm_return_target_{selected_id}",
-    )
+        return_target_label = st.selectbox(
+            "Кому повернути (якщо обрано повернення)",
+            _adm_target_labels,
+            key=f"adm_return_target_{selected_id}",
+        )
 
-    decision_labels = {
-        _approve_option:
-            ("🖊 Заявку буде передано на наступну ланку схеми погодження"
-             if _req_chain and _next_after_admin else
-             ("✅ Заявка отримає статус «Погоджено»" if _req_chain else
-              "🖊 Заявка перейде до керівника ССП на підтвердження")),
-        "Повернути на доопрацювання":
-            "↩ Повернено на доопрацювання — адресат отримає сповіщення",
-        "Залишити в очікуванні":
-            "⏳ Залишено в очікуванні — без змін статусу",
-    }
+        decision_labels = {
+            _approve_option:
+                ("🖊 Заявку буде передано на наступну ланку схеми погодження"
+                 if _req_chain and _next_after_admin else
+                 ("✅ Заявка отримає статус «Погоджено»" if _req_chain else
+                  "🖊 Заявка перейде до керівника ССП на підтвердження")),
+            "Повернути на доопрацювання":
+                "↩ Повернено на доопрацювання — адресат отримає сповіщення",
+            "Залишити в очікуванні":
+                "⏳ Залишено в очікуванні — без змін статусу",
+        }
 
-    st.markdown(
-        f'<div class="decision-box">{decision_labels.get(decision, decision)}</div>',
-        unsafe_allow_html=True
-    )
+        st.markdown(
+            f'<div class="decision-box">{decision_labels.get(decision, decision)}</div>',
+            unsafe_allow_html=True
+        )
 
-    st.markdown(
-        '<div class="comment-header">✏ Коментар адміністратора</div>',
-        unsafe_allow_html=True
-    )
+        st.markdown(
+            '<div class="comment-header">✏ Коментар адміністратора</div>',
+            unsafe_allow_html=True
+        )
 
-    admin_comment = st.text_area(
-        "Введіть коментар або обґрунтування рішення",
-        value=default_comment,
-        height=130,
-        key=f"admin_comment_form_{selected_id}",
-        label_visibility="collapsed"
-    )
+        admin_comment = st.text_area(
+            "Введіть коментар або обґрунтування рішення",
+            value=default_comment,
+            height=130,
+            key=f"admin_comment_form_{selected_id}",
+            label_visibility="collapsed"
+        )
 
-    confirm_decision = st.form_submit_button(
-        "Застосувати рішення",
-        use_container_width=True
-    )
+        confirm_decision = st.form_submit_button(
+            "Застосувати рішення",
+            use_container_width=True
+        )
 
-if confirm_decision:
-    _extra_update = {}
-    _notify_action = None   # ("stage", stage_dict) | ("approved",) | ("returned", target)
+    if confirm_decision:
+        _extra_update = {}
+        _notify_action = None   # ("stage", stage_dict) | ("approved",) | ("returned", target)
 
-    if decision == _approve_option:
-        if _req_chain:
-            new_status, _new_stage = schemes.status_after_approve(_req_chain, _req_stage)
-            _extra_update["chain_stage"] = int(_new_stage)
-            if new_status == "Погоджено":
-                action_text  = "Погодження координатором (остання ланка схеми)"
-                success_text = "✅ Заявка пройшла всі етапи схеми. Статус: «Погоджено»."
-                _notify_action = ("approved",)
+        if decision == _approve_option:
+            if _req_chain:
+                new_status, _new_stage = schemes.status_after_approve(_req_chain, _req_stage)
+                _extra_update["chain_stage"] = int(_new_stage)
+                if new_status == "Погоджено":
+                    action_text  = "Погодження координатором (остання ланка схеми)"
+                    success_text = "✅ Заявка пройшла всі етапи схеми. Статус: «Погоджено»."
+                    _notify_action = ("approved",)
+                else:
+                    action_text  = f"Погодження координатором → передано далі: {new_status}"
+                    _who_next = ""
+                    if _next_after_admin:
+                        _who_next = (_next_after_admin.get("name")
+                                     or _next_after_admin.get("email")
+                                     or _next_after_admin.get("label", ""))
+                    success_text = (
+                        f"✅ Підтверджено. Заявка одразу надійшла наступній ланці — "
+                        f"{_next_after_admin.get('label','') if _next_after_admin else ''}"
+                        f"{f' ({_who_next})' if _who_next else ''}. "
+                        f"Вона вже бачить її у кабінеті у списку «Активні до розгляду»."
+                    )
+                    _notify_action = ("stage", _next_after_admin)
             else:
-                action_text  = f"Погодження координатором → передано далі: {new_status}"
-                _who_next = ""
-                if _next_after_admin:
-                    _who_next = (_next_after_admin.get("name")
-                                 or _next_after_admin.get("email")
-                                 or _next_after_admin.get("label", ""))
-                success_text = (
-                    f"✅ Підтверджено. Заявка одразу надійшла наступній ланці — "
-                    f"{_next_after_admin.get('label','') if _next_after_admin else ''}"
-                    f"{f' ({_who_next})' if _who_next else ''}. "
-                    f"Вона вже бачить її у кабінеті у списку «Активні до розгляду»."
-                )
-                _notify_action = ("stage", _next_after_admin)
+                new_status   = "Очікує: Керівник ССП"
+                action_text  = "Передано керівнику ССП на підтвердження"
+                success_text = "✅ Заявку передано керівнику ССП на підтвердження. Після підтвердження дані відобразяться на головній сторінці."
+        elif decision == "Повернути на доопрацювання":
+            _picked = _adm_targets[_adm_target_labels.index(return_target_label)]
+            new_status   = _picked["status"]
+            action_text  = f"Повернення на доопрацювання: {_picked['label']}"
+            success_text = f"↩ Заявку повернуто: {_picked['label']}."
+            if _req_chain:
+                _extra_update["chain_stage"] = int(_picked["new_stage"])
+            _notify_action = ("returned", _picked)
         else:
-            new_status   = "Очікує: Керівник ССП"
-            action_text  = "Передано керівнику ССП на підтвердження"
-            success_text = "✅ Заявку передано керівнику ССП на підтвердження. Після підтвердження дані відобразяться на головній сторінці."
-    elif decision == "Повернути на доопрацювання":
-        _picked = _adm_targets[_adm_target_labels.index(return_target_label)]
-        new_status   = _picked["status"]
-        action_text  = f"Повернення на доопрацювання: {_picked['label']}"
-        success_text = f"↩ Заявку повернуто: {_picked['label']}."
-        if _req_chain:
-            _extra_update["chain_stage"] = int(_picked["new_stage"])
-        _notify_action = ("returned", _picked)
-    else:
-        new_status   = approval_status
-        action_text  = "Заявку залишено в очікуванні"
-        success_text = "⏳ Заявку залишено в очікуванні."
+            new_status   = approval_status
+            action_text  = "Заявку залишено в очікуванні"
+            success_text = "⏳ Заявку залишено в очікуванні."
 
-    try:
-        supabase.table("monitoring_requests").update({
-            "approval_status": new_status,
-            "admin_comment":   admin_comment,
-            **_extra_update,
-        }).eq("id", int(selected_id)).execute()
-
-        write_log(selected_id, action_text, approval_status, new_status, admin_comment)
-
-        # Миттєві email-сповіщення (не ламають інтерфейс при помилці)
         try:
-            if _notify_action and _notify_action[0] == "approved":
-                notify_events.notify_approved(
-                    clean(selected_row.get("email", "")),
-                    clean(selected_row.get("responsible_person", "")),
-                    selected_code, _req_year, _req_quarter, kind=_req_kind or "measure",
-                )
-            elif _notify_action and _notify_action[0] == "stage" and _notify_action[1]:
-                _nx = _notify_action[1]
-                notify_events.notify_stage_assigned(
-                    _nx.get("email", ""), _nx.get("name", ""), _nx.get("label", ""),
-                    selected_code, _req_year, _req_quarter,
-                    submitter=clean(selected_row.get("responsible_person", "")),
-                    kind=_req_kind or "measure",
-                )
-            elif _notify_action and _notify_action[0] == "returned":
-                _tg = _notify_action[1]
-                if _tg["key"] == "submitter":
-                    notify_events.notify_returned(
+            _update_payload = schemes.finalize_update_payload({
+                "approval_status": new_status,
+                "admin_comment":   admin_comment,
+                **_extra_update,
+            }, new_status)
+            supabase.table("monitoring_requests").update(_update_payload).eq("id", int(selected_id)).execute()
+
+            write_log(selected_id, action_text, approval_status, new_status, admin_comment)
+
+            # Миттєві email-сповіщення (не ламають інтерфейс при помилці)
+            try:
+                if _notify_action and _notify_action[0] == "approved":
+                    notify_events.notify_approved(
                         clean(selected_row.get("email", "")),
                         clean(selected_row.get("responsible_person", "")),
+                        selected_code, _req_year, _req_quarter, kind=_req_kind or "measure",
+                    )
+                elif _notify_action and _notify_action[0] == "stage" and _notify_action[1]:
+                    _nx = _notify_action[1]
+                    notify_events.notify_stage_assigned(
+                        _nx.get("email", ""), _nx.get("name", ""), _nx.get("label", ""),
                         selected_code, _req_year, _req_quarter,
-                        by_label="Координатор", comment=clean(admin_comment),
+                        submitter=clean(selected_row.get("responsible_person", "")),
                         kind=_req_kind or "measure",
                     )
-                elif _tg["key"].startswith("stage:") and _req_chain:
-                    _ts = _req_chain[_tg["new_stage"]]
-                    notify_events.notify_returned(
-                        _ts.get("email", ""), _ts.get("name", ""),
-                        selected_code, _req_year, _req_quarter,
-                        by_label="Координатор", comment=clean(admin_comment),
-                        kind=_req_kind or "measure",
-                    )
-        except Exception:
-            pass
+                elif _notify_action and _notify_action[0] == "returned":
+                    _tg = _notify_action[1]
+                    if _tg["key"] == "submitter":
+                        notify_events.notify_returned(
+                            clean(selected_row.get("email", "")),
+                            clean(selected_row.get("responsible_person", "")),
+                            selected_code, _req_year, _req_quarter,
+                            by_label="Координатор", comment=clean(admin_comment),
+                            kind=_req_kind or "measure",
+                        )
+                    elif _tg["key"].startswith("stage:") and _req_chain:
+                        _ts = _req_chain[_tg["new_stage"]]
+                        notify_events.notify_returned(
+                            _ts.get("email", ""), _ts.get("name", ""),
+                            selected_code, _req_year, _req_quarter,
+                            by_label="Координатор", comment=clean(admin_comment),
+                            kind=_req_kind or "measure",
+                        )
+            except Exception:
+                pass
 
-        st.success(success_text)
-        st.cache_data.clear()
-        st.rerun()
-    except Exception as e:
-        st.error("Не вдалося застосувати рішення.")
-        st.exception(e)
+            st.success(success_text)
+            st.cache_data.clear()
+            st.rerun()
+        except Exception as e:
+            st.error("Не вдалося застосувати рішення.")
+            st.exception(e)
 
 st.markdown('</div>', unsafe_allow_html=True)
 
 # ──────────────────────────────────────────────
-# ОСТАННЯ ДІЯ ТА ІСТОРІЯ ЗМІН
+# СУПЕР-АДМІН: КОРИГУВАННЯ ДАНИХ ПІСЛЯ ЗАКРИТТЯ (пункт 5 нового ТЗ)
 # ──────────────────────────────────────────────
+#
+# Якщо захід уже остаточно закрито (final_locked), звичайні дії
+# координатора недоступні (див. блок вище). Але якщо ЗАВТРА зʼявилась
+# нова, найбільш актуальна інформація по заходу — супер-адмін має
+# можливість скоригувати ВЖЕ ПОДАНІ ДАНІ (не маршрут погодження:
+# final_locked і approval_status/chain_stage/approval_chain НЕ
+# змінюються — це і без того гарантовано тригером бази, migrations/
+# 010_final_lock.sql). Обов'язковий коментар-обґрунтування йде і в
+# історію версій, і в лист останній ланці маршруту погодження.
+if schemes.is_final_locked(selected_row) and is_super_admin_user(current_user):
+    st.markdown(
+        '<div class="card"><div class="card-title">🛠 Супер-адмін: '
+        'скоригувати дані після закриття</div>'
+        '<div class="card-subtitle">Захід закрито остаточно. Це виправляє '
+        'ЛИШЕ подані значення (не маршрут погодження) і завжди супроводжується '
+        'обов\'язковим коментарем, який автоматично надсилається останній '
+        'ланці, що погодила заявку.</div>',
+        unsafe_allow_html=True,
+    )
+
+    with st.expander("✏️ Скоригувати дані після закриття"):
+        _sa_status_options = [
+            "Виконано", "Частково виконано", "Не виконано",
+            "Не настав час", "Втратило актуальність",
+        ]
+        _sa_current_status = clean(selected_row.get("status", ""))
+        _sa_status_index = (
+            _sa_status_options.index(_sa_current_status)
+            if _sa_current_status in _sa_status_options else 0
+        )
+
+        sa_new_status = st.selectbox(
+            "Статус виконання", _sa_status_options, index=_sa_status_index,
+            key=f"sa_correct_status_{selected_id}",
+        )
+        sa_new_value = st.text_input(
+            "Фактичне значення", value=clean(selected_row.get("numeric_value", "")),
+            key=f"sa_correct_value_{selected_id}",
+        )
+        sa_new_progress = st.text_area(
+            "Опис прогресу", value=clean(selected_row.get("progress_text", "")),
+            height=110, key=f"sa_correct_progress_{selected_id}",
+        )
+        sa_new_risks = st.text_area(
+            "Ризики / проблеми / відхилення", value=clean(selected_row.get("risks", "")),
+            height=110, key=f"sa_correct_risks_{selected_id}",
+        )
+        sa_reason = st.text_area(
+            "🔴 Обов'язково: на підставі чого вносяться зміни",
+            height=100, key=f"sa_correct_reason_{selected_id}",
+            placeholder="Напр.: надійшов уточнений звіт від ССП від 12.07.2026, "
+                        "попередні дані містили технічну помилку тощо.",
+        )
+
+        sa_submit = st.button(
+            "💾 Зберегти коригування",
+            use_container_width=True,
+            key=f"sa_correct_submit_{selected_id}",
+        )
+
+        if sa_submit:
+            if not clean(sa_reason):
+                st.error("Обов'язково вкажіть підставу для коригування.")
+            else:
+                try:
+                    _sa_old_version = save_request_version(
+                        selected_id, selected_row.to_dict(),
+                        created_by="Супер-адмін / до коригування",
+                    )
+
+                    # ВАЖЛИВО: final_locked, approval_status, chain_stage,
+                    # approval_chain НЕ входять у цей payload — заявка
+                    # лишається закритою рівно так само, як і була.
+                    _sa_update = {
+                        "status": sa_new_status,
+                        "numeric_value": sa_new_value,
+                        "progress_text": sa_new_progress,
+                        "risks": sa_new_risks,
+                        "admin_comment": f"Коригування супер-адміном після закриття: {clean(sa_reason)}",
+                    }
+
+                    supabase.table("monitoring_requests").update(_sa_update).eq(
+                        "id", int(selected_id)
+                    ).execute()
+
+                    _sa_new_version_data = selected_row.to_dict()
+                    _sa_new_version_data.update(_sa_update)
+                    _sa_new_version = save_request_version(
+                        selected_id, _sa_new_version_data,
+                        created_by="Супер-адмін / коригування після закриття",
+                    )
+
+                    write_log(
+                        selected_id,
+                        f"Коригування даних супер-адміном після закриття: версія "
+                        f"{_sa_old_version} → {_sa_new_version}",
+                        "Погоджено", "Погоджено",
+                        f"Підстава: {clean(sa_reason)}",
+                    )
+
+                    # Сповіщення останній ланці маршруту (саме зі СНІМКУ
+                    # заявки на момент закриття, а не з поточної схеми).
+                    try:
+                        if _req_chain:
+                            _last_stage = _req_chain[-1]
+                            notify_events.notify_superadmin_correction(
+                                _last_stage.get("email", ""), _last_stage.get("name", ""),
+                                selected_code, _req_year, _req_quarter,
+                                reason=clean(sa_reason),
+                                editor_name=clean(current_user.get("full_name", "")) or "Супер-адміністратор",
+                                kind=_req_kind or "measure",
+                            )
+                    except Exception:
+                        pass
+
+                    st.success(
+                        "Дані скориговано. Заявка лишається закритою (final_locked); "
+                        "останню ланку маршруту повідомлено листом."
+                    )
+                    st.cache_data.clear()
+                    st.rerun()
+                except Exception as e:
+                    st.error("Не вдалося зберегти коригування.")
+                    st.exception(e)
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
 
 st.markdown(
     '<div class="card"><div class="card-title">Остання дія та історія змін</div>',

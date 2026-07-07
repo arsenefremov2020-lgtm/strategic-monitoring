@@ -18,8 +18,9 @@ from core.excel_loader import read_excel_sheet
 from core import operational
 from core.closeouts import load_manual_closeouts
 from core.exports import render_png_download
+from core.access import filter_actions_for_user, filter_requests_for_user
 
-page_setup("Оцінка МіО", page_name="Оцінка МіО")
+current_user = page_setup("Оцінка МіО", page_name="Оцінка МіО")
 
 
 FILE_PATH = "Під моніторинг СП.xlsx"
@@ -1543,6 +1544,18 @@ def insight(text, kind=""):
 
 strat_df      = load_strat_matrix()
 monitoring_df = load_monitoring_requests()
+
+# Пункт 1 нового ТЗ: звужуємо тут лише monitoring_df (подання, без
+# ризику для ієрархії цілей/завдань). strat_df навмисно НЕ звужуємо
+# на цьому рівні — у ньому перемішані рядки стратегічних цілей,
+# завдань і заходів, і "Головний виконавець" для рядків
+# цілей/завдань в Excel успадкований через об'єднані комірки (не є
+# надійним індикатором власника). Звуження заходів застосовується
+# нижче, у кожному режимі сторінки окремо — через ті самі st_filter,
+# що вже й керують відбором ССП у цьому режимі.
+monitoring_df = filter_requests_for_user(
+    monitoring_df, current_user, ssp_columns=["department"], page_key="Оцінка МіО"
+)
 
 # ============================================================
 # ДЖЕРЕЛО ДАНИХ: ПІДТВЕРДЖЕНІ / ОПЕРАТИВНА ОЦІНКА (правка №6)

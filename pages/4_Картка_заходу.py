@@ -17,7 +17,8 @@ import re
 from core.page_setup import page_setup, render_footer
 from core.strategic_data import load_strat_matrix as core_load_strat_matrix
 from core import monitoring_data
-from config.roles import ROLE_SSP, ROLE_ADMIN, ROLE_SUPER_ADMIN, ENABLE_PERSONAL_CABINETS
+from config.roles import ROLE_SSP, ROLE_SSP_HEAD, ROLE_UNIT_HEAD, ROLE_SSP_DEPUTY, ROLE_ADMIN, ROLE_SUPER_ADMIN, ENABLE_PERSONAL_CABINETS
+from core.access import filter_actions_for_user, filter_requests_for_user
 
 
 current_user = page_setup("Картка заходу", page_name="Картка заходу")
@@ -26,7 +27,12 @@ can_view_submission_history = (
     not ENABLE_PERSONAL_CABINETS or current_role in [ROLE_ADMIN, ROLE_SUPER_ADMIN]
 )
 can_submit_monitoring_data = (
-    not ENABLE_PERSONAL_CABINETS or current_role == ROLE_SSP
+    # Пункт 2 нового ТЗ: подавати відомості можуть не тільки "Відповідальний
+    # від ССП", а й керівник ССП / керівник управління / заступник —
+    # схема погодження для них автоматично звужується до координатора
+    # (див. core/approval_schemes.py: scheme_options_for_submitter).
+    not ENABLE_PERSONAL_CABINETS
+    or current_role in [ROLE_SSP, ROLE_SSP_HEAD, ROLE_UNIT_HEAD, ROLE_SSP_DEPUTY]
 )
 
 
@@ -1119,6 +1125,18 @@ requests_df = load_requests()
 goals = df[df["object_type"] == "goal"].copy()
 tasks = df[df["object_type"] == "task"].copy()
 measures = df[df["object_type"] == "measure"].copy()
+
+# Пункт 1 нового ТЗ: ролі, звужені до власного ССП, за замовчуванням
+# бачать (і можуть обрати в переліку заходів) тільки заходи свого ССП.
+# Стратегічні цілі/завдання НЕ звужуємо тут напряму (див. app.py/Dashboard —
+# "Головний виконавець" для рядків цілей/завдань в Excel успадкований
+# через об'єднані комірки і не є надійним індикатором власника); якщо
+# ціль/завдання після цього не містить жодного видимого заходу — це
+# вже коректно обробляють подальші перевірки "заходів не знайдено".
+measures = filter_actions_for_user(measures, current_user, page_key="Картка заходу")
+requests_df = filter_requests_for_user(
+    requests_df, current_user, ssp_columns=["department"], page_key="Картка заходу"
+)
 
 if measures.empty:
     st.warning("Заходів у стратегічній матриці не знайдено.")

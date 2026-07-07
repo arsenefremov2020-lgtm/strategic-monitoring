@@ -434,72 +434,14 @@ def write_log(request_id, action, old_status, new_status, admin_comment):
     }).execute()
 
 
-def get_next_version_number(request_id):
-    response = (
-        supabase
-        .table("monitoring_request_versions")
-        .select("version_number")
-        .eq("request_id", int(request_id))
-        .order("version_number", desc=True)
-        .limit(1)
-        .execute()
-    )
-
-    if not response.data:
-        return 1
-
-    return int(response.data[0].get("version_number", 0)) + 1
-
-
-def save_request_version(request_id, row_data, created_by="ССП"):
-    version_number = get_next_version_number(request_id)
-
-    payload = {
-        "request_id": int(request_id),
-        "version_number": version_number,
-        "year": clean(row_data.get("year", "")),
-        "quarter": clean(row_data.get("quarter", "")),
-        "department": clean(row_data.get("department", "")),
-        "responsible_person": clean(row_data.get("responsible_person", "")),
-        "phone": clean(row_data.get("phone", "")),
-        "email": clean(row_data.get("email", "")),
-        "strat_code": clean(row_data.get("strat_code", "")),
-        "status": clean(row_data.get("status", "")),
-        "progress_text": clean(row_data.get("progress_text", "")),
-        "numeric_value": clean(row_data.get("numeric_value", "")),
-        "risks": clean(row_data.get("risks", "")),
-        "file_names": clean(row_data.get("file_names", "")),
-        "file_urls": clean(row_data.get("file_urls", "")),
-        "approval_status": clean(row_data.get("approval_status", "")),
-        "admin_comment": clean(row_data.get("admin_comment", "")),
-        "start_date": clean(row_data.get("start_date", "")),
-        "end_date": clean(row_data.get("end_date", "")),
-        # Розширення версії (міграція 004): маршрут погодження та контекст
-        "npa_link": clean(row_data.get("npa_link", "")),
-        "approval_chain": clean(row_data.get("approval_chain", "")),
-        "chain_stage": int(row_data.get("chain_stage") or 0),
-        "scheme_label": clean(row_data.get("scheme_label", "")),
-        "object_kind": clean(row_data.get("object_kind", "")),
-        "object_name": clean(row_data.get("object_name", "")),
-        "indicator_name": clean(row_data.get("indicator_name", "")),
-        "as_of_date": clean(row_data.get("as_of_date", "")),
-        "created_by": created_by
-    }
-
-    supabase.table("monitoring_request_versions").insert(payload).execute()
-    return version_number
-
-
-def load_versions(request_id):
-    response = (
-        supabase
-        .table("monitoring_request_versions")
-        .select("*")
-        .eq("request_id", int(request_id))
-        .order("version_number", desc=False)
-        .execute()
-    )
-    return pd.DataFrame(response.data or [])
+# Спільна логіка версіювання винесена в core/versioning.py (пункт 3 ТЗ:
+# та сама логіка тепер потрібна і в 1_Мій_кабінет.py, і в
+# 3_Адміністрування.py для коригування супер-адміном закритих заявок).
+from core.versioning import (
+    get_next_version_number,
+    save_request_version,
+    load_versions,
+)
 
 
 # ============================================================
@@ -937,6 +879,140 @@ else:
     )
 
 st.markdown('</div>', unsafe_allow_html=True)
+
+# ============================================================
+# ПРЯМЕ РЕДАГУВАННЯ (пункт 3 нового ТЗ)
+# ============================================================
+#
+# На відміну від блоку "RESUBMIT" нижче (він доступний лише коли
+# координатор/ланка явно повернули заявку на доопрацювання і запускає
+# ВЕСЬ маршрут погодження заново), цей блок дозволяє подавачу
+# відредагувати дані ПРЯМО ЗАРАЗ, поки заявка ще десь у процесі
+# погодження (не повернута і ще не погоджена остаточно) — без
+# додаткового кроку "надіслати на доопрацювання". Обов'язкова умова:
+# відредаговані дані завжди повертаються саме на ланку координатора
+# (а не на початок схеми і не туди, де заявка щойно була) — координатор
+# повторно перевіряє зміни, після чого заявка як і раніше рухається
+# рештою ланок схеми.
+_direct_edit_statuses = set(schemes.ALL_WAITING_STATUSES) - {"Повернуто на доопрацювання"}
+
+if approval in _direct_edit_statuses and not schemes.is_final_locked(selected_row):
+    with st.expander("✏️ Редагувати подану інформацію (без очікування повернення)"):
+        st.caption(
+            "Зміните дані нижче й натисніть «Зберегти й надіслати координатору». "
+            "Попередню версію буде збережено в історії. Заявка повернеться на "
+            "розгляд координатору (ланці «Координатор»), після чого — далі за "
+            "звичайним маршрутом схеми погодження."
+        )
+
+        _de_status_options = list(SUBMISSION_STATUS_OPTIONS)
+        _de_current_status = clean(selected_row["status"])
+        _de_status_index = (
+            _de_status_options.index(_de_current_status)
+            if _de_current_status in _de_status_options else 0
+        )
+
+        de_new_status = st.selectbox(
+            "Статус виконання", _de_status_options, index=_de_status_index,
+            key=f"direct_edit_status_{selected_id}",
+        )
+        de_new_value = st.text_input(
+            "Фактичне значення", value=clean(selected_row["numeric_value"]),
+            key=f"direct_edit_value_{selected_id}",
+        )
+        de_new_progress = st.text_area(
+            "Опис прогресу", value=clean(selected_row["progress_text"]),
+            height=120, key=f"direct_edit_progress_{selected_id}",
+        )
+        de_new_risks = st.text_area(
+            "Ризики / проблеми / відхилення", value=clean(selected_row["risks"]),
+            height=120, key=f"direct_edit_risks_{selected_id}",
+        )
+
+        de_submit = st.button(
+            "💾 Зберегти й надіслати координатору",
+            use_container_width=True,
+            key=f"direct_edit_submit_{selected_id}",
+        )
+
+        if de_submit:
+            de_errors = []
+            if not has_value(de_new_value):
+                de_errors.append("Заповніть фактичне значення.")
+            if not has_value(de_new_progress):
+                de_errors.append("Заповніть опис прогресу.")
+
+            if de_errors:
+                for e in de_errors:
+                    st.error(e)
+                st.stop()
+
+            try:
+                _de_old_data = selected_row.to_dict()
+                _de_old_version = save_request_version(
+                    selected_id, _de_old_data, created_by="ССП / до редагування"
+                )
+
+                _de_chain = schemes.parse_chain(selected_row.get("approval_chain"))
+                if _de_chain:
+                    from core.versioning import coordinator_stage_index
+                    _de_coord_idx = coordinator_stage_index(_de_chain)
+                    _de_new_status = schemes.waiting_status_for_stage(_de_chain[_de_coord_idx])
+                else:
+                    _de_coord_idx = 0
+                    _de_new_status = "Очікує погодження"
+
+                _de_update = {
+                    "status": de_new_status,
+                    "numeric_value": de_new_value,
+                    "progress_text": de_new_progress,
+                    "risks": de_new_risks,
+                    "approval_status": _de_new_status,
+                    "chain_stage": int(_de_coord_idx),
+                    "submitted_at": datetime.now(timezone.utc).isoformat(),
+                    "admin_comment": "",
+                }
+
+                supabase.table("monitoring_requests").update(_de_update).eq(
+                    "id", int(selected_id)
+                ).execute()
+
+                if _de_chain:
+                    _de_coord_stage = _de_chain[_de_coord_idx]
+                    try:
+                        notify_events.notify_stage_assigned(
+                            _de_coord_stage.get("email", ""), _de_coord_stage.get("name", ""),
+                            _de_coord_stage.get("label", ""),
+                            clean(selected_row.get("strat_code", "")),
+                            clean(selected_row.get("year", "")),
+                            clean(selected_row.get("quarter", "")),
+                            submitter=clean(selected_row.get("responsible_person", "")),
+                            kind=clean(selected_row.get("object_kind", "")) or "measure",
+                        )
+                    except Exception:
+                        pass
+
+                _de_new_version_data = selected_row.to_dict()
+                _de_new_version_data.update(_de_update)
+                _de_new_version = save_request_version(
+                    selected_id, _de_new_version_data, created_by="ССП / пряме редагування"
+                )
+
+                write_log(
+                    selected_id,
+                    f"Пряме редагування поданих даних: версія {_de_old_version} → {_de_new_version}",
+                    approval, _de_new_status,
+                    "Відредаговано без повернення на доопрацювання; надіслано координатору повторно.",
+                )
+
+                st.success(
+                    "Зміни збережено. Заявку повторно надіслано координатору на розгляд."
+                )
+                st.cache_data.clear()
+                st.rerun()
+            except Exception as e:
+                st.error("Не вдалося зберегти зміни.")
+                st.exception(e)
 
 # ============================================================
 # RESUBMIT

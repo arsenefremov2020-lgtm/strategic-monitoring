@@ -12,6 +12,7 @@ from core.ui import load_css
 from core.config import FILE_PATH, SHEET_NAME
 from core.excel_loader import read_excel_sheet
 from core.exports import fig_png_bytes
+from core import exports as core_exports
 import plotly.express as _px_rep
 
 from docx import Document
@@ -1057,43 +1058,19 @@ def create_excel_report(active, period_requests, goal_progress, dep_progress, ta
         ["Відхилення", deviation_label(metrics["deviation"])],
     ], columns=["Показник", "Значення"])
 
-    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        summary_df.to_excel(writer, sheet_name="Пояснення", index=False)
-        active_export[[c for c in active_cols if c in active_export.columns]].to_excel(writer, sheet_name="Аналітичний масив", index=False)
-        goal_progress.to_excel(writer, sheet_name="Стратегічні цілі", index=False)
-        task_progress.to_excel(writer, sheet_name="Завдання", index=False)
-        dep_progress.to_excel(writer, sheet_name="ССП", index=False)
-        product_progress.to_excel(writer, sheet_name="Типи продукту", index=False)
-        period_dynamics.to_excel(writer, sheet_name="Динаміка", index=False)
-        status_counts.to_excel(writer, sheet_name="Статуси", index=False)
-        yoy_comparison.to_excel(writer, sheet_name="Рік до року", index=False)
-        period_requests.to_excel(writer, sheet_name="Реєстр заявок", index=False)
-
-        workbook = writer.book
-        header_format = workbook.add_format({"bold": True, "bg_color": "#D9EAF7", "border": 1})
-        for sheet_name, worksheet in writer.sheets.items():
-            worksheet.freeze_panes(1, 0)
-            worksheet.set_column(0, 30, 20)
-            worksheet.autofilter(0, 0, 0, 20)
-            # Apply header style conservatively.
-            try:
-                ws_df = {
-                    "Пояснення": summary_df,
-                    "Аналітичний масив": active_export[[c for c in active_cols if c in active_export.columns]],
-                    "Стратегічні цілі": goal_progress,
-                    "Завдання": task_progress,
-                    "ССП": dep_progress,
-                    "Типи продукту": product_progress,
-                    "Динаміка": period_dynamics,
-                    "Статуси": status_counts,
-                    "Рік до року": yoy_comparison,
-                    "Реєстр заявок": period_requests,
-                }[sheet_name]
-                for col_num, value in enumerate(ws_df.columns.values):
-                    worksheet.write(0, col_num, value, header_format)
-            except Exception:
-                pass
-
+    _sheets = {
+        "Пояснення": summary_df,
+        "Аналітичний масив": active_export[[c for c in active_cols if c in active_export.columns]],
+        "Стратегічні цілі": goal_progress,
+        "Завдання": task_progress,
+        "ССП": dep_progress,
+        "Типи продукту": product_progress,
+        "Динаміка": period_dynamics,
+        "Статуси": status_counts,
+        "Рік до року": yoy_comparison,
+        "Реєстр заявок": period_requests,
+    }
+    output = BytesIO(core_exports.write_styled_excel(_sheets, freeze_first_col=1))
     output.seek(0)
     return output
 
@@ -1782,8 +1759,7 @@ with e2:
         use_container_width=True,
     )
 with e3:
-    requests_output = BytesIO()
-    period_requests.to_excel(requests_output, index=False, engine="openpyxl")
+    requests_output = BytesIO(core_exports.write_styled_excel({"Реєстр заявок": period_requests}))
     requests_output.seek(0)
     st.download_button(
         "Реєстр заявок",

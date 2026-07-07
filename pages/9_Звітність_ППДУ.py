@@ -5,9 +5,10 @@ from core.ui import load_css
 from core.page_setup import page_setup, render_footer
 from core.filters import match_source, PPDU_2026
 from core.strategic_data import load_strat_matrix, strip_leading_code
+from core.access import filter_actions_for_user
 
 
-page_setup("Звітність ППДУ", page_name="Звітність ППДУ")
+current_user = page_setup("Звітність ППДУ", page_name="Звітність ППДУ")
 
 st.info(
     "Це тестовий варіант сторінки, який перебуває на стадії опрацювання. "
@@ -19,6 +20,9 @@ st.markdown('<div class="section-title">Звітність ППДУ-2026 (тес
 
 df = load_strat_matrix()
 measures = df[df["object_type"] == "measure"].copy()
+# Пункт 1 нового ТЗ: звужуємо до власного ССП (кнопка "Переглянути
+# загальну інформацію" з page_setup() знімає звуження на цій вкладці).
+measures = filter_actions_for_user(measures, current_user, page_key="Звітність ППДУ")
 ppdu_measures = measures[measures["source_national"].apply(lambda v: match_source(v, [PPDU_2026]))].copy()
 
 st.caption(f"Заходів ППДУ-2026 у стратегічній матриці: {len(ppdu_measures)}")

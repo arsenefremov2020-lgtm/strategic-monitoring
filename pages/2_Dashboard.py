@@ -16,6 +16,13 @@ from core.closeouts import load_manual_closeouts
 from core.exports import render_png_download, build_presentation_pdf
 from core.periods import get_period_state
 from core.filters import get_source_options, match_source
+from core.access import (
+    filter_actions_for_user,
+    filter_requests_for_user,
+    is_scope_lockable_user,
+    is_scope_override_active,
+    get_user_ssp_index,
+)
 from datetime import datetime
 import re
 
@@ -1701,6 +1708,20 @@ st.markdown(f"""
 strat_df = load_strat_matrix()
 requests_df = load_requests()
 
+# Пункт 1 нового ТЗ: ролі, звужені до власного ССП, бачать за
+# замовчуванням тільки своє ССП. ВАЖЛИВО: фільтруємо тут лише
+# requests_df (це вже подання per-ССП без ризику для ієрархії).
+# strat_df НЕ фільтруємо на цьому рівні — там в одному датафреймі
+# перемішані рядки стратегічних цілей/завдань і заходів, і в
+# Excel-джерелі колонка "Головний виконавець" для рядків
+# цілей/завдань успадкована через об'єднані комірки й не є
+# надійним індикатором "чиє це ССП". Замість цього нижче звужується
+# САМЕ підмножина заходів (measures_all/measures) — так само, як
+# уже коректно влаштовано на вкладці app.py.
+requests_df = filter_requests_for_user(
+    requests_df, current_user, ssp_columns=["department"], page_key="Dashboard"
+)
+
 # ============================================================
 # ДЖЕРЕЛО ДАНИХ: ПІДТВЕРДЖЕНІ / ОПЕРАТИВНА ОЦІНКА (правка №6)
 # ============================================================
@@ -1771,6 +1792,7 @@ if requests_df.empty:
     ])
 
 measures_all = strat_df[strat_df["object_type"] == "measure"].copy()
+measures_all = filter_actions_for_user(measures_all, current_user, page_key="Dashboard")
 goals_all = strat_df[strat_df["object_type"] == "goal"].copy()
 tasks_all = strat_df[strat_df["object_type"] == "task"].copy()
 
@@ -1849,12 +1871,23 @@ with st.container():
         )
 
     with fc:
-        selected_department_indices = st.multiselect(
-            "🏢 Індекс самостійного струкутрного підрозділу",
-            department_indices_options,
-            key="dash_department_indices",
-            placeholder="Усі підрозділи"
-        )
+        if is_scope_lockable_user(current_user) and not is_scope_override_active("Dashboard"):
+            _own_dash_ssp = get_user_ssp_index(current_user) or "—"
+            st.markdown(
+                "<div style='font-size:13px;font-weight:700;margin-bottom:4px;'>"
+                "🏢 Індекс самостійного структурного підрозділу</div>"
+                f"<div style='background:#f1f5f9;border:1px solid #cbd5e1;border-radius:10px;"
+                f"padding:9px 12px;font-weight:800;'>лише ваше ССП: {_own_dash_ssp}</div>",
+                unsafe_allow_html=True,
+            )
+            selected_department_indices = []  # реальне звуження нижче, через own-index override
+        else:
+            selected_department_indices = st.multiselect(
+                "🏢 Індекс самостійного струкутрного підрозділу",
+                department_indices_options,
+                key="dash_department_indices",
+                placeholder="Усі підрозділи"
+            )
 
     with fd:
         view_mode = st.selectbox(
@@ -1971,6 +2004,15 @@ active_raw = build_period_data(strat_df, requests_df, years_for_calc, quarters_f
 if active_raw.empty:
     st.warning("Для обраного періоду активних заходів не знайдено.")
     st.stop()
+
+# Пункт 1 нового ТЗ: ролі, звужені до власного ССП, за замовчуванням
+# бачать на Dashboard тільки своє ССП — точно так само, як на вкладці
+# app.py, це виконується через існуючий механізм фільтра (тут —
+# selected_department_indices), а не через окреме звуження "з нуля".
+if is_scope_lockable_user(current_user) and not is_scope_override_active("Dashboard"):
+    _own_department_index = get_user_ssp_index(current_user)
+    if _own_department_index:
+        selected_department_indices = [_own_department_index]
 
 active = apply_dashboard_filters(
     active_raw,

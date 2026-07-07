@@ -6,12 +6,14 @@ from core.errors import log_exception
 from core.notifications import render_notifications_panel
 from core.config import FILE_PATH, SHEET_NAME
 from core.excel_loader import read_excel_sheet
-from datetime import datetime
+from datetime import datetime, timezone
 from html import escape
 import re
 from core.page_setup import page_setup, render_footer
 from core.strategic_data import load_strat_matrix as core_load_strat_matrix
 from core import monitoring_data
+from core.statuses import SUBMISSION_STATUS_OPTIONS
+from core.versioning import save_request_version, coordinator_stage_index
 
 from core.access import (
     filter_requests_for_user,
@@ -781,6 +783,7 @@ if is_my_turn:
         }
         if _chain and "chain_stage" in selected_row.index:
             update_data["chain_stage"] = int(new_stage)
+        update_data = schemes.finalize_update_payload(update_data, new_status)
 
         try:
             supabase.table("monitoring_requests").update(update_data).eq("id", selected_id).execute()
@@ -873,6 +876,120 @@ if is_my_turn:
             except Exception as e:
                 st.error("Помилка при поверненні.")
                 st.exception(e)
+
+    # ── Редагувати дані напряму (пункт 3 нового ТЗ) ──────────
+    # Замість того, щоб повертати заявку на доопрацювання (і чекати,
+    # доки подавач сам відредагує), ця ланка може виправити дані сама.
+    # Відредаговані дані завжди повертаються саме координатору —
+    # незалежно від того, на якій ланці зараз перебуває ланка, що
+    # редагує (координатор повторно перевіряє й далі заявка йде
+    # рештою маршруту як зазвичай).
+    if not schemes.is_final_locked(selected_row):
+        with st.expander(f"✏️ Редагувати дані заявки (від імені ланки «{_stage_label}»)"):
+            st.caption(
+                "Використовуйте, якщо простіше виправити дані самостійно, ніж "
+                "повертати заявку відповідальній особі. Попередню версію буде "
+                "збережено в історії; заявка повернеться на розгляд координатору."
+            )
+
+            _cab_status_options = list(SUBMISSION_STATUS_OPTIONS)
+            _cab_current_status = clean(selected_row["status"])
+            _cab_status_index = (
+                _cab_status_options.index(_cab_current_status)
+                if _cab_current_status in _cab_status_options else 0
+            )
+
+            cab_new_status = st.selectbox(
+                "Статус виконання", _cab_status_options, index=_cab_status_index,
+                key=f"cab_edit_status_{selected_id}",
+            )
+            cab_new_value = st.text_input(
+                "Фактичне значення", value=clean(selected_row["numeric_value"]),
+                key=f"cab_edit_value_{selected_id}",
+            )
+            cab_new_progress = st.text_area(
+                "Опис прогресу", value=clean(selected_row["progress_text"]),
+                height=110, key=f"cab_edit_progress_{selected_id}",
+            )
+            cab_new_risks = st.text_area(
+                "Ризики / проблеми / відхилення", value=clean(selected_row["risks"]),
+                height=110, key=f"cab_edit_risks_{selected_id}",
+            )
+
+            cab_edit_submit = st.button(
+                "💾 Зберегти й надіслати координатору",
+                use_container_width=True,
+                key=f"cab_edit_submit_{selected_id}",
+            )
+
+            if cab_edit_submit:
+                if not has_value(cab_new_value) or not has_value(cab_new_progress):
+                    st.error("Заповніть фактичне значення та опис прогресу.")
+                else:
+                    try:
+                        _cab_old_version = save_request_version(
+                            selected_id, selected_row.to_dict(),
+                            created_by=f"{role_label} / до редагування",
+                        )
+
+                        if _chain:
+                            _cab_coord_idx = coordinator_stage_index(_chain)
+                            _cab_new_status = schemes.waiting_status_for_stage(_chain[_cab_coord_idx])
+                        else:
+                            _cab_coord_idx = 0
+                            _cab_new_status = "Очікує погодження"
+
+                        _cab_update = {
+                            "status": cab_new_status,
+                            "numeric_value": cab_new_value,
+                            "progress_text": cab_new_progress,
+                            "risks": cab_new_risks,
+                            "approval_status": _cab_new_status,
+                            "chain_stage": int(_cab_coord_idx),
+                            "admin_comment": "",
+                        }
+
+                        supabase.table("monitoring_requests").update(_cab_update).eq(
+                            "id", selected_id
+                        ).execute()
+
+                        if _chain:
+                            _cab_coord_stage = _chain[_cab_coord_idx]
+                            try:
+                                notify_events.notify_stage_assigned(
+                                    _cab_coord_stage.get("email", ""), _cab_coord_stage.get("name", ""),
+                                    _cab_coord_stage.get("label", ""),
+                                    code, clean(selected_row.get("year", "")), clean(selected_row.get("quarter", "")),
+                                    submitter=clean(selected_row.get("responsible_person", "")),
+                                    kind=clean(selected_row.get("object_kind", "")) or "measure",
+                                )
+                            except Exception:
+                                pass
+
+                        _cab_new_version_data = selected_row.to_dict()
+                        _cab_new_version_data.update(_cab_update)
+                        _cab_new_version = save_request_version(
+                            selected_id, _cab_new_version_data,
+                            created_by=f"{role_label} / редагування",
+                        )
+
+                        write_log(
+                            selected_id,
+                            f"Редагування ланкою «{_stage_label}»: версія "
+                            f"{_cab_old_version} → {_cab_new_version}",
+                            approval, _cab_new_status,
+                            "Відредаговано ланкою погодження; надіслано координатору повторно.",
+                            changed_by=role_label,
+                        )
+
+                        st.success(
+                            "Зміни збережено. Заявку повторно надіслано координатору на розгляд."
+                        )
+                        st.cache_data.clear()
+                        st.rerun()
+                    except Exception as e:
+                        st.error("Не вдалося зберегти зміни.")
+                        st.exception(e)
 
 else:
     st.markdown('<div class="card">', unsafe_allow_html=True)

@@ -9,6 +9,7 @@ from core.page_setup import page_setup, render_footer
 from config.users import get_active_users
 from config.roles import ROLE_ADMIN, ROLE_SSP, ROLE_SSP_HEAD
 from core.access import normalize_ssp_index
+from core import exports as core_exports
 
 page_setup("Журнал дій", page_name="Журнал дій")
 supabase = get_supabase_client()
@@ -312,30 +313,7 @@ def natural_sort_key(value):
 
 
 def dataframe_to_excel(sheets):
-    output = BytesIO()
-
-    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        for sheet_name, df in sheets.items():
-            safe_name = str(sheet_name)[:31]
-            df.to_excel(writer, sheet_name=safe_name, index=False)
-
-            worksheet = writer.sheets[safe_name]
-            workbook = writer.book
-
-            header_format = workbook.add_format({
-                "bold": True,
-                "bg_color": "#D9EAF7",
-                "border": 1,
-                "text_wrap": True,
-                "valign": "top"
-            })
-
-            for col_num, value in enumerate(df.columns.values):
-                worksheet.write(0, col_num, value, header_format)
-                worksheet.set_column(col_num, col_num, 18)
-
-            worksheet.freeze_panes(1, 0)
-
+    output = BytesIO(core_exports.write_styled_excel(sheets))
     output.seek(0)
     return output
 

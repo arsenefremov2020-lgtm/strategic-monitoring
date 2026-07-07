@@ -376,15 +376,32 @@ div[data-testid="stTextArea"] label {
     color: #1e293b !important;
 }
 
-/* Центрування всієї таблиці */
+/* Центрування всієї таблиці.
+   ВАЖЛИВО (пункт 6 нового ТЗ, виправлення бага зі скролом/посиланнями):
+   раніше тут стояв overflow: hidden !important. Це обрізало не тільки
+   кути картки, а й усе, що data_editor малює ЗА межами свого контейнера
+   під час редагування клітинки (випадний список для колонки-статусу,
+   підказки тощо) — саме тому "не можна було натиснути і провести скрол":
+   спливаючий список чи скролбар виявлявся невидимим або обрізаним.
+   overflow: visible нічого не ламає в звичайному режимі (сама таблиця
+   й так не виходить за межі max-width), але більше не ховає те, що
+   data_editor малює поверх/збоку під час взаємодії. */
 div[data-testid="stDataEditor"] {
     max-width: 1280px !important;
     margin-left: auto !important;
     margin-right: auto !important;
     border-radius: 14px !important;
-    overflow: hidden !important;
+    overflow: visible !important;
     border: 1px solid #cbd5e1 !important;
     box-shadow: 0 8px 22px rgba(15,23,42,0.06) !important;
+}
+
+/* Внутрішній скрол-контейнер самого grid (Glide Data Grid) — саме тут
+   реально відбувається горизонтальна/вертикальна прокрутка. На відміну
+   від зовнішньої обгортки вище, тут overflow навмисно лишається
+   керованим самим компонентом (auto), а не примусово ламається. */
+div[data-testid="stDataEditor"] [class*="dvn-scroll"] {
+    border-radius: 0 0 14px 14px;
 }
 
 /* Вища шапка таблиці + перенос тексту в шапці */
@@ -821,12 +838,37 @@ def render_scheme_picker(ssp_index, key_prefix):
         "підтвердити або змінити обрану схему (зміна фіксується в журналі дій)."
     )
 
-    scheme_name = st.selectbox(
-        "Маршрут погодження",
-        schemes.scheme_options(),
-        index=schemes.scheme_options().index(schemes.DEFAULT_SCHEME),
-        key=f"{key_prefix}_scheme",
-    )
+    # Пункт 2 нового ТЗ: подавати відомості може не тільки "Відповідальний
+    # від ССП", а й керівник ССП / керівник управління / заступник
+    # керівника ССП. Якщо подавач сам є однією з ланок погодження — немає
+    # сенсу, щоб він погоджував сам себе, тож маршрут звужується рівно до
+    # обов'язкової ланки координатора (без вибору).
+    _submitter_role = (current_user or {}).get("role")
+    _available_schemes = schemes.scheme_options_for_submitter(_submitter_role)
+    _forced_scheme = schemes.submitter_is_approving_role(_submitter_role)
+
+    if _forced_scheme:
+        st.info(
+            "ℹ️ Оскільки подання здійснює представник ланки погодження "
+            f"(«{schemes.STAGE_LABELS.get(_submitter_role, _submitter_role)}»), "
+            "маршрут автоматично звужено лише до координатора — самопогодження "
+            "не передбачене."
+        )
+        scheme_name = st.selectbox(
+            "Маршрут погодження",
+            _available_schemes,
+            index=0,
+            key=f"{key_prefix}_scheme",
+            disabled=True,
+        )
+    else:
+        scheme_name = st.selectbox(
+            "Маршрут погодження",
+            _available_schemes,
+            index=_available_schemes.index(schemes.DEFAULT_SCHEME)
+            if schemes.DEFAULT_SCHEME in _available_schemes else 0,
+            key=f"{key_prefix}_scheme",
+        )
 
     roles_in_scheme = schemes.APPROVAL_SCHEMES[scheme_name]
     persons = {}
@@ -1052,177 +1094,8 @@ if submission_mode.startswith("🎯"):
         st.info("За обраними параметрами індикаторів не знайдено.")
         st.stop()
 
-    # ── Формат подання індикаторів: картка або таблиця ──
-    ind_view_mode = st.radio(
-        "Формат подання",
-        ["🗂 Карткове подання (як у Картці заходу)", "🧾 Табличне подання"],
-        horizontal=True,
-        key="indicators_form_view_mode",
-    )
-
-    if ind_view_mode.startswith("🗂"):
-        def _ind_option_label(r):
-            mark = " · ⏳ у процесі погодження" if r["_locked"] else ""
-            return f"{r['Код']} — {str(r['Індикатор'])[:80]}{mark}"
-
-        ind_card_labels = [_ind_option_label(r) for _, r in ind_df_table.iterrows()]
-        ind_pick = st.selectbox(
-            "Показник для подання",
-            ind_card_labels,
-            key=f"ind_card_pick_{ind_ssp_index}_{ind_year}",
-        )
-        icr = ind_df_table.iloc[ind_card_labels.index(ind_pick)]
-
-        def _ipcell(label, value):
-            v = clean_value(value) or "—"
-            return (f'<div style="background:#f8fafc;border:1px solid #e2e8f0;'
-                    f'border-radius:12px;padding:10px 12px;">'
-                    f'<div style="font-size:10px;font-weight:800;letter-spacing:.05em;'
-                    f'text-transform:uppercase;color:#64748b;margin-bottom:4px;">{label}</div>'
-                    f'<div style="font-size:13px;font-weight:700;color:#0f172a;'
-                    f'line-height:1.35;">{v}</div></div>')
-
-        st.markdown(
-            f'''
-            <div style="background:#ffffff;border:1px solid #d8dee9;border-radius:16px;
-                        padding:18px 20px;margin:14px 0 8px 0;">
-              <div style="font-size:11px;font-weight:900;letter-spacing:.08em;color:#1d4ed8;
-                          text-transform:uppercase;margin-bottom:6px;">Паспорт показника · {clean_value(icr["Код"])}</div>
-              <div style="font-size:17px;font-weight:900;color:#0f172a;line-height:1.35;
-                          margin-bottom:14px;">{clean_value(icr["Індикатор"])}</div>
-              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;">
-                {_ipcell("СЦ / Завдання", icr["СЦ / Завдання"])}
-                {_ipcell("Одиниці виміру", icr["Одиниці" + chr(10) + "виміру"])}
-                {_ipcell("2021 (базовий)", icr["2021" + chr(10) + "(базовий)"])}
-                {_ipcell(f"{ind_year} (цільовий орієнтир)", icr[f"{ind_year}" + chr(10) + "(цільовий орієнтир)"])}
-                {_ipcell("Останнє подане значення", icr["Останнє подане" + chr(10) + "значення"])}
-              </div>
-            </div>
-            ''',
-            unsafe_allow_html=True,
-        )
-
-        if bool(icr["_locked"]):
-            st.info("За цим показником подання вже перебуває в процесі погодження — "
-                    "повторне подання стане доступним після завершення процесу.")
-        else:
-            def _iblock_open(title, required=True):
-                color = "#fda4a5" if required else "#fde68a"
-                bg = "#fff7f7" if required else "#fffdf3"
-                mark = "🔴" if required else "🟡"
-                st.markdown(
-                    f'<div style="border:2px solid {color};background:{bg};border-radius:14px;'
-                    f'padding:12px 14px 4px 14px;margin:10px 0 4px 0;">'
-                    f'<div style="font-size:12px;font-weight:900;color:#0f172a;'
-                    f'margin-bottom:4px;">{mark} {title}</div>',
-                    unsafe_allow_html=True,
-                )
-
-            _ind_key_sfx = f"{ind_ssp_index}_{ind_year}_{raw_value(icr['Код'])}_{normalize_key(raw_value(icr['Індикатор']))}"
-
-            _iblock_open(f"Значення станом на {ind_as_of.strftime('%d.%m.%Y')}", required=True)
-            ind_card_value = st.text_input(
-                "Фактичне значення показника", key=f"indcard_value_{_ind_key_sfx}",
-            )
-            st.markdown('</div>', unsafe_allow_html=True)
-
-            _iblock_open("Статус виконання", required=True)
-            ind_card_status = st.selectbox(
-                "Статус виконання", execution_status_options,
-                key=f"indcard_status_{_ind_key_sfx}",
-            )
-            st.markdown('</div>', unsafe_allow_html=True)
-
-            _iblock_open("Опис прогресу", required=False)
-            ind_card_progress = st.text_area(
-                "Короткий опис прогресу", height=100, key=f"indcard_progress_{_ind_key_sfx}",
-            )
-            st.markdown('</div>', unsafe_allow_html=True)
-
-            _iblock_open("Ризики / проблеми / відхилення", required=False)
-            ind_card_risks = st.text_area(
-                "Ризики / проблеми (за наявності)", height=90, key=f"indcard_risks_{_ind_key_sfx}",
-            )
-            st.markdown('</div>', unsafe_allow_html=True)
-
-            _iblock_open("Посилання на НПА / джерела", required=False)
-            ind_card_npa = st.text_area(
-                "Посилання (по одному в рядку)", height=80, key=f"indcard_npa_{_ind_key_sfx}",
-            )
-            st.markdown('</div>', unsafe_allow_html=True)
-
-            ind_card_scheme, ind_card_chain, ind_card_ready = render_scheme_picker(
-                ind_ssp_index, "indcard"
-            )
-
-            if st.button("Подати значення показника на розгляд",
-                         use_container_width=True, key=f"indcard_submit_{_ind_key_sfx}"):
-                _errs = []
-                if not raw_value(responsible_person):
-                    _errs.append("Заповніть ПІБ відповідальної особи")
-                if not raw_value(responsible_email):
-                    _errs.append("Заповніть електронну пошту відповідальної особи")
-                if not raw_value(ind_card_value):
-                    _errs.append("Заповніть обов'язковий блок зі значенням показника")
-                if not raw_value(ind_card_status):
-                    _errs.append("Заповніть обов'язковий блок «Статус виконання»")
-                if not ind_card_ready:
-                    _errs.append("Схема погодження неповна: для однієї з ланок не знайдено користувача")
-                if _errs:
-                    for e in _errs:
-                        st.error(e)
-                else:
-                    as_of_iso = ind_as_of.isoformat()
-                    quarter_roman = {1: "I", 2: "II", 3: "III", 4: "IV"}[(ind_as_of.month - 1) // 3 + 1]
-                    item = {
-                        "object_name": raw_value(icr["СЦ / Завдання"]),
-                        "indicator_name": raw_value(icr["Індикатор"]),
-                        "department": raw_value(ind_ssp_index),
-                        "year": str(ind_year),
-                        "quarter": quarter_roman,
-                        "approval_status": (
-                            schemes.waiting_status_for_stage(ind_card_chain[0])
-                            if ind_card_chain else "Очікує погодження"
-                        ),
-                        "status": raw_value(ind_card_status),
-                        "strat_code": raw_value(icr["Код"]),
-                        "responsible_person": raw_value(responsible_person),
-                        "phone": raw_value(responsible_phone),
-                        "email": raw_value(responsible_email),
-                        "numeric_value": raw_value(ind_card_value),
-                        "progress_text": raw_value(ind_card_progress),
-                        "risks": raw_value(ind_card_risks),
-                        "file_names": "", "file_urls": "", "admin_comment": "",
-                        "start_date": "", "end_date": "",
-                        "submitted_at": datetime.now(timezone.utc).isoformat(),
-                    }
-                    if npa_link_column_exists:
-                        item["npa_link"] = "\n".join(
-                            [u.strip() for u in raw_value(ind_card_npa).splitlines() if u.strip()]
-                        )
-                    if kind_column_exists:
-                        item["object_kind"] = "indicator"
-                        item["as_of_date"] = as_of_iso
-                    if ind_card_chain:
-                        item["approval_chain"] = schemes.chain_to_json(ind_card_chain)
-                        item["chain_stage"] = 0
-                        item["scheme_label"] = ind_card_scheme
-                    try:
-                        supabase.table("monitoring_requests").insert(item).execute()
-                        st.cache_data.clear()
-                        notify_first_stage(
-                            ind_card_chain, [item["strat_code"]],
-                            str(ind_year),
-                            f"станом на {ind_as_of.strftime('%d.%m.%Y')}",
-                            kind="indicator",
-                        )
-                        st.success("Значення показника подано на розгляд.")
-                        st.rerun()
-                    except Exception as error:
-                        st.error(f"Не вдалося подати значення. Технічна помилка: {error}")
-
-        render_footer()
-        st.stop()
+    # Пункт 6 нового ТЗ: картковий режим подання прибрано за рішенням
+    # Арсена — лишається виключно табличний спосіб подання (нижче).
 
     ind_locked_count = int(ind_df_table["_locked"].sum())
     if ind_locked_count:
@@ -1565,267 +1438,8 @@ st.markdown(
 )
 
 
-# ------------------------------------------------------------
-# Формат подання: таблиця або картка (нове)
-# ------------------------------------------------------------
-
-form_view_mode = st.radio(
-    "Формат подання",
-    ["🗂 Карткове подання (як у Картці заходу)", "🧾 Табличне подання"],
-    horizontal=True,
-    key="measures_form_view_mode",
-)
-
-if form_view_mode.startswith("🗂"):
-    # ========================================================
-    # КАРТКОВЕ ПОДАННЯ: один захід за раз, паспорт + кольорові блоки
-    # ========================================================
-    quarter_label = f"{quarter_to_q_label(selected_quarter)} {selected_year}"
-    card_target_col = f"target_{selected_year}"
-    if card_target_col not in filtered_measures.columns:
-        filtered_measures[card_target_col] = ""
-
-    if filtered_measures.empty:
-        st.info("За обраними параметрами немає заходів, доступних для подання.")
-        render_footer()
-        st.stop()
-
-    # Індекс уже поданих заявок цього періоду (лок, як у таблиці)
-    card_submitted_map = {}
-    if not monitoring_df.empty:
-        _cmask = (
-            (monitoring_df["year"].astype(str).str.strip() == str(selected_year))
-            & (monitoring_df["quarter"].astype(str).str.strip() == str(selected_quarter))
-        )
-        for _, _mrow in monitoring_df[_cmask].iterrows():
-            if raw_value(_mrow.get("object_kind", "")).lower() == "indicator":
-                continue
-            _ck = raw_value(_mrow.get("strat_code", ""))
-            if _ck and _ck not in card_submitted_map:
-                card_submitted_map[_ck] = _mrow
-    card_closeouts = load_manual_closeouts()
-
-    def _card_option_label(r):
-        c = raw_value(r.get("code", ""))
-        nm = strip_leading_code(r.get("name", ""), c)
-        mark = ""
-        ex = card_submitted_map.get(c)
-        if (c, str(selected_year), str(selected_quarter)) in card_closeouts:
-            mark = " · 🔒 закрито вручну"
-        elif ex is not None:
-            mark = (" · ✅ погоджено"
-                    if raw_value(ex.get("approval_status")) == "Погоджено"
-                    else " · ⏳ на розгляді")
-        return f"{c} — {nm[:90]}{mark}"
-
-    card_measures = filtered_measures.reset_index(drop=True)
-    card_labels = [_card_option_label(r) for _, r in card_measures.iterrows()]
-    picked_label = st.selectbox(
-        f"Захід ССП {selected_ssp_index} для подання",
-        card_labels,
-        key="card_measure_pick",
-    )
-    card_row = card_measures.iloc[card_labels.index(picked_label)]
-    card_code = raw_value(card_row.get("code", ""))
-    card_name = strip_leading_code(card_row.get("name", ""), card_code)
-
-    _existing = card_submitted_map.get(card_code)
-    _closed = (card_code, str(selected_year), str(selected_quarter)) in card_closeouts
-    _locked = _closed or (_existing is not None)
-
-    # ── Паспорт заходу (як у Картці заходу) ──
-    def _pcell(label, value):
-        v = clean_value(value) or "—"
-        return (f'<div style="background:#f8fafc;border:1px solid #e2e8f0;'
-                f'border-radius:12px;padding:10px 12px;">'
-                f'<div style="font-size:10px;font-weight:800;letter-spacing:.05em;'
-                f'text-transform:uppercase;color:#64748b;margin-bottom:4px;">{label}</div>'
-                f'<div style="font-size:13px;font-weight:700;color:#0f172a;'
-                f'line-height:1.35;">{v}</div></div>')
-
-    st.markdown(
-        f'''
-        <div style="background:#ffffff;border:1px solid #d8dee9;border-radius:16px;
-                    padding:18px 20px;margin:14px 0 8px 0;">
-          <div style="font-size:11px;font-weight:900;letter-spacing:.08em;color:#1d4ed8;
-                      text-transform:uppercase;margin-bottom:6px;">Паспорт заходу · {card_code}</div>
-          <div style="font-size:19px;font-weight:900;color:#0f172a;line-height:1.3;
-                      margin-bottom:14px;">{clean_value(card_name)}</div>
-          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;">
-            {_pcell("Тип продукту", card_row.get("product_type"))}
-            {_pcell("Індикатор", card_row.get("indicator"))}
-            {_pcell("Одиниці виміру", card_row.get("unit"))}
-            {_pcell("Головний виконавець", card_row.get("resp_main"))}
-            {_pcell("Співвиконавець", card_row.get("resp_co_1"))}
-            {_pcell(f"Цільовий орієнтир {selected_year}", card_row.get(card_target_col))}
-            {_pcell("2021 (базовий)", card_row.get("base_2021"))}
-            {_pcell("2024 (звіт)", card_row.get("fact_2024"))}
-            {_pcell("Початок виконання", card_row.get("measure_start_date"))}
-            {_pcell("Кінець виконання", card_row.get("measure_end_date"))}
-          </div>
-        </div>
-        ''',
-        unsafe_allow_html=True,
-    )
-
-    if _locked:
-        if _closed:
-            st.info("🔒 Захід закрито вручну адміністратором за цей період — подання недоступне.")
-        else:
-            _ap = raw_value(_existing.get("approval_status"))
-            st.info(f"За цей період уже є заявка (статус погодження: «{_ap}»). "
-                    "Повторне подання можливе після повернення на доопрацювання "
-                    "у вкладці «Мої заявки».")
-    else:
-        # ── Кольорові блоки подання: 🔴 обовʼязкові · 🟡 необовʼязкові ──
-        st.markdown(
-            '''<div class="note-box" style="background:#f8fafc;border:1px solid #d8dee9;">
-            <b>Легенда:</b>
-            <span style="background:#fde8e8;border:1px solid #fca5a5;border-radius:8px;
-                  padding:2px 10px;margin:0 6px;font-weight:800;color:#991b1b;">🔴 Обов'язковий блок</span>
-            <span style="background:#fef6e0;border:1px solid #fde68a;border-radius:8px;
-                  padding:2px 10px;margin:0 6px;font-weight:800;color:#92400e;">🟡 Необов'язковий блок</span>
-            </div>''',
-            unsafe_allow_html=True,
-        )
-
-        def _block_open(title, required=True):
-            color = ("#fda4a5" if required else "#fde68a")
-            bg = ("#fff7f7" if required else "#fffdf3")
-            mark = "🔴" if required else "🟡"
-            st.markdown(
-                f'<div style="border:2px solid {color};background:{bg};border-radius:14px;'
-                f'padding:12px 14px 4px 14px;margin:10px 0 4px 0;">'
-                f'<div style="font-size:12px;font-weight:900;color:#0f172a;'
-                f'margin-bottom:4px;">{mark} {title}</div>',
-                unsafe_allow_html=True,
-            )
-
-        def _block_close():
-            st.markdown('</div>', unsafe_allow_html=True)
-
-        _block_open(f"Квартальні дані · {quarter_label}", required=True)
-        card_value = st.text_input(
-            f"Фактичне значення за {quarter_label}",
-            key=f"card_value_{card_code}_{selected_year}_{selected_quarter}",
-            placeholder="Наприклад: 120 або так/ні",
-        )
-        _block_close()
-
-        _block_open("Статус виконання", required=True)
-        card_status = st.selectbox(
-            "Статус виконання заходу",
-            execution_status_options,
-            key=f"card_status_{card_code}_{selected_year}_{selected_quarter}",
-        )
-        _block_close()
-
-        _block_open("Опис прогресу", required=True)
-        card_progress = st.text_area(
-            "Короткий опис прогресу виконання",
-            height=110,
-            key=f"card_progress_{card_code}_{selected_year}_{selected_quarter}",
-        )
-        _block_close()
-
-        _block_open("Ризики / проблеми / відхилення", required=False)
-        card_risks = st.text_area(
-            "Ризики, проблеми або відхилення (за наявності)",
-            height=90,
-            key=f"card_risks_{card_code}_{selected_year}_{selected_quarter}",
-        )
-        _block_close()
-
-        _block_open("Посилання на НПА / джерела", required=False)
-        card_npa = st.text_area(
-            "Посилання (по одному в рядку)",
-            height=80,
-            key=f"card_npa_{card_code}_{selected_year}_{selected_quarter}",
-            placeholder="https://zakon.rada.gov.ua/…",
-        )
-        _block_close()
-
-        # ── Схема погодження (та сама, що в табличному режимі) ──
-        card_scheme_name, card_chain, card_scheme_ready = render_scheme_picker(
-            selected_ssp_index, "card"
-        )
-
-        if st.button("Подати відомості на розгляд", use_container_width=True,
-                     key=f"card_submit_{card_code}"):
-            card_errors = []
-            if not raw_value(responsible_person):
-                card_errors.append("Заповніть ПІБ відповідальної особи")
-            if not raw_value(responsible_phone):
-                card_errors.append("Заповніть контактний номер телефону")
-            if not raw_value(responsible_email):
-                card_errors.append("Заповніть електронну пошту відповідальної особи")
-            if not raw_value(card_value):
-                card_errors.append(f"Заповніть обов'язковий блок «Квартальні дані · {quarter_label}»")
-            if not raw_value(card_status):
-                card_errors.append("Заповніть обов'язковий блок «Статус виконання»")
-            if not raw_value(card_progress):
-                card_errors.append("Заповніть обов'язковий блок «Опис прогресу»")
-            if chain_columns_exist and not card_scheme_ready:
-                card_errors.append("Схема погодження неповна: для однієї з ланок не знайдено користувача")
-
-            if card_errors:
-                for e in card_errors:
-                    st.error(e)
-            else:
-                submitted_at = datetime.now(timezone.utc).isoformat()
-                first_stage_status = (
-                    schemes.waiting_status_for_stage(card_chain[0])
-                    if (chain_columns_exist and card_chain)
-                    else "Очікує погодження"
-                )
-                card_payload = {
-                    "object_name":        raw_value(card_name),
-                    "department":         raw_value(selected_ssp_index),
-                    "year":               str(selected_year),
-                    "quarter":            raw_value(selected_quarter),
-                    "approval_status":    first_stage_status,
-                    "status":             raw_value(card_status),
-                    "strat_code":         card_code,
-                    "responsible_person": raw_value(responsible_person),
-                    "phone":              raw_value(responsible_phone),
-                    "email":              raw_value(responsible_email),
-                    "numeric_value":      raw_value(card_value),
-                    "progress_text":      raw_value(card_progress),
-                    "risks":              raw_value(card_risks),
-                    "file_names": "", "file_urls": "", "admin_comment": "",
-                    # Дати виконання — зі стратегічної матриці (як у таблиці)
-                    "start_date": raw_value(card_row.get("measure_start_date", "")),
-                    "end_date":   raw_value(card_row.get("measure_end_date", "")),
-                    "submitted_at":       submitted_at,
-                }
-                if npa_link_column_exists:
-                    card_payload["npa_link"] = "\n".join(
-                        [u.strip() for u in raw_value(card_npa).splitlines() if u.strip()]
-                    )
-                if kind_column_exists:
-                    card_payload["object_kind"] = "measure"
-                if chain_columns_exist and card_chain:
-                    card_payload["approval_chain"] = schemes.chain_to_json(card_chain)
-                    card_payload["chain_stage"] = 0
-                    card_payload["scheme_label"] = card_scheme_name
-                try:
-                    supabase.table("monitoring_requests").insert(card_payload).execute()
-                    st.cache_data.clear()
-                    notify_first_stage(
-                        card_chain, [card_code],
-                        str(selected_year), raw_value(selected_quarter), kind="measure",
-                    )
-                    st.success(
-                        f"Відомості щодо заходу {card_code} подано на розгляд "
-                        f"за схемою «{card_scheme_name}»."
-                    )
-                    st.rerun()
-                except Exception as error:
-                    st.error(f"Не вдалося подати відомості. Технічна помилка: {error}")
-
-    render_footer()
-    st.stop()
-
+# Пункт 6 нового ТЗ: картковий режим подання прибрано за рішенням
+# Арсена — лишається виключно табличний спосіб подання (нижче).
 
 # ------------------------------------------------------------
 # One editable table

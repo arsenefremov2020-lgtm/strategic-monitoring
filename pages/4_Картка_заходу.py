@@ -1794,7 +1794,7 @@ if can_submit_monitoring_data:
     with n2:
         st.page_link(
             "pages/2_Dashboard.py",
-            label="&#128202; Перейти до аналітики",
+            label="&#128202; Dashboard",
             icon="📊"
         )
 else:
@@ -1803,7 +1803,7 @@ else:
     with n2:
         st.page_link(
             "pages/2_Dashboard.py",
-            label="&#128202; Перейти до аналітики",
+            label="&#128202; Dashboard",
             icon="📊"
         )
 

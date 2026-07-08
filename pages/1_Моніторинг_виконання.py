@@ -25,6 +25,8 @@ from core.strategic_data import load_strat_matrix as load_full_strat_matrix
 from core import monitoring_data
 from core import approval_schemes as schemes
 from core import notify_events
+from core.validation import validate_fact_value, status_completion_warning, value_reaches_target
+from core.audit import write_audit_log
 
 # Спільна для обох таблиць (заходи + індикатори) висота видимої області
 # редактора (~2 рядки + шапка).
@@ -832,61 +834,74 @@ st.markdown("</div>", unsafe_allow_html=True)
 # ------------------------------------------------------------
 
 def render_scheme_picker(ssp_index, key_prefix):
-    """
-    Показує інформацію про початок маршруту погодження.
+    """Вибір повного маршруту погодження подавачем.
 
-    ВАЖЛИВО (виправлення після тестування): раніше тут подавач ОБИРАВ
-    усю схему погодження наперед (включно з тим, хто розглядатиме заявку
-    ПІСЛЯ координатора) — це і призводило до плутанини й помилок на
-    етапах погодження. Тепер жоден подавач наперед нічого не визначає:
-    КОЖНА заявка, незалежно від того, хто її подає, завжди починається
-    рівно з координатора. Сам координатор, коли розглядатиме заявку,
-    сам вирішить — потрібна ще одна ланка після нього (і яка саме), чи
-    заявку можна завершити одразу на ньому (core/approval_schemes.py:
-    next_stage_role_options). Так само кожна наступна ланка вирішує це
-    сама за себе — і не може призначити нікого "нижче" себе.
-
-    Повертає (scheme_name, chain, ready) — сигнатура лишена незмінною
-    заради сумісності з рештою коду подання нижче.
+    DEMO 1.9 повертає логіку вибору маршруту на етап подання, але залишає
+    обмеження: координатор обов'язковий, координатор не може бути останнім
+    (крім подання керівником ССП), а ланки нижче ролі подавача недоступні.
     """
     st.markdown(
         '<div class="table-title" style="margin-top:14px;">Маршрут погодження</div>',
         unsafe_allow_html=True,
     )
-    st.caption(
-        "Кожна заявка спершу йде на розгляд координатору. Хто розглядатиме "
-        "далі (якщо це взагалі потрібно) — вирішує сам координатор під час "
-        "розгляду, а не подавач."
+    submitter_role = str(current_user.get("role") or "")
+    available_schemes = schemes.scheme_options_for_submitter(submitter_role)
+
+    if not available_schemes:
+        st.error("Для вашої ролі не знайдено доступної схеми погодження.")
+        return "", [], False
+
+    default_index = 0
+    if schemes.DEFAULT_SCHEME in available_schemes:
+        default_index = available_schemes.index(schemes.DEFAULT_SCHEME)
+
+    scheme_name = st.selectbox(
+        "Схема погодження",
+        available_schemes,
+        index=default_index,
+        key=f"{key_prefix}_approval_scheme_select",
+        help="Координатор є обов'язковою ланкою. Схема не може завершуватися координатором, крім випадку подання керівником ССП.",
     )
 
-    chain = schemes.initial_chain(ssp_index)
-    ready = bool(chain)
+    roles = schemes.APPROVAL_SCHEMES.get(scheme_name, [])
+    persons: dict[str, dict] = {}
+    ready = True
 
-    if not ready:
-        st.error(
-            f"Для ССП {ssp_index} не закріплено координатора (адміністратора). "
-            f"Зверніться до супер-адміністратора, щоб призначити відповідального "
-            f"адміністратора цьому ССП — без цього подання неможливе."
-        )
-        return "Координатор", [], False
+    for i, role in enumerate(roles, start=1):
+        candidates = schemes.stage_candidates(role, ssp_index)
+        label = schemes.STAGE_LABELS.get(role, role)
+        if not candidates:
+            ready = False
+            st.error(
+                f"Для ССП {ssp_index} не знайдено користувача для ланки «{label}». "
+                f"Без цього подання за обраною схемою неможливе."
+            )
+            continue
 
-    coordinator = chain[0]
-    st.markdown(
-        f'<div style="background:#eef2f9;border:1px solid #d8dee9;'
-        f'border-radius:10px;padding:8px 12px;">'
-        f'<div style="font-size:10px;font-weight:800;letter-spacing:.04em;'
-        f'text-transform:uppercase;color:#64748b;">1. Координатор</div>'
-        f'<div style="font-size:13px;font-weight:700;color:#0f172a;">'
-        f'{escape(coordinator["name"])}</div></div>',
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        '<div class="note-box" style="background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;">'
-        'Далі маршрут визначить координатор під час розгляду.</div>',
-        unsafe_allow_html=True,
-    )
-    return "Координатор", chain, True
+        if len(candidates) == 1:
+            chosen = candidates[0]
+            st.markdown(
+                f'<div style="background:#eef2f9;border:1px solid #d8dee9;'
+                f'border-radius:10px;padding:8px 12px;margin-bottom:6px;">'
+                f'<div style="font-size:10px;font-weight:800;letter-spacing:.04em;'
+                f'text-transform:uppercase;color:#64748b;">{i}. {escape(label)}</div>'
+                f'<div style="font-size:13px;font-weight:700;color:#0f172a;">'
+                f'{escape(chosen.get("name") or chosen.get("email") or "")}</div></div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            chosen_label = st.selectbox(
+                f"{i}. {label}",
+                [schemes.candidate_label(c) for c in candidates],
+                key=f"{key_prefix}_stage_{i}_{role}",
+            )
+            chosen = candidates[[schemes.candidate_label(c) for c in candidates].index(chosen_label)]
+        persons[role] = chosen
 
+    chain = schemes.build_chain(scheme_name, persons) if ready else []
+    if chain:
+        st.caption("Маршрут: " + schemes.chain_route_text(chain))
+    return scheme_name, chain, ready
 
 def notify_first_stage(chain, codes, year_str, quarter_str, kind="measure"):
     """Одне миттєве сповіщення першій ланці про подання (без спаму по кожному коду)."""
@@ -1113,10 +1128,7 @@ if submission_mode.startswith("🎯"):
 
     if st.button("Подати значення індикаторів на розгляд", use_container_width=True, key="ind_submit"):
         ind_errors = []
-        if not raw_value(responsible_person):
-            ind_errors.append("Заповніть ПІБ відповідальної особи")
-        if not raw_value(responsible_email):
-            ind_errors.append("Заповніть електронну пошту відповідальної особи")
+        # Контактні дані підтягуються з таблиці доступів; ручну валідацію не застосовуємо.
         if not ind_scheme_ready:
             ind_errors.append("Схема погодження неповна: для однієї з ланок не знайдено користувача")
 
@@ -1125,12 +1137,24 @@ if submission_mode.startswith("🎯"):
             ind_errors.append("Позначте хоча б один індикатор для подання")
         else:
             for _, r in ind_selected.iterrows():
+                code = raw_value(r.get("Код"))
+                unit = raw_value(r.get("Одиниці\nвиміру", ""))
+                fact_value = raw_value(r.get(value_col, ""))
+                target_value = raw_value(r.get(f"{ind_year}\n(цільовий орієнтир)", ""))
                 for field in ind_required_cols:
                     if not raw_value(r.get(field, "")):
                         ind_errors.append(
-                            f"У індикаторі {raw_value(r.get('Код'))} не заповнено обов'язкове поле "
+                            f"У індикаторі {code} не заповнено обов'язкове поле "
                             f"«{field.replace(chr(10), ' ')}»."
                         )
+                ok, msg = validate_fact_value(fact_value, unit)
+                if fact_value and not ok:
+                    ind_errors.append(f"У індикаторі {code}: {msg}.")
+                status_msg = status_completion_warning(
+                    r.get("Статус\nвиконання", ""), fact_value, target_value, unit, code
+                )
+                if status_msg:
+                    ind_errors.append(status_msg)
 
         if ind_errors:
             for e in ind_errors:
@@ -1175,7 +1199,20 @@ if submission_mode.startswith("🎯"):
                 ind_payload.append(item)
 
             try:
-                supabase.table("monitoring_requests").insert(ind_payload).execute()
+                ind_result = supabase.table("monitoring_requests").insert(ind_payload).execute()
+                for item in (getattr(ind_result, "data", None) or ind_payload):
+                    write_audit_log(
+                        supabase,
+                        request_id=item.get("id"),
+                        action="Подання значення індикатора",
+                        old_status="",
+                        new_status=first_status,
+                        comment="Заявку створено подавачем",
+                        user=current_user,
+                        ssp_index=item.get("department"),
+                        strat_code=item.get("strat_code"),
+                        details={"object_kind": "indicator", "scheme_label": ind_scheme_name},
+                    )
                 st.cache_data.clear()
                 notify_first_stage(
                     ind_chain, [p["strat_code"] for p in ind_payload],
@@ -1693,12 +1730,7 @@ else:
 def validate_submission():
     errors = []
 
-    if not raw_value(responsible_person):
-        errors.append("Заповніть ПІБ відповідальної особи")
-    if not raw_value(responsible_phone):
-        errors.append("Заповніть контактний номер телефону")
-    if not raw_value(responsible_email):
-        errors.append("Заповніть електронну пошту відповідальної особи")
+    # Контактні дані підтягуються з таблиці доступів; ручну валідацію не застосовуємо.
 
     if chain_columns_exist and not measures_scheme_ready:
         errors.append("Схема погодження неповна: для однієї з ланок не знайдено користувача")
@@ -1723,6 +1755,9 @@ def validate_submission():
 
     for _, row in selected_rows.iterrows():
         code = raw_value(row.get("Код", ""))
+        fact_value = raw_value(row.get(quarter_label, ""))
+        target_value = raw_value(row.get(col_target, ""))
+        unit = raw_value(row.get("Одиниці\nвиміру", ""))
         missing_fields = [
             field for field in required_editable_cols
             if not raw_value(row.get(field, ""))
@@ -1733,6 +1768,15 @@ def validate_submission():
                 f"У заході {code} не заповнено поле «{field_label}». "
                 "Виправте це та спробуйте подати інформацію ще раз."
             )
+        if fact_value:
+            ok, msg = validate_fact_value(fact_value, unit)
+            if not ok:
+                errors.append(f"У заході {code}: {msg}.")
+        status_msg = status_completion_warning(
+            row.get("Статус\nвиконання", ""), fact_value, target_value, unit, code
+        )
+        if status_msg:
+            errors.append(status_msg)
 
     return errors
 
@@ -1809,7 +1853,20 @@ if submit_clicked:
             })
 
         try:
-            supabase.table("monitoring_requests").insert(payload).execute()
+            submit_result = supabase.table("monitoring_requests").insert(payload).execute()
+            for item in (getattr(submit_result, "data", None) or payload):
+                write_audit_log(
+                    supabase,
+                    request_id=item.get("id"),
+                    action="Подання моніторингових відомостей",
+                    old_status="",
+                    new_status=first_stage_status,
+                    comment="Заявку створено подавачем",
+                    user=current_user,
+                    ssp_index=item.get("department"),
+                    strat_code=item.get("strat_code"),
+                    details={"object_kind": "measure", "scheme_label": measures_scheme_name},
+                )
             st.cache_data.clear()
             if chain_columns_exist and measures_chain:
                 notify_first_stage(

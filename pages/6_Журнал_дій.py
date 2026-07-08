@@ -792,6 +792,10 @@ def display_logs_table(filtered):
         "approval_status": "Статус модерації",
         "admin_comment": "Коментар",
         "changed_by": "Ким змінено",
+        "actor_email": "Email виконавця",
+        "actor_name": "ПІБ виконавця",
+        "actor_role": "Роль виконавця",
+        "payload_json": "Службові деталі",
         "changed_by_role": "Роль",
         "changed_by_name": "ПІБ",
         "changed_by_phone": "Номер",
@@ -810,9 +814,13 @@ def display_logs_table(filtered):
         "Новий статус",
         "Статус модерації",
         "Коментар",
+        "Роль виконавця",
+        "ПІБ виконавця",
+        "Email виконавця",
         "Роль",
         "ПІБ",
         "Номер",
+        "Службові деталі",
         "Дата зміни",
     ]
 
@@ -1256,13 +1264,36 @@ excel_file = dataframe_to_excel({
     "Версії заявок": versions_export
 })
 
-st.download_button(
-    "Завантажити журнал і заявки XLSX",
-    data=excel_file,
-    file_name=f"audit_log_requests_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    use_container_width=True
-)
+ec1, ec2 = st.columns(2)
+with ec1:
+    st.download_button(
+        "Завантажити журнал і заявки XLSX",
+        data=excel_file,
+        file_name=f"audit_log_requests_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
+with ec2:
+    _docx_file = core_exports.dataframes_to_docx_landscape(
+        {
+            "Журнал дій": logs_export,
+            "Не пройшли модерацію": pending_export,
+            "Заявки за період": all_requests_export,
+            "Версії заявок": versions_export,
+        },
+        title="Журнал дій системи моніторингу",
+        subtitle=f"Період: {format_date_range(selected_start_date, selected_end_date)}",
+    )
+    if _docx_file is not None:
+        st.download_button(
+            "Завантажити журнал DOCX (альбомний)",
+            data=_docx_file,
+            file_name=f"audit_log_requests_{datetime.now().strftime('%Y%m%d_%H%M')}.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            use_container_width=True
+        )
+    else:
+        st.caption("DOCX-експорт недоступний: перевірте пакет python-docx у requirements.txt.")
 
 st.markdown('</div>', unsafe_allow_html=True)
 

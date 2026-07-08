@@ -1878,7 +1878,7 @@ with st.container():
                 "<div style='font-size:13px;font-weight:700;margin-bottom:4px;'>"
                 "🏢 Індекс самостійного структурного підрозділу</div>"
                 f"<div style='background:#f1f5f9;border:1px solid #cbd5e1;border-radius:10px;"
-                f"padding:9px 12px;font-weight:800;'>лише ваше ССП: {_own_dash_ssp}</div>",
+                f"padding:9px 12px;font-weight:800;'>Ваш ССП: №{_own_dash_ssp}</div>",
                 unsafe_allow_html=True,
             )
             selected_department_indices = []  # реальне звуження нижче, через own-index override

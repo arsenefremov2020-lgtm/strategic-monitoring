@@ -22,6 +22,8 @@ from core.access import (
 from core import approval_schemes as schemes
 from core import notify_events
 from core.closeouts import load_manual_closeouts
+from core.superadmin_routing import resolve_manual_closeout_route, can_superadmin_decide_closeout
+from core.audit import write_audit_log
 from core.versioning import save_request_version
 from html import escape as _esc
 
@@ -2416,373 +2418,336 @@ else:
 st.markdown('</div>', unsafe_allow_html=True)
 
 # ──────────────────────────────────────────────
-# ЗАКРИТТЯ ЗАХОДУ ВРУЧНУ (admin → super_admin)
+# РЕЖИМ РОБОТИ АДМІНІСТРУВАННЯ
 # ──────────────────────────────────────────────
 
-
-def load_closeout_requests():
-    resp = (
-        supabase.table("closeout_requests")
-        .select("*")
-        .order("requested_at", desc=True)
-        .execute()
-    )
-    return pd.DataFrame(resp.data) if resp.data else pd.DataFrame()
-
-
-measure_codes = strat_df[strat_df["code"].astype(str).str.count(r"\.") >= 3]["code"].astype(str).tolist() \
-    if "code" in strat_df.columns else []
-
-st.markdown(
-    '<div class="card"><div class="card-title">Закриття заходу вручну</div>',
-    unsafe_allow_html=True
+admin_work_mode = st.radio(
+    "Режим адміністрування",
+    ["Основний режим координатора", "Ручне закриття заходів"],
+    horizontal=True,
+    key="admin_work_mode",
 )
 
-if is_admin_user(current_user) or is_super_admin_user(current_user):
-    with st.form("closeout_request_form"):
-        st.caption(
-            "Подати запит на ручне закриття заходу за період. "
-            "Підтверджений запит не підмінює статус подання моніторингу — "
-            "він лише додає окрему позначку «Закрито вручну»."
+if admin_work_mode == "Ручне закриття заходів":
+    # ──────────────────────────────────────────────
+    # ЗАКРИТТЯ ЗАХОДУ ВРУЧНУ (admin → super_admin)
+    # ──────────────────────────────────────────────
+
+
+    def load_closeout_requests():
+        resp = (
+            supabase.table("closeout_requests")
+            .select("*")
+            .order("requested_at", desc=True)
+            .execute()
         )
-        co_code = st.selectbox("Код заходу", measure_codes)
-        co_scope_col, co_year_col, co_quarter_col = st.columns(3)
-        with co_scope_col:
-            co_scope = st.selectbox("Масштаб закриття", ["Квартал", "Рік"])
-        with co_year_col:
-            co_year = st.selectbox("Рік", list(range(2026, 2035)))
-        with co_quarter_col:
-            co_quarter = st.selectbox("Квартал (якщо масштаб — квартал)", ["I", "II", "III", "IV"])
-        co_reason = st.text_area("Підстава для закриття (внутрішня інформація, комунікація, інший звітний документ)")
-        co_npa = st.text_area(
-            "Посилання на НПА / джерела (по одному в рядку, опційно)",
-            placeholder="https://zakon.rada.gov.ua/...\nhttps://docs.google.com/...",
-        )
-        co_evidence = st.text_area("Додаткові пояснення (опційно)")
-        co_submit = st.form_submit_button("Надіслати на підтвердження супер-адміну")
+        return pd.DataFrame(resp.data) if resp.data else pd.DataFrame()
 
-    if co_submit:
-        if not co_reason.strip():
-            st.error("Заповніть підставу для закриття заходу.")
-        else:
-            try:
-                supabase.table("closeout_requests").insert({
-                    "strat_code":     co_code,
-                    "period_year":    str(co_year),
-                    "period_quarter": "Рік" if co_scope == "Рік" else co_quarter,
-                    "scope":          co_scope,
-                    "npa_links":      co_npa.strip(),
-                    "admin_id":       current_user.get("id", ""),
-                    "admin_email":    current_user.get("email", ""),
-                    "reason":         co_reason.strip(),
-                    "evidence_note":  co_evidence.strip(),
-                    "approval_status": "Очікує підтвердження",
-                }).execute()
-                st.success("Запит на закриття заходу надіслано на підтвердження супер-адміну.")
-                st.cache_data.clear()
-                st.rerun()
-            except Exception as e:
-                st.error("Не вдалося надіслати запит на закриття заходу.")
-                st.exception(e)
-else:
-    st.info("Подання запиту на закриття заходу доступне лише адміністратору або супер-адміну.")
 
-closeout_df = load_closeout_requests()
+    _closeout_scope_df = filter_actions_for_user(
+        strat_df,
+        current_user,
+        executor_columns=["resp_main", "resp_co_1", "Головний\nвиконавець", "Співвиконавець"],
+    )
+    measure_codes = _closeout_scope_df[_closeout_scope_df["code"].astype(str).str.count(r"\.") >= 3]["code"].astype(str).tolist() \
+        if "code" in _closeout_scope_df.columns else []
 
-if is_super_admin_user(current_user):
-    st.markdown('<div class="card-title" style="margin-top:18px;">Підтвердження закриття заходів (супер-адмін)</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="card"><div class="card-title">Закриття заходу вручну</div>',
+        unsafe_allow_html=True
+    )
 
-    pending_closeouts = closeout_df[closeout_df["approval_status"] == "Очікує підтвердження"] if not closeout_df.empty else pd.DataFrame()
-
-    if pending_closeouts.empty:
-        st.info("Запитів на закриття, що очікують підтвердження, немає.")
-    else:
-        for _, co_row in pending_closeouts.iterrows():
-            with st.container():
-                st.markdown(
-                    f"""
-                    <div class="review-box">
-                        <div class="review-title">Захід {clean(co_row.get("strat_code",""))}
-                            — {clean(co_row.get("period_quarter",""))} кв. {clean(co_row.get("period_year",""))}</div>
-                        <div><b>Підстава:</b> {clean(co_row.get("reason",""))}</div>
-                        <div><b>Пояснення:</b> {clean(co_row.get("evidence_note",""))}</div>
-                        <div><b>Подано:</b> {clean(co_row.get("admin_email",""))} о {clean(co_row.get("requested_at",""))}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-                co_decision_comment = st.text_input(
-                    "Коментар рішення (опційно)",
-                    key=f"co_decision_comment_{co_row.get('id')}"
-                )
-                co_col1, co_col2 = st.columns(2)
-                with co_col1:
-                    co_approve = st.button("Підтвердити", key=f"co_approve_{co_row.get('id')}", use_container_width=True)
-                with co_col2:
-                    co_reject = st.button("Відхилити", key=f"co_reject_{co_row.get('id')}", use_container_width=True)
-
-                if co_approve or co_reject:
-                    new_co_status = "Підтверджено" if co_approve else "Відхилено"
-                    try:
-                        _co_update = {
-                            "approval_status":   new_co_status,
-                            "superadmin_id":      current_user.get("id", ""),
-                            "decided_at":         datetime.now(timezone.utc).isoformat(),
-                            "decision_comment":   co_decision_comment,
-                        }
-                        if new_co_status == "Підтверджено":
-                            _co_update["head_status"] = "Очікує реакції"
-                        supabase.table("closeout_requests").update(_co_update).eq("id", int(co_row.get("id"))).execute()
-
-                        # Сповіщення керівнику ССП «до відома» (може заперечити у кабінеті)
-                        if new_co_status == "Підтверджено":
-                            try:
-                                _co_code = clean(co_row.get("strat_code", ""))
-                                _m = strat_df[strat_df["code"].astype(str).str.strip() == _co_code]
-                                _dept = str(_m.iloc[0].get("resp_main", "") or _m.iloc[0].get("department", "")) if not _m.empty else ""
-                                _idx = re.findall(r"\d+", _dept)
-                                _idx = _idx[0] if _idx else ""
-                                from config.users import get_users_by_role
-                                _heads = [
-                                    u for u in get_users_by_role("ssp_head").values()
-                                    if str(u.get("ssp_index")) == _idx
-                                ]
-                                if _heads:
-                                    supabase.table("closeout_requests").update(
-                                        {"head_email": _heads[0].get("email", "")}
-                                    ).eq("id", int(co_row.get("id"))).execute()
-                                    notify_events.notify_closeout_to_head(
-                                        _heads[0].get("email", ""), _heads[0].get("full_name", ""),
-                                        _co_code, clean(co_row.get("period_year", "")),
-                                        clean(co_row.get("period_quarter", "")),
-                                        clean(co_row.get("reason", "")), clean(co_decision_comment),
-                                    )
-                            except Exception:
-                                pass
-
-                        load_manual_closeouts.clear()
-                        write_log(
-                            co_row.get("id"),
-                            f"Закриття заходу: {new_co_status}",
-                            "Очікує підтвердження",
-                            new_co_status,
-                            co_decision_comment,
-                        )
-                        st.success(f"Запит на закриття заходу {new_co_status.lower()}.")
-                        st.cache_data.clear()
-                        st.rerun()
-                    except Exception as e:
-                        st.error("Не вдалося застосувати рішення щодо закриття заходу.")
-                        st.exception(e)
-
-# ── Розбіжності «ручне закриття vs подана заявка» + заперечення керівників ──
-if is_super_admin_user(current_user) and not closeout_df.empty:
-    for _col in ("dispute_status", "dispute_note", "dispute_request_id",
-                 "head_status", "head_comment"):
-        if _col not in closeout_df.columns:
-            closeout_df[_col] = ""
-
-    _issues = closeout_df[
-        (closeout_df["approval_status"] == "Підтверджено")
-        & (
-            (closeout_df["dispute_status"].astype(str) == "На розгляді")
-            | (closeout_df["head_status"].astype(str) == "Заперечує")
-        )
-    ]
-    if not _issues.empty:
-        st.markdown(
-            '<div class="card-title" style="margin-top:18px;">⚠️ Розбіжності та заперечення щодо ручних закриттів (супер-адмін)</div>',
-            unsafe_allow_html=True,
-        )
-        for _, _iss in _issues.iterrows():
-            _iss_id = int(_iss.get("id"))
-            _problems = []
-            if str(_iss.get("dispute_status")) == "На розгляді":
-                _problems.append(f"розбіжність із заявкою №{clean(_iss.get('dispute_request_id'))}: «{clean(_iss.get('dispute_note'))}»")
-            if str(_iss.get("head_status")) == "Заперечує":
-                _problems.append(f"заперечення керівника ССП: «{clean(_iss.get('head_comment'))}»")
-            st.markdown(
-                f"""<div class="review-box">
-                    <div class="review-title">Захід {clean(_iss.get("strat_code",""))} —
-                        {clean(_iss.get("period_quarter",""))} · {clean(_iss.get("period_year",""))}</div>
-                    <div>{"; ".join(_problems)}</div>
-                </div>""",
-                unsafe_allow_html=True,
+    if is_admin_user(current_user) or is_super_admin_user(current_user):
+        with st.form("closeout_request_form"):
+            st.caption(
+                "Подати запит на ручне закриття заходу за період. "
+                "Після підтвердження супер-адміном ручне закриття вважається офіційними даними "
+                "та рахується як виконання, але до реакції керівника ССП відображається фіолетовим."
             )
-            _res_comment = st.text_input("Коментар рішення", key=f"iss_comment_{_iss_id}")
-            _i1, _i2 = st.columns(2)
-            with _i1:
-                if st.button("🔒 Лишити закриття чинним", key=f"iss_keep_{_iss_id}", use_container_width=True):
-                    try:
-                        supabase.table("closeout_requests").update({
-                            "dispute_status": "Вирішено",
-                            "decision_comment": _res_comment or clean(_iss.get("decision_comment", "")),
-                        }).eq("id", _iss_id).execute()
-                        _dr = _iss.get("dispute_request_id")
-                        if _dr and str(_dr).strip() not in ("", "nan", "None"):
-                            supabase.table("monitoring_requests").update({
-                                "approval_status": "Повернуто на доопрацювання",
-                                "admin_comment": f"Супер-адмін лишив чинним ручне закриття заходу. {_res_comment}",
-                            }).eq("id", int(float(_dr))).execute()
-                            write_log(int(float(_dr)),
-                                      "Розбіжність вирішено: ручне закриття лишено чинним",
-                                      "", "Повернуто на доопрацювання", _res_comment)
-                        load_manual_closeouts.clear()
-                        st.success("Закриття лишено чинним; заявку (якщо була) повернуто подавачу.")
-                        st.cache_data.clear()
-                        st.rerun()
-                    except Exception as e:
-                        st.error("Не вдалося застосувати рішення.")
-                        st.exception(e)
-            with _i2:
-                if st.button("↩️ Скасувати закриття (заявка йде звичайним шляхом)", key=f"iss_cancel_{_iss_id}", use_container_width=True):
-                    try:
-                        supabase.table("closeout_requests").update({
-                            "approval_status": "Скасовано",
-                            "dispute_status": "Вирішено",
-                            "decision_comment": _res_comment,
-                        }).eq("id", _iss_id).execute()
-                        _dr = _iss.get("dispute_request_id")
-                        if _dr and str(_dr).strip() not in ("", "nan", "None"):
-                            write_log(int(float(_dr)),
-                                      "Розбіжність вирішено: ручне закриття скасовано",
-                                      "", "", _res_comment)
-                        load_manual_closeouts.clear()
-                        st.success("Закриття скасовано. Подана заявка проходить звичайну схему погодження.")
-                        st.cache_data.clear()
-                        st.rerun()
-                    except Exception as e:
-                        st.error("Не вдалося скасувати закриття.")
-                        st.exception(e)
+            co_code = st.selectbox("Код заходу", measure_codes)
+            co_scope_col, co_year_col, co_quarter_col = st.columns(3)
+            with co_scope_col:
+                co_scope = st.selectbox("Масштаб закриття", ["Квартал", "Рік"])
+            with co_year_col:
+                co_year = st.selectbox("Рік", list(range(2026, 2035)))
+            with co_quarter_col:
+                co_quarter = st.selectbox("Квартал (якщо масштаб — квартал)", ["I", "II", "III", "IV"])
+            co_reason = st.text_area("Підстава для закриття (внутрішня інформація, комунікація, інший звітний документ)")
+            co_npa = st.text_area(
+                "Посилання на НПА / джерела (по одному в рядку, опційно)",
+                placeholder="https://zakon.rada.gov.ua/...\nhttps://docs.google.com/...",
+            )
+            co_evidence = st.text_area("Додаткові пояснення (опційно)")
+            co_submit = st.form_submit_button("Закрити вручну" if is_super_admin_user(current_user) else "Надіслати на підтвердження супер-адміну")
 
-    # Скасування будь-якого підтвердженого закриття
-    _confirmed = closeout_df[closeout_df["approval_status"] == "Підтверджено"]
-    if not _confirmed.empty:
-        with st.expander("↩️ Відкликати підтверджене закриття"):
-            _rev_options = [
-                f"#{int(r['id'])} · {clean(r.get('strat_code'))} · {clean(r.get('period_quarter'))} {clean(r.get('period_year'))}"
-                for _, r in _confirmed.iterrows()
-            ]
-            _rev_pick = st.selectbox("Оберіть закриття", _rev_options, key="revoke_closeout_pick")
-            _rev_comment = st.text_input("Причина відкликання", key="revoke_closeout_comment")
-            if st.button("Відкликати закриття", key="revoke_closeout_btn"):
-                _rev_id = int(_rev_pick.split("·")[0].strip().lstrip("#"))
+        if co_submit:
+            if not co_reason.strip():
+                st.error("Заповніть підставу для закриття заходу.")
+            else:
                 try:
-                    supabase.table("closeout_requests").update({
-                        "approval_status": "Скасовано",
-                        "decision_comment": _rev_comment,
-                    }).eq("id", _rev_id).execute()
-                    write_log(_rev_id, "Ручне закриття відкликано супер-адміном",
-                              "Підтверджено", "Скасовано", _rev_comment)
-                    load_manual_closeouts.clear()
-                    st.success("Закриття відкликано.")
+                    _route = resolve_manual_closeout_route(current_user)
+                    _is_super = is_super_admin_user(current_user)
+                    _payload = {
+                        "strat_code":     co_code,
+                        "period_year":    str(co_year),
+                        "period_quarter": "Рік" if co_scope == "Рік" else co_quarter,
+                        "scope":          co_scope,
+                        "npa_links":      co_npa.strip(),
+                        "admin_id":       current_user.get("id", ""),
+                        "admin_email":    current_user.get("email", ""),
+                        "reason":         co_reason.strip(),
+                        "evidence_note":  co_evidence.strip(),
+                        "approval_status": "Підтверджено" if _is_super else "Очікує підтвердження",
+                        **({"superadmin_id": current_user.get("id", ""),
+                            "decided_at": datetime.now(timezone.utc).isoformat(),
+                            "head_status": "Очікує реакції"} if _is_super else {}),
+                        **_route,
+                    }
+                    try:
+                        _res = supabase.table("closeout_requests").insert(_payload).execute()
+                    except Exception:
+                        # fallback до старої схеми БД, якщо міграція DEMO 1.9 ще не застосована
+                        for _k in ["assigned_superadmin_name", "assigned_superadmin_email",
+                                   "senior_superadmin_name", "senior_superadmin_email", "routing_note"]:
+                            _payload.pop(_k, None)
+                        _res = supabase.table("closeout_requests").insert(_payload).execute()
+                    write_audit_log(
+                        supabase,
+                        request_id=(getattr(_res, "data", None) or [{}])[0].get("id"),
+                        action="Ручне закриття заходу",
+                        old_status="",
+                        new_status=_payload.get("approval_status"),
+                        comment=co_reason.strip(),
+                        user=current_user,
+                        ssp_index="",
+                        strat_code=co_code,
+                        related_table="closeout_requests",
+                        details={"scope": co_scope, "year": co_year, "quarter": co_quarter, "routing": _route},
+                    )
+                    st.success("Захід закрито вручну." if _is_super else "Запит на закриття заходу надіслано на підтвердження відповідальному супер-адміну.")
                     st.cache_data.clear()
                     st.rerun()
                 except Exception as e:
-                    st.error("Не вдалося відкликати закриття.")
+                    st.error("Не вдалося надіслати запит на закриття заходу.")
                     st.exception(e)
+    else:
+        st.info("Подання запиту на закриття заходу доступне лише адміністратору або супер-адміну.")
 
-if not closeout_df.empty:
-    with st.expander("Усі запити на закриття заходів"):
-        st.dataframe(closeout_df, use_container_width=True, hide_index=True)
+    closeout_df = load_closeout_requests()
 
-st.markdown('</div>', unsafe_allow_html=True)
+    if is_super_admin_user(current_user):
+        st.markdown('<div class="card-title" style="margin-top:18px;">Підтвердження закриття заходів (супер-адмін)</div>', unsafe_allow_html=True)
 
-# ──────────────────────────────────────────────
-# АРХІВ (заморожені знімки періодів)
-# ──────────────────────────────────────────────
+        pending_closeouts = closeout_df[closeout_df["approval_status"] == "Очікує підтвердження"] if not closeout_df.empty else pd.DataFrame()
+
+        if pending_closeouts.empty:
+            st.info("Запитів на закриття, що очікують підтвердження, немає.")
+        else:
+            for _, co_row in pending_closeouts.iterrows():
+                with st.container():
+                    st.markdown(
+                        f"""
+                        <div class="review-box">
+                            <div class="review-title">Захід {clean(co_row.get("strat_code",""))}
+                                — {clean(co_row.get("period_quarter",""))} кв. {clean(co_row.get("period_year",""))}</div>
+                            <div><b>Підстава:</b> {clean(co_row.get("reason",""))}</div>
+                            <div><b>Пояснення:</b> {clean(co_row.get("evidence_note",""))}</div>
+                            <div><b>Подано:</b> {clean(co_row.get("admin_email",""))} о {clean(co_row.get("requested_at",""))}</div>
+                            <div><b>Маршрутизація:</b> {clean(co_row.get("routing_note", ""))}</div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+                    co_decision_comment = st.text_input(
+                        "Коментар рішення (опційно)",
+                        key=f"co_decision_comment_{co_row.get('id')}"
+                    )
+                    co_col1, co_col2 = st.columns(2)
+                    with co_col1:
+                        co_approve = st.button("Підтвердити", key=f"co_approve_{co_row.get('id')}", use_container_width=True)
+                    with co_col2:
+                        co_reject = st.button("Відхилити", key=f"co_reject_{co_row.get('id')}", use_container_width=True)
+
+                    if co_approve or co_reject:
+                        new_co_status = "Підтверджено" if co_approve else "Відхилено"
+                        try:
+                            _co_update = {
+                                "approval_status":   new_co_status,
+                                "superadmin_id":      current_user.get("id", ""),
+                                "decided_at":         datetime.now(timezone.utc).isoformat(),
+                                "decision_comment":   co_decision_comment,
+                            }
+                            if new_co_status == "Підтверджено":
+                                _co_update["head_status"] = "Очікує реакції"
+                            supabase.table("closeout_requests").update(_co_update).eq("id", int(co_row.get("id"))).execute()
+
+                            # Сповіщення керівнику ССП «до відома» (може заперечити у кабінеті)
+                            if new_co_status == "Підтверджено":
+                                try:
+                                    _co_code = clean(co_row.get("strat_code", ""))
+                                    _m = strat_df[strat_df["code"].astype(str).str.strip() == _co_code]
+                                    _dept = str(_m.iloc[0].get("resp_main", "") or _m.iloc[0].get("department", "")) if not _m.empty else ""
+                                    _idx = re.findall(r"\d+", _dept)
+                                    _idx = _idx[0] if _idx else ""
+                                    from config.users import get_users_by_role
+                                    _heads = [
+                                        u for u in get_users_by_role("ssp_head").values()
+                                        if str(u.get("ssp_index")) == _idx
+                                    ]
+                                    if _heads:
+                                        supabase.table("closeout_requests").update(
+                                            {"head_email": _heads[0].get("email", "")}
+                                        ).eq("id", int(co_row.get("id"))).execute()
+                                        notify_events.notify_closeout_to_head(
+                                            _heads[0].get("email", ""), _heads[0].get("full_name", ""),
+                                            _co_code, clean(co_row.get("period_year", "")),
+                                            clean(co_row.get("period_quarter", "")),
+                                            clean(co_row.get("reason", "")), clean(co_decision_comment),
+                                        )
+                                except Exception:
+                                    pass
+
+                            load_manual_closeouts.clear()
+                            write_log(
+                                co_row.get("id"),
+                                f"Закриття заходу: {new_co_status}",
+                                "Очікує підтвердження",
+                                new_co_status,
+                                co_decision_comment,
+                            )
+                            st.success(f"Запит на закриття заходу {new_co_status.lower()}.")
+                            st.cache_data.clear()
+                            st.rerun()
+                        except Exception as e:
+                            st.error("Не вдалося застосувати рішення щодо закриття заходу.")
+                            st.exception(e)
+
+    # ── Розбіжності «ручне закриття vs подана заявка» + заперечення керівників ──
+    if is_super_admin_user(current_user) and not closeout_df.empty:
+        for _col in ("dispute_status", "dispute_note", "dispute_request_id",
+                     "head_status", "head_comment"):
+            if _col not in closeout_df.columns:
+                closeout_df[_col] = ""
+
+        _issues = closeout_df[
+            (closeout_df["approval_status"] == "Підтверджено")
+            & (
+                (closeout_df["dispute_status"].astype(str) == "На розгляді")
+                | (closeout_df["head_status"].astype(str) == "Заперечує")
+            )
+        ]
+        if not _issues.empty:
+            st.markdown(
+                '<div class="card-title" style="margin-top:18px;">⚠️ Розбіжності та заперечення щодо ручних закриттів (супер-адмін)</div>',
+                unsafe_allow_html=True,
+            )
+            for _, _iss in _issues.iterrows():
+                _iss_id = int(_iss.get("id"))
+                _problems = []
+                if str(_iss.get("dispute_status")) == "На розгляді":
+                    _problems.append(f"розбіжність із заявкою №{clean(_iss.get('dispute_request_id'))}: «{clean(_iss.get('dispute_note'))}»")
+                if str(_iss.get("head_status")) == "Заперечує":
+                    _problems.append(f"заперечення керівника ССП: «{clean(_iss.get('head_comment'))}»")
+                st.markdown(
+                    f"""<div class="review-box">
+                        <div class="review-title">Захід {clean(_iss.get("strat_code",""))} —
+                            {clean(_iss.get("period_quarter",""))} · {clean(_iss.get("period_year",""))}</div>
+                        <div>{"; ".join(_problems)}</div>
+                    </div>""",
+                    unsafe_allow_html=True,
+                )
+                _res_comment = st.text_input("Коментар рішення", key=f"iss_comment_{_iss_id}")
+                _i1, _i2 = st.columns(2)
+                with _i1:
+                    if st.button("🔒 Лишити закриття чинним", key=f"iss_keep_{_iss_id}", use_container_width=True):
+                        try:
+                            supabase.table("closeout_requests").update({
+                                "dispute_status": "Вирішено",
+                                "decision_comment": _res_comment or clean(_iss.get("decision_comment", "")),
+                            }).eq("id", _iss_id).execute()
+                            _dr = _iss.get("dispute_request_id")
+                            if _dr and str(_dr).strip() not in ("", "nan", "None"):
+                                supabase.table("monitoring_requests").update({
+                                    "approval_status": "Повернуто на доопрацювання",
+                                    "admin_comment": f"Супер-адмін лишив чинним ручне закриття заходу. {_res_comment}",
+                                }).eq("id", int(float(_dr))).execute()
+                                write_log(int(float(_dr)),
+                                          "Розбіжність вирішено: ручне закриття лишено чинним",
+                                          "", "Повернуто на доопрацювання", _res_comment)
+                            load_manual_closeouts.clear()
+                            st.success("Закриття лишено чинним; заявку (якщо була) повернуто подавачу.")
+                            st.cache_data.clear()
+                            st.rerun()
+                        except Exception as e:
+                            st.error("Не вдалося застосувати рішення.")
+                            st.exception(e)
+                with _i2:
+                    if st.button("↩️ Скасувати закриття (заявка йде звичайним шляхом)", key=f"iss_cancel_{_iss_id}", use_container_width=True):
+                        try:
+                            supabase.table("closeout_requests").update({
+                                "approval_status": "Скасовано",
+                                "dispute_status": "Вирішено",
+                                "decision_comment": _res_comment,
+                            }).eq("id", _iss_id).execute()
+                            _dr = _iss.get("dispute_request_id")
+                            if _dr and str(_dr).strip() not in ("", "nan", "None"):
+                                write_log(int(float(_dr)),
+                                          "Розбіжність вирішено: ручне закриття скасовано",
+                                          "", "", _res_comment)
+                            load_manual_closeouts.clear()
+                            st.success("Закриття скасовано. Подана заявка проходить звичайну схему погодження.")
+                            st.cache_data.clear()
+                            st.rerun()
+                        except Exception as e:
+                            st.error("Не вдалося скасувати закриття.")
+                            st.exception(e)
+
+        # Скасування будь-якого підтвердженого закриття
+        _confirmed = closeout_df[closeout_df["approval_status"] == "Підтверджено"]
+        if not _confirmed.empty:
+            with st.expander("↩️ Відкликати підтверджене закриття"):
+                _rev_options = [
+                    f"#{int(r['id'])} · {clean(r.get('strat_code'))} · {clean(r.get('period_quarter'))} {clean(r.get('period_year'))}"
+                    for _, r in _confirmed.iterrows()
+                ]
+                _rev_pick = st.selectbox("Оберіть закриття", _rev_options, key="revoke_closeout_pick")
+                _rev_comment = st.text_input("Причина відкликання", key="revoke_closeout_comment")
+                if st.button("Відкликати закриття", key="revoke_closeout_btn"):
+                    _rev_id = int(_rev_pick.split("·")[0].strip().lstrip("#"))
+                    try:
+                        supabase.table("closeout_requests").update({
+                            "approval_status": "Скасовано",
+                            "decision_comment": _rev_comment,
+                        }).eq("id", _rev_id).execute()
+                        write_log(_rev_id, "Ручне закриття відкликано супер-адміном",
+                                  "Підтверджено", "Скасовано", _rev_comment)
+                        load_manual_closeouts.clear()
+                        st.success("Закриття відкликано.")
+                        st.cache_data.clear()
+                        st.rerun()
+                    except Exception as e:
+                        st.error("Не вдалося відкликати закриття.")
+                        st.exception(e)
+
+    if not closeout_df.empty:
+        with st.expander("Усі запити на закриття заходів"):
+            st.dataframe(closeout_df, use_container_width=True, hide_index=True)
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # ──────────────────────────────────────────────
+    # АРХІВ (заморожені знімки періодів)
+    # ──────────────────────────────────────────────
 
 
-def load_archive_snapshots():
-    try:
-        resp = (
-            supabase.table("archive_snapshots")
-            .select("id,year,quarter,archived_by,archived_at")
-            .order("archived_at", desc=True)
-            .execute()
-        )
-    except Exception:
-        return pd.DataFrame()
-    return pd.DataFrame(resp.data) if resp.data else pd.DataFrame()
-
+else:
+    st.info("Увімкнено основний режим координатора. Ручне закриття приховано; перемкніть режим вище, якщо потрібно працювати саме з ручним закриттям.")
 
 st.markdown(
-    '<div class="card"><div class="card-title">Архів</div>',
-    unsafe_allow_html=True
+    '<div class="card"><div class="card-title">Архівування</div>',
+    unsafe_allow_html=True,
 )
-
-if is_admin_user(current_user) or is_super_admin_user(current_user):
-    st.caption(
-        "Заархівувати рік (або рік+квартал) — фіксується «заморожений» знімок поточних "
-        "даних моніторингу, який надалі не змінюється навіть якщо зміниться логіка розрахунків "
-        "чи живі дані. Перегляд знімків доступний на сторінці «Архів»."
-    )
-
-    arc_year_col, arc_quarter_col = st.columns(2)
-    with arc_year_col:
-        arc_year = st.selectbox("Рік для архівування", list(range(2026, 2035)), key="arc_year")
-    with arc_quarter_col:
-        arc_quarter = st.selectbox(
-            "Квартал (опційно — залишити «Весь рік», щоб заархівувати рік цілком)",
-            ["Весь рік", "I", "II", "III", "IV"],
-            key="arc_quarter",
-        )
-
-    arc_confirm = st.checkbox("Я підтверджую архівування цього періоду", key="arc_confirm")
-    arc_submit = st.button("Заархівувати", key="arc_submit")
-
-    if arc_submit:
-        if not arc_confirm:
-            st.error("Підтвердіть архівування, встановивши прапорець вище.")
-        else:
-            quarter_value = None if arc_quarter == "Весь рік" else arc_quarter
-            try:
-                requests_resp = supabase.table("monitoring_requests").select("*").eq(
-                    "year", str(arc_year)
-                )
-                if quarter_value:
-                    requests_resp = requests_resp.eq("quarter", quarter_value)
-                requests_data = requests_resp.execute().data or []
-
-                snapshot_data = {
-                    "measures": strat_df.to_dict(orient="records"),
-                    "monitoring": requests_data,
-                }
-
-                existing_query = supabase.table("archive_snapshots").select("id").eq("year", str(arc_year))
-                existing_query = existing_query.is_("quarter", "null") if quarter_value is None else existing_query.eq("quarter", quarter_value)
-                existing_snapshot = existing_query.execute().data or []
-
-                payload = {
-                    "year":          str(arc_year),
-                    "quarter":       quarter_value,
-                    "snapshot_data": snapshot_data,
-                    "archived_by":   current_user.get("email", ""),
-                    "archived_at":   datetime.now(timezone.utc).isoformat(),
-                }
-                if existing_snapshot:
-                    supabase.table("archive_snapshots").update(payload).eq(
-                        "id", existing_snapshot[0]["id"]
-                    ).execute()
-                else:
-                    supabase.table("archive_snapshots").insert(payload).execute()
-
-                st.success(
-                    f"Період {arc_quarter if quarter_value else 'весь рік'} {arc_year} заархівовано."
-                )
-                st.cache_data.clear()
-                st.rerun()
-            except Exception as e:
-                st.error("Не вдалося заархівувати період. Перевірте, чи застосована міграція archive_snapshots.")
-                st.exception(e)
-else:
-    st.info("Архівування доступне лише адміністратору або супер-адміну.")
-
-archive_snapshots_df = load_archive_snapshots()
-if not archive_snapshots_df.empty:
-    with st.expander("Заархівовані періоди"):
-        st.dataframe(archive_snapshots_df, use_container_width=True, hide_index=True)
-
+st.info("Архівування тимчасово вимкнено в DEMO 1.9. Функція не відображається в адмінському режимі та не створює нових архівних знімків.")
 st.markdown('</div>', unsafe_allow_html=True)
 
 with st.expander("Технічна таблиця заявок"):

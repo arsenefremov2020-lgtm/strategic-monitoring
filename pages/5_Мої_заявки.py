@@ -499,6 +499,12 @@ for col in required_cols:
     if col not in df.columns:
         df[col] = ""
 
+# DEMO 1.9: «Мої заявки» показує тільки заявки, створені поточним користувачем,
+# а не всі заявки ССП. Основний ключ — email подавача.
+_current_email = str((current_user or {}).get("email") or "").strip().lower()
+if _current_email and "email" in df.columns:
+    df = df[df["email"].astype(str).str.strip().str.lower() == _current_email].copy()
+
 render_notifications_panel(df, mode="cabinet")
 
 # ============================================================
@@ -507,55 +513,49 @@ render_notifications_panel(df, mode="cabinet")
 
 st.markdown(
     '<div class="card"><div class="card-title">Параметри відбору</div>'
-    '<div class="card-subtitle">Оберіть самостійний структурний підрозділ, рік і статус погодження.</div>'
+    '<div class="card-subtitle">Фільтри застосовуються тільки після натискання кнопки. У кабінеті показуються лише заявки, створені поточним користувачем.</div>'
     '<div class="filter-panel">',
     unsafe_allow_html=True
 )
 
-c1, c2, c3, c4 = st.columns(4)
+if "my_requests_filters_applied" not in st.session_state:
+    st.session_state.my_requests_filters_applied = {
+        "year": "Усі",
+        "status": "Усі",
+        "search": "",
+    }
 
-with c1:
-    departments = sorted(df["department"].dropna().astype(str).unique().tolist())
-
-    if user_has_all_ssp_access(current_user):
-        available_departments = departments
-    else:
-        available_departments = get_available_ssp_options_for_user(
-            current_user,
-            all_options=departments
-        )
-
-        # Для випадку, коли в заявках department записаний просто як "30",
-        # а в профілі користувача label стоїть як "деп. 30".
-        allowed_indexes = current_user.get("allowed_ssp_indexes", [])
-        available_departments = [
-            department
-            for department in departments
-            if any(str(index) in str(department) for index in allowed_indexes)
-        ] or available_departments
-
-    if not available_departments:
-        st.warning("Для цього користувача немає доступних заявок за ССП.")
-        st.stop()
-
-    selected_department = st.selectbox(
-        "Самостійний структурний підрозділ",
-        available_departments,
-        index=0,
-        disabled=should_lock_ssp_fields(current_user),
-    )
-
-with c2:
+f1, f2, f3 = st.columns([0.75, 1.15, 1.5])
+with f1:
     years = ["Усі"] + sorted(df["year"].dropna().astype(str).unique().tolist())
-    selected_year = st.selectbox("Рік", years)
+    st.selectbox("Рік", years, key="my_req_year_pending")
+with f2:
+    st.selectbox("Статус погодження", APPROVAL_FILTER_OPTIONS, index=0, key="my_req_status_pending")
+with f3:
+    st.text_input("Пошук за ID або кодом заходу", key="my_req_search_pending")
 
-with c3:
-    selected_status = st.selectbox("Статус погодження", APPROVAL_FILTER_OPTIONS, index=0)
+b1, b2 = st.columns([1, 1])
+with b1:
+    if st.button("Застосувати обрані параметри", type="primary", use_container_width=True, key="my_req_apply_filters"):
+        st.session_state.my_requests_filters_applied = {
+            "year": st.session_state.get("my_req_year_pending", "Усі"),
+            "status": st.session_state.get("my_req_status_pending", "Усі"),
+            "search": st.session_state.get("my_req_search_pending", ""),
+        }
+        st.rerun()
+with b2:
+    if st.button("Скинути параметри", use_container_width=True, key="my_req_reset_filters"):
+        st.session_state.my_requests_filters_applied = {"year": "Усі", "status": "Усі", "search": ""}
+        for _k in ("my_req_year_pending", "my_req_status_pending", "my_req_search_pending"):
+            st.session_state.pop(_k, None)
+        st.rerun()
 
-with c4:
-    search = st.text_input("Пошук за ID або назвою заходу")
+_applied = st.session_state.my_requests_filters_applied
+filtered = df.copy()
 
-filtered = df[df["department"].astype(str) == str(selected_department)].copy()
+selected_year = _applied.get("year", "Усі")
+selected_status = _applied.get("status", "Усі")
+search = str(_applied.get("search", "") or "")
 
 if selected_year != "Усі":
     filtered = filtered[filtered["year"].astype(str) == str(selected_year)]
@@ -569,11 +569,15 @@ if search.strip():
     sq = search.strip().lower()
     filtered = filtered[
         filtered["id"].astype(str).str.lower().str.contains(sq, na=False)
-        |
-        filtered["strat_code"].astype(str).str.lower().str.contains(sq, na=False)
-        |
-        filtered["responsible_person"].astype(str).str.lower().str.contains(sq, na=False)
+        | filtered["strat_code"].astype(str).str.lower().str.contains(sq, na=False)
+        | filtered["responsible_person"].astype(str).str.lower().str.contains(sq, na=False)
     ]
+
+# Повернуті заявки піднімаємо вгору.
+if not filtered.empty:
+    filtered["_returned_rank"] = (filtered["approval_status"].astype(str) != "Повернуто на доопрацювання").astype(int)
+    filtered["_submitted_sort"] = pd.to_datetime(filtered["submitted_at"], errors="coerce")
+    filtered = filtered.sort_values(["_returned_rank", "_submitted_sort"], ascending=[True, False]).drop(columns=["_returned_rank", "_submitted_sort"], errors="ignore")
 
 st.caption(f"Знайдено відомостей: {len(filtered)}")
 st.markdown('</div></div>', unsafe_allow_html=True)

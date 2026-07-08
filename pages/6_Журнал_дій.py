@@ -353,6 +353,21 @@ def load_versions():
     return pd.DataFrame(response.data or [])
 
 
+@st.cache_data(ttl=300)
+def load_notification_log():
+    try:
+        response = (
+            supabase
+            .table("notification_log")
+            .select("*")
+            .order("sent_at", desc=True)
+            .execute()
+        )
+        return pd.DataFrame(response.data or [])
+    except Exception:
+        return pd.DataFrame()
+
+
 def clean_text(value):
     if value is None or pd.isna(value):
         return ""
@@ -759,6 +774,30 @@ def render_metric_cards(total_logs, unique_requests, unique_actions, total_versi
     """, unsafe_allow_html=True)
 
 
+def display_notifications_table(df):
+    if df is None or df.empty:
+        st.info("Email-сповіщень за обраним режимом не знайдено.")
+        return pd.DataFrame()
+    show = df.copy()
+    rename_map = {
+        "id": "ID",
+        "recipient_email": "Email отримувача",
+        "recipient_role": "Роль отримувача",
+        "notification_type": "Тип сповіщення",
+        "related_key": "Пов'язаний ключ",
+        "subject": "Тема",
+        "body_preview": "Текст/прев'ю",
+        "sent_at": "Дата відправки",
+        "status": "Статус",
+        "error": "Помилка",
+    }
+    show = show.rename(columns=rename_map)
+    cols = ["ID", "Дата відправки", "Email отримувача", "Роль отримувача", "Тип сповіщення", "Пов'язаний ключ", "Тема", "Текст/прев'ю", "Статус", "Помилка"]
+    available = [c for c in cols if c in show.columns]
+    st.dataframe(show[available], use_container_width=True, hide_index=True)
+    return show[available]
+
+
 def display_logs_table(filtered):
     if filtered.empty:
         st.info("За обраними параметрами відбору записів журналу не знайдено.")
@@ -1141,6 +1180,38 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+# DEMO 1.9: параметри журналу застосовуються тільки після кнопки.
+_j_defaults = {"departments": ["Усі"], "years": ["Усі"], "quarters": ["Усі"], "actions": ["Усі"], "changed_by": ["Усі"], "approval": ["Усі"], "search": ""}
+if "journal_filters_applied_v19" not in st.session_state:
+    st.session_state["journal_filters_applied_v19"] = _j_defaults.copy()
+_j1, _j2, _j3 = st.columns([1, 1, 1.5])
+with _j1:
+    if st.button("Застосувати обрані параметри", type="primary", use_container_width=True, key="journal_apply_filters_v19"):
+        st.session_state["journal_filters_applied_v19"] = {
+            "departments": list(selected_departments or ["Усі"]),
+            "years": list(selected_years or ["Усі"]),
+            "quarters": list(selected_quarters or ["Усі"]),
+            "actions": list(selected_actions or ["Усі"]),
+            "changed_by": list(selected_changed_by or ["Усі"]),
+            "approval": list(selected_approval_statuses or ["Усі"]),
+            "search": search,
+        }
+        st.rerun()
+with _j2:
+    if st.button("Скинути параметри", use_container_width=True, key="journal_reset_filters_v19"):
+        st.session_state["journal_filters_applied_v19"] = _j_defaults.copy()
+        st.rerun()
+with _j3:
+    st.caption("Журнал показує зміни за застосованими параметрами; email-сповіщення вмикаються окремим перемикачем.")
+_j_applied = st.session_state.get("journal_filters_applied_v19", _j_defaults.copy())
+selected_departments = _j_applied.get("departments", ["Усі"])
+selected_years = _j_applied.get("years", ["Усі"])
+selected_quarters = _j_applied.get("quarters", ["Усі"])
+selected_actions = _j_applied.get("actions", ["Усі"])
+selected_changed_by = _j_applied.get("changed_by", ["Усі"])
+selected_approval_statuses = _j_applied.get("approval", ["Усі"])
+search = _j_applied.get("search", "")
+
 filtered_logs = apply_common_filters(
     logs_df,
     selected_departments=selected_departments,
@@ -1241,6 +1312,22 @@ logs_export = display_logs_table(filtered_logs)
 
 st.markdown('</div>', unsafe_allow_html=True)
 
+show_notifications = st.toggle(
+    "Показати email-сповіщення",
+    value=False,
+    key="journal_show_notifications_v19",
+    help="Увімкніть тільки коли треба перевірити відправлені листи або помилки email."
+)
+notifications_export = pd.DataFrame()
+if show_notifications:
+    st.markdown('<div class="card"><div class="card-title">Email-сповіщення</div><div class="card-subtitle">Окремий службовий режим, щоб не перевантажувати журнал.</div>', unsafe_allow_html=True)
+    _notif = notifications_df.copy()
+    if not _notif.empty and "sent_at" in _notif.columns:
+        _notif["sent_at_dt"] = pd.to_datetime(_notif["sent_at"], errors="coerce")
+        _notif = _notif[(_notif["sent_at_dt"].dt.date >= selected_start_date) & (_notif["sent_at_dt"].dt.date <= selected_end_date)]
+    notifications_export = display_notifications_table(_notif)
+    st.markdown('</div>', unsafe_allow_html=True)
+
 st.markdown('<div class="card"><div class="card-title">Версії заявок</div><div class="card-subtitle">Попередні та повторно подані версії заявок у межах обраного періоду.</div>', unsafe_allow_html=True)
 
 versions_export = display_versions_table(
@@ -1257,12 +1344,15 @@ st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown('<div class="card"><div class="card-title">Експорт журналу</div><div class="card-subtitle">Завантаження поточного зрізу журналу, заявок без завершеної модерації, усіх заявок за період і версій.</div>', unsafe_allow_html=True)
 
-excel_file = dataframe_to_excel({
+_export_sheets = {
     "Журнал дій": logs_export,
     "Не пройшли модерацію": pending_export,
     "Заявки за період": all_requests_export,
-    "Версії заявок": versions_export
-})
+    "Версії заявок": versions_export,
+}
+if not notifications_export.empty:
+    _export_sheets["Email-сповіщення"] = notifications_export
+excel_file = dataframe_to_excel(_export_sheets)
 
 ec1, ec2 = st.columns(2)
 with ec1:
@@ -1275,12 +1365,7 @@ with ec1:
     )
 with ec2:
     _docx_file = core_exports.dataframes_to_docx_landscape(
-        {
-            "Журнал дій": logs_export,
-            "Не пройшли модерацію": pending_export,
-            "Заявки за період": all_requests_export,
-            "Версії заявок": versions_export,
-        },
+        _export_sheets,
         title="Журнал дій системи моніторингу",
         subtitle=f"Період: {format_date_range(selected_start_date, selected_end_date)}",
     )

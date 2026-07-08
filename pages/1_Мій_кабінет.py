@@ -461,58 +461,62 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-c1, c2, c3, c4 = st.columns(4)
+if "cabinet_filters_applied_v19" not in st.session_state:
+    st.session_state["cabinet_filters_applied_v19"] = {"department": None, "year": "Усі", "status": "Усі", "search": ""}
 
+c1, c2, c3, c4 = st.columns(4)
 with c1:
     departments = sorted(df["department"].dropna().astype(str).unique().tolist())
-
     if user_has_all_ssp_access(current_user):
         available_departments = departments
     else:
-        available_departments = get_available_ssp_options_for_user(
-            current_user,
-            all_options=departments
-        )
-
+        available_departments = get_available_ssp_options_for_user(current_user, all_options=departments)
         allowed_indexes = current_user.get("allowed_ssp_indexes", [])
-        available_departments = [
-            department
-            for department in departments
-            if any(str(index) in str(department) for index in allowed_indexes)
-        ] or available_departments
-
+        available_departments = [d for d in departments if any(str(index) in str(d) for index in allowed_indexes)] or available_departments
     if not available_departments:
         st.warning("Для цього користувача немає доступних ССП.")
         st.stop()
-
-    selected_department = st.selectbox(
-        "Самостійний структурний підрозділ",
-        available_departments,
-        index=0,
-        disabled=should_lock_ssp_fields(current_user),
+    current_dep = st.session_state["cabinet_filters_applied_v19"].get("department") or available_departments[0]
+    dep_index = available_departments.index(current_dep) if current_dep in available_departments else 0
+    selected_department_pending = st.selectbox(
+        "Самостійний структурний підрозділ", available_departments, index=dep_index,
+        disabled=should_lock_ssp_fields(current_user), key="cabinet_department_pending"
     )
-
 with c2:
     years = ["Усі"] + sorted(df["year"].dropna().astype(str).unique().tolist())
-    selected_year = st.selectbox("Рік", years)
-
+    _cur_year = st.session_state["cabinet_filters_applied_v19"].get("year", "Усі")
+    selected_year_pending = st.selectbox("Рік", years, index=years.index(_cur_year) if _cur_year in years else 0, key="cabinet_year_pending")
 with c3:
-    selected_status = st.selectbox("Статус погодження", APPROVAL_FILTER_OPTIONS, index=0)
-
+    _cur_status = st.session_state["cabinet_filters_applied_v19"].get("status", "Усі")
+    selected_status_pending = st.selectbox("Статус погодження", APPROVAL_FILTER_OPTIONS, index=APPROVAL_FILTER_OPTIONS.index(_cur_status) if _cur_status in APPROVAL_FILTER_OPTIONS else 0, key="cabinet_status_pending")
 with c4:
-    search = st.text_input("Пошук за ID або кодом заходу")
+    search_pending = st.text_input("Пошук за ID або кодом заходу", value=st.session_state["cabinet_filters_applied_v19"].get("search", ""), key="cabinet_search_pending")
+
+ba, bb, bc = st.columns([1, 1, 1.2])
+with ba:
+    if st.button("Застосувати обрані параметри", type="primary", use_container_width=True, key="cabinet_apply_filters_v19"):
+        st.session_state["cabinet_filters_applied_v19"] = {"department": selected_department_pending, "year": selected_year_pending, "status": selected_status_pending, "search": search_pending}
+        st.rerun()
+with bb:
+    if st.button("Скинути параметри", use_container_width=True, key="cabinet_reset_filters_v19"):
+        st.session_state["cabinet_filters_applied_v19"] = {"department": available_departments[0], "year": "Усі", "status": "Усі", "search": ""}
+        st.rerun()
+with bc:
+    st.caption("Заявки фільтруються тільки після застосування параметрів.")
+
+_applied_cab = st.session_state["cabinet_filters_applied_v19"]
+selected_department = _applied_cab.get("department") or available_departments[0]
+selected_year = _applied_cab.get("year", "Усі")
+selected_status = _applied_cab.get("status", "Усі")
+search = str(_applied_cab.get("search", "") or "")
 
 filtered = df[df["department"].astype(str) == str(selected_department)].copy()
-
 if selected_year != "Усі":
     filtered = filtered[filtered["year"].astype(str) == str(selected_year)]
-
 if selected_status == "Активні до розгляду":
-    # Усі заявки, що чекають рішення будь-якої ланки схеми
     filtered = filtered[filtered["approval_status"].astype(str).isin(schemes.ALL_WAITING_STATUSES)]
 elif selected_status != "Усі":
     filtered = filtered[filtered["approval_status"].astype(str) == selected_status]
-
 if search.strip():
     sq = search.strip().lower()
     filtered = filtered[
@@ -1164,7 +1168,7 @@ if _my_role == ROLE_SSP_HEAD:
 
         _pending_ack = _co_df[
             _co_df.apply(_closeout_is_mine, axis=1)
-            & (~_co_df["head_status"].astype(str).isin(["Не заперечує", "Заперечує"]))
+            & (~_co_df["head_status"].astype(str).isin(["Не заперечує", "Заперечує", "Оскаржено"]))
         ]
 
         if not _pending_ack.empty:
@@ -1200,13 +1204,13 @@ if _my_role == ROLE_SSP_HEAD:
                 with _a1:
                     _ok_btn = st.button("✅ Не заперечую", key=f"co_ok_{_co_id}", use_container_width=True)
                 with _a2:
-                    _obj_btn = st.button("⛔ Заперечую", key=f"co_obj_{_co_id}", use_container_width=True)
+                    _obj_btn = st.button("⛔ Оскаржити", key=f"co_obj_{_co_id}", use_container_width=True)
 
                 if _ok_btn or _obj_btn:
                     if _obj_btn and not clean(_ack_comment):
                         st.error("Вкажіть коментар до заперечення.")
                     else:
-                        _new_head_status = "Заперечує" if _obj_btn else "Не заперечує"
+                        _new_head_status = "Оскаржено" if _obj_btn else "Не заперечує"
                         try:
                             supabase.table("closeout_requests").update({
                                 "head_status": _new_head_status,

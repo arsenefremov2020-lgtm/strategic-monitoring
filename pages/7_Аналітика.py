@@ -23,13 +23,14 @@ from core.page_setup import page_setup, render_footer
 from core.strategic_data import load_strat_matrix as core_load_strat_matrix
 from core import monitoring_data
 from core import statuses as core_statuses
+from core import operational
 
 
 # ============================================================
 # Page config
 # ============================================================
 
-page_setup("Аналітика", page_name="Аналітика")
+current_user = page_setup("Аналітика", page_name="Аналітика")
 
 
 supabase = get_supabase_client()
@@ -1285,6 +1286,21 @@ st.markdown(
 
 strat_df = load_strat_matrix()
 requests_df = ensure_request_columns(load_requests())
+
+analytics_data_mode = st.radio(
+    "Джерело даних для аналітики",
+    operational.MODE_OPTIONS,
+    horizontal=True,
+    key="analytics_data_mode_v19",
+    help=operational.MODE_HELP,
+)
+if analytics_data_mode == operational.MODE_OPERATIONAL and not requests_df.empty:
+    _analytics_targets = operational.build_target_map(strat_df)
+    requests_df, _analytics_auto = operational.apply_operational_mode(requests_df, _analytics_targets)
+    st.caption(f"⚡ Оперативний режим: додатково враховано подання після координатора; авто-зараховано: {len(_analytics_auto)}.")
+else:
+    st.caption("✅ Аналітика розраховується за офіційно погодженими даними.")
+
 measures_all = base_measures(strat_df)
 
 if measures_all.empty:
@@ -1405,6 +1421,39 @@ with f5:
     )
 
 st.markdown('</div>', unsafe_allow_html=True)
+
+# DEMO 1.9: параметри аналітики застосовуються тільки після кнопки.
+_an_defaults = {"years": [], "quarters": [], "ssp": [], "deputies": [], "goals": [], "tasks": [], "product_types": []}
+if "analytics_filters_applied_v19" not in st.session_state:
+    st.session_state["analytics_filters_applied_v19"] = _an_defaults.copy()
+_an_a, _an_b, _an_c = st.columns([1, 1, 1.4])
+with _an_a:
+    if st.button("Застосувати обрані параметри", type="primary", use_container_width=True, key="analytics_apply_filters_v19"):
+        st.session_state["analytics_filters_applied_v19"] = {
+            "years": list(selected_years_raw or []),
+            "quarters": list(selected_quarters_raw or []),
+            "ssp": list(selected_ssp_indices or []),
+            "deputies": list(selected_deputies or []),
+            "goals": list(selected_goal_labels or []),
+            "tasks": list(selected_task_labels or []),
+            "product_types": list(selected_product_types or []),
+        }
+        st.rerun()
+with _an_b:
+    if st.button("Скинути параметри", use_container_width=True, key="analytics_reset_filters_v19"):
+        st.session_state["analytics_filters_applied_v19"] = _an_defaults.copy()
+        st.rerun()
+with _an_c:
+    st.caption("Аналітичні графіки, таблиці та експорти перебудовуються після застосування параметрів.")
+
+_an_applied = st.session_state.get("analytics_filters_applied_v19", _an_defaults.copy())
+selected_years_raw = _an_applied.get("years", [])
+selected_quarters_raw = _an_applied.get("quarters", [])
+selected_ssp_indices = _an_applied.get("ssp", [])
+selected_deputies = _an_applied.get("deputies", [])
+selected_goal_labels = _an_applied.get("goals", [])
+selected_task_labels = _an_applied.get("tasks", [])
+selected_product_types = _an_applied.get("product_types", [])
 
 # Default rule requested by user: no period filters -> full 2026.
 selected_years = selected_years_raw if selected_years_raw else [2026]

@@ -19,10 +19,11 @@ from core.strategic_data import load_strat_matrix as core_load_strat_matrix
 from core import monitoring_data
 from config.roles import ROLE_SSP, ROLE_SSP_HEAD, ROLE_UNIT_HEAD, ROLE_SSP_DEPUTY, ROLE_ADMIN, ROLE_SUPER_ADMIN, ENABLE_PERSONAL_CABINETS
 from core.access import filter_actions_for_user, filter_requests_for_user
-from core.ui import render_scope_toggle
+from core.ui import render_scope_toggle, render_auto_refresh_notice
 
 
 current_user = page_setup("Картка заходу", page_name="Картка заходу")
+render_auto_refresh_notice("Картка заходу", minutes=5)
 current_role = current_user.get("role")
 can_view_submission_history = (
     not ENABLE_PERSONAL_CABINETS or current_role in [ROLE_ADMIN, ROLE_SUPER_ADMIN]

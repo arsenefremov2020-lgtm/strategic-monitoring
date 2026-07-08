@@ -23,11 +23,12 @@ from core.access import (
     is_scope_override_active,
     get_user_ssp_index,
 )
-from core.ui import render_scope_toggle
+from core.ui import render_scope_toggle, render_auto_refresh_notice
 from datetime import datetime
 import re
 
 current_user = page_setup("Dashboard", page_name="Dashboard")
+render_auto_refresh_notice("Dashboard", minutes=5)
 supabase = get_supabase_client()
 # ============================================================
 # STYLE
@@ -1988,11 +1989,63 @@ with st.container():
 
         _r1, _r2 = st.columns([1, 1])
         with _r1:
-            if st.button("↺ Скинути фільтри", use_container_width=True):
+            if st.button("↺ Скинути поля фільтрів", use_container_width=True):
                 reset_filters()
                 st.rerun()
         with _r2:
             render_scope_toggle("Dashboard", current_user)
+
+
+# DEMO 1.9: фільтри Dashboard застосовуються тільки після кнопки.
+_dash_defaults = {
+    "years": [], "quarters": [], "department_indices": [], "view_mode": "Усі візуалізації",
+    "goals": [], "tasks": [], "measures": [], "product_types": [], "deputies": [],
+    "statuses": [], "financing": [], "kpkvk": [], "sources": [],
+}
+if "dash_filters_applied_v19" not in st.session_state:
+    st.session_state["dash_filters_applied_v19"] = _dash_defaults.copy()
+
+_ap1, _ap2, _ap3 = st.columns([1.25, 1.0, 1.2])
+with _ap1:
+    if st.button("Застосувати обрані параметри", type="primary", use_container_width=True, key="dash_apply_filters_v19"):
+        st.session_state["dash_filters_applied_v19"] = {
+            "years": list(selected_years or []),
+            "quarters": list(selected_quarters or []),
+            "department_indices": list(selected_department_indices or []),
+            "view_mode": view_mode,
+            "goals": list(st.session_state.get("dash_goals", []) or []),
+            "tasks": list(st.session_state.get("dash_tasks", []) or []),
+            "measures": list(st.session_state.get("dash_measures", []) or []),
+            "product_types": list(st.session_state.get("dash_product_types", []) or []),
+            "deputies": list(st.session_state.get("dash_deputies", []) or []),
+            "statuses": list(st.session_state.get("dash_statuses", []) or []),
+            "financing": list(st.session_state.get("dash_financing", []) or []),
+            "kpkvk": list(st.session_state.get("dash_kpkvk", []) or []),
+            "sources": list(st.session_state.get("dash_sources", []) or []),
+        }
+        st.rerun()
+with _ap2:
+    if st.button("Скинути параметри", use_container_width=True, key="dash_reset_applied_v19"):
+        st.session_state["dash_filters_applied_v19"] = _dash_defaults.copy()
+        reset_filters()
+        st.rerun()
+with _ap3:
+    st.caption("Фільтри на Dashboard впливають на графіки тільки після натискання кнопки застосування.")
+
+_dash_applied = st.session_state.get("dash_filters_applied_v19", _dash_defaults.copy())
+selected_years = _dash_applied.get("years", [])
+selected_quarters = _dash_applied.get("quarters", [])
+selected_department_indices = _dash_applied.get("department_indices", [])
+view_mode = _dash_applied.get("view_mode", "Усі візуалізації")
+selected_goals = _dash_applied.get("goals", [])
+selected_tasks = _dash_applied.get("tasks", [])
+selected_measures = _dash_applied.get("measures", [])
+selected_product_types = _dash_applied.get("product_types", [])
+selected_deputies = _dash_applied.get("deputies", [])
+selected_statuses = _dash_applied.get("statuses", [])
+selected_financing = _dash_applied.get("financing", [])
+selected_kpkvk = _dash_applied.get("kpkvk", [])
+selected_sources = _dash_applied.get("sources", [])
 
 
 # ============================================================

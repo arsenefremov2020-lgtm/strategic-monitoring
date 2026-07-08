@@ -8,7 +8,7 @@ from core.page_setup import page_setup, render_footer
 from core.strategic_data import load_strat_matrix, strip_leading_code
 from core import monitoring_data
 from core.access import filter_actions_for_user
-from core.ui import render_scope_toggle
+from core.ui import render_scope_toggle, render_auto_refresh_notice
 from core import exports as core_exports
 
 
@@ -23,6 +23,7 @@ PPDU_ALIASES = {
 }
 
 current_user = page_setup(PAGE_KEY, page_name=PAGE_KEY)
+render_auto_refresh_notice(PAGE_KEY, minutes=5, show_note=False)
 
 st.markdown('<div class="section-title">Фільтр заходів за НПА / стратегічним документом</div>', unsafe_allow_html=True)
 st.caption(

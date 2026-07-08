@@ -9,6 +9,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from core.page_setup import page_setup, render_footer
+from core.ui import render_auto_refresh_notice
 from core.strategic_data import load_strat_matrix as core_load_strat_matrix, measure_name_by_code
 from core import monitoring_data
 from core import statuses as core_statuses
@@ -21,6 +22,7 @@ from core.exports import render_png_download
 from core.access import filter_actions_for_user, filter_requests_for_user
 
 current_user = page_setup("Оцінка МіО", page_name="Оцінка МіО")
+render_auto_refresh_notice("Оцінка МіО", minutes=5)
 
 
 FILE_PATH = "Під моніторинг СП.xlsx"
@@ -1786,13 +1788,22 @@ monitoring_df = filter_requests_for_user(
 # авто-зараховуються як «Виконано» (⚡). Пріоритет підтверджених — по кожному
 # заходу. Ручні закриття (офіційні) враховуються в обох режимах.
 
-mio_data_mode = st.radio(
+_mio_pre_defaults = {"data_mode": operational.MODE_CONFIRMED, "active_mode": "📋 М_заходи", "years": [2026]}
+if "mio_filters_applied_v19" not in st.session_state:
+    st.session_state["mio_filters_applied_v19"] = _mio_pre_defaults.copy()
+_mio_pre_applied = st.session_state.get("mio_filters_applied_v19", _mio_pre_defaults.copy())
+_mio_pre_mode = _mio_pre_applied.get("data_mode", operational.MODE_CONFIRMED)
+_mio_pre_idx = operational.MODE_OPTIONS.index(_mio_pre_mode) if _mio_pre_mode in operational.MODE_OPTIONS else 0
+mio_data_mode_pending = st.radio(
     "Джерело даних для розрахунків",
     operational.MODE_OPTIONS,
+    index=_mio_pre_idx,
     horizontal=True,
-    key="mio_data_source_mode",
+    key="mio_data_source_mode_pending",
     help=operational.MODE_HELP,
 )
+mio_data_mode = _mio_pre_mode
+st.caption(f"Застосований режим джерела даних: {mio_data_mode}. Щоб змінити — натисніть «Застосувати обрані параметри» нижче.")
 
 mio_auto_list = []
 if mio_data_mode == operational.MODE_OPERATIONAL and not monitoring_df.empty:
@@ -1913,6 +1924,29 @@ if not active_mode:
     active_mode = MODE_MZAHODY
 st.markdown('</div>', unsafe_allow_html=True)
 
+# DEMO 1.9: основні параметри МіО застосовуються кнопкою.
+_mio_defaults = {"data_mode": operational.MODE_CONFIRMED, "active_mode": MODE_MZAHODY, "years": [2026]}
+if "mio_filters_applied_v19" not in st.session_state:
+    st.session_state["mio_filters_applied_v19"] = _mio_defaults.copy()
+_mio_a, _mio_b, _mio_c = st.columns([1, 1, 1.5])
+with _mio_a:
+    if st.button("Застосувати обрані параметри", type="primary", use_container_width=True, key="mio_apply_filters_v19"):
+        st.session_state["mio_filters_applied_v19"] = {
+            "data_mode": mio_data_mode_pending,
+            "active_mode": active_mode,
+            "years": list(st.session_state.get("mio_years", [2026]) or [2026]),
+        }
+        st.rerun()
+with _mio_b:
+    if st.button("Скинути параметри", use_container_width=True, key="mio_reset_filters_v19"):
+        st.session_state["mio_filters_applied_v19"] = _mio_defaults.copy()
+        st.rerun()
+with _mio_c:
+    st.caption("Режим МіО, джерело даних і роки застосовуються після натискання кнопки.")
+_mio_applied = st.session_state.get("mio_filters_applied_v19", _mio_defaults.copy())
+mio_data_mode = _mio_applied.get("data_mode", operational.MODE_CONFIRMED)
+active_mode = _mio_applied.get("active_mode", MODE_MZAHODY)
+
 
 # ============================================================
 # ФІЛЬТР ЗА РОКАМИ (для режимів методики; можна обрати кілька)
@@ -1926,6 +1960,9 @@ def _render_year_filter():
         )
     if not yrs:
         yrs = [2026]
+    _applied_years = st.session_state.get("mio_filters_applied_v19", {}).get("years")
+    if _applied_years:
+        yrs = _applied_years
     return sorted(yrs)
 
 

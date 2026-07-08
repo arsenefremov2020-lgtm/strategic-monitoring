@@ -27,6 +27,7 @@ from core import approval_schemes as schemes
 from core import notify_events
 from core.validation import validate_fact_value, status_completion_warning, value_reaches_target
 from core.audit import write_audit_log
+from core import periods as core_periods
 
 # Спільна для обох таблиць (заходи + індикатори) висота видимої області
 # редактора (~2 рядки + шапка).
@@ -1213,7 +1214,7 @@ if submission_mode.startswith("🎯"):
                         strat_code=item.get("strat_code"),
                         details={"object_kind": "indicator", "scheme_label": ind_scheme_name},
                     )
-                st.cache_data.clear()
+                monitoring_data.invalidate_monitoring_cache()
                 notify_first_stage(
                     ind_chain, [p["strat_code"] for p in ind_payload],
                     str(ind_year), f"станом на {ind_as_of.strftime('%d.%m.%Y')}", kind="indicator",
@@ -1490,6 +1491,14 @@ if not monitoring_df.empty:
 
 manual_closeouts = load_manual_closeouts()
 
+# Номер обраного звітного періоду (рік*10 + квартал) для перевірки
+# «Не настав час» — ТЗ 10.18: система має правильно зчитувати, коли
+# саме починається захід, і не давати подавати відомості раніше.
+_selected_period_num = (
+    int(str(selected_year)) * 10
+    + core_periods.quarter_to_number(selected_quarter)
+)
+
 table_rows = []
 locked_cols_per_row = {}   # code -> list of column names that must be disabled
 
@@ -1506,6 +1515,17 @@ for _, row in filtered_measures.iterrows():
     if is_manually_closed:
         is_locked = True
 
+    # ТЗ 10.18: якщо період виконання заходу ще НЕ НАСТАВ у обраному
+    # звітному періоді — подання відомостей неможливе в принципі.
+    # Заходи без розпізнаваної початкової дати вважаються щорічними
+    # (виконуються постійно) і НЕ блокуються.
+    is_not_started = core_periods.is_measure_not_started(
+        core_periods.parse_period(row.get("measure_start_date", "")),
+        _selected_period_num,
+    )
+    if is_not_started and not is_locked:
+        is_locked = True
+
     if is_locked:
         q_fact_val   = raw_value(existing.get("numeric_value", "")) if existing is not None else ""
         status_val   = raw_value(existing.get("status", "")) if existing is not None else ""
@@ -1514,6 +1534,8 @@ for _, row in filtered_measures.iterrows():
         npa_link_val = raw_value(existing.get("npa_link", "")) if existing is not None else ""
         if is_manually_closed:
             lock_label = "🔒 Закрито вручну"
+        elif is_not_started and existing is None:
+            lock_label = "⬜ Не настав час"
         else:
             lock_label = "✅ Погоджено" if is_approved else "⏳ На розгляді"
     else:
@@ -1556,6 +1578,16 @@ for _, row in filtered_measures.iterrows():
     })
 
 table_df = pd.DataFrame(table_rows)
+
+_not_started_count = int(
+    (table_df["_lock_label"] == "⬜ Не настав час").sum()
+) if not table_df.empty else 0
+if _not_started_count:
+    st.caption(
+        f"⬜ {_not_started_count} захід(ів) у переліку мають статус «Не настав час» "
+        f"для обраного періоду — подання відомостей за ними стане доступним "
+        f"з початком їхнього періоду виконання."
+    )
 
 # Колонки які завжди disabled (інформаційні)
 always_disabled = [
@@ -1755,6 +1787,17 @@ def validate_submission():
 
     for _, row in selected_rows.iterrows():
         code = raw_value(row.get("Код", ""))
+        # Контрольна перевірка ТЗ 10.18 (додатково до блокування рядка):
+        # захід, період якого ще не настав, подати неможливо.
+        if core_periods.is_measure_not_started(
+            core_periods.parse_period(row.get("Початкова\nдата", "")),
+            _selected_period_num,
+        ):
+            errors.append(
+                f"Захід {code} має статус «Не настав час» для обраного періоду — "
+                "подання відомостей за ним неможливе."
+            )
+            continue
         fact_value = raw_value(row.get(quarter_label, ""))
         target_value = raw_value(row.get(col_target, ""))
         unit = raw_value(row.get("Одиниці\nвиміру", ""))
@@ -1852,6 +1895,39 @@ if submit_clicked:
                 "submitted_at":       submitted_at,
             })
 
+        # ТЗ 15.14–15.15: перед вставкою — СВІЖА перевірка бази (без кешу).
+        # Якщо по частині заходів заявка за цей період уже існує (наприклад,
+        # її щойно подав колега), подаються ТІЛЬКИ валідні заходи, а
+        # конкретні конфліктні коди показуються користувачу попередженням.
+        try:
+            _fresh = (
+                supabase.table("monitoring_requests")
+                .select("strat_code")
+                .eq("department", raw_value(selected_ssp_index))
+                .eq("year", str(selected_year))
+                .eq("quarter", raw_value(selected_quarter))
+                .execute()
+            )
+            _existing_codes = {
+                raw_value(r.get("strat_code", "")) for r in (_fresh.data or [])
+            }
+        except Exception:
+            _existing_codes = set()
+
+        conflicting = [p for p in payload if p["strat_code"] in _existing_codes]
+        payload = [p for p in payload if p["strat_code"] not in _existing_codes]
+
+        if conflicting:
+            st.warning(
+                "За такими заходами заявка у цьому звітному періоді вже існує, "
+                "тому вони НЕ подані повторно: "
+                + ", ".join(p["strat_code"] for p in conflicting)
+                + ". Відредагувати вже подані відомості можна у вкладці «Мої заявки»."
+            )
+
+        if not payload:
+            st.stop()
+
         try:
             submit_result = supabase.table("monitoring_requests").insert(payload).execute()
             for item in (getattr(submit_result, "data", None) or payload):
@@ -1867,7 +1943,7 @@ if submit_clicked:
                     strat_code=item.get("strat_code"),
                     details={"object_kind": "measure", "scheme_label": measures_scheme_name},
                 )
-            st.cache_data.clear()
+            monitoring_data.invalidate_monitoring_cache()
             if chain_columns_exist and measures_chain:
                 notify_first_stage(
                     measures_chain,

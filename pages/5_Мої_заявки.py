@@ -393,7 +393,7 @@ def load_strat_matrix():
 
 def load_requests():
     """ЄДИНЕ джерело — core.monitoring_data (правки К2, П2)."""
-    df = monitoring_data.load_monitoring_requests()
+    df = monitoring_data.load_monitoring_requests_live()
     if not df.empty and "submitted_at" in df.columns:
         df = df.sort_values("submitted_at", ascending=False)
     return df
@@ -800,6 +800,66 @@ if _chain:
 
 st.markdown('</div>', unsafe_allow_html=True)
 
+# ── У кого зараз заявка та чи потрібна ваша дія (ТЗ 8.14 / 8.17) ──
+def _render_holder_strip():
+    _now = datetime.now(timezone.utc)
+
+    # Скільки днів заявка на поточному кроці: від останньої дії в журналі,
+    # а якщо дій ще не було — від моменту подання.
+    _last_ts = None
+    try:
+        _hl = load_logs(selected_id)
+        if not _hl.empty and "changed_at" in _hl.columns:
+            _last_ts = pd.to_datetime(_hl["changed_at"], errors="coerce", utc=True).max()
+    except Exception:
+        _last_ts = None
+    if _last_ts is None or pd.isna(_last_ts):
+        _last_ts = pd.to_datetime(
+            clean(selected_row.get("submitted_at", "")), errors="coerce", utc=True
+        )
+    _days_txt = ""
+    if _last_ts is not None and not pd.isna(_last_ts):
+        _days = max(0, (_now - _last_ts.to_pydatetime()).days)
+        _days_txt = f" · на цьому кроці {_days} дн."
+
+    if approval == "Погоджено":
+        _holder = "Погодження завершено"
+        _action = ("✅ Дій від вас не потрібно", "#f0fdf4", "#86efac", "#166534")
+    elif approval == "Повернуто на доопрацювання":
+        _holder = "Заявка у вас (повернута на доопрацювання)"
+        _action = ("✍️ Потребує вашої дії — виправте дані та подайте повторно",
+                   "#fff7ed", "#fdba74", "#9a3412")
+    elif _chain:
+        _hs_idx = (
+            schemes.parse_stage(selected_row.get("chain_stage"))
+            if "chain_stage" in selected_row.index else 0
+        )
+        _st = schemes.current_stage(_chain, _hs_idx)
+        _holder = (
+            f"Зараз у: {clean((_st or {}).get('label', ''))} — "
+            f"{clean((_st or {}).get('name', '') or (_st or {}).get('email', ''))}"
+        )
+        _action = ("⏳ На розгляді — дій від вас не потрібно",
+                   "#eff6ff", "#93c5fd", "#1e40af")
+    else:
+        _holder = "На розгляді координатора"
+        _action = ("⏳ На розгляді — дій від вас не потрібно",
+                   "#eff6ff", "#93c5fd", "#1e40af")
+
+    st.markdown(
+        f'<div style="display:flex;flex-wrap:wrap;gap:10px;margin:6px 0 10px 0;">'
+        f'<div style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:10px;'
+        f'padding:8px 12px;font-size:13px;font-weight:700;color:#0f172a;">'
+        f'📍 {escape(_holder)}{escape(_days_txt)}</div>'
+        f'<div style="background:{_action[1]};border:1px solid {_action[2]};'
+        f'border-radius:10px;padding:8px 12px;font-size:13px;font-weight:700;'
+        f'color:{_action[3]};">{_action[0]}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+_render_holder_strip()
+
 # ============================================================
 # STATUS HISTORY
 # ============================================================
@@ -900,7 +960,25 @@ st.markdown('</div>', unsafe_allow_html=True)
 # рештою ланок схеми.
 _direct_edit_statuses = set(schemes.ALL_WAITING_STATUSES) - {"Повернуто на доопрацювання"}
 
-if approval in _direct_edit_statuses and not schemes.is_final_locked(selected_row):
+# ТЗ 2.10 / 8.7 / 8.8 / 8.11: пряме редагування доступне подавачу ЛИШЕ доти,
+# доки жодна ланка схеми (насамперед координатор) не здійснила дій із
+# заявкою: заявка стоїть на ПЕРШІЙ ланці у статусі очікування. Щойно
+# координатор (або перша ланка) погодив/повернув — редагування блокується,
+# і зміни можливі тільки через повернення на доопрацювання.
+_first_stage_waiting = (
+    schemes.waiting_status_for_stage(_chain[0]) if _chain else "Очікує погодження"
+)
+_request_stage_idx = (
+    schemes.parse_stage(selected_row.get("chain_stage"))
+    if "chain_stage" in selected_row.index else 0
+)
+_no_action_yet = (approval == _first_stage_waiting and _request_stage_idx == 0)
+
+if (
+    approval in _direct_edit_statuses
+    and _no_action_yet
+    and not schemes.is_final_locked(selected_row)
+):
     with st.expander("✏️ Редагувати подану інформацію (без очікування повернення)"):
         st.caption(
             "Зміните дані нижче й натисніть «Зберегти й надіслати координатору». "
@@ -960,7 +1038,13 @@ if approval in _direct_edit_statuses and not schemes.is_final_locked(selected_ro
                 _de_chain = schemes.parse_chain(selected_row.get("approval_chain"))
                 if _de_chain:
                     from core.versioning import coordinator_stage_index
-                    _de_coord_idx = coordinator_stage_index(_de_chain)
+                    # Якщо заявка ще НЕ дійшла до координатора (перша ланка —
+                    # інша), редагування не «перестрибує» чергу: заявка
+                    # залишається на поточній (першій) ланці. Якщо ж перша
+                    # ланка — координатор, вона й отримує заявку повторно.
+                    _de_coord_idx = min(
+                        coordinator_stage_index(_de_chain), _request_stage_idx
+                    )
                     _de_new_status = schemes.waiting_status_for_stage(_de_chain[_de_coord_idx])
                 else:
                     _de_coord_idx = 0
@@ -1012,10 +1096,74 @@ if approval in _direct_edit_statuses and not schemes.is_final_locked(selected_ro
                 st.success(
                     "Зміни збережено. Заявку повторно надіслано координатору на розгляд."
                 )
-                st.cache_data.clear()
+                monitoring_data.invalidate_monitoring_cache()
                 st.rerun()
             except Exception as e:
                 st.error("Не вдалося зберегти зміни.")
+                st.exception(e)
+
+# ============================================================
+# ВІДКЛИКАННЯ ЗАЯВКИ (ТЗ 8.18–8.19 / 15.12)
+# ============================================================
+#
+# Подавач може ВІДКЛИКАТИ власну заявку, але лише доти, доки координатор
+# (перша ланка схеми) не здійснив із нею жодних дій. Заявка при цьому
+# видаляється з розгляду (зникає з кабінетів усіх ланок), захід знову
+# стає доступним для подання, а в журналі дій назавжди залишається
+# повний запис про відкликання з усіма поданими даними.
+
+if _no_action_yet and not schemes.is_final_locked(selected_row):
+    with st.expander("↩️ Відкликати заявку"):
+        st.warning(
+            "Відкликання повністю знімає заявку з розгляду. Після цього ви "
+            "зможете подати за цим заходом нову заявку у вкладці "
+            "«Моніторинг виконання». Запис про відкликання та всі подані "
+            "дані назавжди зберігаються в журналі дій."
+        )
+        _wd_confirm = st.checkbox(
+            "Підтверджую, що хочу відкликати цю заявку",
+            key=f"withdraw_confirm_{selected_id}",
+        )
+        _wd_click = st.button(
+            "Відкликати заявку",
+            use_container_width=True,
+            disabled=not _wd_confirm,
+            key=f"withdraw_btn_{selected_id}",
+        )
+        if _wd_click:
+            try:
+                # 1) Спершу — запис у журнал (він переживає видалення заявки,
+                #    бо журнал не має жорсткої прив'язки до рядка заявки).
+                _wd_snapshot = (
+                    f"Відкликано подавачем. Дані на момент відкликання: "
+                    f"код {clean(selected_row.get('strat_code', ''))}; "
+                    f"період {clean(selected_row.get('year', ''))}, "
+                    f"{clean(selected_row.get('quarter', ''))} квартал; "
+                    f"статус виконання «{clean(selected_row.get('status', ''))}»; "
+                    f"фактичне значення «{clean(selected_row.get('numeric_value', ''))}»; "
+                    f"опис прогресу «{clean(selected_row.get('progress_text', ''))}»; "
+                    f"ризики «{clean(selected_row.get('risks', ''))}»."
+                )
+                write_log(
+                    selected_id,
+                    "Відкликання заявки подавачем",
+                    approval,
+                    "Відкликано",
+                    _wd_snapshot,
+                )
+                # 2) Потім — видалення самої заявки.
+                supabase.table("monitoring_requests").delete().eq(
+                    "id", int(selected_id)
+                ).execute()
+
+                monitoring_data.invalidate_monitoring_cache()
+                st.success(
+                    "Заявку відкликано. Захід знову доступний для подання у "
+                    "вкладці «Моніторинг виконання»."
+                )
+                st.rerun()
+            except Exception as e:
+                st.error("Не вдалося відкликати заявку.")
                 st.exception(e)
 
 # ============================================================
@@ -1193,7 +1341,7 @@ if approval == "Повернуто на доопрацювання":
             )
 
             st.success("Заявку повторно подано на погодження. Попередню і нову версію збережено.")
-            st.cache_data.clear()
+            monitoring_data.invalidate_monitoring_cache()
             st.rerun()
 
         except Exception as e:

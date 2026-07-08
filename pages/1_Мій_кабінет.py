@@ -341,7 +341,7 @@ def load_strat_matrix():
 
 def load_requests():
     """ЄДИНЕ джерело — core.monitoring_data (правки К2, П2)."""
-    df = monitoring_data.load_monitoring_requests()
+    df = monitoring_data.load_monitoring_requests_live()
     if not df.empty and "submitted_at" in df.columns:
         df = df.sort_values("submitted_at", ascending=False)
     return df
@@ -390,7 +390,7 @@ def write_log(request_id, action, old_status, new_status, comment, changed_by="�
 _refresh_col1, _refresh_col2 = st.columns([4, 1])
 with _refresh_col2:
     if st.button("🔄 Оновити зараз", use_container_width=True, key="cabinet_refresh"):
-        st.cache_data.clear()
+        monitoring_data.invalidate_monitoring_cache()
         st.rerun()
 with _refresh_col1:
     from datetime import datetime as _dt, timezone as _tz, timedelta as _td
@@ -750,6 +750,32 @@ if is_my_turn:
         key=f"leader_comment_{selected_id}"
     )
 
+    # ТЗ 3.16: користувач має розуміти наслідок дії ЩЕ ДО натискання кнопки —
+    # показуємо, кому саме перейде заявка після погодження.
+    _preview_next = schemes.current_stage(_chain, _stage_idx + 1) if _chain else None
+    if _preview_next is not None:
+        _next_who = clean(_preview_next.get("name", "") or _preview_next.get("email", ""))
+        _next_note = (
+            f"➡️ Після погодження заявка перейде наступній ланці: "
+            f"«{clean(_preview_next.get('label', ''))}»"
+            + (f" — {_next_who}" if _next_who else "")
+        )
+    else:
+        _next_note = (
+            "➡️ Наступної наперед визначеної ланки немає — після погодження ви "
+            "зможете завершити погодження або передати вище."
+        )
+    # ТЗ 3.17: попередження про незворотність.
+    st.markdown(
+        f'<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;'
+        f'padding:8px 12px;margin-bottom:8px;font-size:13px;color:#92400e;">'
+        f'<div style="font-weight:800;">{escape(_next_note)}</div>'
+        f'<div style="margin-top:2px;">⚠️ Після погодження ви більше не зможете '
+        f'змінити своє рішення — заявка повернеться до вас лише в разі '
+        f'повернення на доопрацювання наступними ланками.</div></div>',
+        unsafe_allow_html=True,
+    )
+
     # Адресати повернення: подавач + усі попередні ланки
     if _chain:
         _targets = schemes.return_targets(_chain, _stage_idx)
@@ -915,7 +941,7 @@ if is_my_turn:
                 "переключило на НАСТУПНУ заявку. Це не помилка: перегляньте її "
                 "дані з самого початку, перш ніж ухвалювати рішення."
             )
-            st.cache_data.clear()
+            monitoring_data.invalidate_monitoring_cache()
             st.rerun()
         except Exception as e:
             st.error("Помилка під час погодження.")
@@ -964,7 +990,7 @@ if is_my_turn:
                     "переключило на НАСТУПНУ заявку. Це не помилка: перегляньте її "
                     "дані з самого початку, перш ніж ухвалювати рішення."
                 )
-                st.cache_data.clear()
+                monitoring_data.invalidate_monitoring_cache()
                 st.rerun()
             except Exception as e:
                 st.error("Помилка при поверненні.")
@@ -1078,7 +1104,7 @@ if is_my_turn:
                         st.success(
                             "Зміни збережено. Заявку повторно надіслано координатору на розгляд."
                         )
-                        st.cache_data.clear()
+                        monitoring_data.invalidate_monitoring_cache()
                         st.rerun()
                     except Exception as e:
                         st.error("Не вдалося зберегти зміни.")
@@ -1108,14 +1134,46 @@ st.markdown('<div class="card"><div class="card-title">Історія зміни
 if logs_df.empty:
     st.info("Історії змін для цієї заявки поки що немає.")
 else:
-    logs_show = logs_df.rename(columns={
-        "changed_at": "Дата", "action": "Дія",
-        "old_status": "Попередній статус", "new_status": "Новий статус",
-        "admin_comment": "Коментар", "changed_by": "Ким змінено"
-    })
-    cols = ["Дата", "Дія", "Попередній статус", "Новий статус", "Коментар", "Ким змінено"]
-    st.dataframe(logs_show[[c for c in cols if c in logs_show.columns]],
-                 use_container_width=True, hide_index=True)
+    # ТЗ 3.15: історія погодження у вигляді ТАЙМЛАЙНУ (хронологічно,
+    # знизу — найдавніші події), а деталі — у таблиці нижче.
+    _tl = logs_df.copy()
+    _tl["_ts"] = pd.to_datetime(_tl.get("changed_at"), errors="coerce", utc=True)
+    _tl = _tl.sort_values("_ts")
+    _tl_items = []
+    for _, _ev in _tl.iterrows():
+        _when = _ev["_ts"]
+        _when_txt = _when.strftime("%d.%m.%Y %H:%M") if pd.notna(_when) else ""
+        _act = clean(_ev.get("action", ""))
+        _who = clean(_ev.get("changed_by", ""))
+        _new = clean(_ev.get("new_status", ""))
+        _cmt = clean(_ev.get("admin_comment", ""))
+        _dot = "#22c55e" if _new == "Погоджено" else (
+            "#f59e0b" if "Повернуто" in _new else "#3b82f6")
+        _tl_items.append(
+            f'<div style="display:flex;gap:10px;margin-bottom:8px;">'
+            f'<div style="width:10px;min-width:10px;height:10px;border-radius:50%;'
+            f'background:{_dot};margin-top:5px;"></div>'
+            f'<div style="font-size:12.5px;line-height:1.45;color:#0f172a;">'
+            f'<b>{escape(_when_txt)}</b> — {escape(_act)}'
+            + (f' <span style="color:#475569;">({escape(_new)})</span>' if _new else "")
+            + (f'<br><span style="color:#334155;">💬 {escape(_cmt)}</span>' if _cmt else "")
+            + (f'<br><span style="color:#64748b;font-size:11.5px;">👤 {escape(_who)}</span>' if _who else "")
+            + '</div></div>'
+        )
+    st.markdown(
+        '<div style="border-left:2px solid #e2e8f0;padding-left:12px;margin:4px 0 10px 2px;">'
+        + "".join(_tl_items) + "</div>",
+        unsafe_allow_html=True,
+    )
+    with st.expander("Таблиця історії (усі поля)"):
+        logs_show = logs_df.rename(columns={
+            "changed_at": "Дата", "action": "Дія",
+            "old_status": "Попередній статус", "new_status": "Новий статус",
+            "admin_comment": "Коментар", "changed_by": "Ким змінено"
+        })
+        cols = ["Дата", "Дія", "Попередній статус", "Новий статус", "Коментар", "Ким змінено"]
+        st.dataframe(logs_show[[c for c in cols if c in logs_show.columns]],
+                     use_container_width=True, hide_index=True)
 st.markdown('</div>', unsafe_allow_html=True)
 
 # ============================================================
@@ -1224,7 +1282,7 @@ if _my_role == ROLE_SSP_HEAD:
                                 clean(_ack_comment), changed_by=role_label,
                             )
                             st.success(f"Вашу реакцію зафіксовано: {_new_head_status}.")
-                            st.cache_data.clear()
+                            monitoring_data.invalidate_monitoring_cache()
                             st.rerun()
                         except Exception as e:
                             st.error("Не вдалося зберегти реакцію.")

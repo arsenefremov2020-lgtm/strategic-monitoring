@@ -318,7 +318,7 @@ def dataframe_to_excel(sheets):
     return output
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=30)
 def load_logs():
     response = (
         supabase
@@ -330,7 +330,7 @@ def load_logs():
     return pd.DataFrame(response.data or [])
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=30)
 def load_requests():
     response = (
         supabase
@@ -341,7 +341,7 @@ def load_requests():
     return pd.DataFrame(response.data or [])
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=30)
 def load_versions():
     response = (
         supabase
@@ -353,7 +353,7 @@ def load_versions():
     return pd.DataFrame(response.data or [])
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=30)
 def load_notification_log():
     try:
         response = (

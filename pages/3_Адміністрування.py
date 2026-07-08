@@ -726,7 +726,7 @@ def load_strat_matrix():
 
 def load_requests():
     """ЄДИНЕ джерело — core.monitoring_data (правки К2, П2)."""
-    df = monitoring_data.load_monitoring_requests()
+    df = monitoring_data.load_monitoring_requests_live()
     if not df.empty and "submitted_at" in df.columns:
         df = df.sort_values("submitted_at", ascending=False)
     return df
@@ -1229,6 +1229,104 @@ if df.empty:
 render_notifications_panel(df, mode="admin")
 
 attention = build_attention_summary(df)
+
+# ──────────────────────────────────────────────
+# ЩО ПОТРЕБУЄ ДІЇ СЬОГОДНІ (ТЗ 5.20)
+# ──────────────────────────────────────────────
+# Компактний службовий блок на самому верху: рівно те, що очікує РІШЕННЯ,
+# без перевантаження. Деталі — нижче в «Системному аналізі» та режимах.
+
+def _count_today_items():
+    """Рахує позиції, що потребують дії, у межах закріплених ССП."""
+    counts = {}
+    # 1) Заявки, які зараз стоять саме на ланці координатора
+    try:
+        counts["на моєму рішенні"] = int(
+            (df["approval_status"].astype(str).str.strip() == "Очікує погодження").sum()
+        )
+    except Exception:
+        counts["на моєму рішенні"] = 0
+    # 2) Очікують понад 5 робочих днів
+    counts["очікують понад 5 днів"] = len(attention.get("long_waiting", []))
+    # 3) Повернуті на доопрацювання і ще не виправлені
+    counts["повернуті, не виправлені"] = len(attention.get("returned", []))
+    # 4) Ручні закриття, що очікують підтвердження, та конфлікти (спори)
+    _co_pending = 0
+    _co_disputes = 0
+    try:
+        _co_resp = (
+            supabase.table("closeout_requests")
+            .select("id, strat_code, approval_status, dispute_status")
+            .execute()
+        )
+        _co_all = pd.DataFrame(_co_resp.data or [])
+        if not _co_all.empty:
+            # Звуження за закріпленими ССП: код заходу → головний виконавець
+            # (ССП) через стратегічну матрицю.
+            if not user_has_all_ssp_access(current_user):
+                _allowed = {
+                    str(i) for i in (get_user_allowed_ssp_indexes(current_user) or [])
+                }
+                _code_to_ssp = {}
+                try:
+                    for _, _mrow in strat_df.iterrows():
+                        _c = clean(_mrow.get("code", ""))
+                        _resp = str(_mrow.get("resp_main", "") or "")
+                        _mm = re.search(r"\d+", _resp)
+                        if _c and _mm:
+                            _code_to_ssp[_c] = _mm.group(0)
+                except Exception:
+                    _code_to_ssp = {}
+                _co_all = _co_all[
+                    _co_all["strat_code"].astype(str).map(
+                        lambda c: _code_to_ssp.get(str(c).strip(), "") in _allowed
+                    )
+                ]
+            if not _co_all.empty:
+                if "approval_status" in _co_all.columns:
+                    _co_pending = int(
+                        (_co_all["approval_status"].astype(str)
+                         == "Очікує підтвердження").sum()
+                    )
+                if "dispute_status" in _co_all.columns:
+                    _co_disputes = int(
+                        (_co_all["dispute_status"].astype(str) == "На розгляді").sum()
+                    )
+    except Exception:
+        pass
+    counts["ручні закриття на підтвердженні"] = _co_pending
+    counts["конфлікти / спори"] = _co_disputes
+    return counts
+
+_today = _count_today_items()
+_today_total = sum(_today.values())
+
+st.markdown(
+    '<div class="card">'
+    '<div class="card-title">Що потребує дії сьогодні</div>'
+    '<div class="card-subtitle">Службовий підсумок за вашими закріпленими ССП — '
+    'станом на момент відкриття сторінки</div>',
+    unsafe_allow_html=True,
+)
+if _today_total == 0:
+    st.markdown(
+        '<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:12px;'
+        'padding:10px 14px;font-size:13px;font-weight:700;color:#166534;">'
+        '✅ Немає позицій, які очікують вашої дії. Все опрацьовано.</div>',
+        unsafe_allow_html=True,
+    )
+else:
+    _today_cells = "".join(
+        f'<div class="admin-kpi-card" style="min-width:150px;">'
+        f'<div class="admin-kpi-label">{_esc(k)}</div>'
+        f'<div class="admin-kpi-value">{v}</div></div>'
+        for k, v in _today.items()
+    )
+    st.markdown(
+        f'<div style="display:flex;flex-wrap:wrap;gap:10px;">{_today_cells}</div>',
+        unsafe_allow_html=True,
+    )
+st.markdown("</div>", unsafe_allow_html=True)
 
 # ──────────────────────────────────────────────
 # СИСТЕМНИЙ АНАЛІЗ
@@ -1893,7 +1991,7 @@ if _is_conflict and _req_kind != "indicator":
                           approval_status, "Погоджено",
                           "Дані заявки збігаються з підтвердженим ручним закриттям.")
                 st.success("Заявку погоджено.")
-                st.cache_data.clear()
+                monitoring_data.invalidate_monitoring_cache()
                 st.rerun()
             except Exception as e:
                 st.error("Не вдалося погодити заявку.")
@@ -1920,7 +2018,7 @@ if _is_conflict and _req_kind != "indicator":
                     write_log(selected_id, "Розбіжність із ручним закриттям — передано Супер-адміну",
                               approval_status, approval_status, clean(_dispute_note))
                     st.warning("Розбіжність зафіксовано та передано супер-адміну.")
-                    st.cache_data.clear()
+                    monitoring_data.invalidate_monitoring_cache()
                     st.rerun()
                 except Exception as e:
                     st.error("Не вдалося зафіксувати розбіжність.")
@@ -2226,7 +2324,7 @@ else:
                     f"переключило на НАСТУПНУ заявку. Це не помилка: перегляньте "
                     f"її дані з самого початку, перш ніж ухвалювати рішення."
                 )
-                st.cache_data.clear()
+                monitoring_data.invalidate_monitoring_cache()
                 st.rerun()
             except Exception as e:
                 st.error("Не вдалося застосувати рішення.")
@@ -2364,7 +2462,7 @@ if schemes.is_final_locked(selected_row) and is_super_admin_user(current_user):
                         "Дані скориговано. Заявка лишається закритою (final_locked); "
                         "останню ланку маршруту повідомлено листом."
                     )
-                    st.cache_data.clear()
+                    monitoring_data.invalidate_monitoring_cache()
                     st.rerun()
                 except Exception as e:
                     st.error("Не вдалося зберегти коригування.")
@@ -2525,7 +2623,7 @@ if admin_work_mode == "Ручне закриття заходів":
                         details={"scope": co_scope, "year": co_year, "quarter": co_quarter, "routing": _route},
                     )
                     st.success("Захід закрито вручну." if _is_super else "Запит на закриття заходу надіслано на підтвердження відповідальному супер-адміну.")
-                    st.cache_data.clear()
+                    monitoring_data.invalidate_monitoring_cache()
                     st.rerun()
                 except Exception as e:
                     st.error("Не вдалося надіслати запит на закриття заходу.")
@@ -2616,7 +2714,7 @@ if admin_work_mode == "Ручне закриття заходів":
                                 co_decision_comment,
                             )
                             st.success(f"Запит на закриття заходу {new_co_status.lower()}.")
-                            st.cache_data.clear()
+                            monitoring_data.invalidate_monitoring_cache()
                             st.rerun()
                         except Exception as e:
                             st.error("Не вдалося застосувати рішення щодо закриття заходу.")
@@ -2676,7 +2774,7 @@ if admin_work_mode == "Ручне закриття заходів":
                                           "", "Повернуто на доопрацювання", _res_comment)
                             load_manual_closeouts.clear()
                             st.success("Закриття лишено чинним; заявку (якщо була) повернуто подавачу.")
-                            st.cache_data.clear()
+                            monitoring_data.invalidate_monitoring_cache()
                             st.rerun()
                         except Exception as e:
                             st.error("Не вдалося застосувати рішення.")
@@ -2696,7 +2794,7 @@ if admin_work_mode == "Ручне закриття заходів":
                                           "", "", _res_comment)
                             load_manual_closeouts.clear()
                             st.success("Закриття скасовано. Подана заявка проходить звичайну схему погодження.")
-                            st.cache_data.clear()
+                            monitoring_data.invalidate_monitoring_cache()
                             st.rerun()
                         except Exception as e:
                             st.error("Не вдалося скасувати закриття.")
@@ -2723,7 +2821,7 @@ if admin_work_mode == "Ручне закриття заходів":
                                   "Підтверджено", "Скасовано", _rev_comment)
                         load_manual_closeouts.clear()
                         st.success("Закриття відкликано.")
-                        st.cache_data.clear()
+                        monitoring_data.invalidate_monitoring_cache()
                         st.rerun()
                     except Exception as e:
                         st.error("Не вдалося відкликати закриття.")

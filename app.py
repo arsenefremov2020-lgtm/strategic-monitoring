@@ -25,6 +25,7 @@ from core.access import (
     get_user_ssp_index,
 )
 from core.ui import render_scope_toggle
+from config.roles import ROLE_SSP, ROLE_SSP_HEAD, ROLE_UNIT_HEAD, ROLE_SSP_DEPUTY
 
 current_user = page_setup("Стратегічний план", page_name="app")
 supabase = get_supabase_client()
@@ -546,6 +547,12 @@ td.status-empty {
     font-weight: 850;
 }
 
+td.status-notyet {
+    background-color: #e0e7ef !important;
+    color: #334155;
+    font-weight: 850;
+}
+
 .closeout-badge {
     display: inline-block;
     margin-left: 6px;
@@ -795,6 +802,10 @@ def is_overdue_review_record(row):
 
 def get_record_visual_status(row):
     approval = raw_value(row.get("approval_status", ""))
+    execution_status = raw_value(row.get("status", ""))
+
+    if execution_status == "Не настав час":
+        return "Не настав час"
 
     if approval == "Погоджено":
         return "Погоджено"
@@ -817,6 +828,9 @@ def visual_status_class(status):
 
     if status == "На доопрацюванні":
         return "status-returned"
+
+    if status == "Не настав час":
+        return "status-notyet"
 
     return "status-empty"
 
@@ -1243,6 +1257,28 @@ def render_table(headers, rows, col_classes, min_width=2200, scroll_class="table
     st.markdown(clean_html(html), unsafe_allow_html=True)
 
 
+def latest_indicator_submission(code):
+    """Останнє подане значення індикатора СЦ/завдання для app.py."""
+    if indicator_monitoring_df.empty:
+        return ""
+    data = indicator_monitoring_df.copy()
+    data = data[data["strat_code"].astype(str).str.strip() == raw_value(code)]
+    if data.empty:
+        return ""
+    data["_submitted_at"] = pd.to_datetime(data.get("submitted_at"), errors="coerce")
+    data = data.sort_values(["_submitted_at", "id"], ascending=[False, False])
+    row = data.iloc[0]
+    value = raw_value(row.get("numeric_value", ""))
+    status = raw_value(row.get("approval_status", ""))
+    as_of = raw_value(row.get("as_of_date", ""))
+    parts = [value] if value else []
+    if as_of:
+        parts.append(f"станом на {as_of[:10]}")
+    if status:
+        parts.append(status)
+    return " · ".join(parts)
+
+
 def build_indicator_rows(parent_row, child_rows, selected_ssp_indices=None, search_query=""):
     selected_ssp_indices = selected_ssp_indices or []
 
@@ -1254,6 +1290,7 @@ def build_indicator_rows(parent_row, child_rows, selected_ssp_indices=None, sear
         "base_2021",
         "fact_2024",
         "fact_2025",
+        "_latest_monitoring",
         "strategic_target_2028",
         "strategic_target_2034",
         "source_global",
@@ -1281,8 +1318,10 @@ def build_indicator_rows(parent_row, child_rows, selected_ssp_indices=None, sear
 
         prepared_row = []
 
+        row_for_display = dict(row)
+        row_for_display["_latest_monitoring"] = latest_indicator_submission(row.get("code", ""))
         for col in indicator_cols:
-            prepared_row.append(format_indicator_value(row.get(col, ""), col))
+            prepared_row.append(format_indicator_value(row_for_display.get(col, ""), col))
 
         rows.append(prepared_row)
 
@@ -1300,7 +1339,7 @@ def render_indicator_table(rows):
 
     html = """
     <div class="table-scroll">
-    <table class="custom-table" style="min-width:2770px;">
+    <table class="custom-table" style="min-width:2940px;">
     <thead>
         <tr>
             <th class="col-indicator" rowspan="2">Індикатор</th>
@@ -1308,6 +1347,7 @@ def render_indicator_table(rows):
             <th class="col-year" rowspan="2">2021<br><span style='font-size:11px;color:#475569;'>базовий рівень (факт)</span></th>
             <th class="col-year" rowspan="2">2024<br><span style='font-size:11px;color:#475569;'>звіт</span></th>
             <th class="col-year" rowspan="2">2025<br><span style='font-size:11px;color:#475569;'>факт</span></th>
+            <th class="col-long" rowspan="2">Останнє подане значення<span class="th-sub">моніторинг індикатора</span></th>
             <th class="col-long" rowspan="2">Проміжний цільовий орієнтир на кінець 2028 року<span class="th-sub">(для цілей і завдань)</span></th>
             <th class="col-long" rowspan="2">Цільовий орієнтир на кінець 2034 року для цілей і завдань<div class="th-note-scroll">відповідає цілі, визначеній в НЕС-2030, ЦСР-2030 для показників, де це зазначено. Ціль перенесена на 2034 рік через «втрату» 4-х років — 2022-2025 внаслідок повномасштабної війни. Інші індикативні значення мають встановлюватись такими, що є кількісно узгодженими з цілями НЕС і ЦСР</div></th>
             <th class="col-long" colspan="2">Джерело даних</th>
@@ -1335,9 +1375,10 @@ def render_indicator_table(rows):
         html += f"<td class='col-long'>{make_cell(row[6], 'fixed')}</td>"
         html += f"<td class='col-long'>{make_cell(row[7], 'fixed')}</td>"
         html += f"<td class='col-long'>{make_cell(row[8], 'fixed')}</td>"
-        html += f"<td class='col-resp'>{make_cell(row[9], 'nowrap')}</td>"
+        html += f"<td class='col-long'>{make_cell(row[9], 'fixed')}</td>"
         html += f"<td class='col-resp'>{make_cell(row[10], 'nowrap')}</td>"
         html += f"<td class='col-resp'>{make_cell(row[11], 'nowrap')}</td>"
+        html += f"<td class='col-resp'>{make_cell(row[12], 'nowrap')}</td>"
         html += "</tr>"
 
     html += "</tbody></table></div>"
@@ -1596,9 +1637,10 @@ def collapse_all_main():
 # ------------------------------------------------------------
 
 df = load_strat_matrix()
-# Аналітика цієї сторінки стосується ЗАХОДІВ: подання індикаторів
-# цілей/завдань (object_kind='indicator') сюди не домішуються.
-monitoring_df = monitoring_data.measures_only(load_monitoring())
+_all_monitoring_df = load_monitoring()
+# Основна матриця заходів рахується окремо від подань індикаторів.
+monitoring_df = monitoring_data.measures_only(_all_monitoring_df)
+indicator_monitoring_df = monitoring_data.indicators_only(_all_monitoring_df)
 quarter_data = build_quarter_data(monitoring_df)
 
 manual_closeouts = load_manual_closeouts()
@@ -1745,35 +1787,12 @@ st.markdown(
 )
 
 # ------------------------------------------------------------
-# Примусове оновлення даних із бази
+# Автоматичне оновлення даних із бази
 # ------------------------------------------------------------
-# Дані Supabase автоматично оновлюються кожні 5 хвилин (спільний кеш для
-# всіх користувачів). Кнопка потрібна для випадку "щойно погодили заявку —
-# хочу побачити результат негайно, не чекаючи 5 хвилин".
 
-refresh_col, refresh_note_col = st.columns([1.4, 3.6])
-
-with refresh_col:
-    if st.button(
-        "🔄 Підтягнути свіжі дані з бази",
-        help="Дані з бази оновлюються автоматично кожні 5 хвилин. "
-             "Натисніть, якщо потрібно побачити щойно внесені зміни негайно.",
-        use_container_width=True,
-        key="force_refresh_supabase",
-    ):
-        load_monitoring.clear()
-        try:
-            from core.closeouts import load_manual_closeouts as _lmc
-            _lmc.clear()
-        except Exception:
-            pass
-        st.rerun()
-
-with refresh_note_col:
-    st.caption(
-        "Дані моніторингу оновлюються автоматично кожні 5 хвилин. "
-        "Кнопка миттєво підтягує останні подані та погоджені відомості."
-    )
+st.info(
+    f"Дані автоматично оновлюються кожні 5 хвилин. Останнє оновлення сторінки: {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+)
 
 
 # ------------------------------------------------------------
@@ -1866,6 +1885,7 @@ st.markdown(
             <div class="legend-item">🟦 На розгляді — відомості подані та перебувають на розгляді координатора або керівника самостійного структурного підрозділу</div>
             <div class="legend-item">🟨 На доопрацюванні — дані потребують уточнення та доопрацювання</div>
             <div class="legend-item">🟩 Погоджено — відомості узгоджено та враховано.</div>
+            <div class="legend-item">⬜ Не настав час — період виконання заходу ще не почався або він не має враховуватися в розрахунках за обраний період</div>
             <div class="legend-item">🟥 Не враховано — відомості не подані або перебувають на погодженні більше 5 робочих днів</div>
             <div class="legend-item">🟪 Закрито адміністратором — захід закрито вручну на підставі внутрішньої інформації чи іншого звітного документа (підтверджено супер-адміном); клітинка підсвічується фіолетовим із позначкою 🔒</div>
         </div>
@@ -1899,7 +1919,7 @@ with st.form("main_filters_form"):
                 "Індекс самостійного структурного підрозділу</div>"
                 f"<div style='background:#f1f5f9;border:1px solid #cbd5e1;border-radius:10px;"
                 f"padding:10px 12px;font-weight:800;color:#0f172a;'>деп./упр. {_own_label} "
-                f"(лише ваше ССП)</div>",
+                f" · Ваш ССП: №{_own_label}</div>",
                 unsafe_allow_html=True,
             )
         else:
@@ -2392,14 +2412,9 @@ with btn2:
         on_click=collapse_all_main
     )
 
-st.markdown(
-    """
-    <a class="submit-main-button" href="/~/+/Моніторинг_виконання" target="_self">
-        🖊️ Подати відомості
-    </a>
-    """,
-    unsafe_allow_html=True
-)
+if str(current_user.get("role") or "") in {ROLE_SSP, ROLE_SSP_HEAD, ROLE_UNIT_HEAD, ROLE_SSP_DEPUTY}:
+    if st.button("🖊️ Подати відомості", use_container_width=True, key="go_to_monitoring_submission"):
+        st.switch_page("pages/1_Моніторинг_виконання.py")
 
 st.markdown("</div>", unsafe_allow_html=True)
 

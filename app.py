@@ -24,7 +24,7 @@ from core.access import (
     is_scope_override_active,
     get_user_ssp_index,
 )
-from core.ui import render_scope_toggle
+from core.ui import render_scope_toggle, render_auto_refresh_notice
 from config.roles import ROLE_SSP, ROLE_SSP_HEAD, ROLE_UNIT_HEAD, ROLE_SSP_DEPUTY
 
 current_user = page_setup("Стратегічний план", page_name="app")
@@ -1790,9 +1790,7 @@ st.markdown(
 # Автоматичне оновлення даних із бази
 # ------------------------------------------------------------
 
-st.info(
-    f"Дані автоматично оновлюються кожні 5 хвилин. Останнє оновлення сторінки: {datetime.now().strftime('%d.%m.%Y %H:%M')}"
-)
+render_auto_refresh_notice("app", minutes=5)
 
 
 # ------------------------------------------------------------

@@ -122,15 +122,26 @@ def submitter_is_approving_role(role: str) -> bool:
 
 
 def _approval_role_rank(role: str) -> int:
-    """Ієрархія для перевірки, що подавач не створює маршрут нижче себе."""
+    """
+    Ієрархія для перевірки, що подавач не створює маршрут нижче себе.
+
+    Організаційна вертикаль погодження (ТЗ DEMO 1.9):
+        координатор → керівник управління → заступник керівника ССП →
+        керівник ССП.
+    Тобто заступник керівника ССП СТОЇТЬ ВИЩЕ за керівника управління —
+    раніше вони помилково вважалися рівними, і заступник міг обрати
+    маршрут із «нижчою» ланкою керівника управління.
+    """
     if role == ROLE_ADMIN:
         return 0
-    if role in (ROLE_UNIT_HEAD, ROLE_SSP_DEPUTY):
+    if role == ROLE_UNIT_HEAD:
         return 1
-    if role == ROLE_SSP_HEAD:
+    if role == ROLE_SSP_DEPUTY:
         return 2
-    if role == ROLE_SUPER_ADMIN:
+    if role == ROLE_SSP_HEAD:
         return 3
+    if role == ROLE_SUPER_ADMIN:
+        return 4
     return -1
 
 
@@ -166,9 +177,13 @@ def scheme_options_for_submitter(role: str) -> list[str]:
         for name, roles in APPROVAL_SCHEMES.items():
             if not _scheme_has_required_coordinator(roles):
                 continue
-            # Не дозволяємо маршрути, де після подавача є нижча ланка.
+            # Не дозволяємо маршрути, де є ланка, НИЖЧА за подавача,
+            # а також маршрути, що містять САМОГО подавача як ланку
+            # (особа не може погоджувати власне подання).
             ranked_roles = [r for r in roles if r in (ROLE_UNIT_HEAD, ROLE_SSP_DEPUTY, ROLE_SSP_HEAD)]
             if any(_approval_role_rank(r) < submitter_rank for r in ranked_roles):
+                continue
+            if role in ranked_roles:
                 continue
             options.append(name)
         return options or [SUBMITTER_SELF_APPROVAL_SCHEME]

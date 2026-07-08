@@ -82,6 +82,55 @@ def load_monitoring_requests() -> pd.DataFrame:
     return ensure_monitoring_columns(data)
 
 
+@st.cache_data(ttl=20, show_spinner=False)
+def load_monitoring_requests_live() -> pd.DataFrame:
+    """
+    «Швидке» читання заявок для РОБОЧИХ сторінок (Мій кабінет,
+    Мої заявки, Адміністрування): TTL 20 секунд, щоб рішення інших
+    ланок з'являлися практично одразу.
+
+    Оглядові сторінки (Головна, Dashboard, Картка заходу,
+    Фільтр за документом, Оцінка МіО) лишаються на load_monitoring_requests
+    з TTL 5 хвилин — саме так погоджено в ТЗ DEMO 1.9.
+    """
+    supabase = get_supabase_client()
+    try:
+        response = supabase.table("monitoring_requests").select("*").execute()
+        data = pd.DataFrame(response.data or [])
+    except Exception as exc:
+        st.warning(
+            "⚠️ Не вдалося прочитати заявки моніторингу з бази даних — "
+            "показники нижче можуть бути неповними. Технічна причина: "
+            f"{type(exc).__name__}: {exc}"
+        )
+        data = pd.DataFrame()
+    return ensure_monitoring_columns(data)
+
+
+def invalidate_monitoring_cache() -> None:
+    """
+    ТОЧКОВЕ очищення кешу заявок (правка за ТЗ 15.7–15.8).
+
+    Чистить лише лоадери заявок моніторингу та ручних закриттів —
+    важка стратегічна матриця з Excel і кеші користувачів НЕ
+    перечитуються, тож система реагує на дії миттєво, але без
+    зайвого повного перезавантаження всіх даних.
+    """
+    try:
+        load_monitoring_requests.clear()
+    except Exception:
+        pass
+    try:
+        load_monitoring_requests_live.clear()
+    except Exception:
+        pass
+    try:
+        from core.closeouts import load_manual_closeouts
+        load_manual_closeouts.clear()
+    except Exception:
+        pass
+
+
 def measures_only(monitoring_df: pd.DataFrame) -> pd.DataFrame:
     """
     Лише подання ЗАХОДІВ (object_kind != 'indicator').

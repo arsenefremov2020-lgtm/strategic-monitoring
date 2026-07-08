@@ -57,7 +57,7 @@ def ensure_monitoring_columns(df: pd.DataFrame) -> pd.DataFrame:
     return data
 
 
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def load_monitoring_requests() -> pd.DataFrame:
     """
     Читає ВСІ заявки моніторингу.

@@ -72,6 +72,12 @@ def render_scope_toggle(page_key: str, user: dict | None) -> bool:
 
     active = is_scope_override_active(page_key)
 
+    from core.access import get_user_allowed_ssp_indexes
+
+    own_indexes = [idx for idx in get_user_allowed_ssp_indexes(user) if idx != "*"]
+    own_label = ", ".join(own_indexes) if own_indexes else "—"
+    st.caption(f"Ваш ССП: №{own_label}")
+
     if active:
         if st.button(
             "⬅ Повернутися до свого ССП",

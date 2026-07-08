@@ -33,10 +33,12 @@ import json
 from datetime import datetime, timezone
 
 from config.roles import (
+    ROLE_SSP,
     ROLE_ADMIN,
     ROLE_SSP_HEAD,
     ROLE_UNIT_HEAD,
     ROLE_SSP_DEPUTY,
+    ROLE_SUPER_ADMIN,
 )
 
 
@@ -119,18 +121,58 @@ def submitter_is_approving_role(role: str) -> bool:
     return role in (ROLE_SSP_HEAD, ROLE_UNIT_HEAD, ROLE_SSP_DEPUTY)
 
 
+def _approval_role_rank(role: str) -> int:
+    """Ієрархія для перевірки, що подавач не створює маршрут нижче себе."""
+    if role == ROLE_ADMIN:
+        return 0
+    if role in (ROLE_UNIT_HEAD, ROLE_SSP_DEPUTY):
+        return 1
+    if role == ROLE_SSP_HEAD:
+        return 2
+    if role == ROLE_SUPER_ADMIN:
+        return 3
+    return -1
+
+
+def _scheme_has_required_coordinator(roles: list[str]) -> bool:
+    return ROLE_ADMIN in roles and roles[-1] != ROLE_ADMIN
+
+
 def scheme_options_for_submitter(role: str) -> list[str]:
     """
-    Повертає список схем, доступних для вибору подавачу з урахуванням
-    його ролі.
+    Повертає список схем, доступних подавачу DEMO 1.9.
 
-    Якщо подавач сам є однією з ланок погодження — вибору немає,
-    повертається лише вимушена схема «Координатор (без додаткових ланок)»,
-    щоб він не міг призначити самого себе ланкою власного погодження.
-    Для звичайного ССП — усі схеми, як і раніше.
+    Правила ТЗ:
+    - координатор обов'язковий у кожній схемі;
+    - координатор не може бути останньою ланкою, крім спеціального випадку,
+      коли дані подає керівник ССП;
+    - подавач-ланка погодження не може створити маршрут нижче себе;
+    - керівник ССП подає тільки через координатора.
     """
-    if submitter_is_approving_role(role):
+    role = str(role or "").strip()
+
+    if role == ROLE_SSP_HEAD:
         return [SUBMITTER_SELF_APPROVAL_SCHEME]
+
+    if role == ROLE_SSP:
+        return [
+            name for name, roles in APPROVAL_SCHEMES.items()
+            if _scheme_has_required_coordinator(roles)
+        ]
+
+    if role in (ROLE_UNIT_HEAD, ROLE_SSP_DEPUTY):
+        submitter_rank = _approval_role_rank(role)
+        options: list[str] = []
+        for name, roles in APPROVAL_SCHEMES.items():
+            if not _scheme_has_required_coordinator(roles):
+                continue
+            # Не дозволяємо маршрути, де після подавача є нижча ланка.
+            ranked_roles = [r for r in roles if r in (ROLE_UNIT_HEAD, ROLE_SSP_DEPUTY, ROLE_SSP_HEAD)]
+            if any(_approval_role_rank(r) < submitter_rank for r in ranked_roles):
+                continue
+            options.append(name)
+        return options or [SUBMITTER_SELF_APPROVAL_SCHEME]
+
     return scheme_options()
 
 

@@ -2,4 +2,4 @@
 
 FILE_PATH: str = "Під моніторинг СП.xlsx"
 SHEET_NAME: str = "Страт_матриця"
-APP_VERSION: str = "DEMO 1.7.4"
+APP_VERSION: str = "DEMO 1.9"

@@ -428,3 +428,109 @@ def write_styled_excel(
             df.to_excel(writer, index=False, sheet_name=safe_name)
 
     return buffer.getvalue()
+
+# ------------------------------------------------------------
+# DOCX-вивантаження таблиць у альбомному форматі (DEMO 1.9)
+# ------------------------------------------------------------
+
+def dataframes_to_docx_landscape(
+    sheets: dict,
+    *,
+    title: str = "Табличний звіт",
+    subtitle: str = "",
+) -> bytes | None:
+    """Формує DOCX з кількома таблицями в альбомній орієнтації.
+
+    Повертає bytes або None, якщо python-docx недоступний. Таблиці навмисно
+    компактні: повторювана шапка у Word не гарантується, але файл придатний
+    для друку й службового долучення до матеріалів.
+    """
+    try:
+        from docx import Document
+        from docx.enum.section import WD_ORIENT
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.shared import Cm, Pt
+        from docx.oxml import OxmlElement
+        from docx.oxml.ns import qn
+    except Exception:
+        return None
+
+    import io
+    import pandas as pd
+
+    doc = Document()
+    section = doc.sections[0]
+    section.orientation = WD_ORIENT.LANDSCAPE
+    section.page_width, section.page_height = section.page_height, section.page_width
+    section.top_margin = Cm(1.2)
+    section.bottom_margin = Cm(1.2)
+    section.left_margin = Cm(1.0)
+    section.right_margin = Cm(1.0)
+
+    styles = doc.styles
+    styles["Normal"].font.name = "Arial"
+    styles["Normal"].font.size = Pt(8)
+
+    h = doc.add_paragraph()
+    h.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = h.add_run(title)
+    r.bold = True
+    r.font.size = Pt(14)
+    if subtitle:
+        p = doc.add_paragraph(subtitle)
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        for run in p.runs:
+            run.font.size = Pt(8)
+
+    for sheet_name, df in sheets.items():
+        if df is None:
+            continue
+        try:
+            frame = pd.DataFrame(df).fillna("")
+        except Exception:
+            continue
+        doc.add_paragraph()
+        ph = doc.add_paragraph(str(sheet_name))
+        ph.runs[0].bold = True
+        ph.runs[0].font.size = Pt(10)
+        if frame.empty:
+            doc.add_paragraph("Даних немає.")
+            continue
+
+        max_rows = min(len(frame), 250)
+        max_cols = min(len(frame.columns), 12)
+        frame = frame.iloc[:max_rows, :max_cols]
+
+        table = doc.add_table(rows=1, cols=len(frame.columns))
+        table.style = "Table Grid"
+        hdr = table.rows[0].cells
+        for i, col in enumerate(frame.columns):
+            hdr[i].text = str(col)
+            for paragraph in hdr[i].paragraphs:
+                paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                for run in paragraph.runs:
+                    run.bold = True
+                    run.font.size = Pt(7)
+            tc_pr = hdr[i]._tc.get_or_add_tcPr()
+            shd = OxmlElement("w:shd")
+            shd.set(qn("w:fill"), "434343")
+            tc_pr.append(shd)
+
+        for _, row in frame.iterrows():
+            cells = table.add_row().cells
+            for i, col in enumerate(frame.columns):
+                value = str(row.get(col, ""))
+                cells[i].text = value[:900]
+                for paragraph in cells[i].paragraphs:
+                    for run in paragraph.runs:
+                        run.font.size = Pt(6.5)
+
+        if len(pd.DataFrame(df)) > max_rows or len(pd.DataFrame(df).columns) > max_cols:
+            doc.add_paragraph(
+                f"Примітка: для друкованої версії показано перші {max_rows} рядків і {max_cols} колонок. "
+                "Повний масив доступний в Excel-вивантаженні."
+            )
+
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    return buffer.getvalue()

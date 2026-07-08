@@ -82,7 +82,7 @@ _ALIASES = {
 }
 
 
-@st.cache_data
+@st.cache_data(ttl=300)
 def load_strat_matrix():
     source_df = read_excel_sheet(FILE_PATH, SHEET_NAME)
     data = source_df.iloc[7:].copy()

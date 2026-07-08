@@ -97,3 +97,60 @@ def render_scope_toggle(page_key: str, user: dict | None) -> bool:
             st.rerun()
 
     return active
+
+
+
+def render_auto_refresh_notice(page_key: str, *, minutes: int = 5, show_note: bool = True) -> None:
+    """Показує службову позначку автооновлення і запускає м'яке browser-refresh.
+
+    Використовується тільки на сторінках, де користувач прямо погодив TTL 5 хв:
+    Головна, Dashboard, Картка заходу, Фільтр за документом, Оцінка МіО.
+    """
+    from datetime import datetime
+    import streamlit.components.v1 as components
+
+    ms = max(1, int(minutes)) * 60 * 1000
+    if show_note:
+        st.info(
+            f"Дані автоматично оновлюються кожні {minutes} хвилин. "
+            f"Останнє оновлення сторінки: {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+        )
+    # Малий невидимий компонент. Не чіпає session_state, просто оновлює вкладку браузера.
+    components.html(
+        f"""
+        <script>
+        const key = 'auto_refresh_{page_key}';
+        if (!window[key]) {{
+          window[key] = true;
+          setTimeout(function() {{ window.parent.location.reload(); }}, {ms});
+        }}
+        </script>
+        """,
+        height=0,
+    )
+
+
+def render_own_ssp_badge(user: dict | None, *, label: str = "Ваш ССП") -> None:
+    """Уніфікований підпис для ролей, прив'язаних до власного ССП."""
+    try:
+        from core.access import get_user_ssp_index
+        idx = get_user_ssp_index(user) or "—"
+    except Exception:
+        idx = "—"
+    st.markdown(
+        "<div style='font-size:13px;font-weight:700;margin-bottom:4px;'>"
+        "Самостійний структурний підрозділ</div>"
+        f"<div style='background:#f1f5f9;border:1px solid #cbd5e1;border-radius:10px;"
+        f"padding:9px 12px;font-weight:800;'>{label}: №{idx}</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def apply_reset_buttons(apply_key: str, reset_key: str, *, apply_label: str = "Застосувати обрані параметри", reset_label: str = "Скинути параметри"):
+    """Стандартна пара кнопок. Повертає (apply_clicked, reset_clicked)."""
+    a, b = st.columns([1, 1])
+    with a:
+        apply_clicked = st.button(apply_label, type="primary", use_container_width=True, key=apply_key)
+    with b:
+        reset_clicked = st.button(reset_label, use_container_width=True, key=reset_key)
+    return apply_clicked, reset_clicked

@@ -436,7 +436,84 @@ with col_b:
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ------------------------------------------------------------
-# 5) ЕКСПОРТ (єдиний стандарт охайного Excel)
+# 5) ЗАХОДИ, ДЕ ВАШ ССП — СПІВВИКОНАВЕЦЬ (ТЗ-правка 09.07.2026, п.1)
+# ------------------------------------------------------------
+
+_co_toggle = st.toggle(
+    "Переглянути стан заходів, де Ваш ССП є співвиконавцем",
+    key="passport_co_exec_toggle",
+)
+if _co_toggle:
+    st.markdown(
+        '<div class="card"><div class="card-title">🤝 Заходи, де '
+        f'{ssp_label} — співвиконавець</div>'
+        '<div class="card-subtitle">Відомості за цими заходами подає '
+        'головний виконавець. Нижче — стан кожного заходу та контакти '
+        'відповідальної особи головного виконавця.</div>',
+        unsafe_allow_html=True,
+    )
+    _co_measures = measures_all[
+        measures_all.apply(
+            lambda r: ssp_index in (
+                extract_ssp_index(r.get("resp_co_1")),
+                extract_ssp_index(r.get("resp_co_2")),
+            ),
+            axis=1,
+        )
+    ].copy() if not measures_all.empty else pd.DataFrame()
+
+    if _co_measures.empty:
+        st.info("Заходів, де ваш ССП визначено співвиконавцем, не знайдено.")
+    else:
+        _co_html_rows = []
+        for _, m in _co_measures.iterrows():
+            code = clean(m.get("code"))
+            name = clean(m.get("name"))
+            _main_idx = extract_ssp_index(m.get("resp_main"))
+            _main_label = _ssp_labels.get(_main_idx, f"ССП №{_main_idx}")
+            # Контакт: відповідальна особа (роль ССП) головного виконавця
+            _contacts = []
+            for u in (get_users_by_ssp_index(_main_idx) or {}).values():
+                if clean(u.get("role")) == ROLE_SSP:
+                    _nm = clean(u.get("full_name")) or clean(u.get("email"))
+                    _em = clean(u.get("email"))
+                    _contacts.append(f"{_nm}" + (f" · {_em}" if _em else ""))
+            _contact_txt = "<br>".join(_contacts) if _contacts else "—"
+            cells = _measure_state_cells(
+                code, m.get("measure_start_date"), m.get("measure_end_date")
+            )
+            _co_html_rows.append(
+                "<tr>"
+                f'<td style="white-space:nowrap;font-weight:700;">{code}</td>'
+                f'<td style="min-width:220px;">{name}</td>'
+                f'<td style="min-width:150px;">{_main_label}</td>'
+                f'<td style="min-width:190px;font-size:11.5px;">{_contact_txt}</td>'
+                + "".join(f'<td style="text-align:center;">{c}</td>' for c in cells)
+                + "</tr>"
+            )
+        _co_head = (
+            "<tr>"
+            '<th style="text-align:left;">Код</th>'
+            '<th style="text-align:left;">Захід</th>'
+            '<th style="text-align:left;">Головний виконавець</th>'
+            '<th style="text-align:left;">Відповідальна особа (контакти)</th>'
+            + "".join(f"<th>{q}</th>" for q in QUARTERS)
+            + "</tr>"
+        )
+        st.markdown(
+            '<div style="max-height:420px;overflow-y:auto;border:1px solid '
+            '#e2e8f0;border-radius:10px;">'
+            '<table style="width:100%;border-collapse:collapse;font-size:12.5px;">'
+            f'<thead style="position:sticky;top:0;background:#0f172a;color:#fff;">'
+            f"{_co_head}</thead><tbody>"
+            + "".join(_co_html_rows)
+            + "</tbody></table></div>",
+            unsafe_allow_html=True,
+        )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# ------------------------------------------------------------
+# 6) ЕКСПОРТ (єдиний стандарт охайного Excel)
 # ------------------------------------------------------------
 
 if export_rows:

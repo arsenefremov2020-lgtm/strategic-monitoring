@@ -1259,7 +1259,8 @@ st.markdown(
         <div class="filter-legend">
             Оберіть індекс самостійного структурнго підрозділу та звітний період. 
             Система автоматично відобразить лише ті заходи, за якими самостійний 
-            структурний підрозділ, визначений головним виконавцем або співвиконавцем.
+            структурний підрозділ визначений головним виконавцем, і лише ті, 
+            період виконання яких уже настав для обраного року та кварталу.
         </div>
         <div class="info-grid">
             <div class="info-card">
@@ -1320,10 +1321,14 @@ st.markdown("</div>", unsafe_allow_html=True)
 # Filtering
 # ------------------------------------------------------------
 
+# ТЗ-правка (09.07.2026, п.1): у таблиці подання відомостей показуються
+# ЛИШЕ заходи, де ССП визначено ГОЛОВНИМ виконавцем. Заходи, де ССП є
+# співвиконавцем, у подання не потрапляють — їхній стан можна переглянути
+# у «Паспорті ССП» через перемикач співвиконавця.
 filtered_measures = filter_actions_for_user(
     all_measures,
     current_user,
-    executor_columns=["resp_main", "resp_co_1"],
+    executor_columns=["resp_main"],
 )
 
 if selected_ssp_index:
@@ -1331,7 +1336,6 @@ if selected_ssp_index:
         filtered_measures.apply(
             lambda row: (
                 value_contains_ssp(row.get("resp_main", ""), selected_ssp_index)
-                or value_contains_ssp(row.get("resp_co_1", ""), selected_ssp_index)
             ),
             axis=1,
         )
@@ -1498,6 +1502,7 @@ _selected_period_num = (
     int(str(selected_year)) * 10
     + core_periods.quarter_to_number(selected_quarter)
 )
+_not_started_hidden = 0
 
 table_rows = []
 locked_cols_per_row = {}   # code -> list of column names that must be disabled
@@ -1519,12 +1524,17 @@ for _, row in filtered_measures.iterrows():
     # звітному періоді — подання відомостей неможливе в принципі.
     # Заходи без розпізнаваної початкової дати вважаються щорічними
     # (виконуються постійно) і НЕ блокуються.
+    # ТЗ-правка (09.07.2026, п.2): захід, період якого ще НЕ НАСТАВ для
+    # обраного року/кварталу, у таблицю подання НЕ потрапляє взагалі —
+    # рядок з'явиться автоматично, щойно настане його період. Якщо по
+    # заходу вже існує заявка чи ручне закриття — рядок показується.
     is_not_started = core_periods.is_measure_not_started(
         core_periods.parse_period(row.get("measure_start_date", "")),
         _selected_period_num,
     )
     if is_not_started and not is_locked:
-        is_locked = True
+        _not_started_hidden += 1
+        continue
 
     if is_locked:
         q_fact_val   = raw_value(existing.get("numeric_value", "")) if existing is not None else ""
@@ -1534,8 +1544,6 @@ for _, row in filtered_measures.iterrows():
         npa_link_val = raw_value(existing.get("npa_link", "")) if existing is not None else ""
         if is_manually_closed:
             lock_label = "🔒 Закрито вручну"
-        elif is_not_started and existing is None:
-            lock_label = "⬜ Не настав час"
         else:
             lock_label = "✅ Погоджено" if is_approved else "⏳ На розгляді"
     else:
@@ -1579,14 +1587,11 @@ for _, row in filtered_measures.iterrows():
 
 table_df = pd.DataFrame(table_rows)
 
-_not_started_count = int(
-    (table_df["_lock_label"] == "⬜ Не настав час").sum()
-) if not table_df.empty else 0
-if _not_started_count:
+if _not_started_hidden:
     st.caption(
-        f"⬜ {_not_started_count} захід(ів) у переліку мають статус «Не настав час» "
-        f"для обраного періоду — подання відомостей за ними стане доступним "
-        f"з початком їхнього періоду виконання."
+        f"⬜ {_not_started_hidden} захід(ів) вашого ССП не показані в таблиці, "
+        f"бо їхній період виконання ще не настав для обраного року/кварталу — "
+        f"вони з'являться автоматично з початком свого періоду."
     )
 
 # Колонки які завжди disabled (інформаційні)

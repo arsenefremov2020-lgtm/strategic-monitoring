@@ -4550,6 +4550,48 @@ def _mio_build_note_text(facts_by_year: list[dict], data_mode: str) -> str:
     return " ".join(parts)
 
 
+def _mio_export_figures(facts, _goals_df):
+    """Той самий набір діаграм для Docx і PDF — щоб вони були ідентичні."""
+    figures = []
+    _f_years = [str(f["year"]) for f in facts]
+    fig_status = go.Figure()
+    for label, key, color in [
+        (ST_DONE, "done", "#22c55e"),
+        (ST_PARTIAL, "partial", "#eab308"),
+        (ST_NOTDONE, "notdone", "#ef4444"),
+        ("Виключено (час / актуальність)", "excluded", "#94a3b8"),
+    ]:
+        fig_status.add_trace(go.Bar(
+            name=label, x=_f_years, y=[f[key] for f in facts],
+            marker_color=color,
+        ))
+    fig_status.update_layout(
+        barmode="stack", title="Розподіл заходів за станом виконання",
+        paper_bgcolor="white", plot_bgcolor="white", height=420,
+    )
+    figures.append(("Стан виконання заходів", fig_status))
+    try:
+        if _goals_df is not None and not _goals_df.empty:
+            _gnum = _goals_df.select_dtypes("number")
+            if not _gnum.empty:
+                _gc = _gnum.columns[0]
+                _glab = next((c for c in _goals_df.columns
+                              if _goals_df[c].dtype == object), None)
+                fig_goals = go.Figure(go.Bar(
+                    x=_goals_df[_glab].astype(str) if _glab
+                    else _goals_df.index.astype(str),
+                    y=_goals_df[_gc], marker_color="#2563eb",
+                ))
+                fig_goals.update_layout(
+                    title="Інтегральна оцінка за цілями",
+                    paper_bgcolor="white", plot_bgcolor="white", height=420,
+                )
+                figures.append(("Інтегральна оцінка за цілями", fig_goals))
+    except Exception:
+        pass
+    return figures
+
+
 def render_mio_export_block(mio_years: list[int]) -> None:
     with st.expander("📤 Експорт оцінки МіО (Excel · Docx · PDF)"):
         st.caption(
@@ -4562,6 +4604,7 @@ def render_mio_export_block(mio_years: list[int]) -> None:
             with st.spinner("Формую файли експорту оцінки МіО..."):
                 _mio_export_files = {}
                 facts = [_mio_year_facts(y) for y in mio_years]
+                _goals_df = pd.DataFrame()
 
                 # ---------- Excel ----------
                 try:
@@ -4583,12 +4626,30 @@ def render_mio_export_block(mio_years: list[int]) -> None:
                         except Exception:
                             pass
                     try:
+                        _gt_df = build_mio_goals_tasks_table(
+                            strat_df, monitoring_df)
+                        if _gt_df is not None and not _gt_df.empty:
+                            sheets["МіО СЦ-Завдання"] = _gt_df
+                    except Exception:
+                        pass
+                    try:
                         _rows_df, _goals_df = build_integral_table(
                             strat_df, monitoring_df)
+                        if _rows_df is not None and not _rows_df.empty:
+                            sheets["Інт_Оцінка (детально)"] = _rows_df
                         if _goals_df is not None and not _goals_df.empty:
                             sheets["Інт_Оцінка (цілі)"] = _goals_df
                     except Exception:
                         _goals_df = pd.DataFrame()
+                    try:
+                        _fin_index = load_financing_data()
+                        for y in mio_years:
+                            _fin_df = build_financing_table(
+                                strat_df, monitoring_df, _fin_index, y)
+                            if _fin_df is not None and not _fin_df.empty:
+                                sheets[f"Фінансування {y}"] = _fin_df
+                    except Exception:
+                        pass
                     sheets = {k: v for k, v in sheets.items()
                               if v is not None and not v.empty}
                     if sheets:
@@ -4617,6 +4678,21 @@ def render_mio_export_block(mio_years: list[int]) -> None:
                     doc.add_heading("Аналітична записка", level=2)
                     p = doc.add_paragraph(_mio_build_note_text(facts, mio_data_mode))
                     p.paragraph_format.first_line_indent = Pt(20)
+
+                    # ТЗ-правка (09.07.2026, п.6): аналітична записка — З
+                    # ГРАФІКАМИ. Вбудовуємо ті самі діаграми, що йдуть у PDF.
+                    try:
+                        from docx.shared import Inches as _Inches
+                        for _dx_title, _dx_fig in _mio_export_figures(facts, _goals_df):
+                            _png = fig_png_bytes(_dx_fig, scale=2,
+                                                 width=1000, height=520)
+                            if not _png:
+                                continue
+                            doc.add_heading(_dx_title, level=2)
+                            doc.add_picture(io.BytesIO(_png),
+                                            width=_Inches(6.4))
+                    except Exception:
+                        pass
 
                     for y in mio_years:
                         try:
@@ -4653,50 +4729,7 @@ def render_mio_export_block(mio_years: list[int]) -> None:
 
                 # ---------- PDF ----------
                 try:
-                    figures = []
-                    _f_years = [str(f["year"]) for f in facts]
-                    fig_status = go.Figure()
-                    for label, key, color in [
-                        (ST_DONE, "done", "#22c55e"),
-                        (ST_PARTIAL, "partial", "#eab308"),
-                        (ST_NOTDONE, "notdone", "#ef4444"),
-                        ("Виключено (х / в-а)", "excluded", "#94a3b8"),
-                    ]:
-                        fig_status.add_trace(go.Bar(
-                            name=label, x=_f_years,
-                            y=[f[key] for f in facts],
-                            marker_color=color,
-                        ))
-                    fig_status.update_layout(
-                        barmode="stack", title="Розподіл заходів за станом "
-                        "виконання", paper_bgcolor="white",
-                        plot_bgcolor="white", height=420,
-                    )
-                    figures.append(("Стан виконання заходів", fig_status))
-                    try:
-                        if _goals_df is not None and not _goals_df.empty:
-                            _gnum = _goals_df.select_dtypes("number")
-                            if not _gnum.empty:
-                                _gc = _gnum.columns[0]
-                                _glab = next(
-                                    (c for c in _goals_df.columns
-                                     if _goals_df[c].dtype == object), None)
-                                fig_goals = go.Figure(go.Bar(
-                                    x=_goals_df[_glab].astype(str) if _glab
-                                    else _goals_df.index.astype(str),
-                                    y=_goals_df[_gc],
-                                    marker_color="#2563eb",
-                                ))
-                                fig_goals.update_layout(
-                                    title="Інтегральна оцінка за цілями",
-                                    paper_bgcolor="white",
-                                    plot_bgcolor="white", height=420,
-                                )
-                                figures.append(
-                                    ("Інтегральна оцінка за цілями", fig_goals))
-                    except Exception:
-                        pass
-
+                    figures = _mio_export_figures(facts, _goals_df)
                     _lead = facts[0] if facts else {"score": None}
                     _score = _lead.get("score")
                     verdict_level = ("high" if (_score or 0) >= 75 else
@@ -4715,7 +4748,7 @@ def render_mio_export_block(mio_years: list[int]) -> None:
                     ]
                     pdf_bytes = build_presentation_pdf(
                         "Оцінка МіО стратегічного плану",
-                        f"Роки: {', '.join(_f_years)} · {mio_data_mode}",
+                        f"Роки: {', '.join(str(y) for y in mio_years)} · {mio_data_mode}",
                         kpi_items, verdict_text, verdict_level,
                         [_mio_build_note_text(facts, mio_data_mode)],
                         figures,

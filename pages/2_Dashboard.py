@@ -1115,14 +1115,14 @@ def status_display(status):
         return "Не виконано"
     disp = core_statuses.status_display(raw)
     if disp == core_statuses.ST_NOTYET:
-        return "Термін не настав"
+        return "Не настав час"
     if disp == core_statuses.ST_OBSOLETE:
-        return "Втратив актуальність"
+        return "Втратило актуальність"
     return disp
 
 
 def is_excluded_status(status):
-    return status_display(status) in ["Термін не настав", "Втратив актуальність"]
+    return status_display(status) in ["Не настав час", "Втратило актуальність"]
 
 
 def status_score(status):
@@ -1181,7 +1181,7 @@ def risk_score_calc(row, selected_quarter_num, selected_period_num):
     score = 0
     reasons = []
 
-    if display_status in ["Термін не настав", "Втратив актуальність"]:
+    if display_status in ["Не настав час", "Втратило актуальність"]:
         return 0, "захід не включається до ризикової оцінки за поточним статусом"
 
     pf = plan_fact_percent(actual, target)
@@ -1415,14 +1415,14 @@ def prepare_period_data(strat_df, requests_df, year, quarter, department="Усі
     )
 
     active["status"] = active["status"].fillna("Не подано")
-    active.loc[active["period_state"] == "not_started", "status"] = "Термін не настав"
+    active.loc[active["period_state"] == "not_started", "status"] = "Не настав час"
     active["numeric_value"] = active["numeric_value"].fillna("")
     active["risks"] = active["risks"].fillna("")
     active["progress_text"] = active["progress_text"].fillna("")
     active["selected_target"] = active[f"target_{year}"] if f"target_{year}" in active.columns else ""
 
     active["status_display"] = active["status"].apply(status_display)
-    active.loc[active["period_state"] == "not_started", "status_display"] = "Термін не настав"
+    active.loc[active["period_state"] == "not_started", "status_display"] = "Не настав час"
     active["status_score"] = active["status"].apply(status_score)
     active["plan_fact_percent"] = active.apply(
         lambda r: plan_fact_percent(r["numeric_value"], r["selected_target"]), axis=1
@@ -1434,7 +1434,7 @@ def prepare_period_data(strat_df, requests_df, year, quarter, department="Усі
     )
     active.loc[active["period_state"] == "not_started", ["status_score", "performance_score"]] = None
     active["included_in_assessment"] = ~active["status_display"].isin([
-        "Термін не настав", "Втратив актуальність"
+        "Не настав час", "Втратило актуальність"
     ])
 
     risk_results = active.apply(
@@ -1833,7 +1833,7 @@ source_options = get_source_options()
 
 status_options = [
     "Виконано", "Частково виконано", "Не виконано",
-    "Термін не настав", "Втратив актуальність", "Виконується"
+    "Не настав час", "Втратило актуальність", "Виконується"
 ]
 
 
@@ -2110,8 +2110,8 @@ without_data = len(active[active["status"] == "Не подано"])
 completed_count = len(active[active["status_display"] == "Виконано"])
 partly_count = len(active[active["status_display"] == "Частково виконано"])
 not_done_count = len(active[active["status_display"] == "Не виконано"])
-obsolete_count = len(active[active["status_display"] == "Втратив актуальність"])
-not_time_count = len(active[(active["status_display"] == "Термін не настав") | (active.get("period_state", "") == "not_started")])
+obsolete_count = len(active[active["status_display"] == "Втратило актуальність"])
+not_time_count = len(active[(active["status_display"] == "Не настав час") | (active.get("period_state", "") == "not_started")])
 in_progress_count = len(active[active["status_display"] == "Виконується"])
 
 approved_requests_count = submitted_count
@@ -2155,47 +2155,8 @@ goal_progress["Середній_ризик"] = goal_progress["Середній_�
 # ============================================================
 
 if presentation_mode:
-    # ── Кнопка "Відкрити на весь екран" ──────────────────────
-    # Працює через components.html (iframe srcdoc — same-origin),
-    # тому може викликати requestFullscreen на батьківському документі.
-    # Кожен користувач бачить презентацію розгорнутою під СВІЙ екран.
-    import streamlit.components.v1 as _components
-    _components.html(
-        """
-        <div style="display:flex;justify-content:flex-end;">
-          <button id="fs-btn" style="
-              font-family:'Segoe UI',system-ui,sans-serif;
-              font-size:14px;font-weight:800;
-              color:#ffffff;background:#005BBB;
-              border:none;border-radius:10px;
-              padding:9px 18px;cursor:pointer;
-              box-shadow:0 4px 12px rgba(0,91,187,0.25);">
-            ⛶ Відкрити на весь екран
-          </button>
-        </div>
-        <script>
-          const btn = document.getElementById("fs-btn");
-          btn.addEventListener("click", () => {
-            const doc = window.parent.document;
-            const target = doc.documentElement;
-            if (doc.fullscreenElement) {
-              doc.exitFullscreen();
-              btn.textContent = "⛶ Відкрити на весь екран";
-            } else if (target.requestFullscreen) {
-              target.requestFullscreen();
-              btn.textContent = "✕ Вийти з повноекранного режиму";
-            }
-          });
-          window.parent.document.addEventListener("fullscreenchange", () => {
-            if (!window.parent.document.fullscreenElement) {
-              btn.textContent = "⛶ Відкрити на весь екран";
-            }
-          });
-        </script>
-        """,
-        height=52,
-    )
-
+    # ТЗ-правка (09.07.2026, п.4): кнопка повного екрана тепер ВСЕРЕДИНІ
+    # самої презентації і розгортає САМЕ презентацію, а не сторінку.
     # ── PDF-версія презентації (той самий набір слайдів) ─────
     with st.expander("📄 Завантажити презентацію у PDF"):
         st.caption(
@@ -2217,7 +2178,7 @@ if presentation_mode:
                         ("⚡ Авто-зараховано", str(len(auto_completed_list))),
                     ]
                     _st_fig = _pdf_px.bar(
-                        x=["Виконано", "Частково", "Виконується", "Не виконано", "Термін не настав"],
+                        x=["Виконано", "Частково", "Виконується", "Не виконано", "Не настав час"],
                         y=[completed_count, partly_count, in_progress_count, not_done_count, not_time_count],
                         color_discrete_sequence=["#005BBB"],
                         title="",
@@ -2495,6 +2456,28 @@ if presentation_mode:
     <div class="pres-overlay">
         <div class="pres-ua-bar"></div>
 
+        <!-- FULLSCREEN (лише презентація) -->
+        <button id="pres-fs-btn" style="position:fixed;top:14px;right:16px;z-index:9999;
+            font-family:'Segoe UI',system-ui,sans-serif;font-size:13px;font-weight:800;
+            color:#fff;background:#005BBB;border:none;border-radius:10px;
+            padding:8px 14px;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.35);">
+            ⛶ На весь екран
+        </button>
+        <script>
+          const _fsBtn = document.getElementById("pres-fs-btn");
+          _fsBtn.addEventListener("click", () => {{
+            if (document.fullscreenElement) {{
+              document.exitFullscreen();
+            }} else {{
+              document.documentElement.requestFullscreen();
+            }}
+          }});
+          document.addEventListener("fullscreenchange", () => {{
+            _fsBtn.textContent = document.fullscreenElement
+              ? "✕ Вийти з повного екрана" : "⛶ На весь екран";
+          }});
+        </script>
+
         <!-- NAV BAR -->
         <div class="pres-nav">
             <div class="pres-nav-title">Стратегічний моніторинг · Presentation mode</div>
@@ -2598,7 +2581,7 @@ if presentation_mode:
                     <div class="pres-kpi-sub">{pct_value(in_progress_count, total_active)}</div>
                 </div>
                 <div class="pres-kpi-card gray">
-                    <div class="pres-kpi-label">Термін не настав</div>
+                    <div class="pres-kpi-label">Не настав час</div>
                     <div class="pres-kpi-value">{not_time_count}</div>
                     <div class="pres-kpi-sub">{pct_value(not_time_count, total_active)}</div>
                 </div>
@@ -2726,8 +2709,8 @@ render_kpi_grid([
     {"title": "На розгляді", "count": review_count, "percent": pct_value(review_count, total_active), "color": "kpi-yellow"},
     {"title": "Не враховано", "count": not_counted_count, "percent": pct_value(not_counted_count, total_active), "color": "kpi-red"},
     {"title": "Не виконано", "count": not_done_count, "percent": pct_value(not_done_count, total_active), "color": "kpi-red"},
-    {"title": "Втратив актуальність", "count": obsolete_count, "percent": pct_value(obsolete_count, total_active), "color": "kpi-gray"},
-    {"title": "Термін не настав", "count": not_time_count, "percent": pct_value(not_time_count, total_active), "color": "kpi-gray"},
+    {"title": "Втратило актуальність", "count": obsolete_count, "percent": pct_value(obsolete_count, total_active), "color": "kpi-gray"},
+    {"title": "Не настав час", "count": not_time_count, "percent": pct_value(not_time_count, total_active), "color": "kpi-gray"},
     {"title": "Частково виконано", "count": partly_count, "percent": pct_value(partly_count, total_active), "color": "kpi-yellow"},
     {"title": "Виконується", "count": in_progress_count, "percent": pct_value(in_progress_count, total_active), "color": "kpi-blue"},
 ])
@@ -2864,9 +2847,9 @@ st.markdown('<div class="section-title">Гнучкий розрахунок ві
 _pct_base = st.selectbox(
     "База розрахунку (знаменник)",
     [
-        "Поточна методологія (активні заходи періоду, без «Термін не настав» і «Втратив актуальність»)",
+        "Поточна методологія (активні заходи періоду, без «Не настав час» і «Втратило актуальність»)",
         "Усі заходи Стратегічного плану (за всі роки)",
-        "Усі заходи, активні в обраному періоді (включно з «Термін не настав» і «Втратив актуальність»)",
+        "Усі заходи, активні в обраному періоді (включно з «Не настав час» і «Втратило актуальність»)",
         "Усі заходи обраних СЦ (за всі роки)",
         "Лише заходи з поданою звітністю в періоді",
     ],
@@ -3797,7 +3780,7 @@ if not presentation_mode:
             ).size().reset_index(name="Кількість")
 
             status_order = ["Виконано", "Частково виконано", "Виконується", "Не виконано",
-                            "Термін не настав", "Втратив актуальність"]
+                            "Не настав час", "Втратило актуальність"]
             fin_order = ["Державний бюджет", "МТД / кошти партнерів", "Небюджетні / інші", "Без фінансування"]
 
             pivot_tbl = heat_fin_pivot.pivot_table(
@@ -4018,7 +4001,7 @@ if not presentation_mode:
             <li>«Виконано» = 100%; «Частково виконано» = 75%; «Не виконано» = 0% —
                 єдина шкала моделі «Оцінка МіО» (Excel «РВ (Заходи)»);</li>
             <li>відсутність поданих даних прирівнюється до «Не виконано» (0%);</li>
-            <li>«Термін не настав» та «Втратив актуальність» не включаються до оцінки ризику.</li>
+            <li>«Не настав час» та «Втратило актуальність» не включаються до оцінки ризику.</li>
         </ul>
 
         <strong>Risk score</strong> визначається автоматично на основі стану виконання:
@@ -4031,6 +4014,97 @@ if not presentation_mode:
         </div>
         """, unsafe_allow_html=True)
 
+
+# ============================================================
+# 🧪 АВТОМАТИЧНИЙ АНАЛІТИЧНИЙ ВИСНОВОК — ТЕСТОВИЙ РЕЖИМ (ТЗ Дш.20)
+# ============================================================
+#
+# Експеримент у самому низу сторінки: система сама порівнює обраний період
+# із попереднім кварталом і коротко каже, що покращилось, що погіршилось
+# і на що звернути увагу. Використовує ті самі відфільтровані дані, що й
+# графіки вище.
+
+def _render_dash_auto_summary():
+    try:
+        _q_order = ["I", "II", "III", "IV"]
+        _cur_years = sorted(int(y) for y in (years_for_calc or []))
+        _cur_quarters = [q for q in _q_order if q in (quarters_for_calc or [])]
+        if not _cur_years or not _cur_quarters:
+            return
+        _cy, _cq = _cur_years[-1], _cur_quarters[-1]
+        _cq_i = _q_order.index(_cq)
+        if _cq_i > 0:
+            _py, _pq = _cy, _q_order[_cq_i - 1]
+        else:
+            _py, _pq = _cy - 1, "IV"
+
+        _prev = build_period_data(strat_df, requests_df, [_py], [_pq])
+        if _prev is not None and not _prev.empty:
+            _prev = collapse_to_latest_measure_rows(_prev)
+
+        def _counts(df):
+            if df is None or df.empty or "status" not in df.columns:
+                return {}
+            return df["status"].astype(str).value_counts().to_dict()
+
+        _cur_c, _prev_c = _counts(active), _counts(_prev)
+        _lines = []
+        _better, _worse = [], []
+        for _st_name, _good in [("Виконано", True), ("Частково виконано", True),
+                                ("Не виконано", False)]:
+            _d = _cur_c.get(_st_name, 0) - _prev_c.get(_st_name, 0)
+            if _d == 0:
+                continue
+            _txt = (f"«{_st_name}»: {'+' if _d > 0 else ''}{_d} "
+                    f"заходів проти {_pq} кв. {_py}")
+            if (_d > 0) == _good:
+                _better.append(_txt)
+            else:
+                _worse.append(_txt)
+        _no_data = int(
+            (active["status"].astype(str).isin(["", "Не подано", "Не враховано"])).sum()
+        ) if "status" in active.columns else 0
+        _not_yet = int(
+            (active["status"].astype(str) == "Не настав час").sum()
+        ) if "status" in active.columns else 0
+
+        if _better:
+            _lines.append("📈 <b>Покращилось:</b> " + "; ".join(_better) + ".")
+        if _worse:
+            _lines.append("📉 <b>Погіршилось:</b> " + "; ".join(_worse) + ".")
+        if not _better and not _worse:
+            _lines.append(
+                f"➖ Суттєвих змін розподілу статусів проти {_pq} кв. {_py} "
+                f"не зафіксовано."
+            )
+        _attn = []
+        if _no_data:
+            _attn.append(f"{_no_data} заходів без поданих відомостей")
+        if _not_yet:
+            _attn.append(f"{_not_yet} заходів у стані «Не настав час»")
+        if _attn:
+            _lines.append("👀 <b>На що звернути увагу:</b> " + "; ".join(_attn) + ".")
+
+        st.markdown(
+            '<div class="card">'
+            '<div class="card-title">🧪 Автоматичний висновок '
+            '<span style="font-size:12px;background:#fef3c7;border:1px solid '
+            '#fcd34d;color:#92400e;border-radius:8px;padding:2px 8px;'
+            'vertical-align:middle;">тестовий режим</span></div>'
+            f'<div class="card-subtitle">Порівняння: {_cq} кв. {_cy} проти '
+            f'{_pq} кв. {_py} · за застосованими фільтрами</div>'
+            + "".join(f'<div style="font-size:13px;color:#0f172a;'
+                      f'margin:4px 0;">{l}</div>' for l in _lines)
+            + '<div style="font-size:11.5px;color:#94a3b8;margin-top:6px;">'
+              'Текст сформовано автоматично і він не є офіційним висновком.'
+              '</div></div>',
+            unsafe_allow_html=True,
+        )
+    except Exception:
+        # Тестовий режим не має права зламати Dashboard.
+        pass
+
+_render_dash_auto_summary()
 
 # ============================================================
 # FOOTER

@@ -1306,6 +1306,56 @@ with tab_all_requests:
 
 st.markdown('</div>', unsafe_allow_html=True)
 
+# ──────────────────────────────────────────────
+# ЗАЯВКИ, ЩО ОЧІКУЮТЬ ПОНАД 5 ДНІВ (ТЗ Жур.16)
+# ──────────────────────────────────────────────
+try:
+    from datetime import timezone as _tz
+    _stale_now = datetime.now(_tz.utc)
+    _stale_src = requests_df.copy()
+    if not _stale_src.empty and "approval_status" in _stale_src.columns:
+        _stale_src = _stale_src[
+            _stale_src["approval_status"].astype(str).str.startswith("Очікує")
+        ]
+        if not _stale_src.empty and "submitted_at" in _stale_src.columns:
+            _stale_src["_ts"] = pd.to_datetime(
+                _stale_src["submitted_at"], errors="coerce", utc=True
+            )
+            _stale_src["Днів в очікуванні"] = _stale_src["_ts"].map(
+                lambda t: (_stale_now - t.to_pydatetime()).days
+                if pd.notna(t) else None
+            )
+            _stale = _stale_src[
+                pd.to_numeric(_stale_src["Днів в очікуванні"],
+                              errors="coerce").fillna(0) > 5
+            ]
+            if not _stale.empty:
+                st.markdown(
+                    '<div class="card"><div class="card-title">⏰ Заявки, що '
+                    'очікують понад 5 днів</div>'
+                    '<div class="card-subtitle">Службовий контрольний перелік: '
+                    'за легендою системи такі відомості вважаються '
+                    '«Не враховано», доки їх не погоджено.</div>',
+                    unsafe_allow_html=True,
+                )
+                _stale_show = _stale.rename(columns={
+                    "id": "№ заявки", "strat_code": "Код заходу",
+                    "department": "ССП", "year": "Рік", "quarter": "Квартал",
+                    "approval_status": "Статус погодження",
+                })
+                _stale_cols = ["№ заявки", "Код заходу", "ССП", "Рік",
+                               "Квартал", "Статус погодження",
+                               "Днів в очікуванні"]
+                st.dataframe(
+                    _stale_show[[c for c in _stale_cols
+                                 if c in _stale_show.columns]]
+                    .sort_values("Днів в очікуванні", ascending=False),
+                    use_container_width=True, hide_index=True,
+                )
+                st.markdown('</div>', unsafe_allow_html=True)
+except Exception:
+    pass
+
 st.markdown('<div class="card"><div class="card-title">Повний журнал дій</div><div class="card-subtitle">Детальний перелік системних подій за обраними параметрами відбору. Графіки з цієї сторінки прибрано, щоб залишити лише контрольні таблиці та календарний відбір.</div>', unsafe_allow_html=True)
 
 logs_export = display_logs_table(filtered_logs)
@@ -1369,6 +1419,10 @@ show_notifications = st.toggle(
 notifications_export = pd.DataFrame()
 if show_notifications:
     st.markdown('<div class="card"><div class="card-title">Email-сповіщення</div><div class="card-subtitle">Окремий службовий режим, щоб не перевантажувати журнал.</div>', unsafe_allow_html=True)
+    # Виправлення (09.07.2026, п.5): дані сповіщень раніше ніде не
+    # завантажувалися, через що перемикач завершувався помилкою. Тепер
+    # журнал сповіщень читається ЛИШЕ коли перемикач увімкнено.
+    notifications_df = load_notification_log()
     _notif = notifications_df.copy()
     if not _notif.empty and "sent_at" in _notif.columns:
         _notif["sent_at_dt"] = pd.to_datetime(_notif["sent_at"], errors="coerce")

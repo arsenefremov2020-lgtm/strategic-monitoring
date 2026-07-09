@@ -154,3 +154,87 @@ def apply_reset_buttons(apply_key: str, reset_key: str, *, apply_label: str = "�
     with b:
         reset_clicked = st.button(reset_label, use_container_width=True, key=reset_key)
     return apply_clicked, reset_clicked
+
+
+# ------------------------------------------------------------
+# Єдиний таймлайн заявки (ТЗ 16.13 — погоджено)
+# ------------------------------------------------------------
+# Використовується в «Мій кабінет», «Мої заявки», «Адміністрування» та
+# «Журнал дій» (через окрему кнопку), щоб історія заявки скрізь виглядала
+# і читалася ОДНАКОВО, без дублювання логіки на сторінках.
+
+def render_request_timeline(logs_df, *, title: str | None = None,
+                            with_table_expander: bool = True) -> None:
+    """Малює хронологічний таймлайн подій заявки з monitoring_logs.
+
+    logs_df — DataFrame з колонками changed_at / action / old_status /
+    new_status / admin_comment / changed_by (зайві колонки ігноруються).
+    """
+    import pandas as pd
+    from html import escape as _escape
+
+    def _c(v) -> str:
+        if v is None:
+            return ""
+        try:
+            if pd.isna(v):
+                return ""
+        except (TypeError, ValueError):
+            pass
+        return str(v).strip()
+
+    if logs_df is None or getattr(logs_df, "empty", True):
+        st.info("Історії змін для цієї заявки поки що немає.")
+        return
+
+    if title:
+        st.markdown(
+            f'<div style="font-size:13px;font-weight:800;color:#0f172a;'
+            f'margin-bottom:6px;">{_escape(title)}</div>',
+            unsafe_allow_html=True,
+        )
+
+    _tl = logs_df.copy()
+    _tl["_ts"] = pd.to_datetime(_tl.get("changed_at"), errors="coerce", utc=True)
+    _tl = _tl.sort_values("_ts")
+
+    items = []
+    for _, ev in _tl.iterrows():
+        ts = ev["_ts"]
+        when = ts.strftime("%d.%m.%Y %H:%M") if pd.notna(ts) else ""
+        act = _c(ev.get("action", ""))
+        who = _c(ev.get("changed_by", ""))
+        new = _c(ev.get("new_status", ""))
+        cmt = _c(ev.get("admin_comment", ""))
+        dot = "#22c55e" if new == "Погоджено" else (
+            "#f59e0b" if "Повернуто" in new else (
+                "#8b5cf6" if "закрит" in act.lower() else "#3b82f6"))
+        items.append(
+            f'<div style="display:flex;gap:10px;margin-bottom:8px;">'
+            f'<div style="width:10px;min-width:10px;height:10px;border-radius:50%;'
+            f'background:{dot};margin-top:5px;"></div>'
+            f'<div style="font-size:12.5px;line-height:1.45;color:#0f172a;">'
+            f'<b>{_escape(when)}</b> — {_escape(act)}'
+            + (f' <span style="color:#475569;">({_escape(new)})</span>' if new else "")
+            + (f'<br><span style="color:#334155;">💬 {_escape(cmt)}</span>' if cmt else "")
+            + (f'<br><span style="color:#64748b;font-size:11.5px;">👤 {_escape(who)}</span>' if who else "")
+            + '</div></div>'
+        )
+
+    st.markdown(
+        '<div style="border-left:2px solid #e2e8f0;padding-left:12px;'
+        'margin:4px 0 10px 2px;">' + "".join(items) + "</div>",
+        unsafe_allow_html=True,
+    )
+
+    if with_table_expander:
+        with st.expander("Таблиця історії (усі поля)"):
+            show = logs_df.rename(columns={
+                "changed_at": "Дата", "action": "Дія",
+                "old_status": "Попередній статус", "new_status": "Новий статус",
+                "admin_comment": "Коментар", "changed_by": "Ким змінено",
+            })
+            cols = ["Дата", "Дія", "Попередній статус", "Новий статус",
+                    "Коментар", "Ким змінено"]
+            st.dataframe(show[[c for c in cols if c in show.columns]],
+                         use_container_width=True, hide_index=True)

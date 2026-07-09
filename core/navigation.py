@@ -195,6 +195,8 @@ def get_blocked_pages_for_current_user() -> list[str]:
 
 PAGE_FILE_PATHS = {
     "app": "app.py",
+    "Центр задач": "pages/0_Центр_задач.py",
+    "Паспорт ССП": "pages/0_Паспорт_ССП.py",
     "Моніторинг виконання": "pages/1_Моніторинг_виконання.py",
     "Мій кабінет": "pages/1_Мій_кабінет.py",
     "Dashboard": "pages/2_Dashboard.py",
@@ -215,6 +217,8 @@ PAGE_LABELS = {
 
 PAGE_ICONS = {
     "app": "🏠",
+    "Центр задач": "🧪",
+    "Паспорт ССП": "🗂️",
     "Моніторинг виконання": "📝",
     "Мій кабінет": "👤",
     "Dashboard": "📊",

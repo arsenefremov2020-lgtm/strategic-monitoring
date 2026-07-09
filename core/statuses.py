@@ -126,3 +126,38 @@ def status_badge(status: object, extra_style: str = "") -> str:
         f'font-size:11px;font-weight:800;background:{c["bg"]};color:{c["fg"]};'
         f'border:1px solid {c["border"]};{extra_style}">{canonical}</span>'
     )
+
+
+# ── Єдина легенда СТАНІВ ПОДАННЯ (звітних даних) ──
+# Це НЕ статуси виконання (їх 5 вище), а стани клітинок звітності з легенди
+# головної сторінки: 🟦 На розгляді · 🟨 На доопрацюванні · 🟩 Погоджено ·
+# ⬜ Не настав час · 🟥 Не враховано · 🟪 Закрито адміністратором.
+# Використовується всіма сторінками, щоб кольори збігалися ВСЮДИ.
+
+LEGEND_STATES = [
+    "На розгляді", "На доопрацюванні", "Погоджено",
+    "Не настав час", "Не враховано", "Закрито адміністратором",
+]
+
+LEGEND_COLORS = {
+    "На розгляді":             {"bg": "#dbeafe", "fg": "#1e40af", "border": "#93c5fd"},
+    "На доопрацюванні":        {"bg": "#fef9c3", "fg": "#854d0e", "border": "#fde047"},
+    "Погоджено":               {"bg": "#dcfce7", "fg": "#166534", "border": "#86efac"},
+    "Не настав час":           {"bg": "#e0e7ef", "fg": "#334155", "border": "#cbd5e1"},
+    "Не враховано":            {"bg": "#fee2e2", "fg": "#991b1b", "border": "#fca5a5"},
+    "Закрито адміністратором": {"bg": "#ede9fe", "fg": "#5b21b6", "border": "#c4b5fd"},
+}
+
+
+def legend_badge(state: object, extra_style: str = "") -> str:
+    """Готовий HTML-бейдж стану подання за єдиною легендою системи."""
+    s = clean(state)
+    c = LEGEND_COLORS.get(s, LEGEND_COLORS["Не враховано"])
+    label = s if s in LEGEND_COLORS else "Не враховано"
+    if label == "Закрито адміністратором":
+        label = "🔒 Закрито адміністратором"
+    return (
+        f'<span style="display:inline-block;padding:2px 10px;border-radius:20px;'
+        f'font-size:11px;font-weight:800;background:{c["bg"]};color:{c["fg"]};'
+        f'border:1px solid {c["border"]};{extra_style}">{label}</span>'
+    )

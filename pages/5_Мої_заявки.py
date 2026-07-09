@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from html import escape
 import re
 from core.page_setup import page_setup, render_footer
+from core.ui import render_request_timeline
 from core.strategic_data import load_strat_matrix as core_load_strat_matrix
 from core import monitoring_data
 from core import notify_events
@@ -867,23 +868,8 @@ _render_holder_strip()
 logs_df = load_logs(selected_id)
 
 st.markdown('<div class="card"><div class="card-title">Історія зміни статусу</div>', unsafe_allow_html=True)
-
-if logs_df.empty:
-    st.info("Історії змін для цієї заявки поки що немає.")
-else:
-    logs_show = logs_df.rename(columns={
-        "changed_at": "Дата",
-        "action": "Дія",
-        "old_status": "Попередній статус",
-        "new_status": "Новий статус",
-        "admin_comment": "Коментар",
-        "changed_by": "Ким змінено"
-    })
-
-    cols = ["Дата", "Дія", "Попередній статус", "Новий статус", "Коментар", "Ким змінено"]
-    available = [c for c in cols if c in logs_show.columns]
-    st.dataframe(logs_show[available], use_container_width=True, hide_index=True)
-
+# ЄДИНИЙ компонент таймлайну для всієї системи (core/ui.py, ТЗ 16.13)
+render_request_timeline(logs_df)
 st.markdown('</div>', unsafe_allow_html=True)
 
 # ============================================================

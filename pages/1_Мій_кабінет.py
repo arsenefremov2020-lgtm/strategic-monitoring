@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from core.db import get_supabase_client
-from core.ui import load_css
+from core.ui import load_css, render_request_timeline
 from core.errors import log_exception
 from core.notifications import render_notifications_panel
 from core.config import FILE_PATH, SHEET_NAME
@@ -1131,49 +1131,8 @@ else:
 
 logs_df = load_logs(selected_id)
 st.markdown('<div class="card"><div class="card-title">Історія зміни статусу</div>', unsafe_allow_html=True)
-if logs_df.empty:
-    st.info("Історії змін для цієї заявки поки що немає.")
-else:
-    # ТЗ 3.15: історія погодження у вигляді ТАЙМЛАЙНУ (хронологічно,
-    # знизу — найдавніші події), а деталі — у таблиці нижче.
-    _tl = logs_df.copy()
-    _tl["_ts"] = pd.to_datetime(_tl.get("changed_at"), errors="coerce", utc=True)
-    _tl = _tl.sort_values("_ts")
-    _tl_items = []
-    for _, _ev in _tl.iterrows():
-        _when = _ev["_ts"]
-        _when_txt = _when.strftime("%d.%m.%Y %H:%M") if pd.notna(_when) else ""
-        _act = clean(_ev.get("action", ""))
-        _who = clean(_ev.get("changed_by", ""))
-        _new = clean(_ev.get("new_status", ""))
-        _cmt = clean(_ev.get("admin_comment", ""))
-        _dot = "#22c55e" if _new == "Погоджено" else (
-            "#f59e0b" if "Повернуто" in _new else "#3b82f6")
-        _tl_items.append(
-            f'<div style="display:flex;gap:10px;margin-bottom:8px;">'
-            f'<div style="width:10px;min-width:10px;height:10px;border-radius:50%;'
-            f'background:{_dot};margin-top:5px;"></div>'
-            f'<div style="font-size:12.5px;line-height:1.45;color:#0f172a;">'
-            f'<b>{escape(_when_txt)}</b> — {escape(_act)}'
-            + (f' <span style="color:#475569;">({escape(_new)})</span>' if _new else "")
-            + (f'<br><span style="color:#334155;">💬 {escape(_cmt)}</span>' if _cmt else "")
-            + (f'<br><span style="color:#64748b;font-size:11.5px;">👤 {escape(_who)}</span>' if _who else "")
-            + '</div></div>'
-        )
-    st.markdown(
-        '<div style="border-left:2px solid #e2e8f0;padding-left:12px;margin:4px 0 10px 2px;">'
-        + "".join(_tl_items) + "</div>",
-        unsafe_allow_html=True,
-    )
-    with st.expander("Таблиця історії (усі поля)"):
-        logs_show = logs_df.rename(columns={
-            "changed_at": "Дата", "action": "Дія",
-            "old_status": "Попередній статус", "new_status": "Новий статус",
-            "admin_comment": "Коментар", "changed_by": "Ким змінено"
-        })
-        cols = ["Дата", "Дія", "Попередній статус", "Новий статус", "Коментар", "Ким змінено"]
-        st.dataframe(logs_show[[c for c in cols if c in logs_show.columns]],
-                     use_container_width=True, hide_index=True)
+# ЄДИНИЙ компонент таймлайну для всієї системи (core/ui.py, ТЗ 16.13)
+render_request_timeline(logs_df)
 st.markdown('</div>', unsafe_allow_html=True)
 
 # ============================================================

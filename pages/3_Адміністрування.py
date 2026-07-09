@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from core.db import get_supabase_client
-from core.ui import load_css
+from core.ui import load_css, render_request_timeline
 from core.notifications import render_notifications_panel
 from core.config import FILE_PATH, SHEET_NAME
 from core.excel_loader import read_excel_sheet
@@ -2498,6 +2498,8 @@ else:
     )
 
     with st.expander("Повна історія змін заявки"):
+        # ЄДИНИЙ компонент таймлайну для всієї системи (core/ui.py, ТЗ 16.13)
+        render_request_timeline(logs_df, with_table_expander=False)
         show_logs = logs_df.rename(columns={
             "changed_at":    "Дата зміни",
             "action":        "Дія",

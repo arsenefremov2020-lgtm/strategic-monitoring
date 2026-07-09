@@ -1,6 +1,7 @@
 import re
 import html
 import math
+import io
 from datetime import datetime
 
 import pandas as pd
@@ -18,7 +19,7 @@ from core.ui import load_css
 from core.excel_loader import read_excel_sheet
 from core import operational
 from core.closeouts import load_manual_closeouts
-from core.exports import render_png_download
+from core.exports import render_png_download, write_styled_excel, build_presentation_pdf
 from core.access import filter_actions_for_user, filter_requests_for_user
 
 current_user = page_setup("Оцінка МіО", page_name="Оцінка МіО")
@@ -4490,6 +4491,274 @@ def render_mode_placeholder(mode_label):
     """, unsafe_allow_html=True)
 
 
+# ============================================================
+# ЕКСПОРТ ОЦІНКИ МіО (ТЗ МіО-19: Excel + Docx + PDF, обов'язково)
+# ============================================================
+#
+# Excel — усі проміжні розрахунки («М_заходи», «РВ (Заходи)»,
+# «РВ (СЦ, Завдання)», «Інт_Оцінка») за обрані роки.
+# Docx — автоматична аналітична записка суцільною прозою + зведені таблиці.
+# PDF — презентація з графіками (той самий фірмовий шаблон, що й Dashboard).
+
+def _mio_year_facts(year: int) -> dict:
+    """Ключові факти одного року з «РВ (Заходи)» для записки/KPI."""
+    facts = {"year": year, "total": 0, "done": 0, "partial": 0,
+             "notdone": 0, "excluded": 0, "score": None}
+    try:
+        rv = build_rv_measures_table(strat_df, monitoring_df, year)
+    except Exception:
+        return facts
+    if rv is None or rv.empty:
+        return facts
+    facts["total"] = len(rv)
+    res_col = next((c for c in rv.columns if "результат" in str(c).lower()), None)
+    bal_col = next((c for c in rv.columns if str(c).startswith("Бал")), None)
+    if res_col:
+        vals = rv[res_col].astype(str)
+        facts["done"] = int((vals == ST_DONE).sum())
+        facts["partial"] = int((vals == ST_PARTIAL).sum())
+        facts["notdone"] = int((vals == ST_NOTDONE).sum())
+        facts["excluded"] = int(vals.isin([ST_NOTYET, ST_OBSOLETE]).sum())
+    if bal_col:
+        nums = pd.to_numeric(rv[bal_col], errors="coerce").dropna()
+        if len(nums):
+            facts["score"] = float(nums.mean()) * 100.0
+    return facts
+
+
+def _mio_build_note_text(facts_by_year: list[dict], data_mode: str) -> str:
+    """Аналітична записка суцільною прозою (без маркованих списків)."""
+    parts = [
+        "Оцінка сформована автоматично системою моніторингу стратегічного "
+        f"плану за методологією моделі «Оцінка МіО». Джерело даних — {data_mode.lower()}. "
+        "Ручні закриття заходів враховані як повноцінні офіційні дані."
+    ]
+    for f in facts_by_year:
+        counted = f["total"] - f["excluded"]
+        sc = (f"зведена оцінка виконання заходів становить {f['score']:.1f} "
+              f"відсотка" if f["score"] is not None
+              else "зведена оцінка виконання наразі не розраховується через "
+                   "відсутність даних")
+        parts.append(
+            f"За {f['year']} рік у розрахунок включено {counted} заходів "
+            f"(усього в матриці {f['total']}, з них {f['excluded']} мають "
+            f"статуси «Не настав час» або «Втратило актуальність» і "
+            f"виключаються з розрахунку за правилами моделі). Статус "
+            f"«Виконано» мають {f['done']} заходів, «Частково виконано» — "
+            f"{f['partial']}, «Не виконано» — {f['notdone']}; {sc}."
+        )
+    return " ".join(parts)
+
+
+def render_mio_export_block(mio_years: list[int]) -> None:
+    with st.expander("📤 Експорт оцінки МіО (Excel · Docx · PDF)"):
+        st.caption(
+            "Excel містить усі проміжні розрахунки за аркушами моделі; "
+            "Docx — автоматичну аналітичну записку та зведені таблиці; "
+            "PDF — презентацію з графіками для керівництва."
+        )
+        if st.button("Сформувати файли експорту",
+                     use_container_width=True, key="mio_export_build_v19"):
+            with st.spinner("Формую файли експорту оцінки МіО..."):
+                _mio_export_files = {}
+                facts = [_mio_year_facts(y) for y in mio_years]
+
+                # ---------- Excel ----------
+                try:
+                    sheets = {}
+                    for y in mio_years:
+                        try:
+                            sheets[f"М_заходи {y}"] = build_mio_measures_table(
+                                strat_df, monitoring_df, y)
+                        except Exception:
+                            pass
+                        try:
+                            sheets[f"РВ Заходи {y}"] = build_rv_measures_table(
+                                strat_df, monitoring_df, y)
+                        except Exception:
+                            pass
+                        try:
+                            sheets[f"РВ СЦ Завдання {y}"] = build_rv_goals_table(
+                                strat_df, monitoring_df, y)
+                        except Exception:
+                            pass
+                    try:
+                        _rows_df, _goals_df = build_integral_table(
+                            strat_df, monitoring_df)
+                        if _goals_df is not None and not _goals_df.empty:
+                            sheets["Інт_Оцінка (цілі)"] = _goals_df
+                    except Exception:
+                        _goals_df = pd.DataFrame()
+                    sheets = {k: v for k, v in sheets.items()
+                              if v is not None and not v.empty}
+                    if sheets:
+                        _mio_export_files["xlsx"] = write_styled_excel(
+                            sheets, freeze_first_col=1)
+                except Exception as e:
+                    st.warning(f"Excel не сформовано: {type(e).__name__}: {e}")
+
+                # ---------- Docx ----------
+                try:
+                    from docx import Document
+                    from docx.shared import Pt
+                    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+                    doc = Document()
+                    h = doc.add_heading(
+                        "Оцінка моніторингу та оцінювання (МіО) "
+                        "стратегічного плану", level=1)
+                    h.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    meta = doc.add_paragraph(
+                        f"Сформовано автоматично {datetime.now().strftime('%d.%m.%Y %H:%M')} · "
+                        f"Роки: {', '.join(str(y) for y in mio_years)} · "
+                        f"Джерело даних: {mio_data_mode}"
+                    )
+                    meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    doc.add_heading("Аналітична записка", level=2)
+                    p = doc.add_paragraph(_mio_build_note_text(facts, mio_data_mode))
+                    p.paragraph_format.first_line_indent = Pt(20)
+
+                    for y in mio_years:
+                        try:
+                            rvg = build_rv_goals_table(strat_df, monitoring_df, y)
+                        except Exception:
+                            rvg = None
+                        if rvg is None or rvg.empty:
+                            continue
+                        doc.add_heading(
+                            f"Виконання за стратегічними цілями та "
+                            f"завданнями, {y} рік", level=2)
+                        cols = [str(c) for c in rvg.columns]
+                        t = doc.add_table(rows=1, cols=len(cols))
+                        t.style = "Light Grid Accent 1"
+                        for i, cname in enumerate(cols):
+                            cell = t.rows[0].cells[i]
+                            cell.text = cname
+                            for r in cell.paragraphs[0].runs:
+                                r.bold = True
+                        for _, rr in rvg.iterrows():
+                            row = t.add_row().cells
+                            for i, cname in enumerate(cols):
+                                row[i].text = raw_value(rr.get(cname, ""))
+                        for row in t.rows:
+                            for cell in row.cells:
+                                for par in cell.paragraphs:
+                                    for r in par.runs:
+                                        r.font.size = Pt(8)
+                    buf = io.BytesIO()
+                    doc.save(buf)
+                    _mio_export_files["docx"] = buf.getvalue()
+                except Exception as e:
+                    st.warning(f"Docx не сформовано: {type(e).__name__}: {e}")
+
+                # ---------- PDF ----------
+                try:
+                    figures = []
+                    _f_years = [str(f["year"]) for f in facts]
+                    fig_status = go.Figure()
+                    for label, key, color in [
+                        (ST_DONE, "done", "#22c55e"),
+                        (ST_PARTIAL, "partial", "#eab308"),
+                        (ST_NOTDONE, "notdone", "#ef4444"),
+                        ("Виключено (х / в-а)", "excluded", "#94a3b8"),
+                    ]:
+                        fig_status.add_trace(go.Bar(
+                            name=label, x=_f_years,
+                            y=[f[key] for f in facts],
+                            marker_color=color,
+                        ))
+                    fig_status.update_layout(
+                        barmode="stack", title="Розподіл заходів за станом "
+                        "виконання", paper_bgcolor="white",
+                        plot_bgcolor="white", height=420,
+                    )
+                    figures.append(("Стан виконання заходів", fig_status))
+                    try:
+                        if _goals_df is not None and not _goals_df.empty:
+                            _gnum = _goals_df.select_dtypes("number")
+                            if not _gnum.empty:
+                                _gc = _gnum.columns[0]
+                                _glab = next(
+                                    (c for c in _goals_df.columns
+                                     if _goals_df[c].dtype == object), None)
+                                fig_goals = go.Figure(go.Bar(
+                                    x=_goals_df[_glab].astype(str) if _glab
+                                    else _goals_df.index.astype(str),
+                                    y=_goals_df[_gc],
+                                    marker_color="#2563eb",
+                                ))
+                                fig_goals.update_layout(
+                                    title="Інтегральна оцінка за цілями",
+                                    paper_bgcolor="white",
+                                    plot_bgcolor="white", height=420,
+                                )
+                                figures.append(
+                                    ("Інтегральна оцінка за цілями", fig_goals))
+                    except Exception:
+                        pass
+
+                    _lead = facts[0] if facts else {"score": None}
+                    _score = _lead.get("score")
+                    verdict_level = ("high" if (_score or 0) >= 75 else
+                                     "medium" if (_score or 0) >= 50 else "low")
+                    verdict_text = (
+                        f"Зведена оцінка виконання заходів за "
+                        f"{_lead.get('year', '')} рік: "
+                        + (f"{_score:.1f}%" if _score is not None else "н/д")
+                    )
+                    kpi_items = [
+                        ("Заходів у розрахунку",
+                         str(sum(f["total"] - f["excluded"] for f in facts))),
+                        ("Виконано", str(sum(f["done"] for f in facts))),
+                        ("Частково", str(sum(f["partial"] for f in facts))),
+                        ("Не виконано", str(sum(f["notdone"] for f in facts))),
+                    ]
+                    pdf_bytes = build_presentation_pdf(
+                        "Оцінка МіО стратегічного плану",
+                        f"Роки: {', '.join(_f_years)} · {mio_data_mode}",
+                        kpi_items, verdict_text, verdict_level,
+                        [_mio_build_note_text(facts, mio_data_mode)],
+                        figures,
+                    )
+                    if pdf_bytes:
+                        _mio_export_files["pdf"] = pdf_bytes
+                except Exception as e:
+                    st.warning(f"PDF не сформовано: {type(e).__name__}: {e}")
+
+                st.session_state["mio_export_files_v19"] = _mio_export_files
+
+        _files = st.session_state.get("mio_export_files_v19") or {}
+        if _files:
+            _stamp = datetime.now().strftime("%Y-%m-%d")
+            dcol1, dcol2, dcol3 = st.columns(3)
+            if _files.get("xlsx"):
+                with dcol1:
+                    st.download_button(
+                        "⬇️ Excel (розрахунки)", data=_files["xlsx"],
+                        file_name=f"Оцінка_МіО_{_stamp}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument."
+                             "spreadsheetml.sheet",
+                        use_container_width=True, key="mio_dl_xlsx_v19",
+                    )
+            if _files.get("docx"):
+                with dcol2:
+                    st.download_button(
+                        "⬇️ Docx (записка)", data=_files["docx"],
+                        file_name=f"Оцінка_МіО_записка_{_stamp}.docx",
+                        mime="application/vnd.openxmlformats-officedocument."
+                             "wordprocessingml.document",
+                        use_container_width=True, key="mio_dl_docx_v19",
+                    )
+            if _files.get("pdf"):
+                with dcol3:
+                    st.download_button(
+                        "⬇️ PDF (презентація)", data=_files["pdf"],
+                        file_name=f"Оцінка_МіО_{_stamp}.pdf",
+                        mime="application/pdf",
+                        use_container_width=True, key="mio_dl_pdf_v19",
+                    )
+
+
 # Диспетчер режимів: кожен режим сторінки відповідає аркушу
 # методичної моделі Excel і рендериться тут.
 if active_mode in MIO_MODES:
@@ -4512,6 +4781,7 @@ if active_mode in MIO_MODES:
         render_mode_infogr_sczz(strat_df, monitoring_df, mio_years)
     else:
         render_mode_placeholder(active_mode)
+    render_mio_export_block(mio_years)
     st.stop()
 
 

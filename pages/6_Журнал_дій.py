@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from core.db import get_supabase_client
-from core.ui import load_css
+from core.ui import load_css, render_request_timeline
 from datetime import datetime, date, timedelta
 from io import BytesIO
 import re
@@ -1310,6 +1310,54 @@ st.markdown('<div class="card"><div class="card-title">Повний журнал
 
 logs_export = display_logs_table(filtered_logs)
 
+st.markdown('</div>', unsafe_allow_html=True)
+
+# ──────────────────────────────────────────────
+# ТАЙМЛАЙН ОДНІЄЇ ЗАЯВКИ (ТЗ 9.8 — «через окрему кнопку»)
+# ──────────────────────────────────────────────
+st.markdown(
+    '<div class="card"><div class="card-title">Таймлайн однієї заявки</div>'
+    '<div class="card-subtitle">Ланцюг подій по конкретній заявці у вигляді '
+    'хронологічного таймлайну — тим самим компонентом, що й у кабінетах '
+    'погодження.</div>',
+    unsafe_allow_html=True,
+)
+_tl_ids = []
+if not logs_df.empty and "request_id" in logs_df.columns:
+    _tl_ids = sorted(
+        {int(v) for v in pd.to_numeric(logs_df["request_id"], errors="coerce")
+         .dropna().astype(int).tolist()}
+    )
+if not _tl_ids:
+    st.info("У журналі поки що немає подій, прив'язаних до заявок.")
+else:
+    _tl_c1, _tl_c2 = st.columns([2, 1])
+    with _tl_c1:
+        _tl_selected = st.selectbox(
+            "Номер заявки",
+            _tl_ids,
+            key="journal_timeline_request_v19",
+            format_func=lambda v: f"Заявка № {v}",
+        )
+    with _tl_c2:
+        st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
+        _tl_show = st.button(
+            "Показати таймлайн",
+            use_container_width=True,
+            key="journal_timeline_btn_v19",
+        )
+    if _tl_show:
+        st.session_state["journal_timeline_shown_v19"] = int(_tl_selected)
+    _tl_active = st.session_state.get("journal_timeline_shown_v19")
+    if _tl_active is not None and _tl_active in _tl_ids:
+        _tl_logs = logs_df[
+            pd.to_numeric(logs_df["request_id"], errors="coerce") == _tl_active
+        ]
+        render_request_timeline(
+            _tl_logs,
+            title=f"Заявка № {_tl_active} — усі події",
+            with_table_expander=False,
+        )
 st.markdown('</div>', unsafe_allow_html=True)
 
 show_notifications = st.toggle(

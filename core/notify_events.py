@@ -157,3 +157,22 @@ def notify_superadmin_correction(to_email: str, to_name: str, code: str, year: s
     )
     _fire(to_email, subject, body, "superadmin_correction",
           f"{kind}:{code}:{year}:{quarter}:{to_email}")
+
+
+def notify_excluded_from_chain(to_email: str, to_name: str, changed_by: str,
+                               code: str, year: str, quarter: str,
+                               kind: str = "measure") -> None:
+    """Сповіщення особі, яку виключили зі схеми погодження (ТЗ Каб.7/Адм.10)."""
+    if not str(to_email or "").strip():
+        return
+    subject = "Зміна схеми погодження: вас виключено зі схеми"
+    body = (
+        f"<p>Шановний(а) {to_name or ''}!</p>"
+        f"<p>{changed_by or 'Учасник схеми погодження'} для "
+        f"{_request_line(code, year, quarter, kind)} змінив(ла) схему "
+        f"погодження та виключив(ла) вас із неї.</p>"
+        f"<p>Це службове сповіщення системи моніторингу стратегічного плану; "
+        f"додаткових дій від вас не потрібно.</p>"
+    )
+    _fire(to_email, subject, body, ntype="chain_excluded",
+          related_key=f"{code}|{year}|{quarter}")

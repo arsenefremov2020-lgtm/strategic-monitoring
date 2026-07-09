@@ -47,17 +47,19 @@ from config.roles import (
 # ------------------------------------------------------------
 
 STAGE_LABELS = {
-    ROLE_ADMIN:      "Координатор",
-    ROLE_UNIT_HEAD:  "Керівник управління",
-    ROLE_SSP_DEPUTY: "Заступник керівника ССП",
-    ROLE_SSP_HEAD:   "Керівник ССП",
+    ROLE_ADMIN:       "Координатор",
+    ROLE_UNIT_HEAD:   "Керівник управління",
+    ROLE_SSP_DEPUTY:  "Заступник керівника ССП",
+    ROLE_SSP_HEAD:    "Керівник ССП",
+    ROLE_SUPER_ADMIN: "Супер-адмін",
 }
 
 STAGE_WAITING_STATUS = {
-    ROLE_ADMIN:      "Очікує погодження",
-    ROLE_SSP_HEAD:   "Очікує: Керівник ССП",
-    ROLE_UNIT_HEAD:  "Очікує: Керівник управління",
-    ROLE_SSP_DEPUTY: "Очікує: Заступник керівника ССП",
+    ROLE_ADMIN:       "Очікує погодження",
+    ROLE_SSP_HEAD:    "Очікує: Керівник ССП",
+    ROLE_UNIT_HEAD:   "Очікує: Керівник управління",
+    ROLE_SSP_DEPUTY:  "Очікує: Заступник керівника ССП",
+    ROLE_SUPER_ADMIN: "Очікує: Супер-адмін",
 }
 
 APPROVED_STATUS = "Погоджено"

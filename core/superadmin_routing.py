@@ -70,3 +70,17 @@ def can_superadmin_decide_closeout(user: dict | None, request_row: dict | Any) -
     if not assigned:
         return True
     return email in {assigned, senior}
+
+
+def senior_superadmin_for(email: str) -> dict | None:
+    """Старший супер-адмін для даного супер-адміна (ескалація Заг.5).
+
+    Пастушина → Делюсто; Канєвська → Перун. Для старших (Делюсто, Перун)
+    вищої ланки немає — повертає None.
+    """
+    e = str(email or "").strip().lower()
+    if e and e == str(PASTUSHYNA.get("email") or "").strip().lower():
+        return DELIUSTO
+    if e and e == str(KANIEVSKA.get("email") or "").strip().lower():
+        return PERUN
+    return None

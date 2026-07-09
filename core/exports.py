@@ -70,20 +70,32 @@ GREY = (71 / 255, 85 / 255, 105 / 255)
 
 
 def _register_fonts():
-    """Реєструє кириличні шрифти DejaVu; повертає (regular, bold) або None."""
+    """Реєструє кириличні шрифти DejaVu; повертає (regular, bold) або None.
+
+    Порядок пошуку: 1) шрифти, ПОКЛАДЕНІ В РЕПОЗИТОРІЙ (assets/fonts) —
+    гарантують однаковий рендер на Streamlit Cloud; 2) системні DejaVu.
+    Без кириличного шрифту reportlab малює «квадрати» замість українських
+    літер — саме тому бандл у репозиторії обов'язковий.
+    """
     try:
         from reportlab.pdfbase import pdfmetrics
         from reportlab.pdfbase.ttfonts import TTFont
 
-        regular_path = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
-        bold_path = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
-        if not regular_path.exists():
-            return None
-        pdfmetrics.registerFont(TTFont("DejaVu", str(regular_path)))
-        if bold_path.exists():
-            pdfmetrics.registerFont(TTFont("DejaVu-Bold", str(bold_path)))
-            return "DejaVu", "DejaVu-Bold"
-        return "DejaVu", "DejaVu"
+        _candidates = [
+            (Path("assets/fonts/DejaVuSans.ttf"),
+             Path("assets/fonts/DejaVuSans-Bold.ttf")),
+            (Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+             Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")),
+        ]
+        for regular_path, bold_path in _candidates:
+            if not regular_path.exists():
+                continue
+            pdfmetrics.registerFont(TTFont("DejaVu", str(regular_path)))
+            if bold_path.exists():
+                pdfmetrics.registerFont(TTFont("DejaVu-Bold", str(bold_path)))
+                return "DejaVu", "DejaVu-Bold"
+            return "DejaVu", "DejaVu"
+        return None
     except Exception:
         return None
 

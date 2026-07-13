@@ -7,6 +7,7 @@ from html import escape
 import pandas as pd
 import streamlit as st
 from core.db import get_supabase_client
+from core.errors import log_cosmetic_error
 from core.deputies import DEPUTY_MINISTER_BY_SSP
 from core.config import FILE_PATH, SHEET_NAME
 from core.excel_loader import read_excel_sheet
@@ -1745,8 +1746,8 @@ if not monitoring_df.empty and "submitted_at" in monitoring_df.columns:
 
         if pd.notna(last_update_value):
             last_update = last_update_value.strftime("%d.%m.%Y %H:%M")
-    except Exception:
-        pass
+    except Exception as exc:
+        log_cosmetic_error("Форматування часу останнього оновлення на головній", exc)
 
 st.markdown('<div class="ua-line"></div>', unsafe_allow_html=True)
 

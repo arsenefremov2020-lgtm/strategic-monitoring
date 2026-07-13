@@ -1329,9 +1329,9 @@ _no_requests_at_all = df.empty
 required_cols = [
     "id", "department", "year", "quarter", "approval_status", "status",
     "strat_code", "responsible_person", "phone", "email",
-    "numeric_value", "progress_text", "risks",
-    "file_names", "file_urls", "admin_comment",
-    "start_date", "end_date", "submitted_at"
+    "numeric_value", "progress_text", "risks", "npa_link",
+    "file_names", "file_urls", "admin_comment", "approval_chain",
+    "object_kind", "final_locked", "start_date", "end_date", "submitted_at"
 ]
 for col in required_cols:
     if col not in df.columns:
@@ -1955,6 +1955,205 @@ if search_query.strip():
 
 st.caption(f"Знайдено заявок: {len(filtered)}")
 st.markdown('</div>', unsafe_allow_html=True)
+
+# ──────────────────────────────────────────────
+# СУПЕР-АДМІН: КОРИГУВАННЯ ОСТАТОЧНО ЗАКРИТИХ ЗАЯВОК
+# ──────────────────────────────────────────────
+# Цей блок навмисно не залежить від фільтра «Активні до розгляду» та від
+# черги погодження. Остаточно закриті заявки вже не можуть потрапити до
+# черги, тому для них потрібен окремий реєстр і окремий вибір.
+if is_super_admin_user(current_user):
+    st.markdown(
+        '<div class="card"><div class="card-title">🛠 Коригування остаточно закритої заявки</div>'
+        '<div class="card-subtitle">Доступно лише супер-адміну. Коригуються тільки звітні дані; '
+        'статус погодження, маршрут і ознака final_locked не змінюються. Кожне коригування '
+        'потребує обґрунтування та створює версії до і після зміни.</div>',
+        unsafe_allow_html=True,
+    )
+
+    _correction_notice = st.session_state.pop("sa_locked_correction_notice", None)
+    if _correction_notice:
+        st.success(_correction_notice)
+
+    def _is_true_flag(value) -> bool:
+        if isinstance(value, bool):
+            return value
+        return clean(value).lower() in {"true", "1", "yes", "так"}
+
+    if "final_locked" in df.columns:
+        _locked_df = df[
+            df["final_locked"].map(_is_true_flag)
+            & df["approval_status"].astype(str).str.strip().eq("Погоджено")
+        ].copy()
+    else:
+        _locked_df = df.iloc[0:0].copy()
+
+    _locked_search = st.text_input(
+        "Пошук серед остаточно закритих заявок",
+        key="sa_locked_requests_search",
+        placeholder="ID, код заходу, ССП або відповідальна особа",
+    )
+    if _locked_search.strip() and not _locked_df.empty:
+        _locked_sq = _locked_search.strip().lower()
+        _locked_df = _locked_df[
+            _locked_df["id"].astype(str).str.lower().str.contains(_locked_sq, na=False)
+            | _locked_df["strat_code"].astype(str).str.lower().str.contains(_locked_sq, na=False)
+            | _locked_df["department"].astype(str).str.lower().str.contains(_locked_sq, na=False)
+            | _locked_df["responsible_person"].astype(str).str.lower().str.contains(_locked_sq, na=False)
+        ]
+
+    st.caption(f"Остаточно закритих заявок для коригування: {len(_locked_df)}")
+
+    if _locked_df.empty:
+        st.info("Остаточно погоджених і заблокованих заявок за цим пошуком немає.")
+    else:
+        if "submitted_at" in _locked_df.columns:
+            _locked_df = _locked_df.sort_values("submitted_at", ascending=False)
+
+        _locked_labels = {
+            int(row["id"]): (
+                f"ID {int(row['id'])} | {clean(row.get('strat_code'))} | "
+                f"{clean(row.get('year'))} {clean(row.get('quarter'))} квартал | "
+                f"ССП {clean(row.get('department'))} | {clean(row.get('responsible_person'))}"
+            )
+            for _, row in _locked_df.iterrows()
+        }
+        _locked_request_id = st.selectbox(
+            "Оберіть остаточно закриту заявку",
+            options=list(_locked_labels),
+            format_func=lambda request_id: _locked_labels[request_id],
+            key="sa_locked_request_id",
+        )
+        _locked_row = _locked_df[
+            _locked_df["id"].astype(int).eq(int(_locked_request_id))
+        ].iloc[0]
+
+        st.markdown(
+            f"""
+            <div class="review-box">
+                <div class="review-title">Заявка ID {int(_locked_request_id)} · захід {_esc(clean(_locked_row.get('strat_code')))}</div>
+                <div><b>Період:</b> {_esc(clean(_locked_row.get('year')))} · {_esc(clean(_locked_row.get('quarter')))} квартал</div>
+                <div><b>ССП:</b> {_esc(clean(_locked_row.get('department')))}</div>
+                <div><b>Відповідальна особа:</b> {_esc(clean(_locked_row.get('responsible_person')))}</div>
+                <div><b>Поточний статус виконання:</b> {_esc(clean(_locked_row.get('status')))}</div>
+                <div><b>Поточне фактичне значення:</b> {_esc(clean(_locked_row.get('numeric_value')))}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        _locked_status_options = [
+            "Виконано",
+            "Частково виконано",
+            "Не виконано",
+            "Не настав час",
+            "Втратило актуальність",
+        ]
+        _locked_current_status = clean(_locked_row.get("status"))
+        _locked_status_index = (
+            _locked_status_options.index(_locked_current_status)
+            if _locked_current_status in _locked_status_options
+            else 0
+        )
+
+        with st.expander("✏️ Відкрити форму коригування", expanded=False):
+            with st.form(f"sa_locked_correction_form_{int(_locked_request_id)}"):
+                sa_locked_status = st.selectbox(
+                    "Статус виконання",
+                    _locked_status_options,
+                    index=_locked_status_index,
+                )
+                sa_locked_value = st.text_input(
+                    "Фактичне значення",
+                    value=clean(_locked_row.get("numeric_value")),
+                    help="Можна ввести число або текстове значення, наприклад «так» чи «ні».",
+                )
+                sa_locked_progress = st.text_area(
+                    "Опис прогресу",
+                    value=clean(_locked_row.get("progress_text")),
+                    height=120,
+                )
+                sa_locked_risks = st.text_area(
+                    "Ризики / проблеми / відхилення",
+                    value=clean(_locked_row.get("risks")),
+                    height=100,
+                )
+                sa_locked_npa = st.text_input(
+                    "Посилання на НПА",
+                    value=clean(_locked_row.get("npa_link")),
+                )
+                sa_locked_reason = st.text_area(
+                    "Обґрунтування коригування",
+                    height=110,
+                    placeholder=(
+                        "Наприклад: надійшов уточнений звіт від ССП; попередні дані "
+                        "містили технічну помилку."
+                    ),
+                )
+                sa_locked_submit = st.form_submit_button(
+                    "Підтвердити коригування закритої заявки",
+                    type="primary",
+                    use_container_width=True,
+                )
+
+            if sa_locked_submit:
+                if not clean(sa_locked_reason):
+                    st.error("Обґрунтування коригування є обов'язковим.")
+                else:
+                    try:
+                        _locked_updates = prepare_monitoring_payload({
+                            "status": sa_locked_status,
+                            "numeric_value": sa_locked_value,
+                            "progress_text": sa_locked_progress,
+                            "risks": sa_locked_risks,
+                            "npa_link": sa_locked_npa,
+                        })
+                        correct_locked_request(
+                            request_id=int(_locked_request_id),
+                            updates=_locked_updates,
+                            reason=clean(sa_locked_reason),
+                            user=current_user,
+                        )
+
+                        # Email не є частиною транзакції БД: помилка листа не відкочує
+                        # вже виконане коригування, але отримує окремий код інциденту.
+                        try:
+                            _locked_chain = schemes.parse_chain(_locked_row.get("approval_chain"))
+                            if _locked_chain:
+                                _locked_last_stage = _locked_chain[-1]
+                                notify_events.notify_superadmin_correction(
+                                    _locked_last_stage.get("email", ""),
+                                    _locked_last_stage.get("name", ""),
+                                    clean(_locked_row.get("strat_code")),
+                                    clean(_locked_row.get("year")),
+                                    clean(_locked_row.get("quarter")),
+                                    reason=clean(sa_locked_reason),
+                                    editor_name=(
+                                        clean(current_user.get("full_name"))
+                                        or clean(current_user.get("name"))
+                                        or "Супер-адміністратор"
+                                    ),
+                                    kind=clean(_locked_row.get("object_kind")) or "measure",
+                                )
+                        except Exception as notify_exc:
+                            show_warning(
+                                "Коригування збережено, але останній ланці не відправлено миттєвий лист.",
+                                notify_exc,
+                                "Email після коригування закритої заявки",
+                            )
+
+                        st.session_state["sa_locked_correction_notice"] = (
+                            f"Заявку ID {int(_locked_request_id)} скориговано. "
+                            "Вона залишається остаточно закритою."
+                        )
+                        monitoring_data.invalidate_monitoring_cache()
+                        st.rerun()
+                    except TransitionRejected as exc:
+                        st.error(exc.message)
+                    except Exception as exc:
+                        show_incident(exc, context="Атомарне коригування закритої заявки")
+
+    st.markdown('</div>', unsafe_allow_html=True)
 
 if filtered.empty:
     st.info("За обраними фільтрами заявок не знайдено.")
@@ -3019,122 +3218,6 @@ if st.session_state.get("adm_last_decision_notice"):
     if st.button("Зрозуміло, приховати це повідомлення", key="adm_dismiss_decision_notice"):
         st.session_state.pop("adm_last_decision_notice", None)
         st.rerun()
-
-
-
-# ──────────────────────────────────────────────
-# СУПЕР-АДМІН: КОРИГУВАННЯ ДАНИХ ПІСЛЯ ЗАКРИТТЯ (пункт 5 нового ТЗ)
-# ──────────────────────────────────────────────
-#
-# Якщо захід уже остаточно закрито (final_locked), звичайні дії
-# координатора недоступні (див. блок вище). Але якщо ЗАВТРА зʼявилась
-# нова, найбільш актуальна інформація по заходу — супер-адмін має
-# можливість скоригувати ВЖЕ ПОДАНІ ДАНІ (не маршрут погодження:
-# final_locked і approval_status/chain_stage/approval_chain НЕ
-# змінюються — це і без того гарантовано тригером бази, migrations/
-# 010_final_lock.sql). Обов'язковий коментар-обґрунтування йде і в
-# історію версій, і в лист останній ланці маршруту погодження.
-if schemes.is_final_locked(selected_row) and is_super_admin_user(current_user):
-    st.markdown(
-        '<div class="card"><div class="card-title">🛠 Супер-адмін: '
-        'скоригувати дані після закриття</div>'
-        '<div class="card-subtitle">Захід закрито остаточно. Це виправляє '
-        'ЛИШЕ подані значення (не маршрут погодження) і завжди супроводжується '
-        'обов\'язковим коментарем, який автоматично надсилається останній '
-        'ланці, що погодила заявку.</div>',
-        unsafe_allow_html=True,
-    )
-
-    with st.expander("✏️ Скоригувати дані після закриття"):
-        _sa_status_options = [
-            "Виконано", "Частково виконано", "Не виконано",
-            "Не настав час", "Втратило актуальність",
-        ]
-        _sa_current_status = clean(selected_row.get("status", ""))
-        _sa_status_index = (
-            _sa_status_options.index(_sa_current_status)
-            if _sa_current_status in _sa_status_options else 0
-        )
-
-        sa_new_status = st.selectbox(
-            "Статус виконання", _sa_status_options, index=_sa_status_index,
-            key=f"sa_correct_status_{selected_id}",
-        )
-        sa_new_value = st.text_input(
-            "Фактичне значення", value=clean(selected_row.get("numeric_value", "")),
-            key=f"sa_correct_value_{selected_id}",
-        )
-        sa_new_progress = st.text_area(
-            "Опис прогресу", value=clean(selected_row.get("progress_text", "")),
-            height=110, key=f"sa_correct_progress_{selected_id}",
-        )
-        sa_new_risks = st.text_area(
-            "Ризики / проблеми / відхилення", value=clean(selected_row.get("risks", "")),
-            height=110, key=f"sa_correct_risks_{selected_id}",
-        )
-        sa_reason = st.text_area(
-            "🔴 Обов'язково: на підставі чого вносяться зміни",
-            height=100, key=f"sa_correct_reason_{selected_id}",
-            placeholder="Напр.: надійшов уточнений звіт від ССП від 12.07.2026, "
-                        "попередні дані містили технічну помилку тощо.",
-        )
-
-        sa_submit = st.button(
-            "💾 Зберегти коригування",
-            use_container_width=True,
-            key=f"sa_correct_submit_{selected_id}",
-        )
-
-        if sa_submit:
-            if not clean(sa_reason):
-                st.error("Обов'язково вкажіть підставу для коригування.")
-            else:
-                try:
-                    # final_locked, approval_status, chain_stage та approval_chain
-                    # не передаються: RPC фізично дозволяє змінювати лише звітні поля.
-                    _sa_update = prepare_monitoring_payload({
-                        "status": sa_new_status,
-                        "numeric_value": sa_new_value,
-                        "progress_text": sa_new_progress,
-                        "risks": sa_new_risks,
-                    })
-                    correct_locked_request(
-                        request_id=int(selected_id),
-                        updates=_sa_update,
-                        reason=clean(sa_reason),
-                        user=current_user,
-                    )
-
-                    # Сповіщення останній ланці маршруту не входить у транзакцію БД.
-                    try:
-                        if _req_chain:
-                            _last_stage = _req_chain[-1]
-                            notify_events.notify_superadmin_correction(
-                                _last_stage.get("email", ""), _last_stage.get("name", ""),
-                                selected_code, _req_year, _req_quarter,
-                                reason=clean(sa_reason),
-                                editor_name=clean(current_user.get("full_name", "")) or "Супер-адміністратор",
-                                kind=_req_kind or "measure",
-                            )
-                    except Exception as notify_exc:
-                        show_warning(
-                            "Коригування збережено, але останній ланці не відправлено миттєвий лист.",
-                            notify_exc,
-                            "Email після коригування закритої заявки",
-                        )
-
-                    st.success(
-                        "Дані скориговано. Заявка лишається закритою (final_locked); "
-                        "останню ланку маршруту повідомлено листом."
-                    )
-                    monitoring_data.invalidate_monitoring_cache()
-                    st.rerun()
-                except TransitionRejected as exc:
-                    st.error(exc.message)
-                except Exception as exc:
-                    show_incident(exc, context="Атомарне коригування закритої заявки")
-
-    st.markdown('</div>', unsafe_allow_html=True)
 
 
 

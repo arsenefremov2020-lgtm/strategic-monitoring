@@ -23,7 +23,8 @@ monitoring_request_versions, а після запису — зберігаєть
 
 from __future__ import annotations
 
-from core.db import get_supabase_client
+from core.data_types import normalise_monitoring_frame, prepare_monitoring_payload
+from core.db import fetch_all, get_supabase_client
 
 
 def get_next_version_number(request_id) -> int:
@@ -96,23 +97,22 @@ def save_request_version(request_id, row_data: dict, created_by: str = "сист
         "created_by": created_by,
     }
 
+    payload = prepare_monitoring_payload(payload)
     supabase = get_supabase_client()
     supabase.table("monitoring_request_versions").insert(payload).execute()
     return version_number
 
 
 def load_versions(request_id):
-    supabase = get_supabase_client()
-    response = (
-        supabase
-        .table("monitoring_request_versions")
-        .select("*")
-        .eq("request_id", int(request_id))
-        .order("version_number", desc=False)
-        .execute()
-    )
     import pandas as pd
-    return pd.DataFrame(response.data or [])
+
+    rows = fetch_all(
+        "monitoring_request_versions",
+        "*",
+        filters=[("eq", "request_id", int(request_id))],
+        order=("version_number", False),
+    )
+    return normalise_monitoring_frame(pd.DataFrame(rows))
 
 
 def coordinator_stage_index(chain: list[dict]) -> int:

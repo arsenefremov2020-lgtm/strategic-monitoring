@@ -21,7 +21,8 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from core.db import get_supabase_client
+from core.data_types import normalise_monitoring_frame
+from core.db import fetch_all
 
 # Повний перелік колонок таблиці monitoring_requests
 # (синхронізовано з фактичною схемою Supabase та міграціями 004–006).
@@ -68,10 +69,8 @@ def load_monitoring_requests() -> pd.DataFrame:
     (а не мовчазне «даних немає»), щоб технічний збій не маскувався
     під порожню систему.
     """
-    supabase = get_supabase_client()
     try:
-        response = supabase.table("monitoring_requests").select("*").execute()
-        data = pd.DataFrame(response.data or [])
+        data = pd.DataFrame(fetch_all("monitoring_requests", "*", order=("id", False)))
     except Exception as exc:
         st.warning(
             "⚠️ Не вдалося прочитати заявки моніторингу з бази даних — "
@@ -79,7 +78,7 @@ def load_monitoring_requests() -> pd.DataFrame:
             f"{type(exc).__name__}: {exc}"
         )
         data = pd.DataFrame()
-    return ensure_monitoring_columns(data)
+    return ensure_monitoring_columns(normalise_monitoring_frame(data))
 
 
 @st.cache_data(ttl=20, show_spinner=False)
@@ -93,10 +92,8 @@ def load_monitoring_requests_live() -> pd.DataFrame:
     Фільтр за документом, Оцінка МіО) лишаються на load_monitoring_requests
     з TTL 5 хвилин — саме так погоджено в ТЗ DEMO 1.9.
     """
-    supabase = get_supabase_client()
     try:
-        response = supabase.table("monitoring_requests").select("*").execute()
-        data = pd.DataFrame(response.data or [])
+        data = pd.DataFrame(fetch_all("monitoring_requests", "*", order=("id", False)))
     except Exception as exc:
         st.warning(
             "⚠️ Не вдалося прочитати заявки моніторингу з бази даних — "
@@ -104,7 +101,7 @@ def load_monitoring_requests_live() -> pd.DataFrame:
             f"{type(exc).__name__}: {exc}"
         )
         data = pd.DataFrame()
-    return ensure_monitoring_columns(data)
+    return ensure_monitoring_columns(normalise_monitoring_frame(data))
 
 
 def invalidate_monitoring_cache() -> None:

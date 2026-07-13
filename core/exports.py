@@ -17,6 +17,8 @@ import io
 from datetime import datetime
 from pathlib import Path
 
+from core.errors import log_cosmetic_error, show_warning
+
 
 # ------------------------------------------------------------
 # PNG для plotly-графіків
@@ -165,8 +167,8 @@ def build_presentation_pdf(
         if Path(logo_path).exists():
             c.drawImage(logo_path, 40, page_h - 170, width=420,
                         preserveAspectRatio=True, anchor="nw", mask="auto")
-    except Exception:
-        pass
+    except Exception as exc:
+        log_cosmetic_error("Додавання логотипа до PDF-презентації", exc)
     c.setFont(font_b, 34)
     c.setFillColorRGB(*DARK)
     c.drawString(40, page_h / 2 + 10, title[:60])
@@ -223,8 +225,8 @@ def build_presentation_pdf(
             img = ImageReader(io.BytesIO(png))
             c.drawImage(img, 40, 50, width=page_w - 80, height=page_h - 140,
                         preserveAspectRatio=True, anchor="c")
-        except Exception:
-            pass
+        except Exception as exc:
+            log_cosmetic_error("Додавання графіка до PDF-презентації", exc)
         footer(page_no)
         c.showPage()
 
@@ -499,7 +501,12 @@ def dataframes_to_docx_landscape(
             continue
         try:
             frame = pd.DataFrame(df).fillna("")
-        except Exception:
+        except Exception as exc:
+            show_warning(
+                f"Аркуш «{sheet_name}» не додано до Word-файлу.",
+                exc,
+                "Перетворення аркуша для Word-експорту",
+            )
             continue
         doc.add_paragraph()
         ph = doc.add_paragraph(str(sheet_name))

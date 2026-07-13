@@ -32,6 +32,8 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr
 
+from core.errors import log_cosmetic_error
+
 
 # ------------------------------------------------------------
 # Конфігурація
@@ -52,8 +54,8 @@ def _get_smtp_config() -> dict | None:
                 "password": smtp.get("password"),
                 "from": smtp.get("from") or smtp.get("user"),
             }
-    except Exception:
-        pass
+    except Exception as exc:
+        log_cosmetic_error("Читання SMTP із Streamlit secrets; використовується env fallback", exc)
 
     # 2. Environment (GitHub Actions)
     host = os.environ.get("SMTP_HOST")

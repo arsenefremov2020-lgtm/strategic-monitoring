@@ -20,6 +20,7 @@ scripts/send_notifications.py, які запускає GitHub Actions).
 from __future__ import annotations
 
 from core.emails import send_email, email_configured
+from core.errors import log_exception
 
 
 def _log(supabase, email: str, ntype: str, related_key: str,
@@ -35,8 +36,8 @@ def _log(supabase, email: str, ntype: str, related_key: str,
             "status": "sent" if ok else "failed",
             "error": error,
         }).execute()
-    except Exception:
-        pass
+    except Exception as exc:
+        log_exception("Запис результату миттєвого email у notification_log", exc)
 
 
 def _fire(to_email: str, subject: str, body_html: str,

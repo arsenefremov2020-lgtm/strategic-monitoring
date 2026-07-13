@@ -23,6 +23,7 @@ import streamlit as st
 
 from core.data_types import normalise_monitoring_frame
 from core.db import fetch_all
+from core.errors import log_cosmetic_error, show_warning
 
 # Повний перелік колонок таблиці monitoring_requests
 # (синхронізовано з фактичною схемою Supabase та міграціями 004–006).
@@ -70,12 +71,16 @@ def load_monitoring_requests() -> pd.DataFrame:
     під порожню систему.
     """
     try:
-        data = pd.DataFrame(fetch_all("monitoring_requests", "*", order=("id", False)))
+        data = pd.DataFrame(fetch_all(
+            "monitoring_requests", "*",
+            filters=[("neq", "approval_status", "Відкликано")],
+            order=("id", False),
+        ))
     except Exception as exc:
-        st.warning(
-            "⚠️ Не вдалося прочитати заявки моніторингу з бази даних — "
-            "показники нижче можуть бути неповними. Технічна причина: "
-            f"{type(exc).__name__}: {exc}"
+        show_warning(
+            "Не вдалося прочитати заявки моніторингу з бази даних; показники можуть бути неповними.",
+            exc,
+            "Читання monitoring_requests",
         )
         data = pd.DataFrame()
     return ensure_monitoring_columns(normalise_monitoring_frame(data))
@@ -93,12 +98,16 @@ def load_monitoring_requests_live() -> pd.DataFrame:
     з TTL 5 хвилин — саме так погоджено в ТЗ DEMO 1.9.
     """
     try:
-        data = pd.DataFrame(fetch_all("monitoring_requests", "*", order=("id", False)))
+        data = pd.DataFrame(fetch_all(
+            "monitoring_requests", "*",
+            filters=[("neq", "approval_status", "Відкликано")],
+            order=("id", False),
+        ))
     except Exception as exc:
-        st.warning(
-            "⚠️ Не вдалося прочитати заявки моніторингу з бази даних — "
-            "показники нижче можуть бути неповними. Технічна причина: "
-            f"{type(exc).__name__}: {exc}"
+        show_warning(
+            "Не вдалося прочитати заявки моніторингу з бази даних; показники можуть бути неповними.",
+            exc,
+            "Читання monitoring_requests",
         )
         data = pd.DataFrame()
     return ensure_monitoring_columns(normalise_monitoring_frame(data))
@@ -115,17 +124,17 @@ def invalidate_monitoring_cache() -> None:
     """
     try:
         load_monitoring_requests.clear()
-    except Exception:
-        pass
+    except Exception as exc:
+        log_cosmetic_error("Очищення кешу load_monitoring_requests", exc)
     try:
         load_monitoring_requests_live.clear()
-    except Exception:
-        pass
+    except Exception as exc:
+        log_cosmetic_error("Очищення кешу load_monitoring_requests_live", exc)
     try:
         from core.closeouts import load_manual_closeouts
         load_manual_closeouts.clear()
-    except Exception:
-        pass
+    except Exception as exc:
+        log_cosmetic_error("Очищення кешу load_manual_closeouts", exc)
 
 
 def measures_only(monitoring_df: pd.DataFrame) -> pd.DataFrame:

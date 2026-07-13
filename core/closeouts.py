@@ -15,6 +15,7 @@ import streamlit as st
 
 from core.data_types import quarter_to_display, year_to_display
 from core.db import fetch_all
+from core.errors import show_warning
 from core.strategic_data import raw_value
 
 _YEAR_MARKERS = {"рік", "весь рік", ""}
@@ -32,10 +33,10 @@ def load_manual_closeouts():
             order=("id", False),
         )
     except Exception as exc:
-        st.warning(
-            "⚠️ Не вдалося прочитати ручні закриття (closeout_requests) — "
-            "статуси «Закрито вручну» тимчасово не враховуються. "
-            f"Технічна причина: {type(exc).__name__}: {exc}"
+        show_warning(
+            "Не вдалося прочитати ручні закриття; відповідні статуси тимчасово не враховуються.",
+            exc,
+            "Читання closeout_requests",
         )
         return set()
 

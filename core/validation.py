@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from core.errors import log_cosmetic_error
+
 YES_VALUES = {"так", "yes", "true", "1", "+"}
 NO_VALUES = {"ні", "нi", "no", "false", "0", "-"}
 NA_VALUES = {"", "н.д.", "нд", "nan", "none", "-", "—"}
@@ -17,8 +19,8 @@ def text(value: Any) -> str:
         # pandas NA safe enough without importing pandas
         if str(value) == "nan":
             return ""
-    except Exception:
-        pass
+    except Exception as exc:
+        log_cosmetic_error("Нормалізація значення у validation", exc)
     return str(value).strip()
 
 

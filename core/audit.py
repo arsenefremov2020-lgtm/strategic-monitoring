@@ -11,6 +11,8 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
+from core.errors import create_incident_code, log_exception
+
 
 def _safe_text(value: Any) -> str:
     if value is None:
@@ -99,9 +101,20 @@ def write_audit_log(
     try:
         supabase.table("monitoring_logs").insert(extended_payload).execute()
         return True
-    except Exception:
+    except Exception as extended_exc:
         try:
             supabase.table("monitoring_logs").insert(legacy_payload).execute()
             return True
-        except Exception:
+        except Exception as legacy_exc:
+            incident_code = create_incident_code()
+            log_exception(
+                "Запис аудиту в розширеному форматі не виконано",
+                extended_exc,
+                incident_code=incident_code,
+            )
+            log_exception(
+                "Запис аудиту в сумісному форматі також не виконано",
+                legacy_exc,
+                incident_code=incident_code,
+            )
             return False

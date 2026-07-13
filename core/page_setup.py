@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import streamlit as st
 
+from core.errors import log_cosmetic_error
+
 from core.config import APP_VERSION
 from core.theme import inject_theme, apply_plotly_theme
 from core.ui import load_css
@@ -48,8 +50,8 @@ def page_setup(page_title: str, page_name: str | None = None,
             "assets/Мінекономіки.png",
             size="large",
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        log_cosmetic_error("Відображення логотипа в сайдбарі", exc)
 
     load_css()
     inject_theme()

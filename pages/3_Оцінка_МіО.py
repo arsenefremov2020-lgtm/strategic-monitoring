@@ -19,7 +19,8 @@ from core.ui import load_css
 from core.excel_loader import read_excel_sheet
 from core import operational
 from core.closeouts import load_manual_closeouts
-from core.exports import render_png_download, write_styled_excel, build_presentation_pdf
+from core.exports import fig_png_bytes, render_png_download, write_styled_excel, build_presentation_pdf
+from core.errors import log_cosmetic_error, show_warning
 from core.access import filter_actions_for_user, filter_requests_for_user
 
 current_user = page_setup("Оцінка МіО", page_name="Оцінка МіО")
@@ -688,8 +689,8 @@ def raw_value(value):
     try:
         if pd.isna(value):
             return ""
-    except Exception:
-        pass
+    except Exception as exc:
+        log_cosmetic_error("Нормалізація значення на сторінці МіО", exc)
     return str(value).strip()
 
 
@@ -4587,8 +4588,12 @@ def _mio_export_figures(facts, _goals_df):
                     paper_bgcolor="white", plot_bgcolor="white", height=420,
                 )
                 figures.append(("Інтегральна оцінка за цілями", fig_goals))
-    except Exception:
-        pass
+    except Exception as exc:
+        show_warning(
+            "Частину графіків експорту МіО не сформовано.",
+            exc,
+            "Побудова графіків експорту МіО",
+        )
     return figures
 
 
@@ -4613,25 +4618,37 @@ def render_mio_export_block(mio_years: list[int]) -> None:
                         try:
                             sheets[f"М_заходи {y}"] = build_mio_measures_table(
                                 strat_df, monitoring_df, y)
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            show_warning(
+                                f"Аркуш «М_заходи {y}» не сформовано.", exc,
+                                "Формування аркуша М_заходи для експорту МіО",
+                            )
                         try:
                             sheets[f"РВ Заходи {y}"] = build_rv_measures_table(
                                 strat_df, monitoring_df, y)
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            show_warning(
+                                f"Аркуш «РВ Заходи {y}» не сформовано.", exc,
+                                "Формування аркуша РВ Заходи для експорту МіО",
+                            )
                         try:
                             sheets[f"РВ СЦ Завдання {y}"] = build_rv_goals_table(
                                 strat_df, monitoring_df, y)
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            show_warning(
+                                f"Аркуш «РВ СЦ Завдання {y}» не сформовано.", exc,
+                                "Формування аркуша РВ СЦ Завдання для експорту МіО",
+                            )
                     try:
                         _gt_df = build_mio_goals_tasks_table(
                             strat_df, monitoring_df)
                         if _gt_df is not None and not _gt_df.empty:
                             sheets["МіО СЦ-Завдання"] = _gt_df
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        show_warning(
+                            "Аркуш «МіО СЦ-Завдання» не сформовано.", exc,
+                            "Формування аркуша МіО СЦ-Завдання",
+                        )
                     try:
                         _rows_df, _goals_df = build_integral_table(
                             strat_df, monitoring_df)
@@ -4639,7 +4656,11 @@ def render_mio_export_block(mio_years: list[int]) -> None:
                             sheets["Інт_Оцінка (детально)"] = _rows_df
                         if _goals_df is not None and not _goals_df.empty:
                             sheets["Інт_Оцінка (цілі)"] = _goals_df
-                    except Exception:
+                    except Exception as exc:
+                        show_warning(
+                            "Аркуші інтегральної оцінки не сформовано.", exc,
+                            "Формування інтегральної оцінки для експорту МіО",
+                        )
                         _goals_df = pd.DataFrame()
                     try:
                         _fin_index = load_financing_data()
@@ -4648,15 +4669,18 @@ def render_mio_export_block(mio_years: list[int]) -> None:
                                 strat_df, monitoring_df, _fin_index, y)
                             if _fin_df is not None and not _fin_df.empty:
                                 sheets[f"Фінансування {y}"] = _fin_df
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        show_warning(
+                            "Аркуші фінансування не сформовано.", exc,
+                            "Формування фінансування для експорту МіО",
+                        )
                     sheets = {k: v for k, v in sheets.items()
                               if v is not None and not v.empty}
                     if sheets:
                         _mio_export_files["xlsx"] = write_styled_excel(
                             sheets, freeze_first_col=1)
-                except Exception as e:
-                    st.warning(f"Excel не сформовано: {type(e).__name__}: {e}")
+                except Exception as exc:
+                    show_warning("Excel-файл МіО не сформовано.", exc, "Формування Excel-експорту МіО")
 
                 # ---------- Docx ----------
                 try:
@@ -4691,8 +4715,11 @@ def render_mio_export_block(mio_years: list[int]) -> None:
                             doc.add_heading(_dx_title, level=2)
                             doc.add_picture(io.BytesIO(_png),
                                             width=_Inches(6.4))
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        show_warning(
+                            "Графіки не додано до Word-файлу МіО.", exc,
+                            "Додавання графіків до Word-експорту МіО",
+                        )
 
                     for y in mio_years:
                         try:
@@ -4724,8 +4751,8 @@ def render_mio_export_block(mio_years: list[int]) -> None:
                     buf = io.BytesIO()
                     doc.save(buf)
                     _mio_export_files["docx"] = buf.getvalue()
-                except Exception as e:
-                    st.warning(f"Docx не сформовано: {type(e).__name__}: {e}")
+                except Exception as exc:
+                    show_warning("Word-файл МіО не сформовано.", exc, "Формування Word-експорту МіО")
 
                 # ---------- PDF ----------
                 try:
@@ -4755,8 +4782,8 @@ def render_mio_export_block(mio_years: list[int]) -> None:
                     )
                     if pdf_bytes:
                         _mio_export_files["pdf"] = pdf_bytes
-                except Exception as e:
-                    st.warning(f"PDF не сформовано: {type(e).__name__}: {e}")
+                except Exception as exc:
+                    show_warning("PDF-файл МіО не сформовано.", exc, "Формування PDF-експорту МіО")
 
                 st.session_state["mio_export_files_v19"] = _mio_export_files
 

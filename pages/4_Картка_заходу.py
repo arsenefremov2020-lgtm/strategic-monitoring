@@ -4,7 +4,7 @@ import plotly.graph_objects as go
 from core.db import get_supabase_client
 from core.deputies import DEPUTY_MINISTER_BY_SSP
 from core.ui import load_css
-from core.errors import log_exception
+from core.errors import log_cosmetic_error, log_exception
 from core.config import FILE_PATH, SHEET_NAME
 from core.excel_loader import read_excel_sheet
 from core import operational
@@ -642,8 +642,8 @@ def clean(value):
     try:
         if pd.isna(value):
             return ""
-    except Exception:
-        pass
+    except Exception as exc:
+        log_cosmetic_error("Нормалізація значення на картці заходу", exc)
     text = str(value).strip()
     if text.lower() in ["none", "nan", "nat"]:
         return ""

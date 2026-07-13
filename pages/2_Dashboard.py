@@ -14,6 +14,7 @@ from core.periods import quarter_key as core_quarter_key
 from core import operational
 from core.closeouts import load_manual_closeouts
 from core.exports import render_png_download, build_presentation_pdf
+from core.errors import log_cosmetic_error, show_incident
 from core.periods import get_period_state
 from core.filters import get_source_options, match_source
 from core.access import (
@@ -2225,7 +2226,7 @@ if presentation_mode:
                     else:
                         st.warning("Для PDF потрібен пакет `reportlab` у requirements.txt.")
                 except Exception as _pdf_err:
-                    st.error(f"Не вдалося сформувати PDF: {_pdf_err}")
+                    show_incident(_pdf_err, context="Формування PDF презентаційного режиму Dashboard")
 
     # ── helpers ──────────────────────────────────────────────
     verdict_class = {"risk-high": "high", "risk-medium": "medium", "risk-low": "low"}[conclusion_badge]
@@ -4100,9 +4101,9 @@ def _render_dash_auto_summary():
               '</div></div>',
             unsafe_allow_html=True,
         )
-    except Exception:
+    except Exception as exc:
         # Тестовий режим не має права зламати Dashboard.
-        pass
+        log_cosmetic_error("Автоматичний текстовий підсумок Dashboard", exc)
 
 _render_dash_auto_summary()
 

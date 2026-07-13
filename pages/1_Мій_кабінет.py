@@ -3,7 +3,7 @@ import pandas as pd
 from core.data_types import normalise_closeout_frame, prepare_monitoring_payload
 from core.db import fetch_all, get_supabase_client
 from core.ui import load_css, render_request_timeline
-from core.errors import log_exception
+from core.errors import log_cosmetic_error, show_incident, show_warning
 from core.notifications import render_notifications_panel
 from core.config import FILE_PATH, SHEET_NAME
 from core.excel_loader import read_excel_sheet
@@ -15,6 +15,11 @@ from core.strategic_data import load_strat_matrix as core_load_strat_matrix
 from core import monitoring_data
 from core.statuses import SUBMISSION_STATUS_OPTIONS
 from core.versioning import save_request_version, coordinator_stage_index
+from core.transitions import (
+    TransitionRejected,
+    approve_request_step,
+    return_request as atomic_return_request,
+)
 
 from core.access import (
     filter_requests_for_user,
@@ -285,8 +290,8 @@ def clean(value):
     try:
         if pd.isna(value):
             return ""
-    except Exception:
-        pass
+    except Exception as exc:
+        log_cosmetic_error("Нормалізація значення у Мій кабінет", exc)
     text = str(value).strip()
     if text.lower() in ["none", "nan", "nat"]:
         return ""
@@ -883,24 +888,20 @@ if is_my_turn:
         if _sign_blocked:
             st.stop()
 
-        update_data = {
-            "approval_status": new_status,
-            "admin_comment": clean(leader_comment) or f"Погоджено ланкою «{_stage_label}»",
-        }
-        if _chain and "chain_stage" in selected_row.index:
-            update_data["chain_stage"] = int(new_stage)
-        if _chain and "approval_chain" in selected_row.index:
-            update_data["approval_chain"] = schemes.chain_to_json(_chain)
-        update_data = schemes.finalize_update_payload(update_data, new_status)
+        _approval_comment = clean(leader_comment) or f"Погоджено ланкою «{_stage_label}»"
 
         try:
-            supabase.table("monitoring_requests").update(update_data).eq("id", selected_id).execute()
-            write_log(
-                selected_id,
-                f"Погодження ланкою «{_stage_label}»",
-                approval, new_status,
-                clean(leader_comment) or f"Погоджено ланкою «{_stage_label}»",
-                changed_by=role_label,
+            approve_request_step(
+                request_id=int(selected_id),
+                expected_status=approval,
+                expected_chain_stage=int(_stage_idx),
+                new_status=new_status,
+                new_chain_stage=int(new_stage),
+                approval_chain=(schemes.chain_to_json(_chain) if _chain else None),
+                comment=_approval_comment,
+                action=f"Погодження ланкою «{_stage_label}»",
+                user=current_user,
+                created_by=f"{role_label} / погодження",
             )
 
             # Миттєві сповіщення
@@ -919,8 +920,12 @@ if is_my_turn:
                             code, clean(selected_row.get("year", "")), clean(selected_row.get("quarter", "")),
                             submitter=clean(selected_row.get("responsible_person", "")),
                         )
-            except Exception:
-                pass
+            except Exception as notify_exc:
+                show_warning(
+                    "Рішення збережено, але миттєве email-сповіщення не відправлено.",
+                    notify_exc,
+                    "Email після погодження у Мій кабінет",
+                )
 
             if new_status == "Погоджено":
                 st.success("✅ Заявка пройшла всі етапи схеми. Статус: «Погоджено».")
@@ -942,29 +947,27 @@ if is_my_turn:
             )
             monitoring_data.invalidate_monitoring_cache()
             st.rerun()
-        except Exception as e:
-            st.error("Помилка під час погодження.")
-            st.exception(e)
+        except TransitionRejected as exc:
+            st.error(exc.message)
+        except Exception as exc:
+            show_incident(exc, context="Атомарне погодження заявки у Мій кабінет")
 
     # ── Повернути на доопрацювання ──────────────────────────
     if return_btn:
         if not clean(leader_comment):
             st.error("Вкажіть коментар перед поверненням на доопрацювання.")
         else:
-            update_data = {
-                "approval_status": _picked_target["status"],
-                "admin_comment": leader_comment,
-            }
-            if _chain and "chain_stage" in selected_row.index:
-                update_data["chain_stage"] = int(_picked_target["new_stage"])
             try:
-                supabase.table("monitoring_requests").update(update_data).eq("id", selected_id).execute()
-                write_log(
-                    selected_id,
-                    f"Повернення на доопрацювання: {_picked_target['label']}",
-                    approval, _picked_target["status"],
-                    leader_comment,
-                    changed_by=role_label,
+                atomic_return_request(
+                    request_id=int(selected_id),
+                    expected_status=approval,
+                    expected_chain_stage=int(_stage_idx),
+                    new_status=_picked_target["status"],
+                    new_chain_stage=int(_picked_target["new_stage"]),
+                    comment=clean(leader_comment),
+                    action=f"Повернення на доопрацювання: {_picked_target['label']}",
+                    user=current_user,
+                    created_by=f"{role_label} / повернення",
                 )
                 try:
                     if _picked_target["key"] == "submitter":
@@ -981,8 +984,12 @@ if is_my_turn:
                             code, clean(selected_row.get("year", "")), clean(selected_row.get("quarter", "")),
                             by_label=_stage_label, comment=clean(leader_comment),
                         )
-                except Exception:
-                    pass
+                except Exception as notify_exc:
+                    show_warning(
+                        "Заявку повернуто, але миттєве email-сповіщення не відправлено.",
+                        notify_exc,
+                        "Email після повернення у Мій кабінет",
+                    )
                 st.warning(f"↩️ Заявку повернуто: {_picked_target['label']}.")
                 st.session_state["cab_last_decision_notice"] = (
                     "Рішення застосовано. Якщо в черзі є ще заявки — систему щойно "
@@ -991,9 +998,10 @@ if is_my_turn:
                 )
                 monitoring_data.invalidate_monitoring_cache()
                 st.rerun()
-            except Exception as e:
-                st.error("Помилка при поверненні.")
-                st.exception(e)
+            except TransitionRejected as exc:
+                st.error(exc.message)
+            except Exception as exc:
+                show_incident(exc, context="Атомарне повернення заявки у Мій кабінет")
 
     # ── Редагувати дані напряму (пункт 3 нового ТЗ) ──────────
     # Замість того, щоб повертати заявку на доопрацювання (і чекати,
@@ -1081,8 +1089,12 @@ if is_my_turn:
                                     submitter=clean(selected_row.get("responsible_person", "")),
                                     kind=clean(selected_row.get("object_kind", "")) or "measure",
                                 )
-                            except Exception:
-                                pass
+                            except Exception as notify_exc:
+                                show_warning(
+                                    "Зміни збережено, але координатору не відправлено миттєвий лист.",
+                                    notify_exc,
+                                    "Email після редагування ланкою погодження",
+                                )
 
                         _cab_new_version_data = selected_row.to_dict()
                         _cab_new_version_data.update(_cab_update)
@@ -1105,9 +1117,8 @@ if is_my_turn:
                         )
                         monitoring_data.invalidate_monitoring_cache()
                         st.rerun()
-                    except Exception as e:
-                        st.error("Не вдалося зберегти зміни.")
-                        st.exception(e)
+                    except Exception as exc:
+                        show_incident(exc, context="Редагування заявки ланкою погодження")
 
 else:
     st.markdown('<div class="card">', unsafe_allow_html=True)
@@ -1241,9 +1252,11 @@ if _my_role == ROLE_SSP_HEAD:
                             st.success(f"Вашу реакцію зафіксовано: {_new_head_status}.")
                             monitoring_data.invalidate_monitoring_cache()
                             st.rerun()
-                        except Exception as e:
-                            st.error("Не вдалося зберегти реакцію.")
-                            st.exception(e)
+                        except Exception as exc:
+                            show_incident(
+                                exc,
+                                context="Збереження реакції керівника ССП на ручне закриття",
+                            )
             st.markdown('</div>', unsafe_allow_html=True)
 
 # ============================================================

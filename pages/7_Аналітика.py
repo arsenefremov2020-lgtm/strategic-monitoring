@@ -24,6 +24,7 @@ from core.strategic_data import load_strat_matrix as core_load_strat_matrix
 from core import monitoring_data
 from core import statuses as core_statuses
 from core import operational
+from core.errors import show_warning
 
 
 # ============================================================
@@ -1142,8 +1143,12 @@ def build_report_charts(goal_progress, dep_progress, status_counts, period_dynam
                                 scale=2, width=1000)
             if png:
                 charts.append(("Рис. Рівень виконання у розрізі самостійних структурних підрозділів", png))
-    except Exception:
-        pass
+    except Exception as exc:
+        show_warning(
+            "Частину графіків аналітичного звіту не сформовано.",
+            exc,
+            "Підготовка графіків аналітичного звіту",
+        )
     return charts
 
 

@@ -11,6 +11,7 @@ from config.users import get_active_users
 from config.roles import ROLE_ADMIN, ROLE_SSP, ROLE_SSP_HEAD
 from core.access import normalize_ssp_index
 from core import exports as core_exports
+from core.errors import show_warning
 
 page_setup("Журнал дій", page_name="Журнал дій")
 supabase = get_supabase_client()
@@ -1343,8 +1344,12 @@ try:
                     use_container_width=True, hide_index=True,
                 )
                 st.markdown('</div>', unsafe_allow_html=True)
-except Exception:
-    pass
+except Exception as exc:
+    show_warning(
+        "Блок заявок із тривалим очікуванням не відображено.",
+        exc,
+        "Побудова блоку тривалого очікування в журналі дій",
+    )
 
 st.markdown('<div class="card"><div class="card-title">Повний журнал дій</div><div class="card-subtitle">Детальний перелік системних подій за обраними параметрами відбору. Графіки з цієї сторінки прибрано, щоб залишити лише контрольні таблиці та календарний відбір.</div>', unsafe_allow_html=True)
 

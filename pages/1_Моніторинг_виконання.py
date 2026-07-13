@@ -27,6 +27,7 @@ from core import monitoring_data
 from core import approval_schemes as schemes
 from core import notify_events
 from core.validation import validate_fact_value, status_completion_warning, value_reaches_target
+from core.errors import show_incident, show_warning
 from core.audit import write_audit_log
 from core import periods as core_periods
 
@@ -917,8 +918,12 @@ def notify_first_stage(chain, codes, year_str, quarter_str, kind="measure"):
             codes_text, year_str, quarter_str,
             submitter=raw_value(responsible_person), kind=kind,
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        show_warning(
+            "Заявку подано, але email першій ланці не надіслано.",
+            exc,
+            "Сповіщення першої ланки після подання заявки",
+        )
 
 
 # ------------------------------------------------------------
@@ -1223,7 +1228,7 @@ if submission_mode.startswith("🎯"):
                 )
                 st.success("Значення індикаторів успішно подано на розгляд за обраною схемою погодження.")
             except Exception as error:
-                st.error(f"Не вдалося подати значення індикаторів. Технічна помилка: {error}")
+                show_incident(error, context="Подання значень індикаторів")
 
     st.stop()
 
@@ -1964,7 +1969,7 @@ if submit_clicked:
                 "Інформація про подальший статус відобразиться в особистому кабінеті."
             )
         except Exception as error:
-            st.error(f"Не вдалося подати відомості. Технічна помилка: {error}")
+            show_incident(error, context="Подання моніторингових відомостей")
 
 
 # ------------------------------------------------------------

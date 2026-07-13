@@ -10,6 +10,7 @@ from core.data_types import (
     year_to_db,
 )
 from core.db import fetch_all, get_supabase_client
+from core.errors import log_cosmetic_error, show_incident, show_warning
 from core.ui import load_css, render_request_timeline
 from core.notifications import render_notifications_panel
 from core.config import FILE_PATH, SHEET_NAME
@@ -32,8 +33,14 @@ from core.closeouts import load_manual_closeouts
 from config.roles import ROLE_SUPER_ADMIN
 from core.access import filter_actions_for_user
 from core.superadmin_routing import resolve_manual_closeout_route, can_superadmin_decide_closeout, senior_superadmin_for
-from core.audit import write_audit_log
-from core.versioning import save_request_version
+from core.transitions import (
+    TransitionRejected,
+    approve_request_step,
+    correct_locked_request,
+    create_closeout,
+    decide_closeout,
+    return_request as atomic_return_request,
+)
 from html import escape as _esc
 
 current_user = page_setup("Адміністрування", page_name="Адміністрування")
@@ -860,7 +867,8 @@ def _actor_identity(role_label):
     try:
         name = str((current_user or {}).get("full_name", "")).strip()
         email = str((current_user or {}).get("email", "")).strip()
-    except Exception:
+    except Exception as exc:
+        log_cosmetic_error("Формування підпису користувача в адмініструванні", exc)
         name, email = "", ""
     parts = [p for p in (role_label, name, f"<{email}>" if email else "") if p]
     return " · ".join(parts) if parts else role_label
@@ -1032,8 +1040,8 @@ def analyze_request(row, plan_val_str):
                                 f"однак статус не закрито — зазначено «{status}»"
                             )
                         })
-        except Exception:
-            pass
+        except Exception as exc:
+            log_cosmetic_error("Перевірка простроченого терміну заявки", exc)
 
     # 4. Ризики при статусі «Виконано»
     if risks and status == "Виконано":
@@ -1423,33 +1431,14 @@ if admin_work_mode == "Ручне закриття заходів":
                         **_route,
                     }
                     _payload = prepare_closeout_payload(_payload)
-                    try:
-                        _res = supabase.table("closeout_requests").insert(_payload).execute()
-                    except Exception:
-                        # fallback до старої схеми БД, якщо міграція DEMO 1.9 ще не застосована
-                        for _k in ["assigned_superadmin_name", "assigned_superadmin_email",
-                                   "senior_superadmin_name", "senior_superadmin_email", "routing_note"]:
-                            _payload.pop(_k, None)
-                        _res = supabase.table("closeout_requests").insert(_payload).execute()
-                    write_audit_log(
-                        supabase,
-                        request_id=(getattr(_res, "data", None) or [{}])[0].get("id"),
-                        action="Ручне закриття заходу",
-                        old_status="",
-                        new_status=_payload.get("approval_status"),
-                        comment=co_reason.strip(),
-                        user=current_user,
-                        ssp_index="",
-                        strat_code=co_code,
-                        related_table="closeout_requests",
-                        details={"scope": co_scope, "year": co_year, "quarter": co_quarter, "routing": _route},
-                    )
+                    create_closeout(payload=_payload, user=current_user)
                     st.success("Захід закрито вручну." if _is_super else "Запит на закриття заходу надіслано на підтвердження відповідальному супер-адміну.")
                     monitoring_data.invalidate_monitoring_cache()
                     st.rerun()
-                except Exception as e:
-                    st.error("Не вдалося надіслати запит на закриття заходу.")
-                    st.exception(e)
+                except TransitionRejected as exc:
+                    st.error(exc.message)
+                except Exception as exc:
+                    show_incident(exc, context="Атомарне подання запиту на ручне закриття заходу")
     else:
         st.info("Подання запиту на закриття заходу доступне лише адміністратору або супер-адміну.")
 
@@ -1491,22 +1480,15 @@ if admin_work_mode == "Ручне закриття заходів":
                     if co_approve or co_reject:
                         new_co_status = "Підтверджено" if co_approve else "Відхилено"
                         try:
-                            _co_update = {
-                                "approval_status":   new_co_status,
-                                "superadmin_id":      current_user.get("id", ""),
-                                "decided_at":         datetime.now(timezone.utc).isoformat(),
-                                "decision_comment":   co_decision_comment,
-                            }
-                            if new_co_status == "Підтверджено":
-                                _co_update["head_status"] = "Очікує реакції"
-                            supabase.table("closeout_requests").update(_co_update).eq("id", int(co_row.get("id"))).execute()
-
-                            # Сповіщення керівнику ССП «до відома» (може заперечити у кабінеті)
+                            _co_code = clean(co_row.get("strat_code", ""))
+                            _head_user = None
                             if new_co_status == "Підтверджено":
                                 try:
-                                    _co_code = clean(co_row.get("strat_code", ""))
                                     _m = strat_df[strat_df["code"].astype(str).str.strip() == _co_code]
-                                    _dept = str(_m.iloc[0].get("resp_main", "") or _m.iloc[0].get("department", "")) if not _m.empty else ""
+                                    _dept = str(
+                                        _m.iloc[0].get("resp_main", "")
+                                        or _m.iloc[0].get("department", "")
+                                    ) if not _m.empty else ""
                                     _idx = re.findall(r"\d+", _dept)
                                     _idx = _idx[0] if _idx else ""
                                     from config.users import get_users_by_role
@@ -1514,33 +1496,49 @@ if admin_work_mode == "Ручне закриття заходів":
                                         u for u in get_users_by_role("ssp_head").values()
                                         if str(u.get("ssp_index")) == _idx
                                     ]
-                                    if _heads:
-                                        supabase.table("closeout_requests").update(
-                                            {"head_email": _heads[0].get("email", "")}
-                                        ).eq("id", int(co_row.get("id"))).execute()
-                                        notify_events.notify_closeout_to_head(
-                                            _heads[0].get("email", ""), _heads[0].get("full_name", ""),
-                                            _co_code, clean(co_row.get("period_year", "")),
-                                            clean(co_row.get("period_quarter", "")),
-                                            clean(co_row.get("reason", "")), clean(co_decision_comment),
-                                        )
-                                except Exception:
-                                    pass
+                                    _head_user = _heads[0] if _heads else None
+                                except Exception as lookup_exc:
+                                    show_warning(
+                                        "Рішення буде збережено, але не вдалося визначити керівника ССП для листа.",
+                                        lookup_exc,
+                                        "Визначення керівника ССП для ручного закриття",
+                                    )
+
+                            decide_closeout(
+                                closeout_id=int(co_row.get("id")),
+                                expected_status="Очікує підтвердження",
+                                new_status=new_co_status,
+                                decision_comment=clean(co_decision_comment),
+                                head_email=clean((_head_user or {}).get("email", "")),
+                                user=current_user,
+                            )
+
+                            if new_co_status == "Підтверджено" and _head_user:
+                                try:
+                                    notify_events.notify_closeout_to_head(
+                                        _head_user.get("email", ""),
+                                        _head_user.get("full_name", ""),
+                                        _co_code,
+                                        clean(co_row.get("period_year", "")),
+                                        clean(co_row.get("period_quarter", "")),
+                                        clean(co_row.get("reason", "")),
+                                        clean(co_decision_comment),
+                                    )
+                                except Exception as notify_exc:
+                                    show_warning(
+                                        "Закриття підтверджено, але керівнику ССП не відправлено миттєвий лист.",
+                                        notify_exc,
+                                        "Email керівнику ССП після ручного закриття",
+                                    )
 
                             load_manual_closeouts.clear()
-                            write_log(
-                                co_row.get("id"),
-                                f"Закриття заходу: {new_co_status}",
-                                "Очікує підтвердження",
-                                new_co_status,
-                                co_decision_comment,
-                            )
                             st.success(f"Запит на закриття заходу {new_co_status.lower()}.")
                             monitoring_data.invalidate_monitoring_cache()
                             st.rerun()
-                        except Exception as e:
-                            st.error("Не вдалося застосувати рішення щодо закриття заходу.")
-                            st.exception(e)
+                        except TransitionRejected as exc:
+                            st.error(exc.message)
+                        except Exception as exc:
+                            show_incident(exc, context="Атомарне рішення щодо ручного закриття")
 
     # ── Розбіжності «ручне закриття vs подана заявка» + заперечення керівників ──
     if is_super_admin_user(current_user) and not closeout_df.empty:
@@ -1587,20 +1585,36 @@ if admin_work_mode == "Ручне закриття заходів":
                             }).eq("id", _iss_id).execute()
                             _dr = _iss.get("dispute_request_id")
                             if _dr and str(_dr).strip() not in ("", "nan", "None"):
-                                supabase.table("monitoring_requests").update({
-                                    "approval_status": "Повернуто на доопрацювання",
-                                    "admin_comment": f"Супер-адмін лишив чинним ручне закриття заходу. {_res_comment}",
-                                }).eq("id", int(float(_dr))).execute()
-                                write_log(int(float(_dr)),
-                                          "Розбіжність вирішено: ручне закриття лишено чинним",
-                                          "", "Повернуто на доопрацювання", _res_comment)
+                                _dr_id = int(float(_dr))
+                                _dr_state_response = (
+                                    supabase.table("monitoring_requests")
+                                    .select("approval_status,chain_stage")
+                                    .eq("id", _dr_id)
+                                    .limit(1)
+                                    .execute()
+                                )
+                                _dr_state = (_dr_state_response.data or [{}])[0]
+                                _return_comment = (
+                                    "Супер-адмін лишив чинним ручне закриття заходу. "
+                                    + (clean(_res_comment) or "Розбіжність вирішено на користь ручного закриття.")
+                                )
+                                atomic_return_request(
+                                    request_id=_dr_id,
+                                    expected_status=clean(_dr_state.get("approval_status")),
+                                    expected_chain_stage=int(_dr_state.get("chain_stage") or 0),
+                                    new_status="Повернуто на доопрацювання",
+                                    new_chain_stage=0,
+                                    comment=_return_comment,
+                                    action="Розбіжність вирішено: ручне закриття лишено чинним",
+                                    user=current_user,
+                                    created_by="Супер-адмін / вирішення розбіжності",
+                                )
                             load_manual_closeouts.clear()
                             st.success("Закриття лишено чинним; заявку (якщо була) повернуто подавачу.")
                             monitoring_data.invalidate_monitoring_cache()
                             st.rerun()
-                        except Exception as e:
-                            st.error("Не вдалося застосувати рішення.")
-                            st.exception(e)
+                        except Exception as exc:
+                            show_incident(exc, context="Збереження рішення щодо розбіжності ручного закриття")
                 with _i2:
                     if st.button("↩️ Скасувати закриття (заявка йде звичайним шляхом)", key=f"iss_cancel_{_iss_id}", use_container_width=True):
                         try:
@@ -1618,9 +1632,8 @@ if admin_work_mode == "Ручне закриття заходів":
                             st.success("Закриття скасовано. Подана заявка проходить звичайну схему погодження.")
                             monitoring_data.invalidate_monitoring_cache()
                             st.rerun()
-                        except Exception as e:
-                            st.error("Не вдалося скасувати закриття.")
-                            st.exception(e)
+                        except Exception as exc:
+                            show_incident(exc, context="Скасування ручного закриття під час вирішення розбіжності")
 
         # Скасування будь-якого підтвердженого закриття
         _confirmed = closeout_df[closeout_df["approval_status"] == "Підтверджено"]
@@ -1645,9 +1658,8 @@ if admin_work_mode == "Ручне закриття заходів":
                         st.success("Закриття відкликано.")
                         monitoring_data.invalidate_monitoring_cache()
                         st.rerun()
-                    except Exception as e:
-                        st.error("Не вдалося відкликати закриття.")
-                        st.exception(e)
+                    except Exception as exc:
+                        show_incident(exc, context="Відкликання підтвердженого ручного закриття")
 
     if not closeout_df.empty:
         with st.expander("Усі запити на закриття заходів"):
@@ -2323,19 +2335,25 @@ if _is_conflict and _req_kind != "indicator":
     with _cfb1:
         if st.button("✅ Дані збігаються — погодити заявку", key=f"conflict_ok_{selected_id}", use_container_width=True):
             try:
-                supabase.table("monitoring_requests").update({
-                    "approval_status": "Погоджено",
-                    "admin_comment": "Погоджено: дані заявки збігаються з ручним закриттям заходу.",
-                }).eq("id", int(selected_id)).execute()
-                write_log(selected_id, "Погодження заявки (збіг із ручним закриттям)",
-                          approval_status, "Погоджено",
-                          "Дані заявки збігаються з підтвердженим ручним закриттям.")
+                approve_request_step(
+                    request_id=int(selected_id),
+                    expected_status=approval_status,
+                    expected_chain_stage=int(_req_stage),
+                    new_status="Погоджено",
+                    new_chain_stage=int(_req_stage) + 1,
+                    approval_chain=(schemes.chain_to_json(_req_chain) if _req_chain else None),
+                    comment="Погоджено: дані заявки збігаються з ручним закриттям заходу.",
+                    action="Погодження заявки (збіг із ручним закриттям)",
+                    user=current_user,
+                    created_by="Координатор / погодження збігу з ручним закриттям",
+                )
                 st.success("Заявку погоджено.")
                 monitoring_data.invalidate_monitoring_cache()
                 st.rerun()
-            except Exception as e:
-                st.error("Не вдалося погодити заявку.")
-                st.exception(e)
+            except TransitionRejected as exc:
+                st.error(exc.message)
+            except Exception as exc:
+                show_incident(exc, context="Атомарне погодження заявки при збігу з ручним закриттям")
     with _cfb2:
         _dispute_note = st.text_input("Опис розбіжності", key=f"dispute_note_{selected_id}",
                                       placeholder="Наприклад: у заявці факт 40%, захід закрито як виконаний")
@@ -2360,9 +2378,8 @@ if _is_conflict and _req_kind != "indicator":
                     st.warning("Розбіжність зафіксовано та передано супер-адміну.")
                     monitoring_data.invalidate_monitoring_cache()
                     st.rerun()
-                except Exception as e:
-                    st.error("Не вдалося зафіксувати розбіжність.")
-                    st.exception(e)
+                except Exception as exc:
+                    show_incident(exc, context="Фіксація розбіжності з ручним закриттям")
 
 # ──────────────────────────────────────────────
 # РІШЕННЯ АДМІНІСТРАТОРА
@@ -2459,15 +2476,33 @@ if _is_super_turn and not schemes.is_final_locked(selected_row):
             _sa_action = "Заявку залишено в очікуванні (супер-адмін)"
         if not _sa_blocked:
             try:
-                _sa_payload = schemes.finalize_update_payload({
-                    "approval_status": _sa_new_status,
-                    "admin_comment": clean(_sa_comment) or clean(selected_row.get("admin_comment", "")),
-                    **_sa_extra,
-                }, _sa_new_status)
-                supabase.table("monitoring_requests").update(_sa_payload).eq(
-                    "id", int(selected_id)).execute()
-                write_log(selected_id, _sa_action, approval_status,
-                          _sa_new_status, clean(_sa_comment))
+                _sa_comment_value = clean(_sa_comment) or clean(selected_row.get("admin_comment", ""))
+                _sa_target_stage = int(_sa_extra.get("chain_stage", _req_stage))
+                if _sa_decision == "Повернути на доопрацювання":
+                    atomic_return_request(
+                        request_id=int(selected_id),
+                        expected_status=approval_status,
+                        expected_chain_stage=int(_req_stage),
+                        new_status=_sa_new_status,
+                        new_chain_stage=_sa_target_stage,
+                        comment=_sa_comment_value,
+                        action=_sa_action,
+                        user=current_user,
+                        created_by="Супер-адмін / повернення",
+                    )
+                else:
+                    approve_request_step(
+                        request_id=int(selected_id),
+                        expected_status=approval_status,
+                        expected_chain_stage=int(_req_stage),
+                        new_status=_sa_new_status,
+                        new_chain_stage=_sa_target_stage,
+                        approval_chain=_sa_extra.get("approval_chain"),
+                        comment=_sa_comment_value,
+                        action=_sa_action,
+                        user=current_user,
+                        created_by="Супер-адмін / рішення",
+                    )
                 try:
                     if _sa_notify and _sa_notify[0] == "approved":
                         notify_events.notify_approved(
@@ -2493,14 +2528,19 @@ if _is_super_turn and not schemes.is_final_locked(selected_row):
                             by_label="Супер-адмін", comment=clean(_sa_comment),
                             kind=_req_kind or "measure",
                         )
-                except Exception:
-                    pass
+                except Exception as notify_exc:
+                    show_warning(
+                        "Рішення збережено, але миттєве email-сповіщення не відправлено.",
+                        notify_exc,
+                        "Email після рішення супер-адміна",
+                    )
                 monitoring_data.invalidate_monitoring_cache()
                 st.success("✅ Рішення супер-адміна зафіксовано.")
                 st.rerun()
-            except Exception as e:
-                st.error("Не вдалося зафіксувати рішення.")
-                st.exception(e)
+            except TransitionRejected as exc:
+                st.error(exc.message)
+            except Exception as exc:
+                show_incident(exc, context="Атомарне рішення супер-адміна")
     st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown(
@@ -2769,6 +2809,7 @@ else:
     if confirm_decision:
         _extra_update = {}
         _notify_action = None   # ("stage", stage_dict) | ("approved",) | ("returned", target)
+        _excluded_after_transition = []
         _decision_blocked = False
 
         if decision == _approve_option:
@@ -2787,22 +2828,9 @@ else:
                     f"{f' ({_who_next})' if _who_next else ''}."
                 )
                 _notify_action = ("stage", _oc[_ostg])
-                for _ex in _excluded:
-                    try:
-                        notify_events.notify_excluded_from_chain(
-                            _ex.get("email", ""), _ex.get("name", ""),
-                            _actor_identity("Координатор"),
-                            selected_code, _req_year, _req_quarter,
-                            kind=_req_kind or "measure",
-                        )
-                    except Exception:
-                        pass
-                    write_log(
-                        selected_id,
-                        "Зміна схеми погодження координатором: виключено "
-                        f"{clean(_ex.get('name')) or clean(_ex.get('email'))}",
-                        approval_status, new_status, admin_comment,
-                    )
+                # Листи та додаткові записи про виключених учасників робимо
+                # лише ПІСЛЯ успішного атомарного переходу.
+                _excluded_after_transition = list(_excluded)
             elif _req_chain and _next_after_admin:
                 # ЗАСТАРІЛИЙ ланцюг: наступна ланка вже була наперед відома.
                 new_status, _new_stage = schemes.status_after_approve(_req_chain, _req_stage)
@@ -2871,16 +2899,62 @@ else:
 
         if not _decision_blocked:
             try:
-                _update_payload = schemes.finalize_update_payload({
-                    "approval_status": new_status,
-                    "admin_comment":   admin_comment,
-                    **_extra_update,
-                }, new_status)
-                supabase.table("monitoring_requests").update(_update_payload).eq("id", int(selected_id)).execute()
+                _target_stage = int(_extra_update.get("chain_stage", _req_stage))
+                if decision == "Повернути на доопрацювання":
+                    atomic_return_request(
+                        request_id=int(selected_id),
+                        expected_status=approval_status,
+                        expected_chain_stage=int(_req_stage),
+                        new_status=new_status,
+                        new_chain_stage=_target_stage,
+                        comment=clean(admin_comment),
+                        action=action_text,
+                        user=current_user,
+                        created_by="Координатор / повернення",
+                    )
+                else:
+                    approve_request_step(
+                        request_id=int(selected_id),
+                        expected_status=approval_status,
+                        expected_chain_stage=int(_req_stage),
+                        new_status=new_status,
+                        new_chain_stage=_target_stage,
+                        approval_chain=_extra_update.get("approval_chain"),
+                        comment=clean(admin_comment),
+                        action=action_text,
+                        user=current_user,
+                        created_by="Координатор / рішення",
+                    )
 
-                write_log(selected_id, action_text, approval_status, new_status, admin_comment)
+                for _ex in _excluded_after_transition:
+                    try:
+                        write_log(
+                            selected_id,
+                            "Зміна схеми погодження координатором: виключено "
+                            f"{clean(_ex.get('name')) or clean(_ex.get('email'))}",
+                            approval_status, new_status, admin_comment,
+                        )
+                    except Exception as audit_exc:
+                        show_warning(
+                            "Рішення збережено, але додатковий запис про виключення з ланцюжка не створено.",
+                            audit_exc,
+                            "Додатковий журнал виключення з ланцюжка",
+                        )
+                    try:
+                        notify_events.notify_excluded_from_chain(
+                            _ex.get("email", ""), _ex.get("name", ""),
+                            _actor_identity("Координатор"),
+                            selected_code, _req_year, _req_quarter,
+                            kind=_req_kind or "measure",
+                        )
+                    except Exception as notify_exc:
+                        show_warning(
+                            "Рішення збережено, але лист виключеній ланці не надіслано.",
+                            notify_exc,
+                            "Сповіщення про виключення з ланцюжка погодження",
+                        )
 
-                # Миттєві email-сповіщення (не ламають інтерфейс при помилці)
+                # Миттєві email-сповіщення не входять у транзакцію БД.
                 try:
                     if _notify_action and _notify_action[0] == "approved":
                         notify_events.notify_approved(
@@ -2914,8 +2988,12 @@ else:
                                 by_label="Координатор", comment=clean(admin_comment),
                                 kind=_req_kind or "measure",
                             )
-                except Exception:
-                    pass
+                except Exception as notify_exc:
+                    show_warning(
+                        "Рішення збережено, але миттєве email-сповіщення не відправлено.",
+                        notify_exc,
+                        "Email після рішення координатора",
+                    )
 
                 # Пункт із тестування: стале (не зникаюче) повідомлення, щоб
                 # координатор точно побачив і зрозумів, що ЦЯ заявка вже
@@ -2929,9 +3007,10 @@ else:
                 )
                 monitoring_data.invalidate_monitoring_cache()
                 st.rerun()
-            except Exception as e:
-                st.error("Не вдалося застосувати рішення.")
-                st.exception(e)
+            except TransitionRejected as exc:
+                st.error(exc.message)
+            except Exception as exc:
+                show_incident(exc, context="Атомарне рішення координатора")
 
 st.markdown('</div>', unsafe_allow_html=True)
 
@@ -3011,43 +3090,22 @@ if schemes.is_final_locked(selected_row) and is_super_admin_user(current_user):
                 st.error("Обов'язково вкажіть підставу для коригування.")
             else:
                 try:
-                    _sa_old_version = save_request_version(
-                        selected_id, selected_row.to_dict(),
-                        created_by="Супер-адмін / до коригування",
-                    )
-
-                    # ВАЖЛИВО: final_locked, approval_status, chain_stage,
-                    # approval_chain НЕ входять у цей payload — заявка
-                    # лишається закритою рівно так само, як і була.
-                    _sa_update = {
+                    # final_locked, approval_status, chain_stage та approval_chain
+                    # не передаються: RPC фізично дозволяє змінювати лише звітні поля.
+                    _sa_update = prepare_monitoring_payload({
                         "status": sa_new_status,
                         "numeric_value": sa_new_value,
                         "progress_text": sa_new_progress,
                         "risks": sa_new_risks,
-                        "admin_comment": f"Коригування супер-адміном після закриття: {clean(sa_reason)}",
-                    }
-
-                    supabase.table("monitoring_requests").update(prepare_monitoring_payload(_sa_update)).eq(
-                        "id", int(selected_id)
-                    ).execute()
-
-                    _sa_new_version_data = selected_row.to_dict()
-                    _sa_new_version_data.update(_sa_update)
-                    _sa_new_version = save_request_version(
-                        selected_id, _sa_new_version_data,
-                        created_by="Супер-адмін / коригування після закриття",
+                    })
+                    correct_locked_request(
+                        request_id=int(selected_id),
+                        updates=_sa_update,
+                        reason=clean(sa_reason),
+                        user=current_user,
                     )
 
-                    write_log(
-                        selected_id,
-                        f"Коригування даних супер-адміном після закриття: версія "
-                        f"{_sa_old_version} → {_sa_new_version}",
-                        "Погоджено", "Погоджено",
-                        f"Підстава: {clean(sa_reason)}",
-                    )
-
-                    # Сповіщення останній ланці маршруту (саме зі СНІМКУ
-                    # заявки на момент закриття, а не з поточної схеми).
+                    # Сповіщення останній ланці маршруту не входить у транзакцію БД.
                     try:
                         if _req_chain:
                             _last_stage = _req_chain[-1]
@@ -3058,8 +3116,12 @@ if schemes.is_final_locked(selected_row) and is_super_admin_user(current_user):
                                 editor_name=clean(current_user.get("full_name", "")) or "Супер-адміністратор",
                                 kind=_req_kind or "measure",
                             )
-                    except Exception:
-                        pass
+                    except Exception as notify_exc:
+                        show_warning(
+                            "Коригування збережено, але останній ланці не відправлено миттєвий лист.",
+                            notify_exc,
+                            "Email після коригування закритої заявки",
+                        )
 
                     st.success(
                         "Дані скориговано. Заявка лишається закритою (final_locked); "
@@ -3067,9 +3129,10 @@ if schemes.is_final_locked(selected_row) and is_super_admin_user(current_user):
                     )
                     monitoring_data.invalidate_monitoring_cache()
                     st.rerun()
-                except Exception as e:
-                    st.error("Не вдалося зберегти коригування.")
-                    st.exception(e)
+                except TransitionRejected as exc:
+                    st.error(exc.message)
+                except Exception as exc:
+                    show_incident(exc, context="Атомарне коригування закритої заявки")
 
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -3094,7 +3157,12 @@ else:
         # їх відсутності — з поточних даних заявки.
         try:
             _vers = load_versions(selected_id)
-        except Exception:
+        except Exception as exc:
+            show_warning(
+                "Історію версій завантажено не повністю.",
+                exc,
+                "Завантаження версій у повній історії заявки",
+            )
             _vers = pd.DataFrame()
         _log_ts = pd.to_datetime(show_logs.get("changed_at"), errors="coerce", utc=True)
         _facts, _progress = [], []

@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from core.data_types import prepare_monitoring_payload
 from core.db import fetch_all, get_supabase_client
+from core.errors import log_cosmetic_error, show_incident, show_warning
 from core.notifications import render_notifications_panel
 from core.config import FILE_PATH, SHEET_NAME
 from core.excel_loader import read_excel_sheet
@@ -16,6 +17,7 @@ from core import notify_events
 from core.statuses import SUBMISSION_STATUS_OPTIONS
 
 from core import approval_schemes as schemes
+from core.transitions import TransitionRejected, withdraw_request as atomic_withdraw_request
 from core.access import (
     filter_requests_for_user,
     get_available_ssp_options_for_user,
@@ -333,8 +335,8 @@ def clean(value):
     try:
         if pd.isna(value):
             return ""
-    except Exception:
-        pass
+    except Exception as exc:
+        log_cosmetic_error("Нормалізація значення у Мої заявки", exc)
     text = str(value).strip()
     if text.lower() in ["none", "nan", "nat"]:
         return ""
@@ -417,7 +419,8 @@ def _actor_identity(role_label):
     try:
         name = str((current_user or {}).get("full_name", "")).strip()
         email = str((current_user or {}).get("email", "")).strip()
-    except Exception:
+    except Exception as exc:
+        log_cosmetic_error("Формування підпису користувача у Мої заявки", exc)
         name, email = "", ""
     parts = [p for p in (role_label, name, f"<{email}>" if email else "") if p]
     return " · ".join(parts) if parts else role_label
@@ -1062,8 +1065,12 @@ if (
                             submitter=clean(selected_row.get("responsible_person", "")),
                             kind=clean(selected_row.get("object_kind", "")) or "measure",
                         )
-                    except Exception:
-                        pass
+                    except Exception as notify_exc:
+                        show_warning(
+                            "Зміни збережено, але координатору не відправлено миттєвий лист.",
+                            notify_exc,
+                            "Email після прямого редагування подавачем",
+                        )
 
                 _de_new_version_data = selected_row.to_dict()
                 _de_new_version_data.update(_de_update)
@@ -1083,9 +1090,8 @@ if (
                 )
                 monitoring_data.invalidate_monitoring_cache()
                 st.rerun()
-            except Exception as e:
-                st.error("Не вдалося зберегти зміни.")
-                st.exception(e)
+            except Exception as exc:
+                show_incident(exc, context="Пряме редагування заявки подавачем")
 
 # ============================================================
 # ВІДКЛИКАННЯ ЗАЯВКИ (ТЗ 8.18–8.19 / 15.12)
@@ -1117,8 +1123,8 @@ if _no_action_yet and not schemes.is_final_locked(selected_row):
         )
         if _wd_click:
             try:
-                # 1) Спершу — запис у журнал (він переживає видалення заявки,
-                #    бо журнал не має жорсткої прив'язки до рядка заявки).
+                # Атомарне м’яке відкликання: рядок, версія та журнал
+                # зберігаються, а заявка зникає лише з робочих вибірок.
                 _wd_snapshot = (
                     f"Відкликано подавачем. Дані на момент відкликання: "
                     f"код {clean(selected_row.get('strat_code', ''))}; "
@@ -1129,17 +1135,13 @@ if _no_action_yet and not schemes.is_final_locked(selected_row):
                     f"опис прогресу «{clean(selected_row.get('progress_text', ''))}»; "
                     f"ризики «{clean(selected_row.get('risks', ''))}»."
                 )
-                write_log(
-                    selected_id,
-                    "Відкликання заявки подавачем",
-                    approval,
-                    "Відкликано",
-                    _wd_snapshot,
+                atomic_withdraw_request(
+                    request_id=int(selected_id),
+                    expected_status=approval,
+                    expected_chain_stage=int(_request_stage_idx),
+                    comment=_wd_snapshot,
+                    user=current_user,
                 )
-                # 2) Потім — видалення самої заявки.
-                supabase.table("monitoring_requests").delete().eq(
-                    "id", int(selected_id)
-                ).execute()
 
                 monitoring_data.invalidate_monitoring_cache()
                 st.success(
@@ -1147,9 +1149,10 @@ if _no_action_yet and not schemes.is_final_locked(selected_row):
                     "вкладці «Моніторинг виконання»."
                 )
                 st.rerun()
-            except Exception as e:
-                st.error("Не вдалося відкликати заявку.")
-                st.exception(e)
+            except TransitionRejected as exc:
+                st.error(exc.message)
+            except Exception as exc:
+                show_incident(exc, context="Атомарне відкликання заявки")
 
 # ============================================================
 # RESUBMIT
@@ -1305,8 +1308,12 @@ if approval == "Повернуто на доопрацювання":
                         submitter=clean(new_responsible),
                         kind=clean(selected_row.get("object_kind", "")) or "measure",
                     )
-            except Exception:
-                pass
+            except Exception as notify_exc:
+                show_warning(
+                    "Заявку повторно подано, але першій ланці не відправлено миттєвий лист.",
+                    notify_exc,
+                    "Email після повторного подання заявки",
+                )
 
             new_version_data = selected_row.to_dict()
             new_version_data.update(update_payload)
@@ -1329,9 +1336,8 @@ if approval == "Повернуто на доопрацювання":
             monitoring_data.invalidate_monitoring_cache()
             st.rerun()
 
-        except Exception as e:
-            st.error("Не вдалося повторно подати заявку.")
-            st.exception(e)
+        except Exception as exc:
+            show_incident(exc, context="Повторне подання заявки після доопрацювання")
 
     st.markdown('</div>', unsafe_allow_html=True)
 

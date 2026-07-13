@@ -27,6 +27,7 @@ from core.ui import render_scope_toggle, render_auto_refresh_notice, load_css
 from core.statuses import legend_badge
 from core.closeouts import load_manual_closeouts
 from core import exports as core_exports
+from core.errors import log_cosmetic_error
 from config.npa_documents import (
     CANONICAL_NPA_DOCUMENTS, PPDU_2026_LABEL, normalize_for_match,
 )
@@ -56,8 +57,8 @@ def raw(value) -> str:
     try:
         if pd.isna(value):
             return ""
-    except Exception:
-        pass
+    except Exception as exc:
+        log_cosmetic_error("Нормалізація значення у фільтрі за документом", exc)
     return str(value).strip()
 
 

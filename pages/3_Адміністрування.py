@@ -2,7 +2,14 @@ import re
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from core.db import get_supabase_client
+from core.data_types import (
+    normalise_closeout_frame,
+    normalise_monitoring_frame,
+    prepare_closeout_payload,
+    prepare_monitoring_payload,
+    year_to_db,
+)
+from core.db import fetch_all, get_supabase_client
 from core.ui import load_css, render_request_timeline
 from core.notifications import render_notifications_panel
 from core.config import FILE_PATH, SHEET_NAME
@@ -735,27 +742,25 @@ def load_requests():
 
 
 def load_logs(request_id):
-    resp = (
-        supabase.table("monitoring_logs")
-        .select("*")
-        .eq("request_id", int(request_id))
-        .order("changed_at", desc=True)
-        .execute()
+    rows = fetch_all(
+        "monitoring_logs",
+        "*",
+        filters=[("eq", "request_id", int(request_id))],
+        order=("changed_at", True),
     )
-    return pd.DataFrame(resp.data) if resp.data else pd.DataFrame()
+    return pd.DataFrame(rows)
 
 
 def load_versions(request_id):
     """Версії заявки — для розширення історії фактом та описом прогресу."""
     try:
-        resp = (
-            supabase.table("monitoring_request_versions")
-            .select("*")
-            .eq("request_id", int(request_id))
-            .order("created_at", desc=False)
-            .execute()
+        rows = fetch_all(
+            "monitoring_request_versions",
+            "*",
+            filters=[("eq", "request_id", int(request_id))],
+            order=("created_at", False),
         )
-        return pd.DataFrame(resp.data) if resp.data else pd.DataFrame()
+        return normalise_monitoring_frame(pd.DataFrame(rows))
     except Exception:
         return pd.DataFrame()
 
@@ -1350,13 +1355,12 @@ if admin_work_mode == "Ручне закриття заходів":
 
 
     def load_closeout_requests():
-        resp = (
-            supabase.table("closeout_requests")
-            .select("*")
-            .order("requested_at", desc=True)
-            .execute()
+        rows = fetch_all(
+            "closeout_requests",
+            "*",
+            order=("requested_at", True),
         )
-        return pd.DataFrame(resp.data) if resp.data else pd.DataFrame()
+        return normalise_closeout_frame(pd.DataFrame(rows))
 
 
     _closeout_scope_df = filter_actions_for_user(
@@ -1418,6 +1422,7 @@ if admin_work_mode == "Ручне закриття заходів":
                             "head_status": "Очікує реакції"} if _is_super else {}),
                         **_route,
                     }
+                    _payload = prepare_closeout_payload(_payload)
                     try:
                         _res = supabase.table("closeout_requests").insert(_payload).execute()
                     except Exception:
@@ -2341,7 +2346,7 @@ if _is_conflict and _req_kind != "indicator":
                 try:
                     _co = (
                         supabase.table("closeout_requests").select("id")
-                        .eq("strat_code", selected_code).eq("period_year", _req_year)
+                        .eq("strat_code", selected_code).eq("period_year", year_to_db(_req_year))
                         .eq("approval_status", "Підтверджено").limit(1).execute()
                     )
                     if _co.data:
@@ -3022,7 +3027,7 @@ if schemes.is_final_locked(selected_row) and is_super_admin_user(current_user):
                         "admin_comment": f"Коригування супер-адміном після закриття: {clean(sa_reason)}",
                     }
 
-                    supabase.table("monitoring_requests").update(_sa_update).eq(
+                    supabase.table("monitoring_requests").update(prepare_monitoring_payload(_sa_update)).eq(
                         "id", int(selected_id)
                     ).execute()
 

@@ -4,6 +4,7 @@ from html import escape
 
 import pandas as pd
 import streamlit as st
+from core.data_types import prepare_monitoring_payload, quarter_to_db, year_to_db
 from core.db import get_supabase_client
 from core.deputies import DEPUTY_MINISTER_BY_SSP
 from core.ui import load_css
@@ -1199,6 +1200,7 @@ if submission_mode.startswith("🎯"):
                     item["scheme_label"] = ind_scheme_name
                 ind_payload.append(item)
 
+            ind_payload = [prepare_monitoring_payload(item) for item in ind_payload]
             try:
                 ind_result = supabase.table("monitoring_requests").insert(ind_payload).execute()
                 for item in (getattr(ind_result, "data", None) or ind_payload):
@@ -1909,8 +1911,8 @@ if submit_clicked:
                 supabase.table("monitoring_requests")
                 .select("strat_code")
                 .eq("department", raw_value(selected_ssp_index))
-                .eq("year", str(selected_year))
-                .eq("quarter", raw_value(selected_quarter))
+                .eq("year", year_to_db(selected_year))
+                .eq("quarter", quarter_to_db(selected_quarter))
                 .execute()
             )
             _existing_codes = {
@@ -1933,6 +1935,7 @@ if submit_clicked:
         if not payload:
             st.stop()
 
+        payload = [prepare_monitoring_payload(item) for item in payload]
         try:
             submit_result = supabase.table("monitoring_requests").insert(payload).execute()
             for item in (getattr(submit_result, "data", None) or payload):

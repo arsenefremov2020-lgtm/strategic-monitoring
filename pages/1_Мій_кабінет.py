@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
-from core.db import get_supabase_client
+from core.data_types import normalise_closeout_frame, prepare_monitoring_payload
+from core.db import fetch_all, get_supabase_client
 from core.ui import load_css, render_request_timeline
 from core.errors import log_exception
 from core.notifications import render_notifications_panel
@@ -348,15 +349,13 @@ def load_requests():
 
 
 def load_logs(request_id):
-    response = (
-        supabase
-        .table("monitoring_logs")
-        .select("*")
-        .eq("request_id", int(request_id))
-        .order("changed_at", desc=True)
-        .execute()
+    rows = fetch_all(
+        "monitoring_logs",
+        "*",
+        filters=[("eq", "request_id", int(request_id))],
+        order=("changed_at", True),
     )
-    return pd.DataFrame(response.data or [])
+    return pd.DataFrame(rows)
 
 
 
@@ -1068,7 +1067,7 @@ if is_my_turn:
                             "admin_comment": "",
                         }
 
-                        supabase.table("monitoring_requests").update(_cab_update).eq(
+                        supabase.table("monitoring_requests").update(prepare_monitoring_payload(_cab_update)).eq(
                             "id", selected_id
                         ).execute()
 
@@ -1145,13 +1144,12 @@ st.markdown('</div>', unsafe_allow_html=True)
 
 if _my_role == ROLE_SSP_HEAD:
     try:
-        _co_resp = (
-            supabase.table("closeout_requests")
-            .select("*")
-            .eq("approval_status", "Підтверджено")
-            .execute()
-        )
-        _co_df = pd.DataFrame(_co_resp.data) if _co_resp.data else pd.DataFrame()
+        _co_df = normalise_closeout_frame(pd.DataFrame(fetch_all(
+            "closeout_requests",
+            "*",
+            filters=[("eq", "approval_status", "Підтверджено")],
+            order=("id", False),
+        )))
     except Exception:
         _co_df = pd.DataFrame()
 

@@ -3,7 +3,8 @@ import streamlit as st
 
 from core.ui import load_css
 from core.page_setup import page_setup, render_footer
-from core.db import get_supabase_client
+from core.data_types import quarter_to_display, year_to_display
+from core.db import fetch_all, get_supabase_client
 
 
 page_setup("Архів", page_name="Архів")
@@ -20,15 +21,17 @@ supabase = get_supabase_client()
 @st.cache_data(ttl=60)
 def load_archive_index():
     try:
-        resp = (
-            supabase.table("archive_snapshots")
-            .select("id,year,quarter,archived_by,archived_at")
-            .order("archived_at", desc=True)
-            .execute()
-        )
+        data = pd.DataFrame(fetch_all(
+            "archive_snapshots",
+            "id,year,quarter,archived_by,archived_at",
+            order=("archived_at", True),
+        ))
     except Exception:
         return pd.DataFrame()
-    return pd.DataFrame(resp.data) if resp.data else pd.DataFrame()
+    if not data.empty:
+        data["year"] = data["year"].map(year_to_display)
+        data["quarter"] = data["quarter"].map(quarter_to_display)
+    return data
 
 
 @st.cache_data(ttl=60)

@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
-from core.db import get_supabase_client
+from core.data_types import normalise_monitoring_frame
+from core.db import fetch_all, get_supabase_client
 from core.ui import load_css, render_request_timeline
 from datetime import datetime, date, timedelta
 from io import BytesIO
@@ -320,50 +321,39 @@ def dataframe_to_excel(sheets):
 
 @st.cache_data(ttl=30)
 def load_logs():
-    response = (
-        supabase
-        .table("monitoring_logs")
-        .select("*")
-        .order("changed_at", desc=True)
-        .execute()
-    )
-    return pd.DataFrame(response.data or [])
+    return pd.DataFrame(fetch_all(
+        "monitoring_logs",
+        "*",
+        order=("changed_at", True),
+    ))
 
 
 @st.cache_data(ttl=30)
 def load_requests():
-    response = (
-        supabase
-        .table("monitoring_requests")
-        .select("*")
-        .execute()
-    )
-    return pd.DataFrame(response.data or [])
+    return normalise_monitoring_frame(pd.DataFrame(fetch_all(
+        "monitoring_requests",
+        "*",
+        order=("id", False),
+    )))
 
 
 @st.cache_data(ttl=30)
 def load_versions():
-    response = (
-        supabase
-        .table("monitoring_request_versions")
-        .select("*")
-        .order("created_at", desc=True)
-        .execute()
-    )
-    return pd.DataFrame(response.data or [])
+    return normalise_monitoring_frame(pd.DataFrame(fetch_all(
+        "monitoring_request_versions",
+        "*",
+        order=("created_at", True),
+    )))
 
 
 @st.cache_data(ttl=30)
 def load_notification_log():
     try:
-        response = (
-            supabase
-            .table("notification_log")
-            .select("*")
-            .order("sent_at", desc=True)
-            .execute()
-        )
-        return pd.DataFrame(response.data or [])
+        return pd.DataFrame(fetch_all(
+            "notification_log",
+            "*",
+            order=("sent_at", True),
+        ))
     except Exception:
         return pd.DataFrame()
 

@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
-from core.db import get_supabase_client
+from core.data_types import prepare_monitoring_payload
+from core.db import fetch_all, get_supabase_client
 from core.notifications import render_notifications_panel
 from core.config import FILE_PATH, SHEET_NAME
 from core.excel_loader import read_excel_sheet
@@ -401,15 +402,13 @@ def load_requests():
 
 
 def load_logs(request_id):
-    response = (
-        supabase
-        .table("monitoring_logs")
-        .select("*")
-        .eq("request_id", int(request_id))
-        .order("changed_at", desc=True)
-        .execute()
+    rows = fetch_all(
+        "monitoring_logs",
+        "*",
+        filters=[("eq", "request_id", int(request_id))],
+        order=("changed_at", True),
     )
-    return pd.DataFrame(response.data or [])
+    return pd.DataFrame(rows)
 
 
 
@@ -1047,7 +1046,7 @@ if (
                     "admin_comment": "",
                 }
 
-                supabase.table("monitoring_requests").update(_de_update).eq(
+                supabase.table("monitoring_requests").update(prepare_monitoring_payload(_de_update)).eq(
                     "id", int(selected_id)
                 ).execute()
 
@@ -1291,7 +1290,7 @@ if approval == "Повернуто на доопрацювання":
                 "admin_comment": ""
             }
 
-            supabase.table("monitoring_requests").update(update_payload).eq("id", int(selected_id)).execute()
+            supabase.table("monitoring_requests").update(prepare_monitoring_payload(update_payload)).eq("id", int(selected_id)).execute()
 
             # Миттєве сповіщення першій ланці (як при первинному поданні)
             try:

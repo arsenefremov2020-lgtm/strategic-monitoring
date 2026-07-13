@@ -63,6 +63,8 @@ import pandas as pd
 # Скрипт запускається з кореня репозиторію: python scripts/send_notifications.py
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from core.data_types import normalise_closeout_frame, normalise_monitoring_frame  # noqa: E402
+from core.db import fetch_all  # noqa: E402
 from core.emails import send_email  # noqa: E402
 
 KYIV_UTC_OFFSET = 3  # прийнятне наближення для щоденного джоба (EEST)
@@ -191,8 +193,13 @@ def _truthy(value) -> bool:
 
 def load_requests(supabase) -> pd.DataFrame:
     try:
-        resp = supabase.table("monitoring_requests").select("*").execute()
-        return pd.DataFrame(resp.data) if resp.data else pd.DataFrame()
+        rows = fetch_all(
+            "monitoring_requests",
+            "*",
+            order=("id", False),
+            client=supabase,
+        )
+        return normalise_monitoring_frame(pd.DataFrame(rows))
     except Exception as exc:
         print(f"!! Не вдалося прочитати monitoring_requests: {exc}")
         return pd.DataFrame()
@@ -200,13 +207,14 @@ def load_requests(supabase) -> pd.DataFrame:
 
 def load_pending_closeouts(supabase) -> pd.DataFrame:
     try:
-        resp = (
-            supabase.table("closeout_requests")
-            .select("*")
-            .eq("approval_status", "Очікує підтвердження")
-            .execute()
+        rows = fetch_all(
+            "closeout_requests",
+            "*",
+            filters=[("eq", "approval_status", "Очікує підтвердження")],
+            order=("id", False),
+            client=supabase,
         )
-        return pd.DataFrame(resp.data) if resp.data else pd.DataFrame()
+        return normalise_closeout_frame(pd.DataFrame(rows))
     except Exception:
         return pd.DataFrame()
 
@@ -298,9 +306,13 @@ def _req_for_ssp(requests: pd.DataFrame, allowed: list[str]) -> pd.DataFrame:
 
 def load_logs(supabase) -> pd.DataFrame:
     try:
-        resp = supabase.table("monitoring_logs").select(
-            "request_id,new_status,changed_at").execute()
-        return pd.DataFrame(resp.data) if resp.data else pd.DataFrame()
+        rows = fetch_all(
+            "monitoring_logs",
+            "request_id,new_status,changed_at",
+            order=("id", False),
+            client=supabase,
+        )
+        return pd.DataFrame(rows)
     except Exception as exc:
         print(f"!! Не вдалося прочитати monitoring_logs: {exc}")
         return pd.DataFrame()

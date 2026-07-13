@@ -1918,6 +1918,7 @@ if submit_clicked:
                 .eq("department", raw_value(selected_ssp_index))
                 .eq("year", year_to_db(selected_year))
                 .eq("quarter", quarter_to_db(selected_quarter))
+                .neq("approval_status", "Відкликано")
                 .execute()
             )
             _existing_codes = {

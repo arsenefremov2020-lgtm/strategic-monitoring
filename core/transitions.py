@@ -143,3 +143,41 @@ def correct_locked_request(*, request_id: int, updates: dict[str, Any],
         "p_reason": reason,
         "p_actor": actor_payload(user),
     })
+
+
+def submit_request(*, payload: dict[str, Any], action: str,
+                   user: dict, created_by: str,
+                   draft_email: str = "", draft_key: str = "") -> TransitionResult:
+    """Атомарно створює заявку, першу версію та запис журналу."""
+    return _call("transition_submit_request", {
+        "p_payload": payload,
+        "p_action": action,
+        "p_actor": actor_payload(user),
+        "p_created_by": created_by,
+        "p_draft_email": draft_email,
+        "p_draft_key": draft_key,
+    })
+
+
+def resubmit_request(*, request_id: int, expected_updated_at: str,
+                     expected_status: str, expected_chain_stage: int,
+                     target_chain_stage: int, payload: dict[str, Any], mode: str, action: str,
+                     user: dict, created_by_before: str,
+                     created_by_after: str,
+                     draft_email: str = "", draft_key: str = "") -> TransitionResult:
+    """Атомарно повторно подає або редагує заявку з optimistic locking."""
+    return _call("transition_resubmit_request", {
+        "p_request_id": int(request_id),
+        "p_expected_updated_at": expected_updated_at,
+        "p_expected_status": expected_status,
+        "p_expected_chain_stage": int(expected_chain_stage),
+        "p_target_chain_stage": int(target_chain_stage),
+        "p_payload": payload,
+        "p_mode": mode,
+        "p_action": action,
+        "p_actor": actor_payload(user),
+        "p_created_by_before": created_by_before,
+        "p_created_by_after": created_by_after,
+        "p_draft_email": draft_email,
+        "p_draft_key": draft_key,
+    })

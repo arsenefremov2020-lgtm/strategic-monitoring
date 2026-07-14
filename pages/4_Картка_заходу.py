@@ -1,9 +1,9 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-from core.db import get_supabase_client
+from core.db import fetch_all, get_supabase_client
 from core.deputies import DEPUTY_MINISTER_BY_SSP
-from core.ui import load_css
+from core.ui import load_css, render_request_timeline
 from core.errors import log_cosmetic_error, log_exception
 from core.config import FILE_PATH, SHEET_NAME
 from core.excel_loader import read_excel_sheet
@@ -20,9 +20,21 @@ from core import monitoring_data
 from config.roles import ROLE_SSP, ROLE_SSP_HEAD, ROLE_UNIT_HEAD, ROLE_SSP_DEPUTY, ROLE_ADMIN, ROLE_SUPER_ADMIN, ENABLE_PERSONAL_CABINETS
 from core.access import filter_actions_for_user, filter_requests_for_user
 from core.ui import render_scope_toggle, render_auto_refresh_notice
-
+from core.versioning import load_versions
+from core.stage4 import (
+    build_measure_card_pdf,
+    clean as stage4_clean,
+    format_kyiv_datetime,
+    get_card_target,
+    human_versions_table,
+    quarter_to_roman,
+    render_copy_card_link,
+    render_version_comparison,
+    style_status_columns,
+)
 
 current_user = page_setup("Картка заходу", page_name="Картка заходу")
+card_target = get_card_target()
 render_auto_refresh_notice("Картка заходу", minutes=5)
 current_role = current_user.get("role")
 can_view_submission_history = (
@@ -1084,6 +1096,19 @@ def load_requests():
     return df
 
 
+def load_request_logs(request_ids):
+    ids = [int(value) for value in request_ids if clean(value)]
+    if not ids:
+        return pd.DataFrame()
+    rows = fetch_all(
+        "monitoring_logs",
+        "*",
+        filters=lambda query: query.in_("request_id", ids),
+        order=("changed_at", False),
+    )
+    return pd.DataFrame(rows)
+
+
 # ============================================================
 # HEADER
 # ============================================================
@@ -1127,6 +1152,7 @@ requests_df = load_requests()
 goals = df[df["object_type"] == "goal"].copy()
 tasks = df[df["object_type"] == "task"].copy()
 measures = df[df["object_type"] == "measure"].copy()
+all_measures_for_access = measures.copy()
 
 # Пункт 1 нового ТЗ: ролі, звужені до власного ССП, за замовчуванням
 # бачать (і можуть обрати в переліку заходів) тільки заходи свого ССП.
@@ -1139,6 +1165,21 @@ measures = filter_actions_for_user(measures, current_user, page_key="Картк�
 requests_df = filter_requests_for_user(
     requests_df, current_user, ssp_columns=["department"], page_key="Картка заходу"
 )
+
+_target_code = clean(card_target.get("code"))
+if _target_code:
+    _exists_anywhere = bool(
+        all_measures_for_access["code"].astype(str).str.strip().eq(_target_code).any()
+    )
+    _exists_in_scope = bool(
+        measures["code"].astype(str).str.strip().eq(_target_code).any()
+    )
+    if _exists_anywhere and not _exists_in_scope:
+        st.error("У вас немає доступу до картки цього заходу.")
+        st.stop()
+    if not _exists_anywhere:
+        st.warning("Захід із посилання не знайдено. Відкрито доступний перелік заходів.")
+        card_target = {"code": "", "year": "", "quarter": ""}
 
 if measures.empty:
     st.warning("Заходів у стратегічній матриці не знайдено.")
@@ -1224,8 +1265,15 @@ measure_options = [
     for _, row in filtered_measures_by_task.iterrows()
 ]
 
+_target_measure_index = 0
+if clean(card_target.get("code")):
+    for _idx, _label in enumerate(measure_options):
+        if _label.split("—")[0].strip() == clean(card_target.get("code")):
+            _target_measure_index = _idx
+            break
+
 with f3:
-    selected_option = st.selectbox("Захід", measure_options, index=0)
+    selected_option = st.selectbox("Захід", measure_options, index=_target_measure_index)
 
 render_html("</div></div>")
 
@@ -1234,6 +1282,64 @@ selected_code = selected_option.split("—")[0].strip()
 selected_measure = measures[
     measures["code"].astype(str).str.strip() == selected_code
 ].iloc[0]
+
+_link_request_rows = requests_df[
+    requests_df["strat_code"].astype(str).str.strip().eq(selected_code)
+].copy() if not requests_df.empty and "strat_code" in requests_df.columns else pd.DataFrame()
+_link_years = {2026, 2027, 2028}
+if not _link_request_rows.empty and "year" in _link_request_rows.columns:
+    for _value in _link_request_rows["year"].tolist():
+        try:
+            _link_years.add(int(float(str(_value))))
+        except (TypeError, ValueError):
+            pass
+_link_year_options = sorted(_link_years)
+_target_year_text = clean(card_target.get("year"))
+try:
+    _target_year = int(float(_target_year_text)) if _target_year_text else 2026
+except (TypeError, ValueError):
+    _target_year = 2026
+_link_year_index = _link_year_options.index(_target_year) if _target_year in _link_year_options else 0
+_link_quarter_options = ["I", "II", "III", "IV"]
+_target_quarter = quarter_to_roman(card_target.get("quarter")) or "I"
+_link_quarter_index = _link_quarter_options.index(_target_quarter) if _target_quarter in _link_quarter_options else 0
+
+st.markdown(
+    '<div class="card"><div class="card-title">Пряме посилання на картку</div>'
+    '<div class="card-subtitle">Оберіть період, який має бути зафіксований у посиланні. '
+    'Саме цей захід і період відновляться після входу в систему.</div>',
+    unsafe_allow_html=True,
+)
+_link_c1, _link_c2, _link_c3 = st.columns([1, 1, 2.4])
+with _link_c1:
+    card_link_year = st.selectbox(
+        "Рік",
+        _link_year_options,
+        index=_link_year_index,
+        key=f"card_link_year_{selected_code}",
+    )
+with _link_c2:
+    card_link_quarter = st.selectbox(
+        "Квартал",
+        _link_quarter_options,
+        index=_link_quarter_index,
+        key=f"card_link_quarter_{selected_code}",
+    )
+with _link_c3:
+    st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+    render_copy_card_link(
+        selected_code,
+        card_link_year,
+        card_link_quarter,
+        key=f"copy_card_{selected_code}_{card_link_year}_{card_link_quarter}",
+    )
+st.markdown('</div>', unsafe_allow_html=True)
+
+if clean(card_target.get("code")) == selected_code:
+    st.info(
+        f"Картку відкрито за прямим посиланням: {card_link_quarter} квартал "
+        f"{card_link_year} року."
+    )
 
 goal_code = get_goal_code(selected_code)
 task_code = get_task_code(selected_code)
@@ -1265,6 +1371,32 @@ if not requests_df.empty and "strat_code" in requests_df.columns:
     measure_requests = requests_df[
         requests_df["strat_code"].astype(str).str.strip() == selected_code
     ].copy()
+
+raw_measure_requests = measure_requests.copy()
+_measure_request_ids = (
+    pd.to_numeric(raw_measure_requests.get("id"), errors="coerce").dropna().astype(int).tolist()
+    if not raw_measure_requests.empty and "id" in raw_measure_requests.columns
+    else []
+)
+measure_logs = load_request_logs(_measure_request_ids)
+_focus_rows = raw_measure_requests.copy()
+if not _focus_rows.empty:
+    _focus_rows = _focus_rows[
+        _focus_rows["year"].astype(str).eq(str(card_link_year))
+        & _focus_rows["quarter"].apply(quarter_to_roman).eq(card_link_quarter)
+    ]
+    if _focus_rows.empty:
+        _focus_rows = raw_measure_requests.copy()
+    if "submitted_at" in _focus_rows.columns:
+        _focus_rows["_submitted"] = pd.to_datetime(_focus_rows["submitted_at"], errors="coerce", utc=True)
+        _focus_rows = _focus_rows.sort_values("_submitted", ascending=False)
+focused_request = _focus_rows.iloc[0] if not _focus_rows.empty else None
+focused_request_id = (
+    int(float(clean(focused_request.get("id"))))
+    if focused_request is not None and clean(focused_request.get("id"))
+    else None
+)
+focused_versions = load_versions(focused_request_id) if focused_request_id is not None else pd.DataFrame()
 
 # ── Джерело даних: підтверджені / оперативна оцінка (правка №6) ──
 card_data_mode = st.radio(
@@ -1749,31 +1881,91 @@ if view_mode in ["Огляд", "Квартальна динаміка"]:
 if can_view_submission_history and view_mode in ["Огляд", "Історія подання відомостей"]:
     render_html('<div class="card"><div class="card-title">Історія подання відомостей</div>')
 
-    if measure_requests.empty:
+    if raw_measure_requests.empty:
         st.info("Для цього заходу ще немає поданих відомостей.")
     else:
-        history_df = measure_requests.rename(columns={
-            "id": "ID",
-            "year": "Рік",
-            "quarter": "Квартал",
-            "status": "Статус виконання",
-            "approval_status": "Статус погодження",
-            "numeric_value": "Фактичне значення",
-            "responsible_person": "Відповідальна особа",
-            "submitted_at": "Дата подання",
-            "admin_comment": "Коментар адміністратора"
-        })
+        history = raw_measure_requests.copy()
+        history["Рік"] = history.get("year", "").apply(lambda value: clean(value) or "—")
+        history["Квартал"] = history.get("quarter", "").apply(lambda value: quarter_to_roman(value) or "—")
+        history["Статус виконання"] = history.get("status", "").apply(lambda value: clean(value) or "—")
+        history["Статус погодження"] = history.get("approval_status", "").apply(lambda value: clean(value) or "—")
+        _numeric = history.get("numeric_value", pd.Series([""] * len(history), index=history.index)).apply(clean)
+        _textual = history.get("value_text", pd.Series([""] * len(history), index=history.index)).apply(clean)
+        history["Фактичне значення"] = [number or text_value or "—" for number, text_value in zip(_numeric, _textual)]
+        history["Відповідальна особа"] = history.get("responsible_person", "").apply(lambda value: clean(value) or "—")
+        history["Дата подання"] = history.get("submitted_at", "").apply(format_kyiv_datetime)
+        history["Коментар"] = history.get("admin_comment", "").apply(lambda value: clean(value) or "—")
+        human_history = history[[
+            "Рік", "Квартал", "Статус виконання", "Статус погодження",
+            "Фактичне значення", "Відповідальна особа", "Дата подання", "Коментар",
+        ]]
+        st.dataframe(
+            style_status_columns(human_history, ["Статус виконання", "Статус погодження"]),
+            use_container_width=True,
+            hide_index=True,
+        )
 
-        show_cols = [
-            "ID", "Рік", "Квартал", "Статус виконання", "Статус погодження",
-            "Фактичне значення", "Відповідальна особа", "Дата подання",
-            "Коментар адміністратора"
-        ]
+        if not measure_logs.empty:
+            with st.expander("Історія погодження заходу"):
+                render_request_timeline(measure_logs)
 
-        available = [c for c in show_cols if c in history_df.columns]
-        st.dataframe(history_df[available], use_container_width=True, hide_index=True)
+        if focused_request_id is not None:
+            st.markdown(
+                f"**Версії заявки за періодом:** ID {focused_request_id} · "
+                f"{card_link_quarter} квартал {card_link_year} року"
+            )
+            if focused_versions.empty:
+                st.info("Для цієї заявки збережених версій поки що немає.")
+            else:
+                human_versions = human_versions_table(focused_versions)
+                st.dataframe(
+                    style_status_columns(human_versions, ["Статус виконання", "Статус погодження"]),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+                with st.expander("Порівняти дві версії заявки", expanded=False):
+                    render_version_comparison(
+                        focused_versions,
+                        key_prefix=f"card_versions_{focused_request_id}",
+                    )
 
     render_html('</div>')
+
+
+# ============================================================
+# PDF CARD — TEST MODE
+# ============================================================
+
+render_html(
+    '<div class="card"><div class="card-title">Друк картки заходу '
+    '<span style="font-size:11px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;'
+    'border-radius:999px;padding:3px 8px;">тест</span></div>'
+    '<div class="card-subtitle">PDF містить паспортні дані, стан за періодами та історію погодження. '
+    'Довгі назви переносяться повністю.</div>'
+)
+try:
+    _card_pdf = build_measure_card_pdf(
+        measure=selected_measure.to_dict(),
+        goal_name=goal_name,
+        task_name=task_name,
+        requests_df=raw_measure_requests,
+        logs_df=measure_logs,
+        focus_year=card_link_year,
+        focus_quarter=card_link_quarter,
+        closed_periods=card_closed_periods,
+    )
+    st.download_button(
+        "Завантажити картку в PDF · тест",
+        data=_card_pdf,
+        file_name=f"картка_заходу_{selected_code}_{card_link_year}_{card_link_quarter}.pdf",
+        mime="application/pdf",
+        use_container_width=True,
+        key=f"download_card_pdf_{selected_code}_{card_link_year}_{card_link_quarter}",
+    )
+except Exception as exc:
+    log_exception("build_measure_card_pdf", exc)
+    st.error("Не вдалося сформувати PDF картки. Причину записано в технічний лог.")
+render_html('</div>')
 
 
 # ============================================================

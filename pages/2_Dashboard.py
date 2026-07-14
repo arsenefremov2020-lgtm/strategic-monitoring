@@ -25,6 +25,7 @@ from core.access import (
     get_user_ssp_index,
 )
 from core.ui import render_scope_toggle, render_auto_refresh_notice
+from core.stage4 import data_read_caption, kyiv_now, render_measure_rows_with_card_links
 from datetime import datetime
 import re
 
@@ -362,6 +363,9 @@ div[data-testid="stButton"] button {
 .kpi-red   { background: #fef2f2; border-color: #fecaca; }
 .kpi-yellow{ background: #fffbeb; border-color: #fde68a; }
 .kpi-gray  { background: #f8fafc; border-color: #e2e8f0; }
+.kpi-card { display:block; text-decoration:none !important; cursor:pointer; color:inherit !important; }
+.kpi-card:hover { transform:translateY(-2px); box-shadow:0 8px 18px rgba(15,23,42,.10); }
+.kpi-card.kpi-active { outline:3px solid rgba(37,99,235,.22); border-color:#60a5fa; }
 
 /* ── Insight items ── */
 .insight-item {
@@ -1280,20 +1284,35 @@ def pct_value(count, total):
     return f"{round(count / total * 100, 2)}%"
 
 
-def render_kpi_grid(items):
-    cards_html = "".join([
-        f'<div class="kpi-card {item["color"]}">'
-        f'<div class="kpi-title">{item["title"]}</div>'
-        f'<div class="kpi-value">{item["count"]}</div>'
-        f'<div class="kpi-pct">{item["percent"]}</div>'
-        f'</div>'
-        for item in items
-    ])
+def render_kpi_grid(items, *, interactive=False, query_key="kpi"):
+    selected = ""
+    if interactive:
+        try:
+            selected = str(st.query_params.get(query_key, "") or "")
+        except Exception:
+            selected = ""
 
-    st.markdown(
-        f'<div class="kpi-grid">{cards_html}</div>',
-        unsafe_allow_html=True
-    )
+    cards = []
+    for item in items:
+        key = str(item.get("key", ""))
+        active_class = " kpi-active" if interactive and key and selected == key else ""
+        if interactive and key:
+            href = "?" if selected == key else f"?{query_key}={key}"
+            opening = f'<a class="kpi-card {item["color"]}{active_class}" href="{href}" target="_self">'
+            closing = "</a>"
+        else:
+            opening = f'<div class="kpi-card {item["color"]}">'
+            closing = "</div>"
+        cards.append(
+            opening
+            + f'<div class="kpi-title">{item["title"]}</div>'
+            + f'<div class="kpi-value">{item["count"]}</div>'
+            + f'<div class="kpi-pct">{item["percent"]}</div>'
+            + closing
+        )
+
+    st.markdown(f'<div class="kpi-grid">{"".join(cards)}</div>', unsafe_allow_html=True)
+    return selected if interactive else ""
 
 
 def render_insight(text, kind="default"):
@@ -1710,6 +1729,8 @@ st.markdown(f"""
 
 strat_df = load_strat_matrix()
 requests_df = load_requests()
+dashboard_read_at = kyiv_now()
+st.caption(data_read_caption(dashboard_read_at))
 
 # Пункт 1 нового ТЗ: ролі, звужені до власного ССП, бачать за
 # замовчуванням тільки своє ССП. ВАЖЛИВО: фільтруємо тут лише
@@ -2703,18 +2724,57 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-render_kpi_grid([
-    {"title": "Заходів", "count": total_active, "percent": "100.0%", "color": "kpi-blue"},
-    {"title": "Виконано", "count": completed_count, "percent": pct_value(completed_count, total_active), "color": "kpi-green"},
-    {"title": "Погоджено", "count": approved_requests_count, "percent": pct_value(approved_requests_count, total_active), "color": "kpi-green"},
-    {"title": "На розгляді", "count": review_count, "percent": pct_value(review_count, total_active), "color": "kpi-yellow"},
-    {"title": "Не враховано", "count": not_counted_count, "percent": pct_value(not_counted_count, total_active), "color": "kpi-red"},
-    {"title": "Не виконано", "count": not_done_count, "percent": pct_value(not_done_count, total_active), "color": "kpi-red"},
-    {"title": "Втратило актуальність", "count": obsolete_count, "percent": pct_value(obsolete_count, total_active), "color": "kpi-gray"},
-    {"title": "Не настав час", "count": not_time_count, "percent": pct_value(not_time_count, total_active), "color": "kpi-gray"},
-    {"title": "Частково виконано", "count": partly_count, "percent": pct_value(partly_count, total_active), "color": "kpi-yellow"},
-    {"title": "Виконується", "count": in_progress_count, "percent": pct_value(in_progress_count, total_active), "color": "kpi-blue"},
-])
+_main_kpi_items = [
+    {"key": "all", "title": "Заходів", "count": total_active, "percent": "100.0%", "color": "kpi-blue"},
+    {"key": "completed", "title": "Виконано", "count": completed_count, "percent": pct_value(completed_count, total_active), "color": "kpi-green"},
+    {"key": "approved", "title": "Погоджено", "count": approved_requests_count, "percent": pct_value(approved_requests_count, total_active), "color": "kpi-green"},
+    {"key": "review", "title": "На розгляді", "count": review_count, "percent": pct_value(review_count, total_active), "color": "kpi-yellow"},
+    {"key": "not_counted", "title": "Не враховано", "count": not_counted_count, "percent": pct_value(not_counted_count, total_active), "color": "kpi-red"},
+    {"key": "not_done", "title": "Не виконано", "count": not_done_count, "percent": pct_value(not_done_count, total_active), "color": "kpi-red"},
+    {"key": "obsolete", "title": "Втратило актуальність", "count": obsolete_count, "percent": pct_value(obsolete_count, total_active), "color": "kpi-gray"},
+    {"key": "not_time", "title": "Не настав час", "count": not_time_count, "percent": pct_value(not_time_count, total_active), "color": "kpi-gray"},
+    {"key": "partly", "title": "Частково виконано", "count": partly_count, "percent": pct_value(partly_count, total_active), "color": "kpi-yellow"},
+    {"key": "in_progress", "title": "Виконується", "count": in_progress_count, "percent": pct_value(in_progress_count, total_active), "color": "kpi-blue"},
+]
+_selected_kpi = render_kpi_grid(_main_kpi_items, interactive=True, query_key="kpi")
+
+_period_state_series = (
+    active["period_state"]
+    if "period_state" in active.columns
+    else pd.Series([""] * len(active), index=active.index)
+)
+_kpi_detail_frames = {
+    "all": active.copy(),
+    "completed": active[active["status_display"] == "Виконано"].copy(),
+    "approved": active[active["status"] != "Не подано"].copy(),
+    "review": active.iloc[0:0].copy(),
+    "not_counted": active[active["status"] == "Не подано"].copy(),
+    "not_done": active[active["status_display"] == "Не виконано"].copy(),
+    "obsolete": active[active["status_display"] == "Втратило актуальність"].copy(),
+    "not_time": active[(active["status_display"] == "Не настав час") | (_period_state_series == "not_started")].copy(),
+    "partly": active[active["status_display"] == "Частково виконано"].copy(),
+    "in_progress": active[active["status_display"] == "Виконується"].copy(),
+}
+
+if _selected_kpi in _kpi_detail_frames:
+    _selected_item = next(item for item in _main_kpi_items if item["key"] == _selected_kpi)
+    _detail_frame = _kpi_detail_frames[_selected_kpi]
+    st.markdown(
+        '<div style="margin-top:16px;padding:16px 18px;background:#fff;border:1px solid #d8dee9;'
+        'border-radius:14px;"><div style="font-size:17px;font-weight:900;color:#0f172a;">'
+        f'Деталізація KPI: {_selected_item["title"]} '
+        '<span style="font-size:11px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;'
+        'border-radius:999px;padding:3px 8px;">тест</span></div>'
+        f'<div style="font-size:13px;color:#64748b;margin-top:4px;">На картці: {_selected_item["count"]}; '
+        f'у деталізації: {len(_detail_frame)}. Повторне натискання згортає блок.</div></div>',
+        unsafe_allow_html=True,
+    )
+    if len(_detail_frame) != int(_selected_item["count"]):
+        st.error("Кількість рядків деталізації не збігається з показником KPI.")
+    render_measure_rows_with_card_links(
+        _detail_frame,
+        key_prefix=f"dashboard_kpi_{_selected_kpi}",
+    )
 
 
 # ============================================================

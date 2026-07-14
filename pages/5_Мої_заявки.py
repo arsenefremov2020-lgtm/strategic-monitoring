@@ -11,6 +11,12 @@ from html import escape
 import re
 from core.page_setup import page_setup, render_footer
 from core.ui import render_request_timeline
+from core.stage4 import (
+    format_kyiv_datetime,
+    human_versions_table,
+    render_version_comparison,
+    style_status_columns,
+)
 from core.strategic_data import load_strat_matrix as core_load_strat_matrix
 from core import monitoring_data
 from core import notify_events
@@ -915,48 +921,37 @@ if versions_df.empty:
 else:
     latest_version = versions_df.sort_values("version_number", ascending=False).iloc[0]
 
+    _latest_numeric = clean(latest_version.get("numeric_value", ""))
+    _latest_textual = clean(latest_version.get("value_text", ""))
+    _latest_fact = _latest_numeric or _latest_textual or "—"
     st.markdown(f"""
     <div class="version-box">
         <div class="version-title">Остання збережена версія: №{display_text(latest_version.get("version_number", ""))}</div>
         <div class="version-text">
-            Створено: {display_text(latest_version.get("created_at", ""))}<br>
+            Створено: {format_kyiv_datetime(latest_version.get("created_at", ""))}<br>
             Ким створено: {display_text(latest_version.get("created_by", ""))}<br>
             Статус погодження: {display_text(latest_version.get("approval_status", ""))}<br>
             Статус виконання: {display_text(latest_version.get("status", ""))}<br>
-            Фактичне значення: {display_text(latest_version.get("numeric_value", ""))}
+            Фактичне значення: {display_text(_latest_fact)}
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    versions_show = versions_df.rename(columns={
-        "version_number": "Версія",
-        "created_at": "Дата створення версії",
-        "created_by": "Ким створено",
-        "approval_status": "Статус погодження",
-        "status": "Статус виконання",
-        "numeric_value": "Фактичне значення",
-        "progress_text": "Опис прогресу",
-        "risks": "Ризики / проблеми"
-    })
-
-    cols = [
-        "Версія",
-        "Дата створення версії",
-        "Ким створено",
-        "Статус погодження",
-        "Статус виконання",
-        "Фактичне значення",
-        "Опис прогресу",
-        "Ризики / проблеми"
-    ]
-
-    available = [c for c in cols if c in versions_show.columns]
-
+    versions_show = human_versions_table(versions_df)
     st.dataframe(
-        versions_show[available],
+        style_status_columns(
+            versions_show,
+            ["Статус погодження", "Статус виконання"],
+        ),
         use_container_width=True,
-        hide_index=True
+        hide_index=True,
     )
+
+    with st.expander("Порівняти дві версії заявки", expanded=False):
+        render_version_comparison(
+            versions_df,
+            key_prefix=f"my_requests_versions_{selected_id}",
+        )
 
 st.markdown('</div>', unsafe_allow_html=True)
 

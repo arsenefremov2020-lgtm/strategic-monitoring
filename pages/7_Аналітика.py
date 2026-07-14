@@ -6,7 +6,7 @@ from html import escape
 import pandas as pd
 import plotly.express as px
 import streamlit as st
-from core.db import get_supabase_client
+from core.db import fetch_all, get_supabase_client
 from core.deputies import DEPUTY_MINISTER_BY_SSP
 from core.ui import load_css
 from core.config import FILE_PATH, SHEET_NAME
@@ -25,6 +25,12 @@ from core import monitoring_data
 from core import statuses as core_statuses
 from core import operational
 from core.errors import show_warning
+from core.stage4 import (
+    build_approval_speed_analytics,
+    build_return_analytics,
+    data_read_caption,
+    kyiv_now,
+)
 
 
 # ============================================================
@@ -507,6 +513,11 @@ def load_requests():
     """ЄДИНЕ джерело — core.monitoring_data (правки К2, П2).
     Аналітика стосується ЗАХОДІВ — подання індикаторів відфільтровуються."""
     return monitoring_data.measures_only(monitoring_data.load_monitoring_requests())
+
+
+def load_workflow_logs():
+    """Повний журнал для тестової аналітики повернень і швидкості."""
+    return pd.DataFrame(fetch_all("monitoring_logs", "*", order=("changed_at", False)))
 
 
 def ensure_request_columns(requests_df):
@@ -1291,6 +1302,9 @@ st.markdown(
 
 strat_df = load_strat_matrix()
 requests_df = ensure_request_columns(load_requests())
+workflow_logs = load_workflow_logs()
+analytics_read_at = kyiv_now()
+st.caption(data_read_caption(analytics_read_at))
 
 analytics_data_mode = st.radio(
     "Джерело даних для аналітики",
@@ -1754,6 +1768,114 @@ with g6:
         st.plotly_chart(fig, use_container_width=True)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ============================================================
+# WORKFLOW ANALYTICS — TEST MODE
+# ============================================================
+
+_active_codes = set(active["code"].astype(str).str.strip().tolist()) if "code" in active.columns else set()
+workflow_requests = period_requests.copy()
+if not workflow_requests.empty and _active_codes:
+    workflow_requests = workflow_requests[
+        workflow_requests["strat_code"].astype(str).str.strip().isin(_active_codes)
+    ].copy()
+return_analytics = build_return_analytics(workflow_logs, workflow_requests)
+approval_speed = build_approval_speed_analytics(
+    workflow_logs,
+    workflow_requests,
+    now=analytics_read_at,
+)
+
+st.markdown(
+    '<div class="card"><div class="card-title">Аналіз повернень на доопрацювання '
+    '<span style="font-size:11px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;'
+    'border-radius:999px;padding:3px 8px;">тест</span></div>'
+    '<div class="card-subtitle">Розрахунок виконується за журналом дій і поточним аналітичним зрізом.</div>',
+    unsafe_allow_html=True,
+)
+_ret_c1, _ret_c2 = st.columns(2)
+with _ret_c1:
+    st.metric("Кількість повернень", return_analytics["total_returns"])
+with _ret_c2:
+    st.metric(
+        "Середня кількість повернень на одну заявку",
+        return_analytics["average_per_request"],
+        help="Кількість подій повернення, поділена на кількість заявок у поточному зрізі.",
+    )
+
+_ret_left, _ret_right = st.columns(2)
+with _ret_left:
+    _ret_dep = return_analytics["by_department"]
+    if _ret_dep.empty:
+        st.info("У поточному зрізі повернень не зафіксовано.")
+    else:
+        _ret_dep_fig = px.bar(
+            _ret_dep,
+            x="ССП",
+            y="Кількість повернень",
+            text="Кількість повернень",
+            title="Рейтинг ССП за кількістю повернень",
+        )
+        st.plotly_chart(_ret_dep_fig, use_container_width=True)
+with _ret_right:
+    _ret_stage = return_analytics["by_stage"]
+    if not _ret_stage.empty:
+        _ret_stage_fig = px.bar(
+            _ret_stage,
+            x="Ланка, що повернула",
+            y="Кількість повернень",
+            text="Кількість повернень",
+            title="Розподіл за ланками, які повертають",
+        )
+        st.plotly_chart(_ret_stage_fig, use_container_width=True)
+
+st.markdown("**Заявки з найбільшою кількістю повернень**")
+_top_returned = return_analytics["top_requests"]
+if _top_returned.empty:
+    st.info("Заявок із поверненнями у поточному зрізі немає.")
+else:
+    st.dataframe(_top_returned.head(20), use_container_width=True, hide_index=True)
+st.markdown('</div>', unsafe_allow_html=True)
+
+st.markdown(
+    '<div class="card"><div class="card-title">Швидкість погодження '
+    '<span style="font-size:11px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;'
+    'border-radius:999px;padding:3px 8px;">тест</span></div>'
+    '<div class="card-subtitle">Час розраховано за датою подання і послідовністю подій у журналі.</div>',
+    unsafe_allow_html=True,
+)
+_speed_c1, _speed_c2 = st.columns(2)
+with _speed_c1:
+    st.metric(
+        "Середній час від подання до фінального погодження",
+        f"{approval_speed['average_total_days']} дн.",
+    )
+with _speed_c2:
+    st.metric("Фінально погоджених заявок у розрахунку", approval_speed["completed_requests"])
+
+_speed_left, _speed_right = st.columns(2)
+with _speed_left:
+    st.markdown("**Середній час на кожній ланці**")
+    if approval_speed["stage_average"].empty:
+        st.info("Для розрахунку часу на ланках недостатньо завершених переходів.")
+    else:
+        st.dataframe(
+            approval_speed["stage_average"],
+            use_container_width=True,
+            hide_index=True,
+        )
+with _speed_right:
+    st.markdown("**Заявки, що зараз очікують найдовше**")
+    if approval_speed["hanging"].empty:
+        st.info("У поточному зрізі немає заявок на активних ланках погодження.")
+    else:
+        st.dataframe(
+            approval_speed["hanging"].head(20),
+            use_container_width=True,
+            hide_index=True,
+        )
+st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ============================================================

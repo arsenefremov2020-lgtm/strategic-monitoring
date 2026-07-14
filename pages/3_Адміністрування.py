@@ -11,7 +11,7 @@ from core.data_types import (
 )
 from core.db import fetch_all, get_supabase_client
 from core.errors import log_cosmetic_error, show_incident, show_warning
-from core.ui import load_css, render_request_timeline
+from core.ui import load_css, render_human_log_table, render_request_timeline
 from core.notifications import render_notifications_panel
 from core.config import FILE_PATH, SHEET_NAME
 from core.excel_loader import read_excel_sheet
@@ -3265,20 +3265,9 @@ else:
             _progress = [clean(selected_row.get("progress_text", ""))] * len(show_logs)
         show_logs["Фактичне значення"] = _facts
         show_logs["Опис прогресу"] = _progress
-        show_logs = show_logs.rename(columns={
-            "changed_at":    "Дата зміни",
-            "action":        "Дія",
-            "old_status":    "Попередній статус",
-            "new_status":    "Новий статус",
-            "admin_comment": "Коментар адміністратора",
-            "changed_by":    "Ким змінено"
-        })
-        show_cols = ["Дата зміни","Дія","Попередній статус",
-                     "Новий статус","Фактичне значення","Опис прогресу",
-                     "Коментар адміністратора","Ким змінено"]
-        st.dataframe(
-            show_logs[[c for c in show_cols if c in show_logs.columns]],
-            use_container_width=True, hide_index=True
+        render_human_log_table(
+            show_logs,
+            extra_columns=["Фактичне значення", "Опис прогресу"],
         )
 
 st.markdown('</div>', unsafe_allow_html=True)

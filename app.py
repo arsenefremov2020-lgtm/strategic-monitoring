@@ -9,7 +9,7 @@ import streamlit as st
 from core.db import get_supabase_client
 from core.errors import log_cosmetic_error
 from core.deputies import DEPUTY_MINISTER_BY_SSP
-from core.config import FILE_PATH, SHEET_NAME
+from core.config import FILE_PATH, SHEET_NAME, ANNOUNCEMENT
 from core.excel_loader import read_excel_sheet
 from core.page_setup import page_setup, render_footer
 from core.text_utils import (
@@ -1777,6 +1777,9 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+
+if str(ANNOUNCEMENT or "").strip():
+    st.warning(str(ANNOUNCEMENT).strip(), icon="📢")
 
 st.markdown(
     """

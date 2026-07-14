@@ -9,3 +9,4 @@ XlsxWriter==3.2.9
 streamlit-aggrid==1.0.5
 kaleido==0.2.1
 reportlab==4.4.9
+extra-streamlit-components==0.1.81

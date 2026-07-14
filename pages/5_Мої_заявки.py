@@ -17,7 +17,23 @@ from core import notify_events
 from core.statuses import SUBMISSION_STATUS_OPTIONS
 
 from core import approval_schemes as schemes
-from core.transitions import TransitionRejected, withdraw_request as atomic_withdraw_request
+from core.transitions import (
+    TransitionRejected,
+    resubmit_request,
+    withdraw_request as atomic_withdraw_request,
+)
+from core.drafts import (
+    clear_draft_recovery,
+    editor_generation,
+    forget_draft_state,
+    load_drafts_for_keys,
+    make_draft_key,
+    queue_draft,
+    render_draft_autosave_worker,
+    render_draft_recovery,
+    save_draft_now,
+)
+from core.submission_ui import render_submission_notice, set_submission_notice
 from core.access import (
     filter_requests_for_user,
     get_available_ssp_options_for_user,
@@ -437,14 +453,24 @@ def write_log(request_id, action, old_status, new_status, admin_comment):
     }).execute()
 
 
+def _apply_widget_draft_once(context_key, content, mapping):
+    marker_key = f"draft_widgets_applied::{context_key}"
+    if not content or st.session_state.get(marker_key):
+        return
+    for content_key, widget_key in mapping.items():
+        if content_key in content:
+            st.session_state[widget_key] = content[content_key]
+    st.session_state[marker_key] = True
+
+
+def _clear_widget_draft_marker(context_key):
+    st.session_state.pop(f"draft_widgets_applied::{context_key}", None)
+
+
 # Спільна логіка версіювання винесена в core/versioning.py (пункт 3 ТЗ:
 # та сама логіка тепер потрібна і в 1_Мій_кабінет.py, і в
 # 3_Адміністрування.py для коригування супер-адміном закритих заявок).
-from core.versioning import (
-    get_next_version_number,
-    save_request_version,
-    load_versions,
-)
+from core.versioning import coordinator_stage_index, load_versions
 
 
 # ============================================================
@@ -487,6 +513,8 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+render_submission_notice()
+
 if df.empty:
     st.warning("Поки що немає поданих відомостей.")
     st.stop()
@@ -495,7 +523,7 @@ required_cols = [
     "id", "year", "quarter", "department", "responsible_person", "phone", "email",
     "strat_code", "status", "progress_text", "numeric_value", "risks",
     "submitted_at", "approval_status", "admin_comment", "file_names", "file_urls",
-    "start_date", "end_date"
+    "start_date", "end_date", "updated_at"
 ]
 
 for col in required_cols:
@@ -975,6 +1003,42 @@ if (
             "звичайним маршрутом схеми погодження."
         )
 
+        _de_chain = schemes.parse_chain(selected_row.get("approval_chain"))
+        _de_coord_idx = (
+            min(coordinator_stage_index(_de_chain), _request_stage_idx)
+            if _de_chain else 0
+        )
+        _de_draft_context = f"direct_edit::{selected_id}"
+        _de_draft_key = make_draft_key(
+            clean(selected_row.get("object_kind")) or "measure",
+            selected_row.get("strat_code"), selected_row.get("year"),
+            selected_row.get("quarter"), mode="direct_edit", request_id=int(selected_id),
+        )
+        _de_draft_rows = load_drafts_for_keys(
+            clean(current_user.get("email")), [_de_draft_key]
+        )
+        _de_restored_map = render_draft_recovery(
+            context_key=_de_draft_context,
+            user_email=clean(current_user.get("email")),
+            draft_rows=_de_draft_rows,
+        )
+        _de_restored = _de_restored_map.get(_de_draft_key, {})
+
+        _de_generation = editor_generation(_de_draft_context)
+        _de_status_key = f"direct_edit_status_{selected_id}_{_de_generation}"
+        _de_value_key = f"direct_edit_value_{selected_id}_{_de_generation}"
+        _de_progress_key = f"direct_edit_progress_{selected_id}_{_de_generation}"
+        _de_risks_key = f"direct_edit_risks_{selected_id}_{_de_generation}"
+        _apply_widget_draft_once(
+            _de_draft_context, _de_restored,
+            {
+                "status": _de_status_key,
+                "numeric_value": _de_value_key,
+                "progress_text": _de_progress_key,
+                "risks": _de_risks_key,
+            },
+        )
+
         _de_status_options = list(SUBMISSION_STATUS_OPTIONS)
         _de_current_status = clean(selected_row["status"])
         _de_status_index = (
@@ -984,20 +1048,38 @@ if (
 
         de_new_status = st.selectbox(
             "Статус виконання", _de_status_options, index=_de_status_index,
-            key=f"direct_edit_status_{selected_id}",
+            key=_de_status_key,
         )
         de_new_value = st.text_input(
             "Фактичне значення", value=clean(selected_row["numeric_value"]),
-            key=f"direct_edit_value_{selected_id}",
+            key=_de_value_key,
         )
         de_new_progress = st.text_area(
             "Опис прогресу", value=clean(selected_row["progress_text"]),
-            height=120, key=f"direct_edit_progress_{selected_id}",
+            height=120, key=_de_progress_key,
         )
         de_new_risks = st.text_area(
             "Ризики / проблеми / відхилення", value=clean(selected_row["risks"]),
-            height=120, key=f"direct_edit_risks_{selected_id}",
+            height=120, key=_de_risks_key,
         )
+
+        _de_draft_content = {
+            "status": de_new_status,
+            "numeric_value": de_new_value,
+            "progress_text": de_new_progress,
+            "risks": de_new_risks,
+        }
+        _de_has_changes = (
+            de_new_status != clean(selected_row.get("status"))
+            or clean(de_new_value) != clean(selected_row.get("numeric_value"))
+            or clean(de_new_progress) != clean(selected_row.get("progress_text"))
+            or clean(de_new_risks) != clean(selected_row.get("risks"))
+        )
+        if (not _de_draft_rows or _de_restored_map) and (_de_has_changes or _de_restored_map):
+            queue_draft(
+                clean(current_user.get("email")), _de_draft_key, _de_draft_content
+            )
+        render_draft_autosave_worker()
 
         de_submit = st.button(
             "💾 Зберегти й надіслати координатору",
@@ -1013,86 +1095,100 @@ if (
                 de_errors.append("Заповніть опис прогресу.")
 
             if de_errors:
-                for e in de_errors:
-                    st.error(e)
-                st.stop()
-
-            try:
-                _de_old_data = selected_row.to_dict()
-                _de_old_version = save_request_version(
-                    selected_id, _de_old_data, created_by="ССП / до редагування"
-                )
-
-                _de_chain = schemes.parse_chain(selected_row.get("approval_chain"))
-                if _de_chain:
-                    from core.versioning import coordinator_stage_index
-                    # Якщо заявка ще НЕ дійшла до координатора (перша ланка —
-                    # інша), редагування не «перестрибує» чергу: заявка
-                    # залишається на поточній (першій) ланці. Якщо ж перша
-                    # ланка — координатор, вона й отримує заявку повторно.
-                    _de_coord_idx = min(
-                        coordinator_stage_index(_de_chain), _request_stage_idx
-                    )
-                    _de_new_status = schemes.waiting_status_for_stage(_de_chain[_de_coord_idx])
-                else:
-                    _de_coord_idx = 0
-                    _de_new_status = "Очікує погодження"
-
-                _de_update = {
+                for error in de_errors:
+                    st.error(error)
+            else:
+                update_payload = prepare_monitoring_payload({
                     "status": de_new_status,
                     "numeric_value": de_new_value,
                     "progress_text": de_new_progress,
                     "risks": de_new_risks,
-                    "approval_status": _de_new_status,
-                    "chain_stage": int(_de_coord_idx),
                     "submitted_at": datetime.now(timezone.utc).isoformat(),
                     "admin_comment": "",
-                }
+                    "log_comment": (
+                        "Відредаговано без повернення на доопрацювання; "
+                        "надіслано координатору повторно."
+                    ),
+                })
+                try:
+                    result = resubmit_request(
+                        request_id=int(selected_id),
+                        expected_updated_at=clean(selected_row.get("updated_at")),
+                        expected_status=approval,
+                        expected_chain_stage=int(_request_stage_idx),
+                        target_chain_stage=int(_de_coord_idx),
+                        payload=update_payload,
+                        mode="stage_edit",
+                        action="Пряме редагування поданих даних",
+                        user=current_user,
+                        created_by_before="ССП / до прямого редагування",
+                        created_by_after="ССП / пряме редагування",
+                        draft_email=clean(current_user.get("email")),
+                        draft_key=_de_draft_key,
+                    )
+                    forget_draft_state([_de_draft_key])
 
-                supabase.table("monitoring_requests").update(prepare_monitoring_payload(_de_update)).eq(
-                    "id", int(selected_id)
-                ).execute()
+                    if _de_chain:
+                        _de_coord_stage = _de_chain[_de_coord_idx]
+                        try:
+                            notify_events.notify_stage_assigned(
+                                _de_coord_stage.get("email", ""),
+                                _de_coord_stage.get("name", ""),
+                                _de_coord_stage.get("label", ""),
+                                clean(selected_row.get("strat_code", "")),
+                                clean(selected_row.get("year", "")),
+                                clean(selected_row.get("quarter", "")),
+                                submitter=clean(selected_row.get("responsible_person", "")),
+                                kind=clean(selected_row.get("object_kind", "")) or "measure",
+                            )
+                        except Exception as notify_exc:
+                            show_warning(
+                                "Зміни збережено, але координатору не відправлено миттєвий лист.",
+                                notify_exc,
+                                "Email після прямого редагування подавачем",
+                            )
 
-                if _de_chain:
-                    _de_coord_stage = _de_chain[_de_coord_idx]
+                    clear_draft_recovery(_de_draft_context)
+                    _clear_widget_draft_marker(_de_draft_context)
+                    set_submission_notice(
+                        first_stage_label=(
+                            result.data.get("first_stage_label")
+                            or (_de_chain[_de_coord_idx].get("label") if _de_chain else "Координатор")
+                        ),
+                        codes=[clean(selected_row.get("strat_code"))],
+                        repeated=True,
+                    )
+                    monitoring_data.invalidate_monitoring_cache()
+                    st.rerun()
+                except TransitionRejected as exc:
+                    if exc.code in {"concurrent_change", "state_changed"}:
+                        try:
+                            save_draft_now(
+                                clean(current_user.get("email")),
+                                _de_draft_key,
+                                _de_draft_content,
+                            )
+                        except Exception as draft_exc:
+                            show_warning(
+                                "Чернетку змін не вдалося зберегти.",
+                                draft_exc,
+                                "Чернетка після конфлікту прямого редагування",
+                            )
+                    st.error(exc.message)
+                except Exception as exc:
                     try:
-                        notify_events.notify_stage_assigned(
-                            _de_coord_stage.get("email", ""), _de_coord_stage.get("name", ""),
-                            _de_coord_stage.get("label", ""),
-                            clean(selected_row.get("strat_code", "")),
-                            clean(selected_row.get("year", "")),
-                            clean(selected_row.get("quarter", "")),
-                            submitter=clean(selected_row.get("responsible_person", "")),
-                            kind=clean(selected_row.get("object_kind", "")) or "measure",
+                        save_draft_now(
+                            clean(current_user.get("email")),
+                            _de_draft_key,
+                            _de_draft_content,
                         )
-                    except Exception as notify_exc:
+                    except Exception as draft_exc:
                         show_warning(
-                            "Зміни збережено, але координатору не відправлено миттєвий лист.",
-                            notify_exc,
-                            "Email після прямого редагування подавачем",
+                            "Чернетку змін не вдалося зберегти.",
+                            draft_exc,
+                            "Чернетка після помилки прямого редагування",
                         )
-
-                _de_new_version_data = selected_row.to_dict()
-                _de_new_version_data.update(_de_update)
-                _de_new_version = save_request_version(
-                    selected_id, _de_new_version_data, created_by="ССП / пряме редагування"
-                )
-
-                write_log(
-                    selected_id,
-                    f"Пряме редагування поданих даних: версія {_de_old_version} → {_de_new_version}",
-                    approval, _de_new_status,
-                    "Відредаговано без повернення на доопрацювання; надіслано координатору повторно.",
-                )
-
-                st.success(
-                    "Зміни збережено. Заявку повторно надіслано координатору на розгляд."
-                )
-                monitoring_data.invalidate_monitoring_cache()
-                st.rerun()
-            except Exception as exc:
-                show_incident(exc, context="Пряме редагування заявки подавачем")
-
+                    show_incident(exc, context="Атомарне пряме редагування заявки подавачем")
 # ============================================================
 # ВІДКЛИКАННЯ ЗАЯВКИ (ТЗ 8.18–8.19 / 15.12)
 # ============================================================
@@ -1165,120 +1261,134 @@ if approval == "Повернуто на доопрацювання":
         unsafe_allow_html=True
     )
 
-    # ЄДИНА шкала статусів моделі «Оцінка МіО» (правка П5)
-    status_options = list(SUBMISSION_STATUS_OPTIONS)
+    _resubmit_chain = schemes.parse_chain(selected_row.get("approval_chain"))
+    _resubmit_draft_context = f"resubmit::{selected_id}"
+    _resubmit_draft_key = make_draft_key(
+        clean(selected_row.get("object_kind")) or "measure",
+        selected_row.get("strat_code"), selected_row.get("year"),
+        selected_row.get("quarter"), mode="resubmit", request_id=int(selected_id),
+    )
+    _resubmit_draft_rows = load_drafts_for_keys(
+        clean(current_user.get("email")), [_resubmit_draft_key]
+    )
+    _resubmit_restored_map = render_draft_recovery(
+        context_key=_resubmit_draft_context,
+        user_email=clean(current_user.get("email")),
+        draft_rows=_resubmit_draft_rows,
+    )
+    _resubmit_restored = _resubmit_restored_map.get(_resubmit_draft_key, {})
 
+    _resubmit_generation = editor_generation(_resubmit_draft_context)
+    _resubmit_widget_keys = {
+        "status": f"edit_status_{selected_id}_{_resubmit_generation}",
+        "numeric_value": f"edit_value_{selected_id}_{_resubmit_generation}",
+        "progress_text": f"edit_progress_{selected_id}_{_resubmit_generation}",
+        "risks": f"edit_risks_{selected_id}_{_resubmit_generation}",
+        "responsible_person": f"edit_responsible_{selected_id}_{_resubmit_generation}",
+        "phone": f"edit_phone_{selected_id}_{_resubmit_generation}",
+        "email": f"edit_email_{selected_id}_{_resubmit_generation}",
+    }
+    _apply_widget_draft_once(
+        _resubmit_draft_context, _resubmit_restored, _resubmit_widget_keys
+    )
+
+    status_options = list(SUBMISSION_STATUS_OPTIONS)
     current_status = clean(selected_row["status"])
     default_status_index = status_options.index(current_status) if current_status in status_options else 0
 
     new_status = st.selectbox(
-        "Статус виконання",
-        status_options,
-        index=default_status_index,
-        key=f"edit_status_{selected_id}"
+        "Статус виконання", status_options, index=default_status_index,
+        key=_resubmit_widget_keys["status"]
     )
-
     new_value = st.text_input(
-        "Фактичне значення",
-        value=clean(selected_row["numeric_value"]),
-        key=f"edit_value_{selected_id}"
+        "Фактичне значення", value=clean(selected_row["numeric_value"]),
+        key=_resubmit_widget_keys["numeric_value"]
     )
-
     new_progress = st.text_area(
-        "Опис прогресу",
-        value=clean(selected_row["progress_text"]),
-        height=140,
-        key=f"edit_progress_{selected_id}"
+        "Опис прогресу", value=clean(selected_row["progress_text"]), height=140,
+        key=_resubmit_widget_keys["progress_text"]
     )
-
     new_risks = st.text_area(
-        "Ризики / проблеми / відхилення",
-        value=clean(selected_row["risks"]),
-        height=140,
-        key=f"edit_risks_{selected_id}"
+        "Ризики / проблеми / відхилення", value=clean(selected_row["risks"]), height=140,
+        key=_resubmit_widget_keys["risks"]
     )
 
     e1, e2, e3 = st.columns(3)
-
     with e1:
         new_responsible = st.text_input(
             "ПІБ відповідальної особи",
             value=prefilled_contacts.get("full_name") or clean(selected_row["responsible_person"]),
-            key=f"edit_responsible_{selected_id}",
-            disabled=True,
+            key=_resubmit_widget_keys["responsible_person"], disabled=True,
         )
-
     with e2:
         new_phone = st.text_input(
-            "Телефон",
-            value=prefilled_contacts.get("phone") or clean(selected_row["phone"]),
-            key=f"edit_phone_{selected_id}",
-            disabled=True,
+            "Телефон", value=prefilled_contacts.get("phone") or clean(selected_row["phone"]),
+            key=_resubmit_widget_keys["phone"], disabled=True,
         )
-
     with e3:
         new_email = st.text_input(
-            "Email",
-            value=prefilled_contacts.get("email") or clean(selected_row["email"]),
-            key=f"edit_email_{selected_id}",
-            disabled=True,
+            "Email", value=prefilled_contacts.get("email") or clean(selected_row["email"]),
+            key=_resubmit_widget_keys["email"], disabled=True,
         )
 
+    _resubmit_draft_content = {
+        "status": new_status,
+        "numeric_value": new_value,
+        "progress_text": new_progress,
+        "risks": new_risks,
+        "responsible_person": new_responsible,
+        "phone": new_phone,
+        "email": new_email,
+    }
+    _resubmit_has_changes = (
+        new_status != clean(selected_row.get("status"))
+        or clean(new_value) != clean(selected_row.get("numeric_value"))
+        or clean(new_progress) != clean(selected_row.get("progress_text"))
+        or clean(new_risks) != clean(selected_row.get("risks"))
+        or clean(new_responsible) != clean(selected_row.get("responsible_person"))
+        or clean(new_phone) != clean(selected_row.get("phone"))
+        or clean(new_email).lower() != clean(selected_row.get("email")).lower()
+    )
+    if (not _resubmit_draft_rows or _resubmit_restored_map) and (
+        _resubmit_has_changes or _resubmit_restored_map
+    ):
+        queue_draft(
+            clean(current_user.get("email")),
+            _resubmit_draft_key,
+            _resubmit_draft_content,
+        )
+    render_draft_autosave_worker()
+
     resubmit = st.button(
-        "Повторно подати на погодження",
-        use_container_width=True,
+        "Повторно подати на погодження", use_container_width=True,
         key=f"resubmit_{selected_id}"
     )
 
     if resubmit:
         errors = []
-
         if not has_value(new_value):
             errors.append("Заповніть фактичне значення.")
-
         if not has_value(new_progress):
             errors.append("Заповніть опис прогресу.")
-
         if not has_value(new_responsible):
             errors.append("Заповніть ПІБ відповідальної особи.")
-
         if not has_value(new_phone):
             errors.append("Заповніть телефон.")
-
         if not has_value(new_email):
             errors.append("Заповніть email.")
         elif not valid_email(new_email):
             errors.append("Email має некоректний формат.")
 
         normalize_value = str(new_value).strip().lower()
-
         if new_status == "Виконано" and normalize_value in ["0", "ні", "нi", "no"]:
             errors.append("Статус «Виконано» не узгоджується з фактичним значенням 0 / ні.")
 
         if errors:
             st.error("Повторне подання не виконано:")
-            for e in errors:
-                st.error(e)
-            st.stop()
-
-        try:
-            old_version_data = selected_row.to_dict()
-            old_version_number = save_request_version(
-                selected_id,
-                old_version_data,
-                created_by="ССП / до редагування"
-            )
-
-            # П3: статус першої ланки БЕРЕТЬСЯ ЗІ СХЕМИ заявки, а не жорстко
-            # «Очікує погодження» (інакше для схем, де перша ланка не
-            # координатор, заявка «зависала» — її не бачив жоден кабінет).
-            _resubmit_chain = schemes.parse_chain(selected_row.get("approval_chain"))
-            if _resubmit_chain:
-                _first_status = schemes.waiting_status_for_stage(_resubmit_chain[0])
-            else:
-                _first_status = "Очікує погодження"
-
-            update_payload = {
+            for error in errors:
+                st.error(error)
+        else:
+            update_payload = prepare_monitoring_payload({
                 "status": new_status,
                 "numeric_value": new_value,
                 "progress_text": new_progress,
@@ -1286,61 +1396,90 @@ if approval == "Повернуто на доопрацювання":
                 "responsible_person": new_responsible,
                 "phone": new_phone,
                 "email": new_email,
-                "approval_status": _first_status,
-                "chain_stage": 0,
-                # П4: єдиний стандарт часу — UTC
                 "submitted_at": datetime.now(timezone.utc).isoformat(),
-                "admin_comment": ""
-            }
-
-            supabase.table("monitoring_requests").update(prepare_monitoring_payload(update_payload)).eq("id", int(selected_id)).execute()
-
-            # Миттєве сповіщення першій ланці (як при первинному поданні)
+                "admin_comment": "",
+                "log_comment": "Заявку повторно подано ССП",
+            })
             try:
-                if _resubmit_chain:
-                    _first = _resubmit_chain[0]
-                    notify_events.notify_stage_assigned(
-                        _first.get("email", ""), _first.get("name", ""),
-                        _first.get("label", ""),
-                        clean(selected_row.get("strat_code", "")),
-                        clean(selected_row.get("year", "")),
-                        clean(selected_row.get("quarter", "")),
-                        submitter=clean(new_responsible),
-                        kind=clean(selected_row.get("object_kind", "")) or "measure",
-                    )
-            except Exception as notify_exc:
-                show_warning(
-                    "Заявку повторно подано, але першій ланці не відправлено миттєвий лист.",
-                    notify_exc,
-                    "Email після повторного подання заявки",
+                result = resubmit_request(
+                    request_id=int(selected_id),
+                    expected_updated_at=clean(selected_row.get("updated_at")),
+                    expected_status="Повернуто на доопрацювання",
+                    expected_chain_stage=int(_request_stage_idx),
+                    target_chain_stage=0,
+                    payload=update_payload,
+                    mode="returned",
+                    action="Повторне подання після доопрацювання",
+                    user=current_user,
+                    created_by_before="ССП / до повторного подання",
+                    created_by_after="ССП / повторне подання",
+                    draft_email=clean(current_user.get("email")),
+                    draft_key=_resubmit_draft_key,
                 )
+                forget_draft_state([_resubmit_draft_key])
 
-            new_version_data = selected_row.to_dict()
-            new_version_data.update(update_payload)
+                try:
+                    if _resubmit_chain:
+                        _first = _resubmit_chain[0]
+                        notify_events.notify_stage_assigned(
+                            _first.get("email", ""), _first.get("name", ""),
+                            _first.get("label", ""),
+                            clean(selected_row.get("strat_code", "")),
+                            clean(selected_row.get("year", "")),
+                            clean(selected_row.get("quarter", "")),
+                            submitter=clean(new_responsible),
+                            kind=clean(selected_row.get("object_kind", "")) or "measure",
+                        )
+                except Exception as notify_exc:
+                    show_warning(
+                        "Заявку повторно подано, але першій ланці не відправлено миттєвий лист.",
+                        notify_exc,
+                        "Email після повторного подання заявки",
+                    )
 
-            new_version_number = save_request_version(
-                selected_id,
-                new_version_data,
-                created_by="ССП / повторне подання"
-            )
-
-            write_log(
-                selected_id,
-                f"Повторне подання після доопрацювання: версія {old_version_number} → {new_version_number}",
-                "Повернуто на доопрацювання",
-                _first_status,
-                "Заявку повторно подано ССП"
-            )
-
-            st.success("Заявку повторно подано на погодження. Попередню і нову версію збережено.")
-            monitoring_data.invalidate_monitoring_cache()
-            st.rerun()
-
-        except Exception as exc:
-            show_incident(exc, context="Повторне подання заявки після доопрацювання")
+                clear_draft_recovery(_resubmit_draft_context)
+                _clear_widget_draft_marker(_resubmit_draft_context)
+                set_submission_notice(
+                    first_stage_label=(
+                        result.data.get("first_stage_label")
+                        or (_resubmit_chain[0].get("label") if _resubmit_chain else "Координатор")
+                    ),
+                    codes=[clean(selected_row.get("strat_code"))],
+                    repeated=True,
+                )
+                monitoring_data.invalidate_monitoring_cache()
+                st.rerun()
+            except TransitionRejected as exc:
+                if exc.code in {"concurrent_change", "state_changed"}:
+                    try:
+                        save_draft_now(
+                            clean(current_user.get("email")),
+                            _resubmit_draft_key,
+                            _resubmit_draft_content,
+                        )
+                    except Exception as draft_exc:
+                        show_warning(
+                            "Чернетку змін не вдалося зберегти.",
+                            draft_exc,
+                            "Чернетка після конфлікту повторного подання",
+                        )
+                st.error(exc.message)
+            except Exception as exc:
+                try:
+                    save_draft_now(
+                        clean(current_user.get("email")),
+                        _resubmit_draft_key,
+                        _resubmit_draft_content,
+                    )
+                except Exception as draft_exc:
+                    show_warning(
+                        "Чернетку змін не вдалося зберегти.",
+                        draft_exc,
+                        "Чернетка після помилки повторного подання",
+                    )
+                show_incident(exc, context="Атомарне повторне подання заявки після доопрацювання")
 
     st.markdown('</div>', unsafe_allow_html=True)
-
 else:
     st.markdown('<div class="card"><div class="card-title">Редагування недоступне</div>', unsafe_allow_html=True)
 

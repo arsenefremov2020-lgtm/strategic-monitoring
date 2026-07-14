@@ -14,12 +14,25 @@ from core.page_setup import page_setup, render_footer
 from core.strategic_data import load_strat_matrix as core_load_strat_matrix
 from core import monitoring_data
 from core.statuses import SUBMISSION_STATUS_OPTIONS
-from core.versioning import save_request_version, coordinator_stage_index
+from core.versioning import coordinator_stage_index
 from core.transitions import (
     TransitionRejected,
     approve_request_step,
+    resubmit_request,
     return_request as atomic_return_request,
 )
+from core.drafts import (
+    clear_draft_recovery,
+    editor_generation,
+    forget_draft_state,
+    load_drafts_for_keys,
+    make_draft_key,
+    queue_draft,
+    render_draft_autosave_worker,
+    render_draft_recovery,
+    save_draft_now,
+)
+from core.submission_ui import render_submission_notice, set_submission_notice
 
 from core.access import (
     filter_requests_for_user,
@@ -387,6 +400,20 @@ def write_log(request_id, action, old_status, new_status, comment, changed_by="�
 
 
 
+def _apply_widget_draft_once(context_key, content, mapping):
+    marker_key = f"draft_widgets_applied::{context_key}"
+    if not content or st.session_state.get(marker_key):
+        return
+    for content_key, widget_key in mapping.items():
+        if content_key in content:
+            st.session_state[widget_key] = content[content_key]
+    st.session_state[marker_key] = True
+
+
+def _clear_widget_draft_marker(context_key):
+    st.session_state.pop(f"draft_widgets_applied::{context_key}", None)
+
+
 # ============================================================
 # MAIN DATA
 # ============================================================
@@ -411,7 +438,7 @@ required_cols = [
     "id", "year", "quarter", "department", "responsible_person", "phone", "email",
     "strat_code", "status", "progress_text", "numeric_value", "risks",
     "submitted_at", "approval_status", "admin_comment", "file_names", "file_urls",
-    "start_date", "end_date"
+    "start_date", "end_date", "updated_at"
 ]
 for col in required_cols:
     if col not in df.columns:
@@ -452,6 +479,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
+render_submission_notice()
 render_notifications_panel(df, mode="cabinet")
 
 # ============================================================
@@ -1004,18 +1032,47 @@ if is_my_turn:
                 show_incident(exc, context="Атомарне повернення заявки у Мій кабінет")
 
     # ── Редагувати дані напряму (пункт 3 нового ТЗ) ──────────
-    # Замість того, щоб повертати заявку на доопрацювання (і чекати,
-    # доки подавач сам відредагує), ця ланка може виправити дані сама.
-    # Відредаговані дані завжди повертаються саме координатору —
-    # незалежно від того, на якій ланці зараз перебуває ланка, що
-    # редагує (координатор повторно перевіряє й далі заявка йде
-    # рештою маршруту як зазвичай).
+    # Ланка погодження може виправити звітні дані сама. В4 проводить
+    # оновлення, дві версії та журнал однією транзакцією, а В2 перевіряє
+    # updated_at всередині тієї самої функції бази.
     if not schemes.is_final_locked(selected_row):
         with st.expander(f"✏️ Редагувати дані заявки (від імені ланки «{_stage_label}»)"):
             st.caption(
                 "Використовуйте, якщо простіше виправити дані самостійно, ніж "
                 "повертати заявку відповідальній особі. Попередню версію буде "
                 "збережено в історії; заявка повернеться на розгляд координатору."
+            )
+
+            _cab_coord_idx = coordinator_stage_index(_chain) if _chain else 0
+            _cab_draft_context = f"stage_edit::{selected_id}::{_stage_idx}"
+            _cab_draft_key = make_draft_key(
+                clean(selected_row.get("object_kind")) or "measure",
+                selected_row.get("strat_code"), selected_row.get("year"),
+                selected_row.get("quarter"), mode="stage_edit", request_id=int(selected_id),
+            )
+            _cab_draft_rows = load_drafts_for_keys(
+                clean(current_user.get("email")), [_cab_draft_key]
+            )
+            _cab_restored_map = render_draft_recovery(
+                context_key=_cab_draft_context,
+                user_email=clean(current_user.get("email")),
+                draft_rows=_cab_draft_rows,
+            )
+            _cab_restored = _cab_restored_map.get(_cab_draft_key, {})
+
+            _cab_generation = editor_generation(_cab_draft_context)
+            _cab_status_key = f"cab_edit_status_{selected_id}_{_cab_generation}"
+            _cab_value_key = f"cab_edit_value_{selected_id}_{_cab_generation}"
+            _cab_progress_key = f"cab_edit_progress_{selected_id}_{_cab_generation}"
+            _cab_risks_key = f"cab_edit_risks_{selected_id}_{_cab_generation}"
+            _apply_widget_draft_once(
+                _cab_draft_context, _cab_restored,
+                {
+                    "status": _cab_status_key,
+                    "numeric_value": _cab_value_key,
+                    "progress_text": _cab_progress_key,
+                    "risks": _cab_risks_key,
+                },
             )
 
             _cab_status_options = list(SUBMISSION_STATUS_OPTIONS)
@@ -1027,20 +1084,40 @@ if is_my_turn:
 
             cab_new_status = st.selectbox(
                 "Статус виконання", _cab_status_options, index=_cab_status_index,
-                key=f"cab_edit_status_{selected_id}",
+                key=_cab_status_key,
             )
             cab_new_value = st.text_input(
                 "Фактичне значення", value=clean(selected_row["numeric_value"]),
-                key=f"cab_edit_value_{selected_id}",
+                key=_cab_value_key,
             )
             cab_new_progress = st.text_area(
                 "Опис прогресу", value=clean(selected_row["progress_text"]),
-                height=110, key=f"cab_edit_progress_{selected_id}",
+                height=110, key=_cab_progress_key,
             )
             cab_new_risks = st.text_area(
                 "Ризики / проблеми / відхилення", value=clean(selected_row["risks"]),
-                height=110, key=f"cab_edit_risks_{selected_id}",
+                height=110, key=_cab_risks_key,
             )
+
+            _cab_draft_content = {
+                "status": cab_new_status,
+                "numeric_value": cab_new_value,
+                "progress_text": cab_new_progress,
+                "risks": cab_new_risks,
+            }
+            _cab_has_changes = (
+                cab_new_status != clean(selected_row.get("status"))
+                or clean(cab_new_value) != clean(selected_row.get("numeric_value"))
+                or clean(cab_new_progress) != clean(selected_row.get("progress_text"))
+                or clean(cab_new_risks) != clean(selected_row.get("risks"))
+            )
+            if (not _cab_draft_rows or _cab_restored_map) and (
+                _cab_has_changes or _cab_restored_map
+            ):
+                queue_draft(
+                    clean(current_user.get("email")), _cab_draft_key, _cab_draft_content
+                )
+            render_draft_autosave_worker()
 
             cab_edit_submit = st.button(
                 "💾 Зберегти й надіслати координатору",
@@ -1052,40 +1129,46 @@ if is_my_turn:
                 if not has_value(cab_new_value) or not has_value(cab_new_progress):
                     st.error("Заповніть фактичне значення та опис прогресу.")
                 else:
+                    _cab_update = prepare_monitoring_payload({
+                        "status": cab_new_status,
+                        "numeric_value": cab_new_value,
+                        "progress_text": cab_new_progress,
+                        "risks": cab_new_risks,
+                        "admin_comment": "",
+                        "submitted_at": datetime.now(timezone.utc).isoformat(),
+                        "log_comment": (
+                            f"Відредаговано ланкою «{_stage_label}»; "
+                            "надіслано координатору повторно."
+                        ),
+                    })
                     try:
-                        _cab_old_version = save_request_version(
-                            selected_id, selected_row.to_dict(),
-                            created_by=f"{role_label} / до редагування",
+                        result = resubmit_request(
+                            request_id=int(selected_id),
+                            expected_updated_at=clean(selected_row.get("updated_at")),
+                            expected_status=approval,
+                            expected_chain_stage=int(_stage_idx),
+                            target_chain_stage=int(_cab_coord_idx),
+                            payload=_cab_update,
+                            mode="stage_edit",
+                            action=f"Редагування ланкою «{_stage_label}»",
+                            user=current_user,
+                            created_by_before=f"{role_label} / до редагування",
+                            created_by_after=f"{role_label} / редагування",
+                            draft_email=clean(current_user.get("email")),
+                            draft_key=_cab_draft_key,
                         )
-
-                        if _chain:
-                            _cab_coord_idx = coordinator_stage_index(_chain)
-                            _cab_new_status = schemes.waiting_status_for_stage(_chain[_cab_coord_idx])
-                        else:
-                            _cab_coord_idx = 0
-                            _cab_new_status = "Очікує погодження"
-
-                        _cab_update = {
-                            "status": cab_new_status,
-                            "numeric_value": cab_new_value,
-                            "progress_text": cab_new_progress,
-                            "risks": cab_new_risks,
-                            "approval_status": _cab_new_status,
-                            "chain_stage": int(_cab_coord_idx),
-                            "admin_comment": "",
-                        }
-
-                        supabase.table("monitoring_requests").update(prepare_monitoring_payload(_cab_update)).eq(
-                            "id", selected_id
-                        ).execute()
+                        forget_draft_state([_cab_draft_key])
 
                         if _chain:
                             _cab_coord_stage = _chain[_cab_coord_idx]
                             try:
                                 notify_events.notify_stage_assigned(
-                                    _cab_coord_stage.get("email", ""), _cab_coord_stage.get("name", ""),
+                                    _cab_coord_stage.get("email", ""),
+                                    _cab_coord_stage.get("name", ""),
                                     _cab_coord_stage.get("label", ""),
-                                    code, clean(selected_row.get("year", "")), clean(selected_row.get("quarter", "")),
+                                    code,
+                                    clean(selected_row.get("year", "")),
+                                    clean(selected_row.get("quarter", "")),
                                     submitter=clean(selected_row.get("responsible_person", "")),
                                     kind=clean(selected_row.get("object_kind", "")) or "measure",
                                 )
@@ -1096,30 +1179,47 @@ if is_my_turn:
                                     "Email після редагування ланкою погодження",
                                 )
 
-                        _cab_new_version_data = selected_row.to_dict()
-                        _cab_new_version_data.update(_cab_update)
-                        _cab_new_version = save_request_version(
-                            selected_id, _cab_new_version_data,
-                            created_by=f"{role_label} / редагування",
-                        )
-
-                        write_log(
-                            selected_id,
-                            f"Редагування ланкою «{_stage_label}»: версія "
-                            f"{_cab_old_version} → {_cab_new_version}",
-                            approval, _cab_new_status,
-                            "Відредаговано ланкою погодження; надіслано координатору повторно.",
-                            changed_by=role_label,
-                        )
-
-                        st.success(
-                            "Зміни збережено. Заявку повторно надіслано координатору на розгляд."
+                        clear_draft_recovery(_cab_draft_context)
+                        _clear_widget_draft_marker(_cab_draft_context)
+                        set_submission_notice(
+                            first_stage_label=(
+                                result.data.get("first_stage_label")
+                                or (_chain[_cab_coord_idx].get("label") if _chain else "Координатор")
+                            ),
+                            codes=[code],
+                            repeated=True,
                         )
                         monitoring_data.invalidate_monitoring_cache()
                         st.rerun()
+                    except TransitionRejected as exc:
+                        if exc.code in {"concurrent_change", "state_changed"}:
+                            try:
+                                save_draft_now(
+                                    clean(current_user.get("email")),
+                                    _cab_draft_key,
+                                    _cab_draft_content,
+                                )
+                            except Exception as draft_exc:
+                                show_warning(
+                                    "Чернетку змін не вдалося зберегти.",
+                                    draft_exc,
+                                    "Чернетка після конфлікту редагування ланкою",
+                                )
+                        st.error(exc.message)
                     except Exception as exc:
-                        show_incident(exc, context="Редагування заявки ланкою погодження")
-
+                        try:
+                            save_draft_now(
+                                clean(current_user.get("email")),
+                                _cab_draft_key,
+                                _cab_draft_content,
+                            )
+                        except Exception as draft_exc:
+                            show_warning(
+                                "Чернетку змін не вдалося зберегти.",
+                                draft_exc,
+                                "Чернетка після помилки редагування ланкою",
+                            )
+                        show_incident(exc, context="Атомарне редагування заявки ланкою погодження")
 else:
     st.markdown('<div class="card">', unsafe_allow_html=True)
     if approval == "Погоджено":

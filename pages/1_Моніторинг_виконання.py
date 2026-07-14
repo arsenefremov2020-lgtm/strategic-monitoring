@@ -4,7 +4,7 @@ from html import escape
 
 import pandas as pd
 import streamlit as st
-from core.data_types import prepare_monitoring_payload, quarter_to_db, year_to_db
+from core.data_types import prepare_monitoring_payload
 from core.db import get_supabase_client
 from core.deputies import DEPUTY_MINISTER_BY_SSP
 from core.ui import load_css
@@ -28,8 +28,20 @@ from core import approval_schemes as schemes
 from core import notify_events
 from core.validation import validate_fact_value, status_completion_warning, value_reaches_target
 from core.errors import show_incident, show_warning
-from core.audit import write_audit_log
 from core import periods as core_periods
+from core.drafts import (
+    clear_draft_recovery,
+    editor_generation,
+    forget_draft_state,
+    load_drafts_for_keys,
+    make_draft_key,
+    queue_draft,
+    render_draft_autosave_worker,
+    render_draft_recovery,
+    save_draft_now,
+)
+from core.submission_ui import render_submission_notice, set_submission_notice
+from core.transitions import TransitionRejected, submit_request
 
 # Спільна для обох таблиць (заходи + індикатори) висота видимої області
 # редактора (~2 рядки + шапка).
@@ -785,6 +797,11 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+render_submission_notice()
+_submit_warning = st.session_state.pop("monitoring_submit_warning", None)
+if _submit_warning:
+    st.warning(_submit_warning)
+
 prefilled_contacts = get_prefilled_user_contacts(current_user)
 contact_fields_disabled = should_prefill_contact_fields(current_user)
 
@@ -905,6 +922,71 @@ def render_scheme_picker(ssp_index, key_prefix):
     if chain:
         st.caption("Маршрут: " + schemes.chain_route_text(chain))
     return scheme_name, chain, ready
+
+
+
+def _draft_values(content):
+    if not isinstance(content, dict):
+        return {}
+    values = content.get("values")
+    return values if isinstance(values, dict) else content
+
+
+def _apply_restored_table_values(frame, restored_map, key_by_code, editable_fields):
+    if frame.empty or not restored_map:
+        return frame
+    restored_frame = frame.copy()
+    for index, row in restored_frame.iterrows():
+        draft_key = key_by_code.get(raw_value(row.get("Код", "")))
+        values = _draft_values(restored_map.get(draft_key, {}))
+        for field in editable_fields:
+            if field in values:
+                restored_frame.at[index, field] = values[field]
+    return restored_frame
+
+
+def _restore_scheme_picker_state(restored_map, ssp_index, key_prefix):
+    if not restored_map:
+        return
+    content = next((item for item in restored_map.values() if isinstance(item, dict)), {})
+    scheme_label = raw_value(content.get("scheme_label"))
+    available_schemes = schemes.scheme_options_for_submitter(str(current_user.get("role") or ""))
+    if scheme_label in available_schemes:
+        st.session_state[f"{key_prefix}_approval_scheme_select"] = scheme_label
+    chain = schemes.parse_chain(content.get("approval_chain"))
+    for position, stage in enumerate(chain, start=1):
+        role = raw_value(stage.get("role"))
+        candidates = schemes.stage_candidates(role, ssp_index)
+        if len(candidates) <= 1:
+            continue
+        email = raw_value(stage.get("email")).lower()
+        matched = next(
+            (candidate for candidate in candidates
+             if raw_value(candidate.get("email")).lower() == email),
+            None,
+        )
+        if matched:
+            st.session_state[f"{key_prefix}_stage_{position}_{role}"] = schemes.candidate_label(matched)
+
+
+def _draft_content(row, editable_fields, scheme_name, chain, **extra):
+    return {
+        "values": {field: row.get(field) for field in editable_fields},
+        "scheme_label": scheme_name,
+        "approval_chain": schemes.chain_to_json(chain) if chain else "",
+        **extra,
+    }
+
+
+def _has_draft_input(row, editable_fields):
+    for field in editable_fields:
+        value = row.get(field)
+        if isinstance(value, bool):
+            if value:
+                return True
+        elif raw_value(value):
+            return True
+    return False
 
 def notify_first_stage(chain, codes, year_str, quarter_str, kind="measure"):
     """Одне миттєве сповіщення першій ланці про подання (без спаму по кожному коду)."""
@@ -1078,6 +1160,30 @@ if submission_mode.startswith("🎯"):
         st.info("За обраними параметрами індикаторів не знайдено.")
         st.stop()
 
+    quarter_roman = {1: "I", 2: "II", 3: "III", 4: "IV"}[(ind_as_of.month - 1) // 3 + 1]
+    _ind_draft_context = f"indicator::{ind_ssp_index}::{ind_year}::{quarter_roman}"
+    _ind_editable_fields = [
+        "Подати", value_col, "Статус\nвиконання", "Опис\nпрогресу",
+        "Ризики / проблеми /\nвідхилення", "Посилання\nна НПА",
+    ]
+    _ind_draft_keys_by_code = {
+        raw_value(row.get("Код")): make_draft_key(
+            "indicator", row.get("Код"), ind_year, quarter_roman, mode="submit"
+        )
+        for _, row in ind_df_table.iterrows()
+    }
+    _ind_draft_rows = load_drafts_for_keys(
+        raw_value(current_user.get("email")), _ind_draft_keys_by_code.values()
+    )
+    _ind_restored = render_draft_recovery(
+        context_key=_ind_draft_context,
+        user_email=raw_value(current_user.get("email")),
+        draft_rows=_ind_draft_rows,
+    )
+    ind_df_table = _apply_restored_table_values(
+        ind_df_table, _ind_restored, _ind_draft_keys_by_code, _ind_editable_fields
+    )
+
     # Пункт 6 нового ТЗ: картковий режим подання прибрано за рішенням
     # Арсена — лишається виключно табличний спосіб подання (нижче).
 
@@ -1103,7 +1209,8 @@ if submission_mode.startswith("🎯"):
     with st.container(height=TABLE_CONTAINER_HEIGHT_PX):
         ind_edited = st.data_editor(
             ind_df_table,
-            key=f"indicator_editor_{ind_ssp_index}_{ind_year}",
+            key=(f"indicator_editor_{ind_ssp_index}_{ind_year}_"
+                 f"{editor_generation(_ind_draft_context)}"),
             use_container_width=True, hide_index=True,
             height=_ind_visible_height,
             row_height=_ind_row_h, num_rows="fixed",
@@ -1131,15 +1238,37 @@ if submission_mode.startswith("🎯"):
         )
 
 
-    ind_scheme_name, ind_chain, ind_scheme_ready = render_scheme_picker(ind_ssp_index, "ind")
+    _ind_scheme_prefix = f"ind_{editor_generation(_ind_draft_context)}"
+    _restore_scheme_picker_state(_ind_restored, ind_ssp_index, _ind_scheme_prefix)
+    ind_scheme_name, ind_chain, ind_scheme_ready = render_scheme_picker(
+        ind_ssp_index, _ind_scheme_prefix
+    )
+
+    if not _ind_draft_rows or _ind_restored:
+        for _, _draft_row in ind_edited.iterrows():
+            if bool(_draft_row.get("_locked")):
+                continue
+            _draft_code = raw_value(_draft_row.get("Код"))
+            _draft_key = _ind_draft_keys_by_code.get(_draft_code)
+            if _draft_key and _has_draft_input(_draft_row, _ind_editable_fields):
+                queue_draft(
+                    raw_value(current_user.get("email")),
+                    _draft_key,
+                    _draft_content(
+                        _draft_row, _ind_editable_fields, ind_scheme_name, ind_chain,
+                        as_of_date=ind_as_of.isoformat(),
+                    ),
+                )
+    render_draft_autosave_worker()
 
     if st.button("Подати значення індикаторів на розгляд", use_container_width=True, key="ind_submit"):
         ind_errors = []
-        # Контактні дані підтягуються з таблиці доступів; ручну валідацію не застосовуємо.
         if not ind_scheme_ready:
             ind_errors.append("Схема погодження неповна: для однієї з ланок не знайдено користувача")
 
-        ind_selected = ind_edited[(ind_edited["Подати"] == True) & (ind_edited["_locked"] == False)].copy()
+        ind_selected = ind_edited[
+            (ind_edited["Подати"] == True) & (ind_edited["_locked"] == False)
+        ].copy()
         if ind_selected.empty:
             ind_errors.append("Позначте хоча б один індикатор для подання")
         else:
@@ -1164,71 +1293,109 @@ if submission_mode.startswith("🎯"):
                     ind_errors.append(status_msg)
 
         if ind_errors:
-            for e in ind_errors:
-                st.error(e)
+            for error in ind_errors:
+                st.error(error)
         else:
-            as_of_iso = ind_as_of.isoformat()
-            quarter_roman = {1: "I", 2: "II", 3: "III", 4: "IV"}[(ind_as_of.month - 1) // 3 + 1]
             submitted_at = datetime.now(timezone.utc).isoformat()
-            first_status = schemes.waiting_status_for_stage(ind_chain[0]) if ind_chain else "Очікує погодження"
+            successful_codes = []
+            rejected_messages = []
+            first_stage_label = ind_chain[0].get("label", "Координатор") if ind_chain else "Координатор"
 
-            ind_payload = []
-            for _, r in ind_selected.iterrows():
+            for _, row in ind_selected.iterrows():
+                code = raw_value(row.get("Код"))
+                draft_key = _ind_draft_keys_by_code.get(code, "")
                 item = {
-                    # П7/П8: знімки назв на момент подання
-                    "object_name": raw_value(r.get("СЦ / Завдання", "")),
-                    "indicator_name": raw_value(r.get("Індикатор", "")),
+                    "object_name": raw_value(row.get("СЦ / Завдання", "")),
+                    "indicator_name": raw_value(row.get("Індикатор", "")),
                     "department": raw_value(ind_ssp_index),
                     "year": str(ind_year),
                     "quarter": quarter_roman,
-                    "approval_status": first_status,
-                    "status": raw_value(r.get("Статус\nвиконання", "")),
-                    "strat_code": raw_value(r.get("Код", "")),
+                    "status": raw_value(row.get("Статус\nвиконання", "")),
+                    "strat_code": code,
                     "responsible_person": raw_value(responsible_person),
                     "phone": raw_value(responsible_phone),
                     "email": raw_value(responsible_email),
-                    "numeric_value": raw_value(r.get(value_col, "")),
-                    "progress_text": raw_value(r.get("Опис\nпрогресу", "")),
-                    "risks": raw_value(r.get("Ризики / проблеми /\nвідхилення", "")),
-                    "file_names": "", "file_urls": "", "admin_comment": "",
-                    "start_date": "", "end_date": "",
+                    "numeric_value": raw_value(row.get(value_col, "")),
+                    "progress_text": raw_value(row.get("Опис\nпрогресу", "")),
+                    "risks": raw_value(row.get("Ризики / проблеми /\nвідхилення", "")),
+                    "npa_link": raw_value(row.get("Посилання\nна НПА", "")),
+                    "object_kind": "indicator",
+                    "as_of_date": ind_as_of.isoformat(),
+                    "approval_chain": schemes.chain_to_json(ind_chain),
+                    "chain_stage": 0,
+                    "scheme_label": ind_scheme_name,
+                    "file_names": "",
+                    "file_urls": "",
+                    "admin_comment": "",
+                    "start_date": "",
+                    "end_date": "",
                     "submitted_at": submitted_at,
                 }
-                if npa_link_column_exists:
-                    item["npa_link"] = raw_value(r.get("Посилання\nна НПА", ""))
-                if kind_column_exists:
-                    item["object_kind"] = "indicator"
-                    item["as_of_date"] = as_of_iso
-                if chain_columns_exist and ind_chain:
-                    item["approval_chain"] = schemes.chain_to_json(ind_chain)
-                    item["chain_stage"] = 0
-                    item["scheme_label"] = ind_scheme_name
-                ind_payload.append(item)
-
-            ind_payload = [prepare_monitoring_payload(item) for item in ind_payload]
-            try:
-                ind_result = supabase.table("monitoring_requests").insert(ind_payload).execute()
-                for item in (getattr(ind_result, "data", None) or ind_payload):
-                    write_audit_log(
-                        supabase,
-                        request_id=item.get("id"),
+                prepared = prepare_monitoring_payload(item)
+                try:
+                    result = submit_request(
+                        payload=prepared,
                         action="Подання значення індикатора",
-                        old_status="",
-                        new_status=first_status,
-                        comment="Заявку створено подавачем",
                         user=current_user,
-                        ssp_index=item.get("department"),
-                        strat_code=item.get("strat_code"),
-                        details={"object_kind": "indicator", "scheme_label": ind_scheme_name},
+                        created_by="Подавач / первинне подання індикатора",
+                        draft_email=raw_value(current_user.get("email")),
+                        draft_key=draft_key,
                     )
+                    successful_codes.append(code)
+                    forget_draft_state([draft_key])
+                    first_stage_label = result.data.get("first_stage_label") or first_stage_label
+                except TransitionRejected as exc:
+                    try:
+                        save_draft_now(
+                            raw_value(current_user.get("email")),
+                            draft_key,
+                            _draft_content(
+                                row, _ind_editable_fields, ind_scheme_name, ind_chain,
+                                as_of_date=ind_as_of.isoformat(),
+                            ),
+                        )
+                    except Exception as draft_exc:
+                        show_warning(
+                            "Введені дані залишилися у формі, але чернетку не вдалося зберегти.",
+                            draft_exc,
+                            "Збереження чернетки після відмови подання індикатора",
+                        )
+                    rejected_messages.append(f"{code}: {exc.message}")
+                except Exception as exc:
+                    try:
+                        save_draft_now(
+                            raw_value(current_user.get("email")),
+                            draft_key,
+                            _draft_content(
+                                row, _ind_editable_fields, ind_scheme_name, ind_chain,
+                                as_of_date=ind_as_of.isoformat(),
+                            ),
+                        )
+                    except Exception as draft_exc:
+                        show_warning(
+                            "Введені дані залишилися у формі, але чернетку не вдалося зберегти.",
+                            draft_exc,
+                            "Збереження чернетки після помилки подання індикатора",
+                        )
+                    show_incident(exc, context=f"Атомарне подання індикатора {code}")
+
+            if successful_codes:
                 monitoring_data.invalidate_monitoring_cache()
                 notify_first_stage(
-                    ind_chain, [p["strat_code"] for p in ind_payload],
-                    str(ind_year), f"станом на {ind_as_of.strftime('%d.%m.%Y')}", kind="indicator",
+                    ind_chain, successful_codes, str(ind_year),
+                    f"станом на {ind_as_of.strftime('%d.%m.%Y')}", kind="indicator",
                 )
-                st.success("Значення індикаторів успішно подано на розгляд за обраною схемою погодження.")
-            except Exception as error:
-                show_incident(error, context="Подання значень індикаторів")
+                clear_draft_recovery(_ind_draft_context)
+                set_submission_notice(
+                    first_stage_label=first_stage_label, codes=successful_codes
+                )
+                if rejected_messages:
+                    st.session_state["monitoring_submit_warning"] = (
+                        "Частину індикаторів не подано: " + " | ".join(rejected_messages)
+                    )
+                st.rerun()
+            elif rejected_messages:
+                st.error("Подання відхилено: " + " | ".join(rejected_messages))
 
     st.stop()
 
@@ -1594,6 +1761,29 @@ for _, row in filtered_measures.iterrows():
 
 table_df = pd.DataFrame(table_rows)
 
+_meas_draft_context = f"measure::{selected_ssp_index}::{selected_year}::{selected_quarter}"
+_meas_draft_fields = [
+    "Подати", quarter_label, "Статус\nвиконання", "Опис\nпрогресу",
+    "Ризики / проблеми /\nвідхилення", "Посилання\nна НПА",
+]
+_meas_draft_keys_by_code = {
+    raw_value(row.get("Код")): make_draft_key(
+        "measure", row.get("Код"), selected_year, selected_quarter, mode="submit"
+    )
+    for _, row in table_df.iterrows()
+}
+_meas_draft_rows = load_drafts_for_keys(
+    raw_value(current_user.get("email")), _meas_draft_keys_by_code.values()
+)
+_meas_restored = render_draft_recovery(
+    context_key=_meas_draft_context,
+    user_email=raw_value(current_user.get("email")),
+    draft_rows=_meas_draft_rows,
+)
+table_df = _apply_restored_table_values(
+    table_df, _meas_restored, _meas_draft_keys_by_code, _meas_draft_fields
+)
+
 if _not_started_hidden:
     st.caption(
         f"⬜ {_not_started_hidden} захід(ів) вашого ССП не показані в таблиці, "
@@ -1755,7 +1945,9 @@ else:
     with st.container(height=TABLE_CONTAINER_HEIGHT_PX):
         edited_df = st.data_editor(
             table_df,
-            key=f"monitoring_editor_{selected_ssp_index}_{selected_year}_{selected_quarter}_{search_query}",
+            key=(f"monitoring_editor_{selected_ssp_index}_{selected_year}_"
+                 f"{selected_quarter}_{search_query}_"
+                 f"{editor_generation(_meas_draft_context)}"),
             use_container_width=True,
             hide_index=True,
             height=_visible_height,
@@ -1840,9 +2032,27 @@ def validate_submission():
 # Схема погодження для подання заходів
 # ------------------------------------------------------------
 
+_meas_scheme_prefix = f"meas_{editor_generation(_meas_draft_context)}"
+_restore_scheme_picker_state(_meas_restored, selected_ssp_index, _meas_scheme_prefix)
 measures_scheme_name, measures_chain, measures_scheme_ready = render_scheme_picker(
-    selected_ssp_index, "meas"
+    selected_ssp_index, _meas_scheme_prefix
 )
+
+if not _meas_draft_rows or _meas_restored:
+    for _, _draft_row in edited_df.iterrows():
+        if bool(_draft_row.get("_locked")):
+            continue
+        _draft_code = raw_value(_draft_row.get("Код"))
+        _draft_key = _meas_draft_keys_by_code.get(_draft_code)
+        if _draft_key and _has_draft_input(_draft_row, _meas_draft_fields):
+            queue_draft(
+                raw_value(current_user.get("email")),
+                _draft_key,
+                _draft_content(
+                    _draft_row, _meas_draft_fields, measures_scheme_name, measures_chain
+                ),
+            )
+render_draft_autosave_worker()
 
 submit_clicked = st.button("Подати на розгляд", use_container_width=True)
 
@@ -1858,119 +2068,104 @@ if submit_clicked:
         ].copy()
         submitted_at = datetime.now(timezone.utc).isoformat()
 
-        first_stage_status = (
-            schemes.waiting_status_for_stage(measures_chain[0])
-            if (chain_columns_exist and measures_chain)
-            else "Очікує погодження"
+        successful_codes = []
+        rejected_messages = []
+        first_stage_label = (
+            measures_chain[0].get("label", "Координатор")
+            if measures_chain else "Координатор"
         )
 
-        payload = []
         for _, row in selected_rows.iterrows():
             code = raw_value(row.get("Код", ""))
-            payload.append({
-                # П8: знімок назви заходу на момент подання (захист від
-                # повторного використання коду після актуалізації плану)
-                "object_name":        raw_value(row.get("Захід", "")),
-                "department":         raw_value(selected_ssp_index),
-                "year":               str(selected_year),
-                "quarter":            raw_value(selected_quarter),
-                "approval_status":    first_stage_status,
-                "status":             raw_value(row.get("Статус\nвиконання", "")),
-                "strat_code":         code,
+            draft_key = _meas_draft_keys_by_code.get(code, "")
+            item = {
+                "object_name": raw_value(row.get("Захід", "")),
+                "department": raw_value(selected_ssp_index),
+                "year": str(selected_year),
+                "quarter": raw_value(selected_quarter),
+                "status": raw_value(row.get("Статус\nвиконання", "")),
+                "strat_code": code,
                 "responsible_person": raw_value(responsible_person),
-                "phone":              raw_value(responsible_phone),
-                "email":              raw_value(responsible_email),
-                "numeric_value":      raw_value(row.get(quarter_label, "")),
-                "progress_text":      raw_value(row.get("Опис\nпрогресу", "")),
-                "risks":              raw_value(row.get("Ризики / проблеми /\nвідхилення", "")),
-                **(
-                    {"npa_link": raw_value(row.get("Посилання\nна НПА", ""))}
-                    if npa_link_column_exists else {}
-                ),
-                **(
-                    {"object_kind": "measure"}
-                    if kind_column_exists else {}
-                ),
-                **(
-                    {
-                        "approval_chain": schemes.chain_to_json(measures_chain),
-                        "chain_stage": 0,
-                        "scheme_label": measures_scheme_name,
-                    }
-                    if (chain_columns_exist and measures_chain) else {}
-                ),
-                "file_names":         "",
-                "file_urls":          "",
-                "admin_comment":      "",
-                "start_date":         raw_value(row.get("Початкова\nдата", "")),
-                "end_date":           raw_value(row.get("Кінцева\nдата", "")),
-                "submitted_at":       submitted_at,
-            })
-
-        # ТЗ 15.14–15.15: перед вставкою — СВІЖА перевірка бази (без кешу).
-        # Якщо по частині заходів заявка за цей період уже існує (наприклад,
-        # її щойно подав колега), подаються ТІЛЬКИ валідні заходи, а
-        # конкретні конфліктні коди показуються користувачу попередженням.
-        try:
-            _fresh = (
-                supabase.table("monitoring_requests")
-                .select("strat_code")
-                .eq("department", raw_value(selected_ssp_index))
-                .eq("year", year_to_db(selected_year))
-                .eq("quarter", quarter_to_db(selected_quarter))
-                .neq("approval_status", "Відкликано")
-                .execute()
-            )
-            _existing_codes = {
-                raw_value(r.get("strat_code", "")) for r in (_fresh.data or [])
+                "phone": raw_value(responsible_phone),
+                "email": raw_value(responsible_email),
+                "numeric_value": raw_value(row.get(quarter_label, "")),
+                "progress_text": raw_value(row.get("Опис\nпрогресу", "")),
+                "risks": raw_value(row.get("Ризики / проблеми /\nвідхилення", "")),
+                "npa_link": raw_value(row.get("Посилання\nна НПА", "")),
+                "object_kind": "measure",
+                "approval_chain": schemes.chain_to_json(measures_chain),
+                "chain_stage": 0,
+                "scheme_label": measures_scheme_name,
+                "file_names": "",
+                "file_urls": "",
+                "admin_comment": "",
+                "start_date": raw_value(row.get("Початкова\nдата", "")),
+                "end_date": raw_value(row.get("Кінцева\nдата", "")),
+                "submitted_at": submitted_at,
             }
-        except Exception:
-            _existing_codes = set()
-
-        conflicting = [p for p in payload if p["strat_code"] in _existing_codes]
-        payload = [p for p in payload if p["strat_code"] not in _existing_codes]
-
-        if conflicting:
-            st.warning(
-                "За такими заходами заявка у цьому звітному періоді вже існує, "
-                "тому вони НЕ подані повторно: "
-                + ", ".join(p["strat_code"] for p in conflicting)
-                + ". Відредагувати вже подані відомості можна у вкладці «Мої заявки»."
-            )
-
-        if not payload:
-            st.stop()
-
-        payload = [prepare_monitoring_payload(item) for item in payload]
-        try:
-            submit_result = supabase.table("monitoring_requests").insert(payload).execute()
-            for item in (getattr(submit_result, "data", None) or payload):
-                write_audit_log(
-                    supabase,
-                    request_id=item.get("id"),
+            prepared = prepare_monitoring_payload(item)
+            try:
+                result = submit_request(
+                    payload=prepared,
                     action="Подання моніторингових відомостей",
-                    old_status="",
-                    new_status=first_stage_status,
-                    comment="Заявку створено подавачем",
                     user=current_user,
-                    ssp_index=item.get("department"),
-                    strat_code=item.get("strat_code"),
-                    details={"object_kind": "measure", "scheme_label": measures_scheme_name},
+                    created_by="Подавач / первинне подання",
+                    draft_email=raw_value(current_user.get("email")),
+                    draft_key=draft_key,
                 )
+                successful_codes.append(code)
+                forget_draft_state([draft_key])
+                first_stage_label = result.data.get("first_stage_label") or first_stage_label
+            except TransitionRejected as exc:
+                try:
+                    save_draft_now(
+                        raw_value(current_user.get("email")),
+                        draft_key,
+                        _draft_content(
+                            row, _meas_draft_fields, measures_scheme_name, measures_chain
+                        ),
+                    )
+                except Exception as draft_exc:
+                    show_warning(
+                        "Введені дані залишилися у формі, але чернетку не вдалося зберегти.",
+                        draft_exc,
+                        "Збереження чернетки після відмови первинного подання",
+                    )
+                rejected_messages.append(f"{code}: {exc.message}")
+            except Exception as exc:
+                try:
+                    save_draft_now(
+                        raw_value(current_user.get("email")),
+                        draft_key,
+                        _draft_content(
+                            row, _meas_draft_fields, measures_scheme_name, measures_chain
+                        ),
+                    )
+                except Exception as draft_exc:
+                    show_warning(
+                        "Введені дані залишилися у формі, але чернетку не вдалося зберегти.",
+                        draft_exc,
+                        "Збереження чернетки після помилки первинного подання",
+                    )
+                show_incident(exc, context=f"Атомарне подання заходу {code}")
+
+        if successful_codes:
             monitoring_data.invalidate_monitoring_cache()
-            if chain_columns_exist and measures_chain:
-                notify_first_stage(
-                    measures_chain,
-                    [p["strat_code"] for p in payload],
-                    str(selected_year), raw_value(selected_quarter),
-                )
-            st.success("Відомості успішно подано на розгляд")
-            st.info(
-                "Відомості опрацьовуються координатором. "
-                "Інформація про подальший статус відобразиться в особистому кабінеті."
+            notify_first_stage(
+                measures_chain, successful_codes, str(selected_year),
+                raw_value(selected_quarter),
             )
-        except Exception as error:
-            show_incident(error, context="Подання моніторингових відомостей")
+            clear_draft_recovery(_meas_draft_context)
+            set_submission_notice(
+                first_stage_label=first_stage_label, codes=successful_codes
+            )
+            if rejected_messages:
+                st.session_state["monitoring_submit_warning"] = (
+                    "Частину заходів не подано: " + " | ".join(rejected_messages)
+                )
+            st.rerun()
+        elif rejected_messages:
+            st.error("Подання відхилено: " + " | ".join(rejected_messages))
 
 
 # ------------------------------------------------------------

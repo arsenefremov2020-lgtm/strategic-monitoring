@@ -163,25 +163,62 @@ def apply_reset_buttons(apply_key: str, reset_key: str, *, apply_label: str = "�
 # «Журнал дій» (через окрему кнопку), щоб історія заявки скрізь виглядала
 # і читалася ОДНАКОВО, без дублювання логіки на сторінках.
 
+def prepare_human_log_table(logs_df, *, extra_columns: list[str] | None = None):
+    """Return a user-facing history table without internal identifiers."""
+    import pandas as pd
+    from core.stage4 import clean, format_kyiv_datetime
+
+    if logs_df is None or getattr(logs_df, "empty", True):
+        return pd.DataFrame()
+
+    show = logs_df.copy()
+
+    def _col(name: str) -> pd.Series:
+        if name in show.columns:
+            return show[name]
+        return pd.Series([""] * len(show), index=show.index, dtype="object")
+
+    show["Дата і час"] = _col("changed_at").apply(format_kyiv_datetime)
+    show["Дія"] = _col("action").apply(lambda x: clean(x) or "—")
+    show["Попередній статус"] = _col("old_status").apply(lambda x: clean(x) or "—")
+    show["Новий статус"] = _col("new_status").apply(lambda x: clean(x) or "—")
+    show["Коментар"] = _col("admin_comment").apply(lambda x: clean(x) or "—")
+
+    actor_name = _col("actor_name").apply(clean)
+    changed_by = _col("changed_by").apply(clean)
+    show["Ким змінено"] = [name or changed or "—" for name, changed in zip(actor_name, changed_by)]
+
+    columns = [
+        "Дата і час", "Дія", "Попередній статус", "Новий статус",
+        "Коментар", "Ким змінено",
+    ]
+    for column in extra_columns or []:
+        if column in show.columns and column not in columns:
+            columns.insert(-2, column)
+    return show[[column for column in columns if column in show.columns]]
+
+
+def render_human_log_table(logs_df, *, extra_columns: list[str] | None = None) -> None:
+    """Render the human history table with light status highlighting."""
+    from core.stage4 import style_status_columns
+
+    table = prepare_human_log_table(logs_df, extra_columns=extra_columns)
+    if table.empty:
+        st.info("Історії змін для цієї заявки поки що немає.")
+        return
+    st.dataframe(
+        style_status_columns(table, ["Попередній статус", "Новий статус"]),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
 def render_request_timeline(logs_df, *, title: str | None = None,
                             with_table_expander: bool = True) -> None:
-    """Малює хронологічний таймлайн подій заявки з monitoring_logs.
-
-    logs_df — DataFrame з колонками changed_at / action / old_status /
-    new_status / admin_comment / changed_by (зайві колонки ігноруються).
-    """
+    """Render a chronological, human-readable timeline from monitoring_logs."""
     import pandas as pd
     from html import escape as _escape
-
-    def _c(v) -> str:
-        if v is None:
-            return ""
-        try:
-            if pd.isna(v):
-                return ""
-        except (TypeError, ValueError):
-            pass
-        return str(v).strip()
+    from core.stage4 import clean, format_kyiv_datetime
 
     if logs_df is None or getattr(logs_df, "empty", True):
         st.info("Історії змін для цієї заявки поки що немає.")
@@ -194,30 +231,45 @@ def render_request_timeline(logs_df, *, title: str | None = None,
             unsafe_allow_html=True,
         )
 
-    _tl = logs_df.copy()
-    _tl["_ts"] = pd.to_datetime(_tl.get("changed_at"), errors="coerce", utc=True)
-    _tl = _tl.sort_values("_ts")
+    timeline = logs_df.copy()
+    timeline["_ts"] = pd.to_datetime(timeline.get("changed_at"), errors="coerce", utc=True)
+    timeline = timeline.sort_values("_ts")
 
     items = []
-    for _, ev in _tl.iterrows():
-        ts = ev["_ts"]
-        when = ts.strftime("%d.%m.%Y %H:%M") if pd.notna(ts) else ""
-        act = _c(ev.get("action", ""))
-        who = _c(ev.get("changed_by", ""))
-        new = _c(ev.get("new_status", ""))
-        cmt = _c(ev.get("admin_comment", ""))
-        dot = "#22c55e" if new == "Погоджено" else (
-            "#f59e0b" if "Повернуто" in new else (
-                "#8b5cf6" if "закрит" in act.lower() else "#3b82f6"))
+    for _, event in timeline.iterrows():
+        when = format_kyiv_datetime(event.get("changed_at"), fallback="Час не визначено")
+        action = clean(event.get("action")) or "Зміна заявки"
+        actor = clean(event.get("actor_name")) or clean(event.get("changed_by"))
+        old_status = clean(event.get("old_status"))
+        new_status = clean(event.get("new_status"))
+        comment = clean(event.get("admin_comment"))
+        dot = "#22c55e" if new_status == "Погоджено" else (
+            "#ef4444" if "Повернуто" in new_status else (
+                "#8b5cf6" if "закрит" in action.lower() else "#3b82f6"
+            )
+        )
+        transition = ""
+        if old_status and new_status and old_status != new_status:
+            transition = (
+                f'<br><span style="display:inline-block;margin-top:3px;padding:2px 7px;'
+                f'border-radius:999px;background:#f1f5f9;color:#475569;font-size:11px;">'
+                f'{_escape(old_status)} → {_escape(new_status)}</span>'
+            )
+        elif new_status:
+            transition = (
+                f'<br><span style="display:inline-block;margin-top:3px;padding:2px 7px;'
+                f'border-radius:999px;background:#eff6ff;color:#1d4ed8;font-size:11px;">'
+                f'{_escape(new_status)}</span>'
+            )
         items.append(
-            f'<div style="display:flex;gap:10px;margin-bottom:8px;">'
+            f'<div style="display:flex;gap:10px;margin-bottom:10px;">'
             f'<div style="width:10px;min-width:10px;height:10px;border-radius:50%;'
             f'background:{dot};margin-top:5px;"></div>'
             f'<div style="font-size:12.5px;line-height:1.45;color:#0f172a;">'
-            f'<b>{_escape(when)}</b> — {_escape(act)}'
-            + (f' <span style="color:#475569;">({_escape(new)})</span>' if new else "")
-            + (f'<br><span style="color:#334155;">💬 {_escape(cmt)}</span>' if cmt else "")
-            + (f'<br><span style="color:#64748b;font-size:11.5px;">👤 {_escape(who)}</span>' if who else "")
+            f'<b>{_escape(when)}</b> — {_escape(action)}'
+            f'{transition}'
+            + (f'<br><span style="color:#334155;">Коментар: {_escape(comment)}</span>' if comment else "")
+            + (f'<br><span style="color:#64748b;font-size:11.5px;">Ким змінено: {_escape(actor)}</span>' if actor else "")
             + '</div></div>'
         )
 
@@ -228,13 +280,5 @@ def render_request_timeline(logs_df, *, title: str | None = None,
     )
 
     if with_table_expander:
-        with st.expander("Таблиця історії (усі поля)"):
-            show = logs_df.rename(columns={
-                "changed_at": "Дата", "action": "Дія",
-                "old_status": "Попередній статус", "new_status": "Новий статус",
-                "admin_comment": "Коментар", "changed_by": "Ким змінено",
-            })
-            cols = ["Дата", "Дія", "Попередній статус", "Новий статус",
-                    "Коментар", "Ким змінено"]
-            st.dataframe(show[[c for c in cols if c in show.columns]],
-                         use_container_width=True, hide_index=True)
+        with st.expander("Таблиця історії"):
+            render_human_log_table(logs_df)

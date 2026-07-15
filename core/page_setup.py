@@ -31,9 +31,12 @@ from core.navigation import render_role_page_links, require_page_access
 def _hide_streamlit_fixed_chrome() -> None:
     """Прибирає фіксовані верхню й нижню службові панелі Streamlit.
 
-    Верхня панель перекривала верх сторінки під час прокрутки, а порожній
-    нижній контейнер залишав нерухомий білий блок поверх контенту. Наш
-    власний футер `.app-footer` не зачіпається.
+    Верхня панель перекривала верх сторінки під час прокрутки. Нижня область
+    Streamlit складається з двох частин: sticky-контейнера ``stBottom`` і
+    окремого flex-spacer перед ним. Якщо приховати лише ``stBottom``, spacer
+    лишається та утворює великий нерухомий порожній блок поверх нижньої
+    частини сторінки. Тому прибираються обидві частини. Наш власний футер
+    ``.app-footer`` не зачіпається.
     """
     st.markdown(
         """
@@ -47,29 +50,69 @@ def _hide_streamlit_fixed_chrome() -> None:
             min-height: 0 !important;
         }
 
-        /* Фіксований нижній службовий/порожній контейнер Streamlit. */
-        div[data-testid="stBottom"],
-        div[data-testid="stBottomBlockContainer"],
+        /*
+         * Нижня sticky-область Streamlit. Селектори без прив'язки до типу
+         * HTML-тега залишаються працездатними при внутрішніх змінах розмітки.
+         */
+        [data-testid="stBottom"],
+        [data-testid="stBottomBlockContainer"],
+        [data-testid="stBottomContainer"],
         .stBottom,
-        .stBottomBlockContainer,
-        footer {
+        .stBottomBlockContainer {
             display: none !important;
             visibility: hidden !important;
+            position: static !important;
+            width: 0 !important;
+            height: 0 !important;
+            min-width: 0 !important;
+            min-height: 0 !important;
+            max-height: 0 !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            overflow: hidden !important;
+        }
+
+        /*
+         * Streamlit 1.59.x додає перед stBottom окремий flex-spacer без
+         * data-testid. Саме він лишав великий порожній блок після приховування
+         * stBottom. :has() точно знаходить тільки spacer, що безпосередньо
+         * передує нижньому контейнеру, і не зачіпає звичайний контент сторінки.
+         */
+        [data-testid="stMain"] > div:not([data-testid]):has(+ [data-testid="stBottom"]) {
+            display: none !important;
+            visibility: hidden !important;
+            flex: 0 0 0 !important;
+            flex-grow: 0 !important;
+            width: 0 !important;
+            height: 0 !important;
+            min-height: 0 !important;
+            max-height: 0 !important;
+            padding: 0 !important;
+            margin: 0 !important;
+        }
+
+        /* Захисний варіант для розмітки, де spacer має службовий клас. */
+        [data-testid="stMain"] > [class*="AppViewBlockSpacer"],
+        [data-testid="stMain"] > [class*="BlockSpacer"]:has(+ [data-testid="stBottom"]) {
+            display: none !important;
+            flex: 0 0 0 !important;
             height: 0 !important;
             min-height: 0 !important;
             padding: 0 !important;
             margin: 0 !important;
         }
 
-        /* Після приховування панелей не залишаємо зарезервовані відступи. */
+        /* Після приховування службових панелей не лишаємо резервних відступів. */
         div.block-container,
-        .main .block-container {
+        .main .block-container,
+        [data-testid="stMainBlockContainer"] {
             padding-top: 1rem !important;
             padding-bottom: 1rem !important;
         }
 
-        div[data-testid="stAppViewContainer"] > .main,
-        section.main {
+        [data-testid="stAppViewContainer"] > .main,
+        section.main,
+        [data-testid="stMain"] {
             padding-bottom: 0 !important;
             margin-bottom: 0 !important;
         }

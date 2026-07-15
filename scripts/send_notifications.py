@@ -53,10 +53,12 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -67,13 +69,14 @@ from core.data_types import normalise_closeout_frame, normalise_monitoring_frame
 from core.db import fetch_all  # noqa: E402
 from core.emails import send_email  # noqa: E402
 
-KYIV_UTC_OFFSET = 3  # прийнятне наближення для щоденного джоба (EEST)
+KYIV_TZ = ZoneInfo("Europe/Kyiv")
 DEADLINE_DAY = 15    # подання до 15 числа місяця, наступного за звітним кварталом
 REMINDER_DAYS_BEFORE = [10, 5, 2, 1]   # за скільки днів до дедлайну нагадуємо
 STALE_DAYS = 5                          # "заявка висить понад N днів"
 RETURNED_STALE_DAYS = 7                 # повернута й не переподана понад N днів
 
 DRY_RUN = os.environ.get("NOTIFICATIONS_DRY_RUN", "0") == "1"
+FORCE_RUN = os.environ.get("NOTIFICATIONS_FORCE_RUN", "0") == "1"
 
 
 # ------------------------------------------------------------
@@ -81,7 +84,8 @@ DRY_RUN = os.environ.get("NOTIFICATIONS_DRY_RUN", "0") == "1"
 # ------------------------------------------------------------
 
 def now_kyiv() -> datetime:
-    return datetime.now(timezone.utc) + timedelta(hours=KYIV_UTC_OFFSET)
+    """Current civil time in Kyiv with automatic winter/summer offset."""
+    return datetime.now(KYIV_TZ)
 
 
 def clean(value) -> str:
@@ -308,7 +312,7 @@ def load_logs(supabase) -> pd.DataFrame:
     try:
         rows = fetch_all(
             "monitoring_logs",
-            "request_id,new_status,changed_at",
+            "request_id,old_status,new_status,changed_at",
             order=("id", False),
             client=supabase,
         )
@@ -319,25 +323,103 @@ def load_logs(supabase) -> pd.DataFrame:
 
 
 def build_log_maps(logs: pd.DataFrame):
-    """request_id → час останньої зміни; час останнього 'Погоджено';
-    час останнього 'Повернуто на доопрацювання'."""
-    last_change, approved, returned = {}, {}, {}
+    """Build timestamps for recent events and the beginning of the current status run.
+
+    Repeated journal entries that keep the same status do not reset the waiting
+    period. A transition away and later back to a status starts a new run.
+    """
+    last_change, approved, returned, stage_since = {}, {}, {}, {}
     if logs.empty:
-        return last_change, approved, returned
+        return last_change, approved, returned, stage_since
     logs = logs.copy()
     logs["_dt"] = pd.to_datetime(logs["changed_at"], errors="coerce", utc=True)
-    for _, r in logs.sort_values("_dt").iterrows():
+    logs = logs.sort_values(["request_id", "_dt"], na_position="last")
+    current_status_by_request: dict[object, str] = {}
+    for _, r in logs.iterrows():
         rid = r.get("request_id")
         ts = r.get("changed_at")
         if rid is None or pd.isna(r["_dt"]):
             continue
         last_change[rid] = ts
         ns = clean(r.get("new_status"))
+        previous = current_status_by_request.get(rid, clean(r.get("old_status")))
+        if ns and ns != previous:
+            stage_since[rid] = ts
+            current_status_by_request[rid] = ns
+        elif ns and rid not in current_status_by_request:
+            current_status_by_request[rid] = ns
+            stage_since.setdefault(rid, ts)
         if ns == "Погоджено":
             approved[rid] = ts
         elif ns == "Повернуто на доопрацювання":
             returned[rid] = ts
-    return last_change, approved, returned
+    return last_change, approved, returned, stage_since
+
+
+def _parse_chain(value) -> list[dict]:
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    raw = clean(value)
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+        return [item for item in data if isinstance(item, dict)] if isinstance(data, list) else []
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+
+
+def build_escalations(requests: pd.DataFrame, users: list[dict]) -> dict[str, list[dict]]:
+    """И1: map recipient email to requests waiting on one stage for >5 days."""
+    result: dict[str, list[dict]] = {}
+    if requests.empty:
+        return result
+    superadmins = {
+        clean(user.get("email")).lower()
+        for user in users
+        if user.get("role") == "super_admin" and clean(user.get("email"))
+    }
+    waiting_statuses = {
+        "Очікує погодження",
+        "Очікує: Керівник ССП",
+        "Очікує: Керівник управління",
+        "Очікує: Заступник керівника ССП",
+        "Очікує: Супер-адмін",
+    }
+    for _, row in requests.iterrows():
+        status = clean(row.get("approval_status"))
+        if status not in waiting_statuses:
+            continue
+        days = _days_since(row.get("_stage_since") or row.get("submitted_at"))
+        if days <= STALE_DAYS:
+            continue
+        chain = _parse_chain(row.get("approval_chain"))
+        try:
+            stage = max(int(float(clean(row.get("chain_stage")) or 0)), 0)
+        except (TypeError, ValueError):
+            stage = 0
+        current = chain[stage] if stage < len(chain) else {}
+        final = chain[-1] if chain else {}
+        recipients = set(superadmins)
+        for stage_item in (current, final):
+            email = clean(stage_item.get("email")).lower()
+            if email:
+                recipients.add(email)
+        if not recipients:
+            continue
+        item = {
+            "id": row.get("id"),
+            "strat_code": clean(row.get("strat_code")),
+            "year": clean(row.get("year")),
+            "quarter": clean(row.get("quarter")),
+            "days": days,
+            "stage_label": clean(current.get("label")) or status.replace("Очікує: ", ""),
+        }
+        for email in recipients:
+            result.setdefault(email, []).append(item)
+    for items in result.values():
+        items.sort(key=lambda item: (-int(item["days"]), str(item["strat_code"])))
+    return result
 
 
 def li(text: str) -> str:
@@ -359,7 +441,15 @@ def block(title: str, items: list[str], accent: str = "#005BBB") -> str:
 
 def main() -> int:
     today = now_kyiv()
-    print(f"== Розсилка сповіщень, Київ: {today:%d.%m.%Y %H:%M}, DRY_RUN={DRY_RUN} ==")
+    print(
+        f"== Розсилка сповіщень, Київ: {today:%d.%m.%Y %H:%M %Z}, "
+        f"DRY_RUN={DRY_RUN}, FORCE_RUN={FORCE_RUN} =="
+    )
+    # A6: GitHub runs at both possible UTC offsets. Exactly one run falls
+    # into the Kyiv 08:00–08:59 window. Manual test runs can explicitly force.
+    if not FORCE_RUN and today.hour != 8:
+        print("-- Зараз у Києві не 08-ма година; розсилку тихо завершено.")
+        return 0
 
     supabase = get_supabase()
     users = load_users()
@@ -377,13 +467,15 @@ def main() -> int:
     # «Останні зміни» заявок — з журналу дій (updated_at у таблиці немає):
     # request_id → (час останньої зміни, час перших "Погоджено"/"Повернуто")
     logs = load_logs(supabase)
-    last_change_at, approved_at, returned_at = build_log_maps(logs)
+    last_change_at, approved_at, returned_at, stage_since = build_log_maps(logs)
     if not requests.empty:
         _ids = requests["id"]
         requests["_last_change_at"] = _ids.map(last_change_at).fillna(requests["submitted_at"])
         requests["_approved_at"] = _ids.map(approved_at)
         requests["_returned_at"] = _ids.map(returned_at)
+        requests["_stage_since"] = _ids.map(stage_since).fillna(requests["submitted_at"])
 
+    escalations_by_email = build_escalations(requests, users)
     period = current_reporting_period(today)
     day_str = today.strftime("%Y-%m-%d")
 
@@ -400,6 +492,19 @@ def main() -> int:
         related_key = f"digest:{day_str}"
 
         my_requests = _req_for_ssp(requests, allowed) if not requests.empty else requests
+
+        # ---------- И1: ескалація заявок, що зависли на одній ланці ----------
+        _escalations = escalations_by_email.get(email.lower(), [])
+        if _escalations:
+            sections.append(block(
+                f"🚨 Заявки, що очікують понад {STALE_DAYS} днів: {len(_escalations)}",
+                [li(
+                    f"Ланка: <b>{item['stage_label']}</b>; заявка №{item['id']} — "
+                    f"захід <b>{item['strat_code']}</b> "
+                    f"({item['quarter']} кв. {item['year']}); очікує <b>{item['days']} дн.</b>"
+                ) for item in _escalations[:20]],
+                accent="#b91c1c",
+            ))
 
         # ---------- ССП: дедлайн-нагадування ----------
         if role == "ssp" and period:
@@ -502,20 +607,6 @@ def main() -> int:
                         f"Захід <b>{clean(r.get('strat_code'))}</b> "
                         f"({clean(r.get('quarter'))} кв. {clean(r.get('year'))})"
                     ) for _, r in new_pending.head(15).iterrows()],
-                ))
-
-            stale = my_requests[
-                (statuses == "Очікує погодження")
-                & (my_requests["submitted_at"].apply(_days_since) >= STALE_DAYS)
-            ]
-            if not stale.empty:
-                sections.append(block(
-                    f"⏳ На розгляді понад {STALE_DAYS} днів: {len(stale)}",
-                    [li(
-                        f"Захід <b>{clean(r.get('strat_code'))}</b> — чекає "
-                        f"{_days_since(r.get('submitted_at'))} дн."
-                    ) for _, r in stale.head(15).iterrows()],
-                    accent="#b91c1c",
                 ))
 
             returned_stuck = my_requests[

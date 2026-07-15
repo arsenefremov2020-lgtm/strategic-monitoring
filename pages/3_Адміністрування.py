@@ -32,6 +32,7 @@ from core import approval_schemes as schemes
 from core import notify_events
 from core.closeouts import load_manual_closeouts
 from core.stage5 import failed_notifications_last_30_days, latest_system_update
+from core.archive import create_archive_snapshot, format_kyiv as format_archive_kyiv
 from core.statuses import SUBMISSION_STATUS_OPTIONS
 from config.roles import ROLE_SUPER_ADMIN
 from core.access import filter_actions_for_user
@@ -1371,6 +1372,116 @@ with st.expander("Розсилка: недоставлені листи", expand
     else:
         st.warning(f"Недоставлених листів за останні 30 днів: {len(_failed_mail)}")
         st.dataframe(_failed_mail, use_container_width=True, hide_index=True)
+
+# З1–З5: ручне створення незмінного архівного знімка доступне лише супер-адміну.
+if is_super_admin_user(current_user):
+    with st.expander("Архівний знімок · ТЕСТОВИЙ РЕЖИМ", expanded=False):
+        st.caption(
+            "Знімок містить повну накопичену структуру, заявки, усі версії, "
+            "розрахункові складові МіО та повний журнал дій. Після створення "
+            "змінити або видалити його неможливо."
+        )
+
+        try:
+            _archive_rows = fetch_all(
+                "archive_snapshots",
+                (
+                    "id,archived_at,archived_by,snapshot_type,reason,replacement_reason,"
+                    "replaces_snapshot_id,coverage_label,request_count,measure_count,log_count"
+                ),
+                order=("archived_at", True),
+            )
+        except Exception as _archive_list_exc:
+            show_warning(
+                "Перелік архівних знімків тимчасово недоступний.",
+                _archive_list_exc,
+                "Читання archive_snapshots в адмініструванні",
+            )
+            _archive_rows = []
+
+        _archive_option_ids = [None] + [int(row["id"]) for row in _archive_rows if row.get("id") is not None]
+        _archive_labels = {None: "Не замінює попередній знімок"}
+        for _archive_row in _archive_rows:
+            try:
+                _archive_id = int(_archive_row.get("id"))
+            except (TypeError, ValueError):
+                continue
+            _archive_labels[_archive_id] = (
+                f"Знімок №{_archive_id} від {format_archive_kyiv(_archive_row.get('archived_at'))}"
+                f" · {_archive_row.get('coverage_label') or 'усі доступні періоди'}"
+            )
+
+        _archive_reason = st.text_area(
+            "Причина створення",
+            key="stage6_archive_reason",
+            placeholder="Наприклад: перед зимовою актуалізацією заходів",
+        )
+        _archive_replaces = st.selectbox(
+            "Знімок, який замінюється (за потреби)",
+            options=_archive_option_ids,
+            format_func=lambda value: _archive_labels.get(value, str(value)),
+            key="stage6_archive_replaces",
+        )
+        _archive_replacement_reason = ""
+        if _archive_replaces is not None:
+            _archive_replacement_reason = st.text_area(
+                "Причина заміни",
+                key="stage6_archive_replacement_reason",
+                placeholder="Опишіть помилку або уточнення, через яке потрібен новий знімок.",
+            )
+
+        _archive_confirm_data = st.checkbox(
+            "Я підтверджую, що перевірив(ла) живі дані перед архівацією.",
+            key="stage6_archive_confirm_data",
+        )
+        _archive_confirm_lock = st.checkbox(
+            "Я розумію, що після створення цей знімок неможливо змінити або видалити.",
+            key="stage6_archive_confirm_lock",
+        )
+
+        if st.button(
+            "Створити архівний знімок зараз",
+            type="primary",
+            use_container_width=True,
+            key="stage6_create_archive_snapshot",
+        ):
+            _archive_errors = []
+            if not _archive_reason.strip():
+                _archive_errors.append("Заповніть поле «Причина створення».")
+            if _archive_replaces is not None and not _archive_replacement_reason.strip():
+                _archive_errors.append("Для знімка-заміни заповніть поле «Причина заміни».")
+            if not _archive_confirm_data or not _archive_confirm_lock:
+                _archive_errors.append("Потрібні обидва підтвердження перед створенням знімка.")
+
+            if _archive_errors:
+                for _archive_error in _archive_errors:
+                    st.error(_archive_error)
+            else:
+                try:
+                    with st.spinner("Створюємо повний незмінний архівний знімок…"):
+                        _archive_result = create_archive_snapshot(
+                            supabase,
+                            actor=current_user,
+                            reason=_archive_reason.strip(),
+                            snapshot_type="manual",
+                            replaces_snapshot_id=_archive_replaces,
+                            replacement_reason=_archive_replacement_reason.strip(),
+                        )
+                    if _archive_result.get("success"):
+                        st.success(
+                            f"Архівний знімок №{_archive_result.get('snapshot_id')} створено. "
+                            "Він доступний на сторінці «Архів»."
+                        )
+                    else:
+                        st.error(
+                            _archive_result.get("message")
+                            or "Не вдалося створити архівний знімок."
+                        )
+                except Exception as _archive_create_exc:
+                    show_incident(
+                        _archive_create_exc,
+                        context="Створення повного архівного знімка",
+                    )
 
 if admin_work_mode == "Ручне закриття заходів":
     # ──────────────────────────────────────────────

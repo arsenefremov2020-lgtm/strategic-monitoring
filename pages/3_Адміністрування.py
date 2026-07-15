@@ -7,6 +7,7 @@ from core.data_types import (
     normalise_monitoring_frame,
     prepare_closeout_payload,
     prepare_monitoring_payload,
+    split_fact_value,
     year_to_db,
 )
 from core.db import fetch_all, get_supabase_client
@@ -30,6 +31,8 @@ from core.access import (
 from core import approval_schemes as schemes
 from core import notify_events
 from core.closeouts import load_manual_closeouts
+from core.stage5 import failed_notifications_last_30_days, latest_system_update
+from core.statuses import SUBMISSION_STATUS_OPTIONS
 from config.roles import ROLE_SUPER_ADMIN
 from core.access import filter_actions_for_user
 from core.superadmin_routing import resolve_manual_closeout_route, can_superadmin_decide_closeout, senior_superadmin_for
@@ -1271,6 +1274,8 @@ def build_attention_summary(df):
 # PAGE
 # ══════════════════════════════════════════════
 
+_stage5_latest_at, _stage5_latest_label = latest_system_update()
+
 st.markdown('<div class="ua-line"></div>', unsafe_allow_html=True)
 st.markdown(
     '<div class="ministry-label">🇺🇦 Міністерство економіки, довкілля та сільського господарства України</div>',
@@ -1290,12 +1295,14 @@ st.markdown(
             <div class="status-pill">● Дані: Supabase</div>
             <div class="status-pill">● Журнал змін: активний</div>
             <div class="status-pill">● Резолюція: автоматична</div>
-            <div class="status-pill">● Оновлено: {datetime.now().strftime("%d.%m.%Y %H:%M")}</div>
+            <div class="status-pill">● Дані востаннє оновлено: {_stage5_latest_label}</div>
         </div>
     </div>
     """,
     unsafe_allow_html=True
 )
+
+st.caption(f"Дані востаннє оновлено: {_stage5_latest_label}")
 
 st.markdown(
     """
@@ -1356,6 +1363,15 @@ admin_work_mode = st.radio(
     key="admin_work_mode",
 )
 
+# І2: єдиний реєстр недоставлених листів за останні 30 днів.
+with st.expander("Розсилка: недоставлені листи", expanded=False):
+    _failed_mail = failed_notifications_last_30_days()
+    if _failed_mail.empty:
+        st.success("Усі листи за останні 30 днів доставлено.")
+    else:
+        st.warning(f"Недоставлених листів за останні 30 днів: {len(_failed_mail)}")
+        st.dataframe(_failed_mail, use_container_width=True, hide_index=True)
+
 if admin_work_mode == "Ручне закриття заходів":
     # ──────────────────────────────────────────────
     # ЗАКРИТТЯ ЗАХОДУ ВРУЧНУ (admin → super_admin)
@@ -1392,6 +1408,26 @@ if admin_work_mode == "Ручне закриття заходів":
                 "та рахується як виконання, але до реакції керівника ССП відображається фіолетовим."
             )
             co_code = st.selectbox("Код заходу", measure_codes)
+            _co_measure = _closeout_scope_df[
+                _closeout_scope_df["code"].astype(str).str.strip() == str(co_code).strip()
+            ]
+            _co_measure_row = _co_measure.iloc[0] if not _co_measure.empty else pd.Series(dtype=object)
+            _co_unit = clean(_co_measure_row.get("unit", ""))
+            _co_indicator = clean(_co_measure_row.get("indicator", ""))
+            _co_object_name = clean(_co_measure_row.get("name", ""))
+            _co_department = clean(
+                _co_measure_row.get("resp_main", "")
+                or _co_measure_row.get("department", "")
+            )
+            _co_targets = " ".join(
+                clean(_co_measure_row.get(column, ""))
+                for column in ("target_2026", "target_2027", "target_2028")
+            ).lower()
+            _co_boolean_fact = (
+                any(token in _co_unit.lower() for token in ("так/ні", "так / ні", "наявн", "булев"))
+                or _co_targets.strip() in {"так", "ні", "так ні", "ні так"}
+            )
+
             co_scope_col, co_year_col, co_quarter_col = st.columns(3)
             with co_scope_col:
                 co_scope = st.selectbox("Масштаб закриття", ["Квартал", "Рік"])
@@ -1399,40 +1435,87 @@ if admin_work_mode == "Ручне закриття заходів":
                 co_year = st.selectbox("Рік", list(range(2026, 2035)))
             with co_quarter_col:
                 co_quarter = st.selectbox("Квартал (якщо масштаб — квартал)", ["I", "II", "III", "IV"])
-            co_reason = st.text_area("Підстава для закриття (внутрішня інформація, комунікація, інший звітний документ)")
+
+            co_fact_status = st.selectbox(
+                "Статус виконання",
+                list(SUBMISSION_STATUS_OPTIONS),
+            )
+            if _co_boolean_fact:
+                co_fact_value = st.selectbox("Фактичне значення", ["так", "ні"])
+            else:
+                co_fact_value = st.text_input(
+                    "Фактичне значення (число)",
+                    help=f"Одиниця виміру: {_co_unit or 'не зазначена'}",
+                )
+            co_fact_progress = st.text_area(
+                "Пояснення фактичних даних",
+                help="Обов'язково: що саме досягнуто і на підставі яких відомостей.",
+            )
+            co_reason = st.text_area(
+                "Підстава для ручного закриття",
+                help="Внутрішня інформація, комунікація або інший звітний документ.",
+            )
             co_npa = st.text_area(
                 "Посилання на НПА / джерела (по одному в рядку, опційно)",
                 placeholder="https://zakon.rada.gov.ua/...\nhttps://docs.google.com/...",
             )
-            co_evidence = st.text_area("Додаткові пояснення (опційно)")
-            co_submit = st.form_submit_button("Закрити вручну" if is_super_admin_user(current_user) else "Надіслати на підтвердження супер-адміну")
+            co_evidence = st.text_area("Ризики / додаткові пояснення (опційно)")
+            co_submit = st.form_submit_button(
+                "Закрити вручну" if is_super_admin_user(current_user)
+                else "Надіслати на підтвердження супер-адміну"
+            )
 
         if co_submit:
+            _fact_number, _fact_text = split_fact_value(co_fact_value)
+            _form_errors = []
             if not co_reason.strip():
-                st.error("Заповніть підставу для закриття заходу.")
+                _form_errors.append("Заповніть підставу для ручного закриття.")
+            if not co_fact_progress.strip():
+                _form_errors.append("Заповніть пояснення фактичних даних.")
+            if not clean(co_fact_value):
+                _form_errors.append("Зазначте фактичне значення.")
+            elif not _co_boolean_fact and _fact_number is None:
+                _form_errors.append("Фактичне значення цього заходу має бути числом.")
+
+            if _form_errors:
+                for _message in _form_errors:
+                    st.error(_message)
             else:
                 try:
                     _route = resolve_manual_closeout_route(current_user)
                     _is_super = is_super_admin_user(current_user)
                     _payload = {
-                        "strat_code":     co_code,
-                        "period_year":    str(co_year),
+                        "strat_code": co_code,
+                        "period_year": str(co_year),
                         "period_quarter": "Рік" if co_scope == "Рік" else co_quarter,
-                        "scope":          co_scope,
-                        "npa_links":      co_npa.strip(),
-                        "admin_id":       current_user.get("id", ""),
-                        "admin_email":    current_user.get("email", ""),
-                        "reason":         co_reason.strip(),
-                        "evidence_note":  co_evidence.strip(),
+                        "scope": co_scope,
+                        "npa_links": co_npa.strip(),
+                        "admin_id": current_user.get("full_name", "") or current_user.get("id", ""),
+                        "admin_email": current_user.get("email", ""),
+                        "reason": co_reason.strip(),
+                        "evidence_note": co_evidence.strip(),
+                        "fact_status": co_fact_status,
+                        "fact_value": co_fact_value,
+                        "fact_progress_text": co_fact_progress.strip(),
+                        "department": _co_department,
+                        "object_name": _co_object_name,
+                        "indicator_name": _co_indicator,
                         "approval_status": "Підтверджено" if _is_super else "Очікує підтвердження",
-                        **({"superadmin_id": current_user.get("id", ""),
+                        **({
+                            "superadmin_id": current_user.get("id", ""),
                             "decided_at": datetime.now(timezone.utc).isoformat(),
-                            "head_status": "Очікує реакції"} if _is_super else {}),
+                            "head_status": "Очікує реакції",
+                        } if _is_super else {}),
                         **_route,
                     }
                     _payload = prepare_closeout_payload(_payload)
                     create_closeout(payload=_payload, user=current_user)
-                    st.success("Захід закрито вручну." if _is_super else "Запит на закриття заходу надіслано на підтвердження відповідальному супер-адміну.")
+                    st.success(
+                        "Захід закрито вручну; фактичні дані записано в моніторинг."
+                        if _is_super else
+                        "Запит на закриття заходу надіслано на підтвердження відповідальному супер-адміну."
+                    )
+                    load_manual_closeouts.clear()
                     monitoring_data.invalidate_monitoring_cache()
                     st.rerun()
                 except TransitionRejected as exc:
@@ -1460,7 +1543,10 @@ if admin_work_mode == "Ручне закриття заходів":
                             <div class="review-title">Захід {clean(co_row.get("strat_code",""))}
                                 — {clean(co_row.get("period_quarter",""))} кв. {clean(co_row.get("period_year",""))}</div>
                             <div><b>Підстава:</b> {clean(co_row.get("reason",""))}</div>
-                            <div><b>Пояснення:</b> {clean(co_row.get("evidence_note",""))}</div>
+                            <div><b>Статус виконання:</b> {clean(co_row.get("fact_status",""))}</div>
+                            <div><b>Фактичне значення:</b> {clean(co_row.get("fact_numeric_value","")) or clean(co_row.get("fact_value_text",""))}</div>
+                            <div><b>Пояснення фактичних даних:</b> {clean(co_row.get("fact_progress_text",""))}</div>
+                            <div><b>Ризики / додаткові пояснення:</b> {clean(co_row.get("evidence_note",""))}</div>
                             <div><b>Подано:</b> {clean(co_row.get("admin_email",""))} о {clean(co_row.get("requested_at",""))}</div>
                             <div><b>Маршрутизація:</b> {clean(co_row.get("routing_note", ""))}</div>
                         </div>

@@ -28,6 +28,57 @@ from core.auth import init_auth_state, render_login_form
 from core.navigation import render_role_page_links, require_page_access
 
 
+def _hide_streamlit_fixed_chrome() -> None:
+    """Прибирає фіксовані верхню й нижню службові панелі Streamlit.
+
+    Верхня панель перекривала верх сторінки під час прокрутки, а порожній
+    нижній контейнер залишав нерухомий білий блок поверх контенту. Наш
+    власний футер `.app-footer` не зачіпається.
+    """
+    st.markdown(
+        """
+        <style>
+        /* Верхня службова панель Streamlit (Share / GitHub / меню тощо). */
+        header[data-testid="stHeader"],
+        div[data-testid="stHeader"] {
+            display: none !important;
+            visibility: hidden !important;
+            height: 0 !important;
+            min-height: 0 !important;
+        }
+
+        /* Фіксований нижній службовий/порожній контейнер Streamlit. */
+        div[data-testid="stBottom"],
+        div[data-testid="stBottomBlockContainer"],
+        .stBottom,
+        .stBottomBlockContainer,
+        footer {
+            display: none !important;
+            visibility: hidden !important;
+            height: 0 !important;
+            min-height: 0 !important;
+            padding: 0 !important;
+            margin: 0 !important;
+        }
+
+        /* Після приховування панелей не залишаємо зарезервовані відступи. */
+        div.block-container,
+        .main .block-container {
+            padding-top: 1rem !important;
+            padding-bottom: 1rem !important;
+        }
+
+        div[data-testid="stAppViewContainer"] > .main,
+        section.main {
+            padding-bottom: 0 !important;
+            margin-bottom: 0 !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def page_setup(page_title: str, page_name: str | None = None,
                layout: str = "wide", stop_if_no_access: bool = True):
     """
@@ -54,6 +105,7 @@ def page_setup(page_title: str, page_name: str | None = None,
         log_cosmetic_error("Відображення логотипа в сайдбарі", exc)
 
     load_css()
+    _hide_streamlit_fixed_chrome()
     inject_theme()
     apply_plotly_theme()
 
@@ -75,9 +127,7 @@ def render_footer() -> None:
         <div class="app-footer">
             <strong>Розроблено департаментом стратегічного планування
             та макроекономічного прогнозування</strong><br>
-            Версія {APP_VERSION} | 2026 | Внутрішня система моніторингу стратегічного плану<br>
-            В разі технічних питань чи пропозицій, звертайтеся за електронною адресою: 
-            <a href="mailto:a.efremov@me.gov.ua">a.efremov@me.gov.ua</a>
+            Версія {APP_VERSION} | 2026 | Внутрішня система моніторингу стратегічного плану
         </div>
         """,
         unsafe_allow_html=True,

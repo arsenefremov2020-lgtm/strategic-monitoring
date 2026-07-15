@@ -338,7 +338,16 @@ def build_log_maps(logs: pd.DataFrame):
     for _, r in logs.iterrows():
         rid = r.get("request_id")
         ts = r.get("changed_at")
-        if rid is None or pd.isna(r["_dt"]):
+        # Журнальні записи ручного закриття можуть не мати request_id.
+        # У DataFrame такі NULL стають NaN; якщо не відкинути їх тут,
+        # у словнику з'являються кілька NaN-ключів, а pandas Series.map()
+        # перетворює словник на Series з неунікальним індексом і падає з
+        # InvalidIndexError. Для реальних заявок нормалізуємо id до int.
+        if rid is None or pd.isna(rid) or pd.isna(r["_dt"]):
+            continue
+        try:
+            rid = int(rid)
+        except (TypeError, ValueError, OverflowError):
             continue
         last_change[rid] = ts
         ns = clean(r.get("new_status"))

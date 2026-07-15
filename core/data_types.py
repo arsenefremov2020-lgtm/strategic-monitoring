@@ -232,6 +232,16 @@ def prepare_closeout_payload(payload: dict[str, Any]) -> dict[str, Any]:
             result["period_quarter"] = None
         else:
             result["period_quarter"] = quarter_to_db(raw_quarter)
+    # Stage 5 / Ж2: store a typed actual value on the closeout itself.
+    # The database later copies the same pair into monitoring_requests.
+    if "fact_value" in result:
+        numeric_value, value_text = split_fact_value(result.pop("fact_value"))
+        result["fact_numeric_value"] = numeric_value
+        result["fact_value_text"] = value_text
+    elif "fact_numeric_value" in result and "fact_value_text" not in result:
+        numeric_value, value_text = split_fact_value(result.get("fact_numeric_value"))
+        result["fact_numeric_value"] = numeric_value
+        result["fact_value_text"] = value_text
     return result
 
 

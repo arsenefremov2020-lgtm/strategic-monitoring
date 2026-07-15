@@ -1,0 +1,45 @@
+# Автоматичні незмінні архівні знімки ДЕМО 2.0.
+# Два UTC-розклади потрібні через зимовий/літній час у Europe/Kyiv.
+# Скрипт створює знімок лише о 18:00 за Києвом; другий запуск тихо завершується.
+# Потрібні Repository secrets: SUPABASE_URL, SUPABASE_KEY.
+
+name: Архівні знімки
+
+on:
+  schedule:
+    - cron: "0 15 15 1,4,7,10 *"
+    - cron: "0 16 15 1,4,7,10 *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Тестовий прогін без запису в базу (1 = так)"
+        default: "1"
+        required: true
+      force_run:
+        description: "Дозволити ручний запуск поза 18:00 за Києвом (1 = так)"
+        default: "1"
+        required: true
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Отримати код
+        uses: actions/checkout@v4
+
+      - name: Налаштувати Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Встановити залежності
+        run: pip install -r requirements.txt
+
+      - name: Створити архівний знімок
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          ARCHIVE_DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
+          ARCHIVE_FORCE_RUN: ${{ github.event.inputs.force_run || '0' }}
+        run: python scripts/create_archive_snapshot.py

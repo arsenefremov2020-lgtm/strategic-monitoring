@@ -1,25 +1,25 @@
 # Щоденна розсилка email-сповіщень системи моніторингу.
+# Два UTC-розклади потрібні через зимовий/літній час у Europe/Kyiv.
+# Скрипт сам пропускає запуск, який не припадає на 08:00–08:59 за Києвом.
 #
-# Необхідні GitHub Secrets (Settings → Secrets and variables → Actions):
-#   SUPABASE_URL      — URL проєкту Supabase
-#   SUPABASE_KEY      — service/anon ключ (той самий, що в secrets Streamlit)
-#   SMTP_HOST         — напр. smtp.gmail.com
-#   SMTP_PORT         — 465
-#   SMTP_USER         — адреса скриньки-відправника
-#   SMTP_PASSWORD     — пароль застосунку (App password)
-#   SMTP_FROM         — (необовʼязково) адреса "Від кого"
+# Необхідні GitHub Secrets:
+#   SUPABASE_URL, SUPABASE_KEY
+#   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM (опційно)
 
 name: Email-сповіщення моніторингу
 
 on:
   schedule:
-    # 05:30 UTC ≈ 08:30 за Києвом — ранковий дайджест у робочий час
     - cron: "30 5 * * 1-5"
+    - cron: "30 6 * * 1-5"
   workflow_dispatch:
     inputs:
       dry_run:
         description: "Тестовий прогін без реальної відправки (1 = так)"
-        default: "0"
+        default: "1"
+      force_run:
+        description: "Дозволити ручний запуск поза 08:00–08:59 за Києвом (1 = так)"
+        default: "1"
 
 jobs:
   notify:
@@ -45,4 +45,5 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           SMTP_FROM: ${{ secrets.SMTP_FROM }}
           NOTIFICATIONS_DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
+          NOTIFICATIONS_FORCE_RUN: ${{ github.event.inputs.force_run || '0' }}
         run: python scripts/send_notifications.py

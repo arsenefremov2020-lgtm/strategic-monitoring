@@ -39,8 +39,10 @@ SESSION_LAST_ACTIVITY_KEY = "auth_last_activity_epoch"
 SESSION_LAST_COOKIE_REFRESH_KEY = "auth_last_cookie_refresh_epoch"
 SESSION_TIMEOUT_MESSAGE_KEY = "auth_timeout_message"
 SESSION_COOKIE_MANAGER_KEY = "auth_cookie_manager_instance"
+SESSION_LOGOUT_GUARD_KEY = "auth_explicit_logout"
 
 AUTH_COOKIE_NAME = "strategic_monitoring_auth"
+AUTH_LOGOUT_TOMBSTONE = "__strategic_monitoring_logged_out__"
 AUTH_COOKIE_REFRESH_SECONDS = 30
 INACTIVITY_TIMEOUT_SECONDS = 60 * 60
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
@@ -140,6 +142,35 @@ def _delete_cookie() -> None:
         return
 
 
+def _set_logout_tombstone() -> bool:
+    """Надійно перекриває попередню cookie-сесію після явного виходу.
+
+    CookieManager виконує браузерні операції через компонент Streamlit. Якщо одразу
+    після ``delete`` зробити ``st.rerun()``, браузер інколи ще встигає повернути стару
+    cookie, і користувача автоматично авторизує знову. Тому при виході спочатку
+    перезаписуємо auth-cookie спеціальним невалідним значенням. Навіть якщо фізичне
+    видалення затримається, старий підписаний токен уже не може відновити сесію.
+    Наступний успішний вхід просто перезапише tombstone новим валідним токеном.
+    """
+    manager = _cookie_manager()
+    if manager is None:
+        return False
+    try:
+        manager.set(
+            AUTH_COOKIE_NAME,
+            AUTH_LOGOUT_TOMBSTONE,
+            key="strategic_monitoring_auth_cookie_logout_tombstone",
+            path="/",
+            expires_at=_end_of_kyiv_day(),
+            secure=True,
+            same_site="strict",
+        )
+        return True
+    except Exception as exc:
+        LOGGER.warning("Не вдалося перекрити cookie входу під час виходу: %s", exc)
+        return False
+
+
 def _issue_token(email: str, last_activity: int | None = None) -> str | None:
     secret = _auth_secret()
     if not secret:
@@ -202,6 +233,8 @@ def init_auth_state() -> None:
         st.session_state[SESSION_LAST_ACTIVITY_KEY] = None
     if SESSION_LAST_COOKIE_REFRESH_KEY not in st.session_state:
         st.session_state[SESSION_LAST_COOKIE_REFRESH_KEY] = 0
+    if SESSION_LOGOUT_GUARD_KEY not in st.session_state:
+        st.session_state[SESSION_LOGOUT_GUARD_KEY] = False
 
 
 def get_current_user() -> dict:
@@ -220,6 +253,9 @@ def set_current_user(user: dict | None, *, persist: bool = False,
     st.session_state[SESSION_AUTH_EMAIL_KEY] = user.get("email")
     st.session_state[SESSION_IS_AUTHENTICATED_KEY] = is_real_user
     st.session_state[SESSION_LAST_ACTIVITY_KEY] = activity
+    if is_real_user:
+        # Успішний явний вхід знімає локальний захист, встановлений кнопкою «Вийти».
+        st.session_state[SESSION_LOGOUT_GUARD_KEY] = False
     if persist and is_real_user:
         token = _issue_token(str(user.get("email") or ""), activity)
         if token and _set_cookie(token):
@@ -227,7 +263,13 @@ def set_current_user(user: dict | None, *, persist: bool = False,
 
 
 def logout_user(*, timeout: bool = False) -> None:
-    _delete_cookie()
+    # Спочатку блокуємо автоматичне відновлення в поточній Streamlit-сесії.
+    # Потім перекриваємо браузерну cookie tombstone-значенням. Це надійніше за
+    # delete + негайний rerun, бо старий токен не може «ожити» на наступному запуску.
+    st.session_state[SESSION_LOGOUT_GUARD_KEY] = True
+    if not _set_logout_tombstone():
+        # Fallback для середовищ, де CookieManager не підтримав set.
+        _delete_cookie()
     st.session_state[SESSION_USER_KEY] = GUEST_USER.copy()
     st.session_state[SESSION_AUTH_EMAIL_KEY] = None
     st.session_state[SESSION_IS_AUTHENTICATED_KEY] = False
@@ -326,10 +368,16 @@ def login_by_email_and_password(
 
 
 def _restore_from_cookie() -> bool:
+    # Після натискання «Вийти» не дозволяємо цьому ж Streamlit-сеансу
+    # автоматично відновити користувача зі старої cookie навіть на один rerun.
+    if st.session_state.get(SESSION_LOGOUT_GUARD_KEY, False):
+        return False
     if is_authenticated():
         return True
     token = _get_cookie()
     if not token:
+        return False
+    if token == AUTH_LOGOUT_TOMBSTONE:
         return False
     payload = _verify_token(token)
     if not payload:

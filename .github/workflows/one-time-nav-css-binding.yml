@@ -1,0 +1,53 @@
+name: One-time shared CSS binding cleanup
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/one-time-nav-css-binding.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Make shared CSS loading robust and scope content page links
+        shell: python
+        run: |
+          from pathlib import Path
+
+          ui_path = Path('core/ui.py')
+          ui = ui_path.read_text(encoding='utf-8')
+          old = '''def load_css(path: str = "assets/app.css") -> None:\n    """Load shared CSS if the stylesheet exists."""\n    css_path = Path(path)\n    if css_path.exists():\n        st.markdown(f"<style>{css_path.read_text(encoding='utf-8')}</style>", unsafe_allow_html=True)\n'''
+          new = '''def load_css(path: str = "assets/app.css") -> None:\n    """Load shared CSS from the project root on every Streamlit page."""\n    css_path = Path(path)\n    if not css_path.is_absolute():\n        project_root = Path(__file__).resolve().parent.parent\n        css_path = project_root / css_path\n\n    if css_path.is_file():\n        st.markdown(\n            f"<style>{css_path.read_text(encoding='utf-8')}</style>",\n            unsafe_allow_html=True,\n        )\n'''
+          if old not in ui:
+              raise SystemExit('Expected load_css block was not found')
+          ui_path.write_text(ui.replace(old, new, 1), encoding='utf-8')
+
+          card_path = Path('pages/4_Картка_заходу.py')
+          card = card_path.read_text(encoding='utf-8')
+          old_prefix = 'div[data-testid="stPageLink"]'
+          if card.count(old_prefix) != 5:
+              raise SystemExit(f'Expected 5 local stPageLink selectors, found {card.count(old_prefix)}')
+          card = card.replace(old_prefix, '[data-testid="stMain"] div[data-testid="stPageLink"]')
+          card = card.replace(
+              '[data-testid="stMain"] div[data-testid="stPageLink"] {',
+              '/* Локальні великі page-link кнопки лише в основному контенті.\n   Sidebar-навігація стилізується виключно в assets/app.css. */\n[data-testid="stMain"] div[data-testid="stPageLink"] {',
+              1,
+          )
+          card_path.write_text(card, encoding='utf-8')
+
+      - name: Commit code changes and remove one-time workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/one-time-nav-css-binding.yml
+          git add core/ui.py pages/4_Картка_заходу.py
+          git commit -m "Ensure shared navigation CSS loads on every page"
+          git push origin main

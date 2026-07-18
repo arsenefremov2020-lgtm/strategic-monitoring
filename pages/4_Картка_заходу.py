@@ -565,14 +565,16 @@ div[data-testid="stMetricValue"] { font-size: 30px !important; }
     margin-top: 2px;
 }
 
-div[data-testid="stPageLink"] {
+/* Локальні великі page-link кнопки лише в основному контенті.
+   Sidebar-навігація стилізується виключно в assets/app.css. */
+[data-testid="stMain"] div[data-testid="stPageLink"] {
     width: 100% !important;
     display: block !important;
     margin-top: 0 !important;
     margin-bottom: 0 !important;
 }
 
-div[data-testid="stPageLink"] a {
+[data-testid="stMain"] div[data-testid="stPageLink"] a {
     width: 100% !important;
     min-height: 86px !important;
     display: flex !important;
@@ -590,19 +592,19 @@ div[data-testid="stPageLink"] a {
     box-shadow: 0 16px 32px rgba(0,91,187,0.28), inset 0 1px 0 rgba(255,255,255,0.24) !important;
 }
 
-div[data-testid="stPageLink"] a p {
+[data-testid="stMain"] div[data-testid="stPageLink"] a p {
     color: #ffffff !important;
     font-size: 18px !important;
     font-weight: 950 !important;
     margin: 0 !important;
 }
 
-div[data-testid="stPageLink"] a svg {
+[data-testid="stMain"] div[data-testid="stPageLink"] a svg {
     color: #ffffff !important;
     fill: #ffffff !important;
 }
 
-div[data-testid="stPageLink"] a:hover {
+[data-testid="stMain"] div[data-testid="stPageLink"] a:hover {
     filter: brightness(1.05);
     transform: translateY(-1px);
 }

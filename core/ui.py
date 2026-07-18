@@ -36,10 +36,17 @@ builtins.require_page_access = require_page_access
 
 
 def load_css(path: str = "assets/app.css") -> None:
-    """Load shared CSS if the stylesheet exists."""
+    """Load shared CSS from the project root on every Streamlit page."""
     css_path = Path(path)
-    if css_path.exists():
-        st.markdown(f"<style>{css_path.read_text(encoding='utf-8')}</style>", unsafe_allow_html=True)
+    if not css_path.is_absolute():
+        project_root = Path(__file__).resolve().parent.parent
+        css_path = project_root / css_path
+
+    if css_path.is_file():
+        st.markdown(
+            f"<style>{css_path.read_text(encoding='utf-8')}</style>",
+            unsafe_allow_html=True,
+        )
 
 
 def render_scope_toggle(page_key: str, user: dict | None) -> bool:

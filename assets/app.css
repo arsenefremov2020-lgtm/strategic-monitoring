@@ -48,6 +48,155 @@
 }
 
 /* ============================================================
+   НАВІГАЦІЯ У БІЧНІЙ ПАНЕЛІ
+   Єдині стилі для st.page_link на всіх сторінках системи.
+   ============================================================ */
+
+section[data-testid="stSidebar"] div[data-testid="stPageLink"] {
+    box-sizing: border-box !important;
+    display: block !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    margin-top: 0 !important;
+    margin-right: 0 !important;
+    margin-bottom: 2px !important;
+    margin-left: 0 !important;
+    padding-top: 0 !important;
+    padding-right: 0 !important;
+    padding-bottom: 0 !important;
+    padding-left: 0 !important;
+}
+
+section[data-testid="stSidebar"] div[data-testid="stPageLink"] a {
+    box-sizing: border-box !important;
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 8px !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    height: auto !important;
+    min-height: 32px !important;
+    margin-top: 0 !important;
+    margin-right: 0 !important;
+    margin-bottom: 0 !important;
+    margin-left: 0 !important;
+    padding-top: 6px !important;
+    padding-right: 8px !important;
+    padding-bottom: 6px !important;
+    padding-left: 8px !important;
+    overflow: hidden !important;
+    background-color: transparent !important;
+    background-image: none !important;
+    border-width: 0 !important;
+    border-style: none !important;
+    border-color: transparent !important;
+    border-radius: 8px !important;
+    box-shadow: none !important;
+    color: #0F172A !important;
+    font-size: 14px !important;
+    font-weight: 700 !important;
+    font-style: normal !important;
+    line-height: 20px !important;
+    letter-spacing: normal !important;
+    text-align: left !important;
+    text-decoration-line: none !important;
+    text-transform: none !important;
+    transform: none !important;
+    filter: none !important;
+    animation: none !important;
+    transition-property: background-color !important;
+    transition-duration: 0.15s !important;
+    transition-timing-function: ease !important;
+    transition-delay: 0s !important;
+}
+
+section[data-testid="stSidebar"] div[data-testid="stPageLink"] a p {
+    box-sizing: border-box !important;
+    display: block !important;
+    flex-grow: 1 !important;
+    flex-shrink: 1 !important;
+    flex-basis: auto !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    margin-top: 0 !important;
+    margin-right: 0 !important;
+    margin-bottom: 0 !important;
+    margin-left: 0 !important;
+    padding-top: 0 !important;
+    padding-right: 0 !important;
+    padding-bottom: 0 !important;
+    padding-left: 0 !important;
+    overflow: hidden !important;
+    color: #0F172A !important;
+    font-size: 14px !important;
+    font-weight: 700 !important;
+    font-style: normal !important;
+    line-height: 20px !important;
+    letter-spacing: normal !important;
+    text-align: left !important;
+    text-decoration-line: none !important;
+    text-overflow: ellipsis !important;
+    text-transform: none !important;
+    white-space: nowrap !important;
+}
+
+section[data-testid="stSidebar"] div[data-testid="stPageLink"] a svg {
+    flex-grow: 0 !important;
+    flex-shrink: 0 !important;
+    width: 1em !important;
+    height: 1em !important;
+    color: currentColor !important;
+    fill: currentColor !important;
+}
+
+section[data-testid="stSidebar"] div[data-testid="stPageLink"] a:hover {
+    background-color: rgba(15, 23, 42, 0.06) !important;
+    background-image: none !important;
+    border-width: 0 !important;
+    border-style: none !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
+    color: #0F172A !important;
+    text-decoration-line: none !important;
+    transform: none !important;
+    filter: none !important;
+}
+
+section[data-testid="stSidebar"] div[data-testid="stPageLink"] a[aria-current="page"],
+section[data-testid="stSidebar"] div[data-testid="stPageLink"] a[aria-current="page"]:hover {
+    background-color: #EAF2FF !important;
+    background-image: none !important;
+    border-width: 0 !important;
+    border-style: none !important;
+    border-color: transparent !important;
+    border-radius: 8px !important;
+    box-shadow: none !important;
+    color: #0F172A !important;
+    font-weight: 700 !important;
+    text-decoration-line: none !important;
+    transform: none !important;
+    filter: none !important;
+}
+
+section[data-testid="stSidebar"] div[data-testid="stPageLink"] a:active,
+section[data-testid="stSidebar"] div[data-testid="stPageLink"] a[aria-current="page"]:active {
+    background-color: #DDEBFF !important;
+    background-image: none !important;
+    border-width: 0 !important;
+    border-style: none !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
+    color: #0F172A !important;
+    transform: none !important;
+    filter: none !important;
+}
+
+/* ============================================================
    2. ПРОПОРЦІЙНЕ МАСШТАБУВАННЯ ДЛЯ ДЕСКТОПІВ / НОУТБУКІВ
    ------------------------------------------------------------
    Мета: на менших екранах (MacBook 13", ноутбуки 1366–1536 px)

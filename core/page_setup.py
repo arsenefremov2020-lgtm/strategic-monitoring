@@ -41,13 +41,42 @@ def _hide_streamlit_fixed_chrome() -> None:
     st.markdown(
         """
         <style>
-        /* Верхня службова панель Streamlit (Share / GitHub / меню тощо). */
+        /*
+         * Верхня службова панель Streamlit.
+         *
+         * ВАЖЛИВО: панель НЕ можна ховати повністю (display:none) — у
+         * Streamlit 1.59 саме в ній живе кнопка розгортання згорнутого
+         * sidebar ([data-testid="stExpandSidebarButton"]). Повне приховування
+         * робило згорнуту бічну панель неможливо відкрити, а стан
+         * «згорнуто» браузер запамʼятовує між перезавантаженнями.
+         *
+         * Тому: панель лишається в DOM, але стає прозорою і не перехоплює
+         * кліки; окремо ховається кожен її зайвий елемент (тулбар, меню,
+         * Deploy, статус-віджет, декоративна смужка); кнопка розгортання
+         * sidebar явно залишається видимою і клікабельною.
+         */
         header[data-testid="stHeader"],
         div[data-testid="stHeader"] {
+            background: transparent !important;
+            box-shadow: none !important;
+            border: none !important;
+            height: auto !important;
+            min-height: 0 !important;
+            pointer-events: none !important;
+        }
+        header[data-testid="stHeader"] [data-testid="stToolbar"],
+        header[data-testid="stHeader"] [data-testid="stMainMenu"],
+        header[data-testid="stHeader"] [data-testid="stAppDeployButton"],
+        header[data-testid="stHeader"] [data-testid="stStatusWidget"],
+        header[data-testid="stHeader"] [data-testid="stDecoration"] {
             display: none !important;
             visibility: hidden !important;
-            height: 0 !important;
-            min-height: 0 !important;
+        }
+        header[data-testid="stHeader"] [data-testid="stExpandSidebarButton"],
+        header[data-testid="stHeader"] [data-testid="stSidebarCollapsedControl"] {
+            display: flex !important;
+            visibility: visible !important;
+            pointer-events: auto !important;
         }
 
         /*
@@ -137,7 +166,11 @@ def page_setup(page_title: str, page_name: str | None = None,
     Кожна сторінка викликає core.ui.render_scope_toggle(page_name, current_user)
     сама, у потрібному місці — поруч зі своїми фільтрами.
     """
-    st.set_page_config(page_title=page_title, layout=layout)
+    st.set_page_config(
+        page_title=page_title,
+        layout=layout,
+        initial_sidebar_state="expanded",
+    )
 
     try:
         st.logo(

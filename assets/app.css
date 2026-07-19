@@ -417,7 +417,7 @@ div[data-testid="stPlotlyChart"],
         white-space: normal !important;
     }
     /* Кнопки та пігулки статусів — на всю ширину, зручні для пальця */
-    .stButton > button { width: 100% !important; }
+    [data-testid="stMain"] .stButton > button { width: 100% !important; }
     [class*="status-pill"], [class*="pill"] {
         font-size: 11px !important;
     }
@@ -567,6 +567,356 @@ div[data-testid="stDataFrame"] input,
 div[data-testid="stDataFrame"] div[data-baseweb="select"] * {
     font-weight: inherit !important;
     background-color: initial !important;
+}
+
+/* ============================================================
+   Блок входу в системі (sidebar)
+   ============================================================ */
+
+section[data-testid="stSidebar"] [data-auth-sidebar-title="login"] {
+    box-sizing: border-box !important;
+    margin-top: 4px !important;
+    margin-right: 0 !important;
+    margin-bottom: 8px !important;
+    margin-left: 0 !important;
+    padding-top: 0 !important;
+    padding-right: 0 !important;
+    padding-bottom: 0 !important;
+    padding-left: 0 !important;
+    color: #0F172A !important;
+    font-size: 20px !important;
+    font-weight: 700 !important;
+    font-style: normal !important;
+    line-height: 1.25 !important;
+    text-align: left !important;
+    text-decoration-line: none !important;
+    text-transform: none !important;
+    transform: none !important;
+}
+
+section[data-testid="stSidebar"] div[data-testid="stForm"] {
+    box-sizing: border-box !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    margin-top: 0 !important;
+    margin-right: 0 !important;
+    margin-bottom: 0 !important;
+    margin-left: 0 !important;
+    padding-top: 16px !important;
+    padding-right: 16px !important;
+    padding-bottom: 16px !important;
+    padding-left: 16px !important;
+    background-color: transparent !important;
+    background-image: none !important;
+    border-width: 1px !important;
+    border-style: solid !important;
+    border-color: #D6DAE3 !important;
+    border-radius: 8px !important;
+    box-shadow: none !important;
+    transform: none !important;
+    filter: none !important;
+}
+
+section[data-testid="stSidebar"] div[data-testid="stForm"] div[data-testid="stVerticalBlock"] {
+    row-gap: 12px !important;
+    column-gap: 12px !important;
+    gap: 12px !important;
+}
+
+section[data-testid="stSidebar"] div[data-testid="stForm"] div[data-testid="stTextInput"] label {
+    margin-top: 0 !important;
+    margin-right: 0 !important;
+    margin-bottom: 4px !important;
+    margin-left: 0 !important;
+    padding-top: 0 !important;
+    padding-right: 0 !important;
+    padding-bottom: 0 !important;
+    padding-left: 0 !important;
+    color: #0F172A !important;
+    font-size: 14px !important;
+    font-weight: 400 !important;
+    font-style: normal !important;
+    line-height: 20px !important;
+    text-decoration-line: none !important;
+    text-transform: none !important;
+}
+
+section[data-testid="stSidebar"] div[data-testid="stForm"] div[data-testid="stTextInput"] label p {
+    margin-top: 0 !important;
+    margin-right: 0 !important;
+    margin-bottom: 0 !important;
+    margin-left: 0 !important;
+    padding-top: 0 !important;
+    padding-right: 0 !important;
+    padding-bottom: 0 !important;
+    padding-left: 0 !important;
+    color: #0F172A !important;
+    font-size: 14px !important;
+    font-weight: 400 !important;
+    font-style: normal !important;
+    line-height: 20px !important;
+    text-decoration-line: none !important;
+    text-transform: none !important;
+}
+
+section[data-testid="stSidebar"] div[data-testid="stForm"] div[data-testid="stTextInput"] input {
+    box-sizing: border-box !important;
+    height: 40px !important;
+    min-height: 40px !important;
+    max-height: 40px !important;
+    caret-color: #005BBB !important;
+}
+
+section[data-testid="stSidebar"] div[data-testid="stForm"] div[data-testid="stTextInput"] input:focus {
+    border-width: 1px !important;
+    border-style: solid !important;
+    border-color: #005BBB !important;
+    box-shadow: none !important;
+    caret-color: #005BBB !important;
+}
+
+section[data-testid="stSidebar"] div[data-testid="stForm"] div[data-testid="stTextInput"] button {
+    box-sizing: border-box !important;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    height: 40px !important;
+    min-height: 40px !important;
+    max-height: 40px !important;
+    margin-top: 0 !important;
+    margin-right: 0 !important;
+    margin-bottom: 0 !important;
+    margin-left: 0 !important;
+    padding-top: 0 !important;
+    padding-right: 8px !important;
+    padding-bottom: 0 !important;
+    padding-left: 8px !important;
+    background-color: transparent !important;
+    background-image: none !important;
+    border-width: 0 !important;
+    border-style: none !important;
+    border-color: transparent !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    color: #64748B !important;
+    transform: none !important;
+    filter: none !important;
+    transition: none !important;
+    animation: none !important;
+}
+
+section[data-testid="stSidebar"] div[data-testid="stForm"] div[data-testid="stTextInput"] button:hover {
+    background-color: transparent !important;
+    background-image: none !important;
+    border-width: 0 !important;
+    border-style: none !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
+    color: #005BBB !important;
+    transform: none !important;
+    filter: none !important;
+}
+
+section[data-testid="stSidebar"] div[data-testid="stFormSubmitButton"] button,
+section[data-testid="stSidebar"] div[data-testid="stButton"] button {
+    box-sizing: border-box !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    height: auto !important;
+    min-height: 40px !important;
+    margin-top: 0 !important;
+    margin-right: 0 !important;
+    margin-bottom: 0 !important;
+    margin-left: 0 !important;
+    padding-top: 8px !important;
+    padding-right: 16px !important;
+    padding-bottom: 8px !important;
+    padding-left: 16px !important;
+    background-color: #FFFFFF !important;
+    background-image: none !important;
+    border-width: 1px !important;
+    border-style: solid !important;
+    border-color: #D6DAE3 !important;
+    border-radius: 8px !important;
+    box-shadow: none !important;
+    color: #0F172A !important;
+    font-size: 14px !important;
+    font-weight: 400 !important;
+    font-style: normal !important;
+    line-height: 20px !important;
+    text-align: center !important;
+    text-decoration-line: none !important;
+    text-transform: none !important;
+    white-space: nowrap !important;
+    transform: none !important;
+    filter: none !important;
+    transition: none !important;
+    animation: none !important;
+}
+
+section[data-testid="stSidebar"] div[data-testid="stFormSubmitButton"] button:hover,
+section[data-testid="stSidebar"] div[data-testid="stButton"] button:hover {
+    background-color: #FFFFFF !important;
+    background-image: none !important;
+    border-width: 1px !important;
+    border-style: solid !important;
+    border-color: #005BBB !important;
+    box-shadow: none !important;
+    color: #005BBB !important;
+    transform: none !important;
+    filter: none !important;
+}
+
+section[data-testid="stSidebar"] div[data-testid="stFormSubmitButton"] button:active,
+section[data-testid="stSidebar"] div[data-testid="stButton"] button:active {
+    background-color: #EAF2FF !important;
+    background-image: none !important;
+    border-width: 1px !important;
+    border-style: solid !important;
+    border-color: #005BBB !important;
+    box-shadow: none !important;
+    color: #005BBB !important;
+    transform: none !important;
+    filter: none !important;
+}
+
+section[data-testid="stSidebar"] [data-auth-sidebar-notice="success"] {
+    box-sizing: border-box !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    margin-top: 0 !important;
+    margin-right: 0 !important;
+    margin-bottom: 0 !important;
+    margin-left: 0 !important;
+    padding-top: 12px !important;
+    padding-right: 16px !important;
+    padding-bottom: 12px !important;
+    padding-left: 16px !important;
+    background-color: #E7F6EC !important;
+    background-image: none !important;
+    border-width: 0 !important;
+    border-style: none !important;
+    border-color: transparent !important;
+    border-radius: 8px !important;
+    box-shadow: none !important;
+    color: #177233 !important;
+    font-size: 14px !important;
+    font-weight: 400 !important;
+    font-style: normal !important;
+    line-height: 20px !important;
+    text-align: left !important;
+    text-decoration-line: none !important;
+    text-transform: none !important;
+    transform: none !important;
+}
+
+section[data-testid="stSidebar"] [data-auth-sidebar-notice="warning"] {
+    box-sizing: border-box !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    margin-top: 0 !important;
+    margin-right: 0 !important;
+    margin-bottom: 0 !important;
+    margin-left: 0 !important;
+    padding-top: 12px !important;
+    padding-right: 16px !important;
+    padding-bottom: 12px !important;
+    padding-left: 16px !important;
+    background-color: #FFF7DB !important;
+    background-image: none !important;
+    border-width: 0 !important;
+    border-style: none !important;
+    border-color: transparent !important;
+    border-radius: 8px !important;
+    box-shadow: none !important;
+    color: #7A5B00 !important;
+    font-size: 14px !important;
+    font-weight: 400 !important;
+    font-style: normal !important;
+    line-height: 20px !important;
+    text-align: left !important;
+    text-decoration-line: none !important;
+    text-transform: none !important;
+    transform: none !important;
+}
+
+section[data-testid="stSidebar"] [data-auth-sidebar-profile="true"] {
+    box-sizing: border-box !important;
+    display: flex !important;
+    flex-direction: column !important;
+    flex-wrap: nowrap !important;
+    row-gap: 2px !important;
+    column-gap: 0 !important;
+    gap: 2px !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    margin-top: 0 !important;
+    margin-right: 0 !important;
+    margin-bottom: 0 !important;
+    margin-left: 0 !important;
+    padding-top: 0 !important;
+    padding-right: 0 !important;
+    padding-bottom: 0 !important;
+    padding-left: 0 !important;
+    color: #5B6472 !important;
+    font-size: 14px !important;
+    font-weight: 400 !important;
+    font-style: normal !important;
+    line-height: 20px !important;
+    white-space: normal !important;
+    overflow-wrap: anywhere !important;
+    word-break: break-word !important;
+    text-transform: none !important;
+}
+
+section[data-testid="stSidebar"] [data-auth-sidebar-profile-line="true"] {
+    box-sizing: border-box !important;
+    display: block !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    margin-top: 0 !important;
+    margin-right: 0 !important;
+    margin-bottom: 0 !important;
+    margin-left: 0 !important;
+    padding-top: 0 !important;
+    padding-right: 0 !important;
+    padding-bottom: 0 !important;
+    padding-left: 0 !important;
+    color: #5B6472 !important;
+    font-size: 14px !important;
+    font-weight: 400 !important;
+    font-style: normal !important;
+    line-height: 20px !important;
+    white-space: normal !important;
+    overflow-wrap: anywhere !important;
+    word-break: break-word !important;
+    text-transform: none !important;
+}
+
+section[data-testid="stSidebar"] [data-auth-sidebar-profile="true"] a {
+    color: #005BBB !important;
+    font-size: 14px !important;
+    font-weight: 400 !important;
+    font-style: normal !important;
+    text-decoration-line: none !important;
+    white-space: normal !important;
+    overflow-wrap: anywhere !important;
+    word-break: break-word !important;
+    text-transform: none !important;
+}
+
+section[data-testid="stSidebar"] [data-auth-sidebar-profile="true"] a:hover {
+    color: #005BBB !important;
+    text-decoration-line: underline !important;
 }
 
 /* ─── KPI CARDS (глобально: Паспорт ССП, Фільтр за документом, Центр задач) ─── */

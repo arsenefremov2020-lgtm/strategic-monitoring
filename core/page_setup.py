@@ -44,16 +44,16 @@ def _hide_streamlit_fixed_chrome() -> None:
         /*
          * Верхня службова панель Streamlit.
          *
-         * ВАЖЛИВО: панель НЕ можна ховати повністю (display:none) — у
-         * Streamlit 1.59 саме в ній живе кнопка розгортання згорнутого
-         * sidebar ([data-testid="stExpandSidebarButton"]). Повне приховування
-         * робило згорнуту бічну панель неможливо відкрити, а стан
-         * «згорнуто» браузер запамʼятовує між перезавантаженнями.
+         * Панель НЕ ховається (display:none заборонено): у Streamlit 1.59
+         * саме в ній живуть кнопка згортання/розгортання бічної панелі та
+         * емблема (st.logo) при згорнутому sidebar. Повне приховування
+         * робило згорнуту бічну панель неможливо відкрити.
          *
-         * Тому: панель лишається в DOM, але стає прозорою і не перехоплює
-         * кліки; окремо ховається кожен її зайвий елемент (тулбар, меню,
-         * Deploy, статус-віджет, декоративна смужка); кнопка розгортання
-         * sidebar явно залишається видимою і клікабельною.
+         * Підхід: смужка лишається, але стає повністю прозорою і не
+         * перехоплює кліки; службові елементи (тулбар Share/Deploy, меню,
+         * статус-віджет, кольорова декоративна смужка) ховаються адресно;
+         * кнопка бічної панелі та емблема залишаються видимими і
+         * клікабельними.
          */
         header[data-testid="stHeader"],
         div[data-testid="stHeader"] {
@@ -73,10 +73,16 @@ def _hide_streamlit_fixed_chrome() -> None:
             visibility: hidden !important;
         }
         header[data-testid="stHeader"] [data-testid="stExpandSidebarButton"],
-        header[data-testid="stHeader"] [data-testid="stSidebarCollapsedControl"] {
-            display: flex !important;
+        header[data-testid="stHeader"] [data-testid="stSidebarCollapsedControl"],
+        header[data-testid="stHeader"] [data-testid="stSidebarCollapseButton"],
+        header[data-testid="stHeader"] [data-testid="stLogoLink"],
+        header[data-testid="stHeader"] [data-testid="stLogo"] {
             visibility: visible !important;
             pointer-events: auto !important;
+        }
+        header[data-testid="stHeader"] [data-testid="stExpandSidebarButton"],
+        header[data-testid="stHeader"] [data-testid="stSidebarCollapsedControl"] {
+            display: flex !important;
         }
 
         /*

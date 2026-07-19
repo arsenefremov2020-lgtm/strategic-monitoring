@@ -70,36 +70,8 @@ header[data-testid="stHeader"] {
     background: transparent !important;
 }
 .stApp {
-    background:
-        radial-gradient(circle at top right, rgba(37,99,235,0.08), transparent 28%),
-        radial-gradient(circle at bottom left, rgba(22,163,74,0.07), transparent 30%),
-        linear-gradient(180deg, #f6f8fb 0%, #eef2f7 100%);
+    background: #F7F9FC;
 }
-
-.stApp::before {
-    content: "";
-    position: fixed;
-    top: -160px;
-    right: -120px;
-    width: 460px;
-    height: 460px;
-    border-radius: 50%;
-    background: rgba(37, 99, 235, 0.045);
-    z-index: 0;
-}
-
-.stApp::after {
-    content: "";
-    position: fixed;
-    bottom: -180px;
-    left: -120px;
-    width: 390px;
-    height: 390px;
-    border-radius: 50%;
-    background: rgba(22, 163, 74, 0.045);
-    z-index: 0;
-}
-
 .main .block-container {
     max-width: 1550px;
     padding-top: 1.2rem;
@@ -116,7 +88,7 @@ header[data-testid="stHeader"] {
 
 .ministry-label {
     text-align: right;
-    color: #475569;
+    color: #61708A;
     font-size: 14px;
     font-weight: 700;
     margin-bottom: 8px;
@@ -129,7 +101,7 @@ header[data-testid="stHeader"] {
 .info-card,
 .note-box {
     background: rgba(255,255,255,0.94);
-    border: 1px solid #d8dee9;
+    border: 1px solid #DCE4F0;
     box-shadow: 0 6px 18px rgba(15,23,42,0.045);
 }
 
@@ -167,33 +139,33 @@ header[data-testid="stHeader"] {
 }
 
 .status-green {
-    background: #dcfce7;
-    color: #166534;
-    border-color: #86efac;
+    background: #E4F5EC;
+    color: #0C713A;
+    border-color: #1E9E57;
 }
 
 .status-green .status-dot {
-    background: #16a34a;
+    background: #118847;
 }
 
 .status-blue {
-    background: #dbeafe;
-    color: #1e40af;
-    border-color: #93c5fd;
+    background: #E3EDFF;
+    color: #032A63;
+    border-color: #BFD3F2;
 }
 
 .status-blue .status-dot {
-    background: #2563eb;
+    background: #005BBB;
 }
 
 .status-orange {
-    background: #ffedd5;
-    color: #9a3412;
-    border-color: #fdba74;
+    background: #FDF3D8;
+    color: #FF7A45;
+    border-color: #FF7A45;
 }
 
 .status-orange .status-dot {
-    background: #f97316;
+    background: #FF7A45;
 }
 
 @media (max-width: 1100px) {
@@ -212,13 +184,13 @@ header[data-testid="stHeader"] {
 .header-title {
     font-size: 32px;
     font-weight: 900;
-    color: #0f172a;
+    color: #132238;
     margin-bottom: 8px;
 }
 
 .header-subtitle {
     font-size: 15px;
-    color: #475569;
+    color: #61708A;
     line-height: 1.55;
 }
 
@@ -226,8 +198,8 @@ header[data-testid="stHeader"] {
     border-radius: 18px;
     padding: 22px 26px 24px 26px;
     margin: 18px 0 18px 0;
-    background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(241,246,253,0.98));
-    border: 1px solid #cbd8ea;
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
     box-shadow: 0 10px 24px rgba(15,23,42,0.07);
 }
 
@@ -236,7 +208,7 @@ header[data-testid="stHeader"] {
 .summary-title,
 .filter-title,
 .table-title {
-    color: #0f172a;
+    color: #132238;
     font-weight: 900;
 }
 
@@ -266,13 +238,13 @@ header[data-testid="stHeader"] {
     min-height: 58px;
     padding: 10px 12px;
     border-radius: 14px;
-    background: linear-gradient(180deg, #f8fafc 0%, #eef4fb 100%);
-    border: 1px solid #d8dee9;
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
     display: flex;
     align-items: center;
     justify-content: center;
     text-align: center;
-    color: #334155;
+    color: #61708A;
     font-size: 13px;
     font-weight: 800;
     line-height: 1.25;
@@ -297,8 +269,8 @@ header[data-testid="stHeader"] {
 }
 
 .summary-card {
-    background: #f8fafc;
-    border: 1px solid #d8dee9;
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
     border-radius: 13px;
     padding: 14px 15px;
     min-height: 96px;
@@ -308,7 +280,7 @@ header[data-testid="stHeader"] {
 }
 
 .summary-label {
-    color: #64748b;
+    color: #61708A;
     font-size: 12px;
     font-weight: 800;
     line-height: 1.35;
@@ -317,7 +289,7 @@ header[data-testid="stHeader"] {
 }
 
 .summary-value {
-    color: #0f172a;
+    color: #132238;
     font-size: 24px;
     line-height: 1;
     font-weight: 950;
@@ -327,8 +299,8 @@ header[data-testid="stHeader"] {
     border-radius: 18px;
     padding: 24px 26px 26px 26px;
     margin: 18px 0 24px 0;
-    background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(241,246,253,0.98));
-    border: 1px solid #cbd8ea;
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
     box-shadow: 0 10px 24px rgba(15,23,42,0.07);
 }
 
@@ -338,7 +310,7 @@ header[data-testid="stHeader"] {
 }
 
 .filter-legend {
-    color: #475569;
+    color: #61708A;
     font-size: 14px;
     line-height: 1.55;
     margin-bottom: 16px;
@@ -354,12 +326,12 @@ header[data-testid="stHeader"] {
 .info-card {
     border-radius: 14px;
     padding: 17px 19px;
-    color: #1f2937;
+    color: #032A63;
     line-height: 1.55;
 }
 
 .info-card-title {
-    color: #0f172a;
+    color: #132238;
     font-size: 16px;
     font-weight: 900;
     margin-bottom: 8px;
@@ -373,7 +345,7 @@ header[data-testid="stHeader"] {
 .note-box {
     border-radius: 10px;
     padding: 13px 17px;
-    color: #374151;
+    color: #032A63;
     font-size: 14px;
     margin: 12px 0 18px 0;
 }
@@ -387,8 +359,8 @@ header[data-testid="stHeader"] {
 [data-testid="stMain"] div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
 [data-testid="stMain"] div[data-testid="stTextInput"] input,
 [data-testid="stMain"] div[data-testid="stTextArea"] textarea {
-    background-color: #d7eaff !important;
-    border: 1px solid #8fb3df !important;
+    background-color: #EAF1FF !important;
+    border: 1px solid #BFD3F2 !important;
     border-radius: 10px !important;
     min-height: 43px !important;
     box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.08) !important;
@@ -398,7 +370,7 @@ header[data-testid="stHeader"] {
 [data-testid="stMain"] div[data-testid="stTextInput"] label,
 [data-testid="stMain"] div[data-testid="stTextArea"] label {
     font-weight: 750 !important;
-    color: #1e293b !important;
+    color: #132238 !important;
 }
 
 /* Центрування всієї таблиці.
@@ -420,7 +392,7 @@ div[data-testid="stDataEditor"] {
     margin-right: auto !important;
     border-radius: 14px !important;
     overflow: hidden !important;
-    border: 1px solid #cbd5e1 !important;
+    border: 1px solid #DCE4F0 !important;
     box-shadow: 0 8px 22px rgba(15,23,42,0.06) !important;
 }
 
@@ -436,10 +408,10 @@ div[data-testid="stDataEditor"] [class*="dvn-scroll"] {
 div[data-testid="stDataEditor"] div[role="columnheader"] {
     min-height: 96px !important;
     height: 96px !important;
-    background: #e8eef7 !important;
-    border-bottom: 1px solid #cbd5e1 !important;
+    background: #EAF1FF !important;
+    border-bottom: 1px solid #DCE4F0 !important;
     font-weight: 900 !important;
-    color: #0f172a !important;
+    color: #132238 !important;
     line-height: 1.2 !important;
     white-space: normal !important;
     overflow: visible !important;
@@ -501,7 +473,7 @@ div[data-testid="stDataEditor"] [data-testid="stCheckbox"] {
 [data-testid="stMain"] div[data-testid="stButton"] > button {
     width: 100%;
     min-height: 68px;
-    background: linear-gradient(135deg, #dc2626 0%, #f97316 52%, #facc15 100%) !important;
+    background: #FF7A45 !important;
     color: #ffffff !important;
     border: 0 !important;
     border-radius: 18px !important;
@@ -518,21 +490,21 @@ div[data-testid="stDataEditor"] [data-testid="stCheckbox"] {
 
 .final-footer {
     text-align: center;
-    color: #475569;
+    color: #61708A;
     font-size: 13px;
     margin-top: 48px;
     padding-top: 24px;
-    border-top: 1px solid #cbd5e1;
+    border-top: 1px solid #DCE4F0;
     line-height: 1.7;
 }
 
 .final-footer-main {
     font-weight: 700;
-    color: #334155;
+    color: #61708A;
 }
 
 .final-footer-sub {
-    color: #64748b;
+    color: #61708A;
     font-size: 12px;
 }
 
@@ -901,11 +873,11 @@ def render_scheme_picker(ssp_index, key_prefix):
         if len(candidates) == 1:
             chosen = candidates[0]
             st.markdown(
-                f'<div style="background:#eef2f9;border:1px solid #d8dee9;'
+                f'<div style="background:#F7F9FC;border:1px solid #DCE4F0;'
                 f'border-radius:10px;padding:8px 12px;margin-bottom:6px;">'
                 f'<div style="font-size:10px;font-weight:800;letter-spacing:.04em;'
-                f'text-transform:uppercase;color:#64748b;">{i}. {escape(label)}</div>'
-                f'<div style="font-size:13px;font-weight:700;color:#0f172a;">'
+                f'text-transform:uppercase;color:#61708A;">{i}. {escape(label)}</div>'
+                f'<div style="font-size:13px;font-weight:700;color:#132238;">'
                 f'{escape(chosen.get("name") or chosen.get("email") or "")}</div></div>',
                 unsafe_allow_html=True,
             )
@@ -1142,13 +1114,13 @@ if submission_mode.startswith("🎯"):
     ind_required_cols = [value_col, "Статус\nвиконання"]
     st.markdown(
         f"""
-        <div class="note-box" style="background:#f8fafc;border:1px solid #d8dee9;">
+        <div class="note-box" style="background:#F7F9FC;border:1px solid #DCE4F0;">
             <b>Легенда обов'язковості полів:</b>
-            <span style="background:#fde8e8;border:1px solid #fca5a5;border-radius:8px;
-                  padding:2px 10px;margin:0 6px;font-weight:800;color:#991b1b;">🔴 Обов'язкове</span>
+            <span style="background:#FBE5E5;border:1px solid #DC4A4A;border-radius:8px;
+                  padding:2px 10px;margin:0 6px;font-weight:800;color:#DC4A4A;">🔴 Обов'язкове</span>
             «{value_col.replace(chr(10), ' ')}», «Статус виконання»
-            <span style="background:#fef6e0;border:1px solid #fde68a;border-radius:8px;
-                  padding:2px 10px;margin:0 6px;font-weight:800;color:#92400e;">🟡 Необов'язкове</span>
+            <span style="background:#FDF3D8;border:1px solid #F4B400;border-radius:8px;
+                  padding:2px 10px;margin:0 6px;font-weight:800;color:#8A6400;">🟡 Необов'язкове</span>
             «Опис прогресу», «Ризики», «Посилання на НПА»
         </div>
         """,
@@ -1190,7 +1162,7 @@ if submission_mode.startswith("🎯"):
     ind_locked_count = int(ind_df_table["_locked"].sum())
     if ind_locked_count:
         st.markdown(
-            f'<div class="note-box" style="background:#fef9c3;border:1px solid #fde047;color:#713f12;">'
+            f'<div class="note-box" style="background:#FDF3D8;border:1px solid #F4B400;color:#8A6400;">'
             f'За {ind_locked_count} індикатором(ами) подання за {ind_year} рік уже перебуває '
             f'в процесі погодження — повторне подання стане доступним після завершення процесу.</div>',
             unsafe_allow_html=True,
@@ -1837,7 +1809,7 @@ else:
         if approved_count_lock:
             parts.append(f"<strong>{approved_count_lock}</strong> ✅ погоджено")
         st.markdown(
-            f'''<div class="note-box" style="background:#fef9c3;border:1px solid #fde047;color:#713f12;">
+            f'''<div class="note-box" style="background:#FDF3D8;border:1px solid #F4B400;color:#8A6400;">
                 За {locked_count} заходом(заходами) у {quarter_label} відомості вже подано: {", ".join(parts)}.
                 Поля цих заходів заповнені поданими даними та <strong>заблоковані</strong> для редагування.
             </div>''',
@@ -1929,13 +1901,13 @@ else:
     # в заголовках колонок + кольоровою легендою перед таблицею.
     st.markdown(
         f"""
-        <div class="note-box" style="background:#f8fafc;border:1px solid #d8dee9;">
+        <div class="note-box" style="background:#F7F9FC;border:1px solid #DCE4F0;">
             <b>Легенда обов'язковості полів:</b>
-            <span style="background:#fde8e8;border:1px solid #fca5a5;border-radius:8px;
-                  padding:2px 10px;margin:0 6px;font-weight:800;color:#991b1b;">🔴 Обов'язкові</span>
+            <span style="background:#FBE5E5;border:1px solid #DC4A4A;border-radius:8px;
+                  padding:2px 10px;margin:0 6px;font-weight:800;color:#DC4A4A;">🔴 Обов'язкові</span>
             «{quarter_label}» (квартальне значення), «Статус виконання», «Опис прогресу» — без них подання не пройде
-            <span style="background:#fef6e0;border:1px solid #fde68a;border-radius:8px;
-                  padding:2px 10px;margin:0 6px;font-weight:800;color:#92400e;">🟡 Необов'язкові</span>
+            <span style="background:#FDF3D8;border:1px solid #F4B400;border-radius:8px;
+                  padding:2px 10px;margin:0 6px;font-weight:800;color:#8A6400;">🟡 Необов'язкові</span>
             «Ризики / проблеми / відхилення», «Посилання на НПА»
         </div>
         """,

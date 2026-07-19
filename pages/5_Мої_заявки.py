@@ -60,13 +60,7 @@ header[data-testid="stHeader"] {
     background: transparent !important;
 }
 .stApp {
-    background:
-        linear-gradient(rgba(15,23,42,0.025) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(15,23,42,0.025) 1px, transparent 1px),
-        radial-gradient(circle at top right, rgba(37,99,235,0.09), transparent 28%),
-        radial-gradient(circle at bottom left, rgba(22,163,74,0.07), transparent 30%),
-        linear-gradient(180deg, #f7f9fc 0%, #eef3f8 100%);
-    background-size: 36px 36px, 36px 36px, auto, auto, auto;
+    background: #F7F9FC;
 }
 
 .main .block-container {
@@ -85,7 +79,7 @@ header[data-testid="stHeader"] {
 
 .ministry-label {
     text-align: right;
-    color: #475569;
+    color: #61708A;
     font-size: 14px;
     font-weight: 700;
     margin-bottom: 8px;
@@ -93,7 +87,7 @@ header[data-testid="stHeader"] {
 
 .header-box, .card {
     background: rgba(255,255,255,0.94);
-    border: 1px solid #d8dee9;
+    border: 1px solid #DCE4F0;
     border-radius: 16px;
     padding: 22px 26px;
     margin-bottom: 18px;
@@ -103,26 +97,26 @@ header[data-testid="stHeader"] {
 .header-title {
     font-size: 32px;
     font-weight: 900;
-    color: #0f172a;
+    color: #132238;
     margin-bottom: 8px;
 }
 
 .header-subtitle, .card-subtitle {
     font-size: 15px;
-    color: #475569;
+    color: #61708A;
     line-height: 1.55;
 }
 
 .card-title {
     font-size: 21px;
     font-weight: 900;
-    color: #0f172a;
+    color: #132238;
     margin-bottom: 8px;
 }
 
 .filter-panel {
-    background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(241,246,253,0.98));
-    border: 1px solid #cbd8ea;
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
     border-radius: 18px;
     padding: 18px 20px 10px 20px;
     margin-top: 12px;
@@ -132,8 +126,8 @@ header[data-testid="stHeader"] {
 [data-testid="stMain"] div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
 [data-testid="stMain"] div[data-testid="stTextInput"] input,
 [data-testid="stMain"] div[data-testid="stTextArea"] textarea {
-    background-color: #d7eaff !important;
-    border: 1px solid #8fb3df !important;
+    background-color: #EAF1FF !important;
+    border: 1px solid #BFD3F2 !important;
     border-radius: 10px !important;
     box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.08) !important;
 }
@@ -147,7 +141,7 @@ header[data-testid="stHeader"] {
 [data-testid="stMain"] div[data-testid="stTextInput"] label,
 [data-testid="stMain"] div[data-testid="stTextArea"] label {
     font-weight: 750 !important;
-    color: #1e293b !important;
+    color: #132238 !important;
 }
 
 .badge-wrap {
@@ -158,9 +152,9 @@ header[data-testid="stHeader"] {
 }
 
 .badge {
-    background: #eef6ff;
-    border: 1px solid #bfdbfe;
-    color: #1d4ed8;
+    background: #EAF1FF;
+    border: 1px solid #BFD3F2;
+    color: #005BBB;
     border-radius: 999px;
     padding: 7px 11px;
     font-size: 13px;
@@ -168,33 +162,33 @@ header[data-testid="stHeader"] {
 }
 
 .badge-green {
-    background: #dcfce7;
-    border: 1px solid #bbf7d0;
-    color: #166534;
+    background: #E4F5EC;
+    border: 1px solid #1E9E57;
+    color: #0C713A;
 }
 
 .badge-yellow {
-    background: #fef9c3;
-    border: 1px solid #fde68a;
-    color: #854d0e;
+    background: #FDF3D8;
+    border: 1px solid #F4B400;
+    color: #8A6400;
 }
 
 .badge-red {
-    background: #fee2e2;
-    border: 1px solid #fecaca;
-    color: #991b1b;
+    background: #FBE5E5;
+    border: 1px solid #DC4A4A;
+    color: #DC4A4A;
 }
 
 .badge-gray {
-    background: #f1f5f9;
-    border: 1px solid #cbd5e1;
-    color: #475569;
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
+    color: #61708A;
 }
 
 .badge-blue {
-    background: #dbeafe;
-    border: 1px solid #93c5fd;
-    color: #1e40af;
+    background: #E3EDFF;
+    border: 1px solid #BFD3F2;
+    color: #032A63;
 }
 
 .info-grid {
@@ -208,37 +202,37 @@ header[data-testid="stHeader"] {
     border-radius: 14px;
     padding: 16px 18px;
     min-height: 105px;
-    border: 1px solid #d8dee9;
+    border: 1px solid #DCE4F0;
     overflow-wrap: anywhere;
 }
 
 .info-card-blue {
-    background: #eef6ff;
-    border-color: #bfdbfe;
+    background: #EAF1FF;
+    border-color: #BFD3F2;
 }
 
 .info-card-green {
-    background: #dcfce7;
-    border-color: #bbf7d0;
+    background: #E4F5EC;
+    border-color: #1E9E57;
 }
 
 .info-card-yellow {
-    background: #fef9c3;
-    border-color: #fde68a;
+    background: #FDF3D8;
+    border-color: #F4B400;
 }
 
 .info-card-red {
-    background: #fee2e2;
-    border-color: #fecaca;
+    background: #FBE5E5;
+    border-color: #DC4A4A;
 }
 
 .info-card-gray {
-    background: #f8fafc;
-    border-color: #cbd5e1;
+    background: #F7F9FC;
+    border-color: #DCE4F0;
 }
 
 .info-label {
-    color: #64748b;
+    color: #61708A;
     font-size: 12px;
     margin-bottom: 7px;
     line-height: 1.35;
@@ -248,45 +242,45 @@ header[data-testid="stHeader"] {
 }
 
 .info-value {
-    color: #0f172a;
+    color: #132238;
     font-weight: 900;
     font-size: 15px;
     line-height: 1.4;
 }
 
 .step-box {
-    background: #eef6ff;
-    border: 1px solid #bfdbfe;
+    background: #EAF1FF;
+    border: 1px solid #BFD3F2;
     border-radius: 14px;
     padding: 14px 16px;
     margin: 10px 0;
 }
 
 .version-box {
-    background: #f8fafc;
-    border: 1px solid #d8dee9;
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
     border-radius: 14px;
     padding: 14px 16px;
     margin: 10px 0;
 }
 
 .version-title {
-    color: #0f172a;
+    color: #132238;
     font-weight: 900;
     font-size: 15px;
     margin-bottom: 6px;
 }
 
 .version-text {
-    color: #475569;
+    color: #61708A;
     font-size: 13px;
     line-height: 1.45;
 }
 
 .comment-box {
-    background: linear-gradient(135deg, #fff7ed, #fef3c7);
-    border: 1px solid #f59e0b;
-    color: #78350f;
+    background: #FDF3D8;
+    border: 1px solid #FF7A45;
+    color: #FF7A45;
     border-radius: 16px;
     padding: 18px 20px;
     margin: 18px 0 6px 0;
@@ -309,7 +303,7 @@ header[data-testid="stHeader"] {
 
 div[data-testid="stMetric"] {
     background: rgba(255,255,255,0.9);
-    border: 1px solid #d8dee9;
+    border: 1px solid #DCE4F0;
     border-radius: 14px;
     padding: 14px 16px;
     box-shadow: 0 4px 12px rgba(15,23,42,0.04);
@@ -319,25 +313,25 @@ div[data-testid="stMetric"] {
     border-radius: 14px;
     padding: 12px 18px;
     font-weight: 900;
-    border: 1px solid #bfdbfe;
-    background: linear-gradient(135deg, #eff6ff, #e0f2fe) !important;
-    color: #1d4ed8 !important;
+    border: 1px solid #BFD3F2;
+    background: #EAF1FF !important;
+    color: #005BBB !important;
     box-shadow: 0 8px 18px rgba(37,99,235,0.10);
 }
 
 [data-testid="stMain"] div.stButton > button:hover {
     filter: brightness(1.03);
     transform: translateY(-1px);
-    border-color: #93c5fd;
+    border-color: #BFD3F2;
 }
 
 .footer {
     text-align: center;
-    color: #94a3b8;
+    color: #8A96A8;
     font-size: clamp(10px, 0.9vw, 12px);
     margin-top: 40px;
     padding: 18px 0 10px;
-    border-top: 1px solid #e2e8f0;
+    border-top: 1px solid #DCE4F0;
 }
 
 @media (max-width: 1100px) {
@@ -707,9 +701,9 @@ if not measure_info.empty:
     st.markdown(f"""
     <div class="step-box">
         <b>{display_text(code)} — {display_text(mi["name"])}</b><br>
-        <span style="color:#475569;">Індикатор: {display_text(mi["indicator"])}</span><br>
-        <span style="color:#475569;">Одиниця виміру: {display_text(mi["unit"])}</span><br>
-        <span style="color:#475569;">Терміни: {display_text(mi["start_date_plan"])} — {display_text(mi["end_date_plan"])}</span>
+        <span style="color:#61708A;">Індикатор: {display_text(mi["indicator"])}</span><br>
+        <span style="color:#61708A;">Одиниця виміру: {display_text(mi["unit"])}</span><br>
+        <span style="color:#61708A;">Терміни: {display_text(mi["start_date_plan"])} — {display_text(mi["end_date_plan"])}</span>
     </div>
     """, unsafe_allow_html=True)
 
@@ -861,11 +855,11 @@ def _render_holder_strip():
 
     if approval == "Погоджено":
         _holder = "Погодження завершено"
-        _action = ("✅ Дій від вас не потрібно", "#f0fdf4", "#86efac", "#166534")
+        _action = ("✅ Дій від вас не потрібно", "#E4F5EC", "#1E9E57", "#0C713A")
     elif approval == "Повернуто на доопрацювання":
         _holder = "Заявка у вас (повернута на доопрацювання)"
         _action = ("✍️ Потребує вашої дії — виправте дані та подайте повторно",
-                   "#fff7ed", "#fdba74", "#9a3412")
+                   "#FDF3D8", "#FF7A45", "#FF7A45")
     elif _chain:
         _hs_idx = (
             schemes.parse_stage(selected_row.get("chain_stage"))
@@ -877,16 +871,16 @@ def _render_holder_strip():
             f"{clean((_st or {}).get('name', '') or (_st or {}).get('email', ''))}"
         )
         _action = ("⏳ На розгляді — дій від вас не потрібно",
-                   "#eff6ff", "#93c5fd", "#1e40af")
+                   "#EAF1FF", "#BFD3F2", "#032A63")
     else:
         _holder = "На розгляді координатора"
         _action = ("⏳ На розгляді — дій від вас не потрібно",
-                   "#eff6ff", "#93c5fd", "#1e40af")
+                   "#EAF1FF", "#BFD3F2", "#032A63")
 
     st.markdown(
         f'<div style="display:flex;flex-wrap:wrap;gap:10px;margin:6px 0 10px 0;">'
-        f'<div style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:10px;'
-        f'padding:8px 12px;font-size:13px;font-weight:700;color:#0f172a;">'
+        f'<div style="background:#F7F9FC;border:1px solid #DCE4F0;border-radius:10px;'
+        f'padding:8px 12px;font-size:13px;font-weight:700;color:#132238;">'
         f'📍 {escape(_holder)}{escape(_days_txt)}</div>'
         f'<div style="background:{_action[1]};border:1px solid {_action[2]};'
         f'border-radius:10px;padding:8px 12px;font-size:13px;font-weight:700;'

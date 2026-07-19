@@ -56,13 +56,7 @@ header[data-testid="stHeader"] {
     background: transparent !important;
 }
 .stApp {
-    background:
-        linear-gradient(rgba(15,23,42,0.025) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(15,23,42,0.025) 1px, transparent 1px),
-        radial-gradient(circle at top right, rgba(37,99,235,0.09), transparent 28%),
-        radial-gradient(circle at bottom left, rgba(22,163,74,0.07), transparent 30%),
-        linear-gradient(180deg, #f7f9fc 0%, #eef3f8 100%);
-    background-size: 36px 36px, 36px 36px, auto, auto, auto;
+    background: #F7F9FC;
 }
 .main .block-container {
     max-width: 1550px;
@@ -78,14 +72,14 @@ header[data-testid="stHeader"] {
 }
 .ministry-label {
     text-align: right;
-    color: #475569;
+    color: #61708A;
     font-size: 14px;
     font-weight: 700;
     margin-bottom: 8px;
 }
 .header-box, .card {
     background: rgba(255,255,255,0.94);
-    border: 1px solid #d8dee9;
+    border: 1px solid #DCE4F0;
     border-radius: 16px;
     padding: 22px 26px;
     margin-bottom: 18px;
@@ -94,23 +88,23 @@ header[data-testid="stHeader"] {
 .header-title {
     font-size: 32px;
     font-weight: 900;
-    color: #0f172a;
+    color: #132238;
     margin-bottom: 8px;
 }
 .header-subtitle, .card-subtitle {
     font-size: 15px;
-    color: #475569;
+    color: #61708A;
     line-height: 1.55;
 }
 .card-title {
     font-size: 21px;
     font-weight: 900;
-    color: #0f172a;
+    color: #132238;
     margin-bottom: 8px;
 }
 .filter-panel {
-    background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(241,246,253,0.98));
-    border: 1px solid #cbd8ea;
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
     border-radius: 18px;
     padding: 18px 20px 10px 20px;
     margin-top: 12px;
@@ -119,8 +113,8 @@ header[data-testid="stHeader"] {
 [data-testid="stMain"] div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
 [data-testid="stMain"] div[data-testid="stTextInput"] input,
 [data-testid="stMain"] div[data-testid="stTextArea"] textarea {
-    background-color: #d7eaff !important;
-    border: 1px solid #8fb3df !important;
+    background-color: #EAF1FF !important;
+    border: 1px solid #BFD3F2 !important;
     border-radius: 10px !important;
     box-shadow: inset 0 1px 2px rgba(15,23,42,0.08) !important;
 }
@@ -132,7 +126,7 @@ header[data-testid="stHeader"] {
 [data-testid="stMain"] div[data-testid="stTextInput"] label,
 [data-testid="stMain"] div[data-testid="stTextArea"] label {
     font-weight: 750 !important;
-    color: #1e293b !important;
+    color: #132238 !important;
 }
 .badge-wrap {
     display: flex;
@@ -141,19 +135,19 @@ header[data-testid="stHeader"] {
     margin: 12px 0;
 }
 .badge {
-    background: #eef6ff;
-    border: 1px solid #bfdbfe;
-    color: #1d4ed8;
+    background: #EAF1FF;
+    border: 1px solid #BFD3F2;
+    color: #005BBB;
     border-radius: 999px;
     padding: 7px 11px;
     font-size: 13px;
     font-weight: 800;
 }
-.badge-green { background: #dcfce7; border: 1px solid #bbf7d0; color: #166534; }
-.badge-yellow { background: #fef9c3; border: 1px solid #fde68a; color: #854d0e; }
-.badge-red { background: #fee2e2; border: 1px solid #fecaca; color: #991b1b; }
-.badge-gray { background: #f1f5f9; border: 1px solid #cbd5e1; color: #475569; }
-.badge-blue { background: #dbeafe; border: 1px solid #93c5fd; color: #1e40af; }
+.badge-green { background: #E4F5EC; border: 1px solid #1E9E57; color: #0C713A; }
+.badge-yellow { background: #FDF3D8; border: 1px solid #F4B400; color: #8A6400; }
+.badge-red { background: #FBE5E5; border: 1px solid #DC4A4A; color: #DC4A4A; }
+.badge-gray { background: #F7F9FC; border: 1px solid #DCE4F0; color: #61708A; }
+.badge-blue { background: #E3EDFF; border: 1px solid #BFD3F2; color: #032A63; }
 .badge-purple { background: #f3e8ff; border: 1px solid #d8b4fe; color: #6b21a8; }
 
 .info-grid {
@@ -166,16 +160,16 @@ header[data-testid="stHeader"] {
     border-radius: 14px;
     padding: 16px 18px;
     min-height: 105px;
-    border: 1px solid #d8dee9;
+    border: 1px solid #DCE4F0;
     overflow-wrap: anywhere;
 }
-.info-card-blue { background: #eef6ff; border-color: #bfdbfe; }
-.info-card-green { background: #dcfce7; border-color: #bbf7d0; }
-.info-card-yellow { background: #fef9c3; border-color: #fde68a; }
-.info-card-red { background: #fee2e2; border-color: #fecaca; }
-.info-card-gray { background: #f8fafc; border-color: #cbd5e1; }
+.info-card-blue { background: #EAF1FF; border-color: #BFD3F2; }
+.info-card-green { background: #E4F5EC; border-color: #1E9E57; }
+.info-card-yellow { background: #FDF3D8; border-color: #F4B400; }
+.info-card-red { background: #FBE5E5; border-color: #DC4A4A; }
+.info-card-gray { background: #F7F9FC; border-color: #DCE4F0; }
 .info-label {
-    color: #64748b;
+    color: #61708A;
     font-size: 12px;
     margin-bottom: 7px;
     line-height: 1.35;
@@ -184,22 +178,22 @@ header[data-testid="stHeader"] {
     font-weight: 750;
 }
 .info-value {
-    color: #0f172a;
+    color: #132238;
     font-weight: 900;
     font-size: 15px;
     line-height: 1.4;
 }
 .step-box {
-    background: #eef6ff;
-    border: 1px solid #bfdbfe;
+    background: #EAF1FF;
+    border: 1px solid #BFD3F2;
     border-radius: 14px;
     padding: 14px 16px;
     margin: 10px 0;
 }
 .comment-box {
-    background: linear-gradient(135deg, #fff7ed, #fef3c7);
-    border: 1px solid #f59e0b;
-    color: #78350f;
+    background: #FDF3D8;
+    border: 1px solid #FF7A45;
+    color: #FF7A45;
     border-radius: 16px;
     padding: 18px 20px;
     margin: 18px 0 6px 0;
@@ -220,8 +214,8 @@ header[data-testid="stHeader"] {
 
 /* ── Таб підтвердження ── */
 .sign-panel {
-    background: linear-gradient(135deg, #f0fdf4, #dcfce7);
-    border: 2px solid #16a34a;
+    background: #E4F5EC;
+    border: 2px solid #118847;
     border-radius: 16px;
     padding: 22px 26px;
     margin-bottom: 14px;
@@ -229,36 +223,36 @@ header[data-testid="stHeader"] {
 .sign-panel-title {
     font-size: 18px;
     font-weight: 900;
-    color: #14532d;
+    color: #0C713A;
     margin-bottom: 6px;
 }
 .sign-panel-sub {
     font-size: 14px;
-    color: #166534;
+    color: #0C713A;
     margin-bottom: 16px;
 }
 /* Кнопка підтвердити — зелена */
 div[data-testid="stButton"].sign-btn > button {
-    background: linear-gradient(135deg, #16a34a, #15803d) !important;
+    background: #118847 !important;
     color: #fff !important;
     border: none !important;
     font-size: 16px !important;
     padding: 14px 22px !important;
 }
 div[data-testid="stButton"].return-ssp-btn > button {
-    background: linear-gradient(135deg, #fef9c3, #fde68a) !important;
-    color: #854d0e !important;
-    border: 1px solid #fbbf24 !important;
+    background: #FDF3D8 !important;
+    color: #8A6400 !important;
+    border: 1px solid #F4B400 !important;
 }
 div[data-testid="stButton"].return-coord-btn > button {
-    background: linear-gradient(135deg, #fee2e2, #fecaca) !important;
-    color: #991b1b !important;
-    border: 1px solid #fca5a5 !important;
+    background: #FBE5E5 !important;
+    color: #DC4A4A !important;
+    border: 1px solid #DC4A4A !important;
 }
 
 div[data-testid="stMetric"] {
     background: rgba(255,255,255,0.9);
-    border: 1px solid #d8dee9;
+    border: 1px solid #DCE4F0;
     border-radius: 14px;
     padding: 14px 16px;
     box-shadow: 0 4px 12px rgba(15,23,42,0.04);
@@ -268,23 +262,23 @@ div[data-testid="stMetric"] {
     border-radius: 14px;
     padding: 12px 18px;
     font-weight: 900;
-    border: 1px solid #bfdbfe;
-    background: linear-gradient(135deg, #eff6ff, #e0f2fe) !important;
-    color: #1d4ed8 !important;
+    border: 1px solid #BFD3F2;
+    background: #EAF1FF !important;
+    color: #005BBB !important;
     box-shadow: 0 8px 18px rgba(37,99,235,0.10);
 }
 [data-testid="stMain"] div.stButton > button:hover {
     filter: brightness(1.03);
     transform: translateY(-1px);
-    border-color: #93c5fd;
+    border-color: #BFD3F2;
 }
 .footer {
     text-align: center;
-    color: #94a3b8;
+    color: #8A96A8;
     font-size: clamp(10px, 0.9vw, 12px);
     margin-top: 40px;
     padding: 18px 0 10px;
-    border-top: 1px solid #e2e8f0;
+    border-top: 1px solid #DCE4F0;
 }
 @media (max-width: 1100px) {
     .info-grid { grid-template-columns: 1fr; }
@@ -653,9 +647,9 @@ if not measure_info.empty:
     st.markdown(f"""
     <div class="step-box">
         <b>{display_text(code)} — {display_text(mi["name"])}</b><br>
-        <span style="color:#475569;">Індикатор: {display_text(mi["indicator"])}</span><br>
-        <span style="color:#475569;">Одиниця виміру: {display_text(mi["unit"])}</span><br>
-        <span style="color:#475569;">Терміни: {display_text(mi["start_date_plan"])} — {display_text(mi["end_date_plan"])}</span>
+        <span style="color:#61708A;">Індикатор: {display_text(mi["indicator"])}</span><br>
+        <span style="color:#61708A;">Одиниця виміру: {display_text(mi["unit"])}</span><br>
+        <span style="color:#61708A;">Терміни: {display_text(mi["start_date_plan"])} — {display_text(mi["end_date_plan"])}</span>
     </div>
     """, unsafe_allow_html=True)
 
@@ -799,8 +793,8 @@ if is_my_turn:
         )
     # ТЗ 3.17: попередження про незворотність.
     st.markdown(
-        f'<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;'
-        f'padding:8px 12px;margin-bottom:8px;font-size:13px;color:#92400e;">'
+        f'<div style="background:#FDF3D8;border:1px solid #F4B400;border-radius:10px;'
+        f'padding:8px 12px;margin-bottom:8px;font-size:13px;color:#8A6400;">'
         f'<div style="font-weight:800;">{escape(_next_note)}</div>'
         f'<div style="margin-top:2px;">⚠️ Після погодження ви більше не зможете '
         f'змінити своє рішення — заявка повернеться до вас лише в разі '

@@ -22,36 +22,8 @@ header[data-testid="stHeader"] {
 }
 
 .stApp {
-    background:
-        radial-gradient(circle at top right, rgba(37,99,235,0.08), transparent 28%),
-        radial-gradient(circle at bottom left, rgba(22,163,74,0.07), transparent 30%),
-        linear-gradient(180deg, #f6f8fb 0%, #eef2f7 100%);
+    background: #F7F9FC;
 }
-
-.stApp::before {
-    content: "";
-    position: fixed;
-    top: -160px;
-    right: -120px;
-    width: 460px;
-    height: 460px;
-    border-radius: 50%;
-    background: rgba(37, 99, 235, 0.045);
-    z-index: 0;
-}
-
-.stApp::after {
-    content: "";
-    position: fixed;
-    bottom: -180px;
-    left: -120px;
-    width: 390px;
-    height: 390px;
-    border-radius: 50%;
-    background: rgba(22, 163, 74, 0.045);
-    z-index: 0;
-}
-
 .main .block-container {
     max-width: 1550px;
     padding-top: 1.2rem;
@@ -69,7 +41,7 @@ header[data-testid="stHeader"] {
 
 .ministry-label {
     text-align: right;
-    color: #475569;
+    color: #61708A;
     font-size: 14px;
     font-weight: 700;
     margin-bottom: 8px;
@@ -77,7 +49,7 @@ header[data-testid="stHeader"] {
 
 .header-box, .card {
     background: rgba(255,255,255,0.94);
-    border: 1px solid #d8dee9;
+    border: 1px solid #DCE4F0;
     border-radius: 16px;
     padding: 22px 26px;
     margin-bottom: 18px;
@@ -87,20 +59,20 @@ header[data-testid="stHeader"] {
 .header-title {
     font-size: 32px;
     font-weight: 900;
-    color: #0f172a;
+    color: #132238;
     margin-bottom: 8px;
 }
 
 .header-subtitle, .card-subtitle {
     font-size: 15px;
-    color: #475569;
+    color: #61708A;
     line-height: 1.55;
 }
 
 .card-title {
     font-size: 21px;
     font-weight: 900;
-    color: #0f172a;
+    color: #132238;
     margin-bottom: 8px;
 }
 
@@ -112,9 +84,9 @@ header[data-testid="stHeader"] {
 }
 
 .badge {
-    background: #eef6ff;
-    border: 1px solid #bfdbfe;
-    color: #1d4ed8;
+    background: #EAF1FF;
+    border: 1px solid #BFD3F2;
+    color: #005BBB;
     border-radius: 999px;
     padding: 7px 11px;
     font-size: 13px;
@@ -122,21 +94,21 @@ header[data-testid="stHeader"] {
 }
 
 .badge-green {
-    background: #dcfce7;
-    border: 1px solid #bbf7d0;
-    color: #166534;
+    background: #E4F5EC;
+    border: 1px solid #1E9E57;
+    color: #0C713A;
 }
 
 .badge-yellow {
-    background: #fef9c3;
-    border: 1px solid #fde68a;
-    color: #854d0e;
+    background: #FDF3D8;
+    border: 1px solid #F4B400;
+    color: #8A6400;
 }
 
 .badge-red {
-    background: #fee2e2;
-    border: 1px solid #fecaca;
-    color: #991b1b;
+    background: #FBE5E5;
+    border: 1px solid #DC4A4A;
+    color: #DC4A4A;
 }
 
 .metric-grid {
@@ -149,13 +121,13 @@ header[data-testid="stHeader"] {
 .metric-card {
     border-radius: 16px;
     padding: 16px 18px;
-    border: 1px solid #d8dee9;
+    border: 1px solid #DCE4F0;
     box-shadow: 0 6px 16px rgba(15,23,42,0.045);
 }
 
 .metric-title {
     font-size: 13px;
-    color: #475569;
+    color: #61708A;
     font-weight: 850;
     margin-bottom: 4px;
 }
@@ -163,39 +135,39 @@ header[data-testid="stHeader"] {
 .metric-value {
     font-size: 30px;
     line-height: 1.1;
-    color: #0f172a;
+    color: #132238;
     font-weight: 950;
 }
 
 .metric-note {
     font-size: 12px;
-    color: #64748b;
+    color: #61708A;
     margin-top: 5px;
 }
 
 .metric-blue {
-    background: #dbeafe;
-    border-color: #bfdbfe;
+    background: #E3EDFF;
+    border-color: #BFD3F2;
 }
 
 .metric-green {
-    background: #dcfce7;
-    border-color: #bbf7d0;
+    background: #E4F5EC;
+    border-color: #1E9E57;
 }
 
 .metric-yellow {
-    background: #fef9c3;
-    border-color: #fde68a;
+    background: #FDF3D8;
+    border-color: #F4B400;
 }
 
 .metric-red {
-    background: #fee2e2;
-    border-color: #fecaca;
+    background: #FBE5E5;
+    border-color: #DC4A4A;
 }
 
 .parameter-panel {
-    background: linear-gradient(180deg, #eef6ff 0%, #f8fbff 100%);
-    border: 1px solid #bfdbfe;
+    background: #EAF1FF;
+    border: 1px solid #BFD3F2;
     border-radius: 16px;
     padding: 16px;
     margin-top: 14px;
@@ -204,7 +176,7 @@ header[data-testid="stHeader"] {
 
 .parameter-box {
     background: #ffffff;
-    border: 1px solid #bfdbfe;
+    border: 1px solid #BFD3F2;
     border-radius: 14px;
     padding: 12px 12px 8px 12px;
     min-height: 96px;
@@ -212,7 +184,7 @@ header[data-testid="stHeader"] {
 }
 
 .parameter-label {
-    color: #1e3a8a;
+    color: #032A63;
     font-size: 13px;
     font-weight: 950;
     margin-bottom: 6px;
@@ -223,14 +195,14 @@ header[data-testid="stHeader"] {
 [data-testid="stMain"] div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
 [data-testid="stMain"] div[data-testid="stDateInput"] input,
 [data-testid="stMain"] div[data-testid="stTextInput"] input {
-    background: #f8fbff !important;
-    border: 1px solid #93c5fd !important;
+    background: #EAF1FF !important;
+    border: 1px solid #BFD3F2 !important;
     border-radius: 12px !important;
     box-shadow: 0 3px 10px rgba(37,99,235,0.08) !important;
 }
 
 div[data-testid="stMultiSelect"] span[data-baseweb="tag"] {
-    background: #2563eb !important;
+    background: #005BBB !important;
     color: #ffffff !important;
     border-radius: 999px !important;
     font-weight: 850 !important;
@@ -238,27 +210,27 @@ div[data-testid="stMultiSelect"] span[data-baseweb="tag"] {
 
 [data-testid="stMain"] div[data-testid="stDateInput"] input:focus,
 [data-testid="stMain"] div[data-testid="stTextInput"] input:focus {
-    border-color: #1d4ed8 !important;
+    border-color: #005BBB !important;
     box-shadow: 0 0 0 3px rgba(37,99,235,0.15) !important;
 }
 
 .status-panel {
-    background: #fff7ed;
-    border: 1px solid #fed7aa;
+    background: #FDF3D8;
+    border: 1px solid #FDF3D8;
     border-radius: 16px;
     padding: 16px;
     margin-top: 10px;
 }
 
 .status-title {
-    color: #9a3412;
+    color: #FF7A45;
     font-weight: 950;
     font-size: 16px;
     margin-bottom: 6px;
 }
 
 .small-note {
-    color: #64748b;
+    color: #61708A;
     font-size: 13px;
     line-height: 1.55;
 }
@@ -268,7 +240,7 @@ div[data-testid="stMultiSelect"] span[data-baseweb="tag"] {
     border-radius: 12px;
     padding: 10px 16px;
     font-weight: 850;
-    border: 1px solid #bfdbfe;
+    border: 1px solid #BFD3F2;
 }
 
 div[data-testid="stDataFrame"] {
@@ -278,11 +250,11 @@ div[data-testid="stDataFrame"] {
 
 .footer {
     text-align: center;
-    color: #64748b;
+    color: #61708A;
     font-size: 13px;
     margin-top: 50px;
     padding: 22px 0 12px 0;
-    border-top: 1px solid #d8dee9;
+    border-top: 1px solid #DCE4F0;
 }
 
 @media (max-width: 1100px) {

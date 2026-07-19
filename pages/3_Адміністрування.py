@@ -56,7 +56,7 @@ header[data-testid="stHeader"] {
 }
 /* ─── BACKGROUND — м'який нейтральний ─── */
 .stApp {
-    background: linear-gradient(160deg, #f0f4f8 0%, #e8edf5 40%, #edf1f8 100%);
+    background: #F7F9FC;
     min-height: 100vh;
 }
 
@@ -76,7 +76,7 @@ header[data-testid="stHeader"] {
 
 .ministry-label {
     text-align: right;
-    color: #64748b;
+    color: #61708A;
     font-size: 12.5px;
     font-weight: 700;
     margin-bottom: 6px;
@@ -86,7 +86,7 @@ header[data-testid="stHeader"] {
 /* ─── HEADER ─── */
 .header-box {
     background: #ffffff;
-    border: 1px solid #dde3ef;
+    border: 1px solid #DCE4F0;
     border-radius: 14px;
     padding: 20px 26px;
     margin-bottom: 14px;
@@ -96,14 +96,14 @@ header[data-testid="stHeader"] {
 .header-title {
     font-size: 28px;
     font-weight: 900;
-    color: #0f172a;
+    color: #132238;
     margin-bottom: 5px;
     letter-spacing: -0.01em;
 }
 
 .header-subtitle {
     font-size: 14px;
-    color: #64748b;
+    color: #61708A;
     line-height: 1.5;
 }
 
@@ -115,19 +115,19 @@ header[data-testid="stHeader"] {
 }
 
 .status-pill {
-    background: #f1f5f9;
-    border: 1px solid #cbd5e1;
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
     border-radius: 999px;
     padding: 5px 11px;
     font-size: 12px;
-    color: #475569;
+    color: #61708A;
     font-weight: 600;
 }
 
 /* ─── CARDS ─── */
 .card {
     background: #ffffff;
-    border: 1px solid #dde3ef;
+    border: 1px solid #DCE4F0;
     border-radius: 14px;
     padding: 18px 22px;
     margin: 12px 0;
@@ -137,21 +137,21 @@ header[data-testid="stHeader"] {
 .card-title {
     font-size: 17px;
     font-weight: 900;
-    color: #0f172a;
+    color: #132238;
     margin-bottom: 5px;
 }
 
 .card-subtitle {
-    color: #64748b;
+    color: #61708A;
     font-size: 13px;
     margin-bottom: 10px;
 }
 
 /* ─── FLOW BOX ─── */
 .flow-box {
-    background: #f8faff;
-    border: 1px solid #c7d7f5;
-    border-left: 4px solid #3b82f6;
+    background: #F7F9FC;
+    border: 1px solid #BFD3F2;
+    border-left: 4px solid #4D8DFF;
     border-radius: 12px;
     padding: 13px 18px;
     margin: 12px 0;
@@ -159,7 +159,7 @@ header[data-testid="stHeader"] {
 
 .flow-title {
     font-weight: 800;
-    color: #1e40af;
+    color: #032A63;
     margin-bottom: 9px;
     font-size: 12px;
     letter-spacing: 0.06em;
@@ -175,9 +175,9 @@ header[data-testid="stHeader"] {
 .flow-step {
     padding: 6px 12px;
     border-radius: 999px;
-    background: #eff6ff;
-    border: 1px solid #bfdbfe;
-    color: #1d4ed8;
+    background: #EAF1FF;
+    border: 1px solid #BFD3F2;
+    color: #005BBB;
     font-size: 13px;
     font-weight: 600;
 }
@@ -191,9 +191,9 @@ header[data-testid="stHeader"] {
 }
 
 .badge {
-    background: #eff6ff;
-    border: 1px solid #bfdbfe;
-    color: #1d4ed8;
+    background: #EAF1FF;
+    border: 1px solid #BFD3F2;
+    color: #005BBB;
     border-radius: 999px;
     padding: 5px 11px;
     font-size: 12px;
@@ -201,21 +201,21 @@ header[data-testid="stHeader"] {
 }
 
 .badge-green {
-    background: #f0fdf4;
-    border: 1px solid #bbf7d0;
-    color: #15803d;
+    background: #E4F5EC;
+    border: 1px solid #1E9E57;
+    color: #118847;
 }
 
 .badge-yellow {
-    background: #fefce8;
-    border: 1px solid #fde68a;
-    color: #92400e;
+    background: #FDF3D8;
+    border: 1px solid #F4B400;
+    color: #8A6400;
 }
 
 .badge-red {
-    background: #fef2f2;
-    border: 1px solid #fecaca;
-    color: #b91c1c;
+    background: #FBE5E5;
+    border: 1px solid #DC4A4A;
+    color: #DC4A4A;
 }
 
 /* ─── ATTENTION GRID — 5 блоків в один рядок ─── */
@@ -253,37 +253,37 @@ header[data-testid="stHeader"] {
     opacity: 0.75;
 }
 
-.att-red    { background: #fef2f2; border-color: #fecaca; }
-.att-red .attention-title  { color: #b91c1c; }
-.att-red .attention-value  { color: #dc2626; }
-.att-red .attention-note   { color: #991b1b; }
+.att-red    { background: #FBE5E5; border-color: #DC4A4A; }
+.att-red .attention-title  { color: #DC4A4A; }
+.att-red .attention-value  { color: #DC4A4A; }
+.att-red .attention-note   { color: #DC4A4A; }
 
-.att-yellow { background: #fefce8; border-color: #fde68a; }
-.att-yellow .attention-title { color: #92400e; }
-.att-yellow .attention-value { color: #d97706; }
-.att-yellow .attention-note  { color: #78350f; }
+.att-yellow { background: #FDF3D8; border-color: #F4B400; }
+.att-yellow .attention-title { color: #8A6400; }
+.att-yellow .attention-value { color: #FF7A45; }
+.att-yellow .attention-note  { color: #FF7A45; }
 
-.att-blue   { background: #eff6ff; border-color: #bfdbfe; }
-.att-blue .attention-title { color: #1e40af; }
-.att-blue .attention-value { color: #2563eb; }
-.att-blue .attention-note  { color: #1e3a8a; }
+.att-blue   { background: #EAF1FF; border-color: #BFD3F2; }
+.att-blue .attention-title { color: #032A63; }
+.att-blue .attention-value { color: #005BBB; }
+.att-blue .attention-note  { color: #032A63; }
 
-.att-green  { background: #f0fdf4; border-color: #bbf7d0; }
-.att-green .attention-title { color: #14532d; }
-.att-green .attention-value { color: #16a34a; }
-.att-green .attention-note  { color: #166534; }
+.att-green  { background: #E4F5EC; border-color: #1E9E57; }
+.att-green .attention-title { color: #0C713A; }
+.att-green .attention-value { color: #118847; }
+.att-green .attention-note  { color: #0C713A; }
 
 /* ─── KPI CARDS ─── */
 .admin-kpi-card {
-    background: #f8fafc;
-    border: 1px solid #dde3ef;
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
     border-radius: 11px;
     padding: 11px 13px;
     min-height: 82px;
 }
 
 .admin-kpi-label {
-    color: #64748b;
+    color: #61708A;
     font-size: 11px;
     font-weight: 700;
     margin-bottom: 5px;
@@ -292,7 +292,7 @@ header[data-testid="stHeader"] {
 }
 
 .admin-kpi-value {
-    color: #0f172a;
+    color: #132238;
     font-size: 19px;
     font-weight: 850;
     line-height: 1.2;
@@ -308,18 +308,18 @@ header[data-testid="stHeader"] {
 }
 
 .quality-card {
-    background: #f8fafc;
-    border: 1px solid #dde3ef;
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
     border-radius: 10px;
     padding: 9px 11px;
     min-height: 64px;
 }
 
-.quality-good { border-left: 3px solid #22c55e; background: #f0fdf4; border-color: #bbf7d0; }
-.quality-warn { border-left: 3px solid #f59e0b; background: #fefce8; border-color: #fde68a; }
+.quality-good { border-left: 3px solid #1E9E57; background: #E4F5EC; border-color: #1E9E57; }
+.quality-warn { border-left: 3px solid #FF7A45; background: #FDF3D8; border-color: #F4B400; }
 
 .quality-label {
-    color: #64748b;
+    color: #61708A;
     font-size: 10px;
     font-weight: 700;
     margin-bottom: 4px;
@@ -337,14 +337,14 @@ header[data-testid="stHeader"] {
     font-size: 13px;
     font-weight: 700;
     line-height: 1.25;
-    color: #0f172a;
+    color: #132238;
 }
 
 /* ─── CONCLUSION BOX ─── */
 .quality-conclusion {
-    background: #f8faff;
-    border: 1px solid #c7d7f5;
-    border-left: 4px solid #3b82f6;
+    background: #F7F9FC;
+    border: 1px solid #BFD3F2;
+    border-left: 4px solid #4D8DFF;
     border-radius: 10px;
     padding: 11px 16px;
     margin-top: 4px;
@@ -354,7 +354,7 @@ header[data-testid="stHeader"] {
 }
 
 .quality-conclusion-label {
-    color: #64748b;
+    color: #61708A;
     font-size: 11px;
     font-weight: 700;
     text-transform: uppercase;
@@ -365,24 +365,24 @@ header[data-testid="stHeader"] {
 .quality-conclusion-value {
     font-size: 14px;
     font-weight: 800;
-    color: #1e40af;
+    color: #032A63;
 }
 
 .quality-conclusion-pct {
     font-size: 13px;
-    color: #475569;
+    color: #61708A;
     font-weight: 600;
     margin-left: auto;
 }
 
 /* ─── REVIEW BOX ─── */
 .review-box {
-    background: #f8fafc;
-    border: 1px solid #dde3ef;
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
     border-radius: 11px;
     padding: 13px 16px;
     margin: 9px 0;
-    color: #334155;
+    color: #61708A;
     font-size: 14px;
     line-height: 1.6;
 }
@@ -390,15 +390,15 @@ header[data-testid="stHeader"] {
 .review-title {
     font-size: 14px;
     font-weight: 900;
-    color: #0f172a;
+    color: #132238;
     margin-bottom: 7px;
 }
 
 /* ─── RESOLUTION ─── */
 .resolution-box {
-    background: #f8faff;
-    border: 1px solid #c7d7f5;
-    border-left: 5px solid #3b82f6;
+    background: #F7F9FC;
+    border: 1px solid #BFD3F2;
+    border-left: 5px solid #4D8DFF;
     border-radius: 11px;
     padding: 16px 20px;
     margin: 10px 0;
@@ -407,41 +407,41 @@ header[data-testid="stHeader"] {
 .resolution-title {
     font-size: 13px;
     font-weight: 800;
-    color: #1e40af;
+    color: #032A63;
     margin-bottom: 9px;
     letter-spacing: 0.04em;
     text-transform: uppercase;
 }
 
 .resolution-text {
-    color: #1e293b;
+    color: #132238;
     font-size: 14px;
     line-height: 1.7;
 }
 
 /* ─── DECISION BOX ─── */
 .decision-box {
-    background: #eff6ff;
-    border: 1px solid #bfdbfe;
+    background: #EAF1FF;
+    border: 1px solid #BFD3F2;
     border-radius: 10px;
     padding: 11px 15px;
     margin: 9px 0;
-    color: #1d4ed8;
+    color: #005BBB;
     font-size: 14px;
     font-weight: 700;
 }
 
 /* ─── PROGRESS / RISK BOXES ─── */
 .progress-risk-box {
-    background: #f8fafc;
-    border: 1px solid #dde3ef;
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
     border-radius: 11px;
     padding: 13px 15px;
     min-height: 110px;
 }
 
 .progress-risk-label {
-    color: #64748b;
+    color: #61708A;
     font-size: 11px;
     font-weight: 700;
     margin-bottom: 7px;
@@ -450,7 +450,7 @@ header[data-testid="stHeader"] {
 }
 
 .progress-risk-value {
-    color: #1e293b;
+    color: #132238;
     font-size: 14px;
     line-height: 1.6;
     white-space: pre-wrap;
@@ -458,8 +458,8 @@ header[data-testid="stHeader"] {
 
 /* ─── PERSON BOX ─── */
 .person-box {
-    background: #f0f7ff;
-    border: 1px solid #bfdbfe;
+    background: #EAF1FF;
+    border: 1px solid #BFD3F2;
     border-radius: 11px;
     padding: 14px 18px;
     display: flex;
@@ -475,7 +475,7 @@ header[data-testid="stHeader"] {
 }
 
 .person-field-label {
-    color: #64748b;
+    color: #61708A;
     font-size: 10px;
     font-weight: 700;
     text-transform: uppercase;
@@ -483,19 +483,19 @@ header[data-testid="stHeader"] {
 }
 
 .person-field-value {
-    color: #1d4ed8;
+    color: #005BBB;
     font-size: 14px;
     font-weight: 700;
 }
 
 /* ─── COMMENT HEADER ─── */
 .comment-header {
-    background: #eff6ff;
-    border: 1px solid #bfdbfe;
+    background: #EAF1FF;
+    border: 1px solid #BFD3F2;
     border-radius: 9px;
     padding: 9px 14px;
     margin-bottom: 6px;
-    color: #1d4ed8;
+    color: #005BBB;
     font-size: 12px;
     font-weight: 800;
     letter-spacing: 0.05em;
@@ -507,69 +507,69 @@ header[data-testid="stHeader"] {
 [data-testid="stMain"] div[data-testid="stTextInput"] input,
 [data-testid="stMain"] div[data-testid="stTextArea"] textarea {
     background: #ffffff !important;
-    border: 1.5px solid #c7d4e8 !important;
-    color: #0f172a !important;
+    border: 1.5px solid #BFD3F2 !important;
+    color: #132238 !important;
     border-radius: 9px !important;
 }
 
 [data-testid="stMain"] div[data-testid="stSelectbox"] > div > div:hover,
 [data-testid="stMain"] div[data-testid="stTextInput"] input:hover,
 [data-testid="stMain"] div[data-testid="stTextArea"] textarea:hover {
-    border-color: #3b82f6 !important;
+    border-color: #4D8DFF !important;
 }
 
 [data-testid="stMain"] div[data-testid="stSelectbox"] label,
 [data-testid="stMain"] div[data-testid="stTextInput"] label,
 [data-testid="stMain"] div[data-testid="stTextArea"] label {
-    color: #475569 !important;
+    color: #61708A !important;
     font-size: 13px !important;
     font-weight: 600 !important;
 }
 
 /* Radio */
 div[data-testid="stRadio"] label {
-    color: #334155 !important;
+    color: #61708A !important;
     font-size: 14px !important;
 }
 
 div[data-testid="stRadio"] > div {
-    background: #f8fafc;
-    border: 1.5px solid #dde3ef;
+    background: #F7F9FC;
+    border: 1.5px solid #DCE4F0;
     border-radius: 11px;
     padding: 11px 15px;
 }
 
 /* Checkbox */
 div[data-testid="stCheckbox"] label {
-    color: #475569 !important;
+    color: #61708A !important;
 }
 
 /* Tabs */
 button[data-baseweb="tab"] {
-    color: #64748b !important;
+    color: #61708A !important;
     background: transparent !important;
     font-weight: 600 !important;
 }
 
 button[data-baseweb="tab"][aria-selected="true"] {
-    color: #1d4ed8 !important;
-    border-bottom: 2px solid #3b82f6 !important;
+    color: #005BBB !important;
+    border-bottom: 2px solid #4D8DFF !important;
 }
 
 /* Metric widgets */
 div[data-testid="stMetric"] {
-    background: #f8fafc;
-    border: 1px solid #dde3ef;
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
     border-radius: 11px;
     padding: 11px 13px;
 }
 
 div[data-testid="stMetric"] label {
-    color: #64748b !important;
+    color: #61708A !important;
 }
 
 div[data-testid="stMetric"] div[data-testid="stMetricValue"] {
-    color: #0f172a !important;
+    color: #132238 !important;
 }
 
 /* Buttons */
@@ -577,22 +577,22 @@ div[data-testid="stMetric"] div[data-testid="stMetricValue"] {
     border-radius: 9px;
     padding: 9px 16px;
     font-weight: 700;
-    background: #eff6ff;
-    border: 1.5px solid #bfdbfe;
-    color: #1d4ed8;
+    background: #EAF1FF;
+    border: 1.5px solid #BFD3F2;
+    color: #005BBB;
     transition: all 0.15s;
 }
 
 [data-testid="stMain"] div.stButton > button:hover {
-    background: #dbeafe;
-    border-color: #93c5fd;
+    background: #E3EDFF;
+    border-color: #BFD3F2;
 }
 
 [data-testid="stMain"] div[data-testid="stFormSubmitButton"] button {
     border-radius: 11px;
     padding: 12px 18px;
     font-weight: 900;
-    background: linear-gradient(135deg, #1d4ed8, #2563eb);
+    background: #005BBB;
     border: none;
     color: white;
     box-shadow: 0 3px 12px rgba(37,99,235,0.35);
@@ -600,19 +600,19 @@ div[data-testid="stMetric"] div[data-testid="stMetricValue"] {
 }
 
 [data-testid="stMain"] div[data-testid="stFormSubmitButton"] button:hover {
-    background: linear-gradient(135deg, #2563eb, #3b82f6);
+    background: #005BBB;
     box-shadow: 0 5px 18px rgba(37,99,235,0.5);
 }
 
 /* Expander */
 div[data-testid="stExpander"] {
-    background: #f8fafc;
-    border: 1px solid #dde3ef;
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
     border-radius: 11px;
 }
 
 div[data-testid="stExpander"] summary {
-    color: #1d4ed8 !important;
+    color: #005BBB !important;
     font-weight: 700;
 }
 
@@ -624,49 +624,49 @@ div[data-testid="stDataFrame"] {
 
 /* Alerts */
 div[data-testid="stWarning"] {
-    background: #fefce8;
-    border: 1px solid #fde68a;
+    background: #FDF3D8;
+    border: 1px solid #F4B400;
     border-radius: 9px;
-    color: #92400e;
+    color: #8A6400;
 }
 
 div[data-testid="stInfo"] {
-    background: #eff6ff;
-    border: 1px solid #bfdbfe;
+    background: #EAF1FF;
+    border: 1px solid #BFD3F2;
     border-radius: 9px;
-    color: #1e40af;
+    color: #032A63;
 }
 
 div[data-testid="stSuccess"] {
-    background: #f0fdf4;
-    border: 1px solid #bbf7d0;
+    background: #E4F5EC;
+    border: 1px solid #1E9E57;
     border-radius: 9px;
-    color: #14532d;
+    color: #0C713A;
 }
 
 div[data-testid="stCaptionContainer"] {
-    color: #64748b !important;
+    color: #61708A !important;
 }
 
 /* Progress bar */
 div[data-testid="stProgressBar"] > div {
-    background: #e2e8f0;
+    background: #DCE4F0;
     border-radius: 999px;
 }
 
 div[data-testid="stProgressBar"] > div > div {
-    background: linear-gradient(90deg, #2563eb, #06b6d4);
+    background: #005BBB;
     border-radius: 999px;
 }
 
 /* Footer */
 .footer {
     text-align: center;
-    color: #94a3b8;
+    color: #8A96A8;
     font-size: 12px;
     margin-top: 48px;
     padding: 18px 0 10px 0;
-    border-top: 1px solid #e2e8f0;
+    border-top: 1px solid #DCE4F0;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -835,19 +835,19 @@ def render_requests_status_viewer(requests_frame):
 
     if _p_appr == "Погоджено":
         _where = "✅ Погодження завершено — заявка закрита"
-        _color = ("#f0fdf4", "#86efac", "#166534")
+        _color = ("#E4F5EC", "#1E9E57", "#0C713A")
     elif _p_appr == "Повернуто на доопрацювання":
         _where = "↩️ У подавача — повернута на доопрацювання"
-        _color = ("#fff7ed", "#fdba74", "#9a3412")
+        _color = ("#FDF3D8", "#FF7A45", "#FF7A45")
     elif _p_chain:
         _st_cur = schemes.current_stage(_p_chain, _p_stage)
         _who = clean((_st_cur or {}).get("name", "")) or clean((_st_cur or {}).get("email", ""))
         _where = (f"⏳ Зараз на ланці: {clean((_st_cur or {}).get('label',''))}"
                   + (f" — {_who}" if _who else ""))
-        _color = ("#eff6ff", "#93c5fd", "#1e40af")
+        _color = ("#EAF1FF", "#BFD3F2", "#032A63")
     else:
         _where = "⏳ На розгляді координатора"
-        _color = ("#eff6ff", "#93c5fd", "#1e40af")
+        _color = ("#EAF1FF", "#BFD3F2", "#032A63")
 
     st.markdown(
         f'<div style="background:{_color[0]};border:1px solid {_color[1]};'
@@ -1997,11 +1997,11 @@ chart_df = chart_df[chart_df["Кількість"] > 0]
 
 if not chart_df.empty:
     color_map = {
-        "На розгляді понад 5 днів": "#ef4444",
-        "На розгляді":              "#f59e0b",
-        "Не враховано":             "#f97316",
-        "На доопрацюванні":         "#3b82f6",
-        "Погоджено":                "#22c55e",
+        "На розгляді понад 5 днів": "#DC4A4A",
+        "На розгляді":              "#FF7A45",
+        "Не враховано":             "#FF7A45",
+        "На доопрацюванні":         "#4D8DFF",
+        "Погоджено":                "#1E9E57",
     }
     fig = px.pie(
         chart_df, names="Статус", values="Кількість", hole=0.48,
@@ -2011,9 +2011,9 @@ if not chart_df.empty:
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font_color="#334155",
-        title_font_color="#0f172a",
-        legend=dict(font=dict(color="#475569"), bgcolor="rgba(0,0,0,0)")
+        font_color="#61708A",
+        title_font_color="#132238",
+        legend=dict(font=dict(color="#61708A"), bgcolor="rgba(0,0,0,0)")
     )
     st.plotly_chart(fig, use_container_width=True)
 else:
@@ -2642,8 +2642,8 @@ with pr1:
     )
 
 with pr2:
-    r_color = "#dc2626" if risks_val else "#64748b"
-    r_text_color = "#b91c1c" if risks_val else "#94a3b8"
+    r_color = "#DC4A4A" if risks_val else "#61708A"
+    r_text_color = "#DC4A4A" if risks_val else "#8A96A8"
     st.markdown(
         f'<div class="progress-risk-box" style="border-left: 3px solid {r_color};">'
         f'<div class="progress-risk-label">Ризики / проблеми / відхилення</div>'
@@ -2706,7 +2706,7 @@ _is_conflict = (selected_code, _req_year, _req_quarter) in _manual_set
 if _is_conflict and _req_kind != "indicator":
     st.markdown(
         f"""
-        <div class="card" style="border:2px solid #b45309;background:#fffbeb;">
+        <div class="card" style="border:2px solid #FF7A45;background:#FDF3D8;">
             <div class="card-title">⚠️ Увага: захід уже закрито вручну</div>
             <div class="card-subtitle">
                 Захід <b>{_esc(selected_code)}</b> за період {_esc(_req_quarter)} кв. {_esc(_req_year)}

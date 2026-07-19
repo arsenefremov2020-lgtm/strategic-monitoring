@@ -126,7 +126,7 @@ except Exception as exc:
 
 st.markdown(
     f"""
-    <div style="background:#fff3cd;border:1px solid #f1c40f;border-radius:12px;padding:14px 16px;margin:12px 0 18px 0;font-weight:800;color:#664d03;">
+    <div style="background:#FDF3D8;border:1px solid #F4B400;border-radius:12px;padding:14px 16px;margin:12px 0 18px 0;font-weight:800;color:#8A6400;">
         Ви переглядаєте архівний знімок від {format_kyiv(snapshot.get('archived_at'))}. Дані незмінні.
     </div>
     """,

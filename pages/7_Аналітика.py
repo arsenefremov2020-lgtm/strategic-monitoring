@@ -53,36 +53,8 @@ header[data-testid="stHeader"] {
 }
 
 .stApp {
-    background:
-        radial-gradient(circle at top right, rgba(37,99,235,0.08), transparent 28%),
-        radial-gradient(circle at bottom left, rgba(22,163,74,0.07), transparent 30%),
-        linear-gradient(180deg, #f6f8fb 0%, #eef2f7 100%);
+    background: #F7F9FC;
 }
-
-.stApp::before {
-    content: "";
-    position: fixed;
-    top: -160px;
-    right: -120px;
-    width: 460px;
-    height: 460px;
-    border-radius: 50%;
-    background: rgba(37, 99, 235, 0.045);
-    z-index: 0;
-}
-
-.stApp::after {
-    content: "";
-    position: fixed;
-    bottom: -180px;
-    left: -120px;
-    width: 390px;
-    height: 390px;
-    border-radius: 50%;
-    background: rgba(22, 163, 74, 0.045);
-    z-index: 0;
-}
-
 .main .block-container {
     max-width: 1550px;
     padding-top: 1.2rem;
@@ -99,7 +71,7 @@ header[data-testid="stHeader"] {
 
 .ministry-label {
     text-align: right;
-    color: #475569;
+    color: #61708A;
     font-size: 14px;
     font-weight: 700;
     margin-bottom: 8px;
@@ -112,7 +84,7 @@ header[data-testid="stHeader"] {
 .export-box,
 .table-box {
     background: rgba(255,255,255,0.96);
-    border: 1px solid #d8dee9;
+    border: 1px solid #DCE4F0;
     border-radius: 16px;
     box-shadow: 0 8px 24px rgba(15,23,42,0.06);
 }
@@ -126,7 +98,7 @@ header[data-testid="stHeader"] {
 .header-title {
     font-size: 32px;
     font-weight: 950;
-    color: #0f172a;
+    color: #132238;
     margin-bottom: 8px;
 }
 
@@ -134,7 +106,7 @@ header[data-testid="stHeader"] {
 .card-subtitle,
 .filter-subtitle {
     font-size: 15px;
-    color: #475569;
+    color: #61708A;
     line-height: 1.55;
 }
 
@@ -146,9 +118,9 @@ header[data-testid="stHeader"] {
 }
 
 .badge {
-    background: #eef6ff;
-    border: 1px solid #bfdbfe;
-    color: #1d4ed8;
+    background: #EAF1FF;
+    border: 1px solid #BFD3F2;
+    color: #005BBB;
     border-radius: 999px;
     padding: 7px 11px;
     font-size: 13px;
@@ -156,15 +128,15 @@ header[data-testid="stHeader"] {
 }
 
 .badge-green {
-    background: #dcfce7;
-    border-color: #bbf7d0;
-    color: #166534;
+    background: #E4F5EC;
+    border-color: #1E9E57;
+    color: #0C713A;
 }
 
 .badge-yellow {
-    background: #fef9c3;
-    border-color: #fde68a;
-    color: #854d0e;
+    background: #FDF3D8;
+    border-color: #F4B400;
+    color: #8A6400;
 }
 
 .filter-box,
@@ -180,17 +152,17 @@ header[data-testid="stHeader"] {
 .report-title {
     font-size: 21px;
     font-weight: 950;
-    color: #0f172a;
+    color: #132238;
     margin-bottom: 8px;
 }
 
 .filter-box {
-    background: linear-gradient(180deg, rgba(255,255,255,0.99), rgba(241,246,253,0.99));
-    border: 1px solid #cbd8ea;
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
 }
 
 .filter-section-title {
-    color: #1e293b;
+    color: #132238;
     font-size: 15px;
     font-weight: 950;
     margin: 14px 0 10px 0;
@@ -202,8 +174,8 @@ header[data-testid="stHeader"] {
 [data-testid="stMain"] div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
 [data-testid="stMain"] div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div,
 [data-testid="stMain"] div[data-testid="stTextInput"] input {
-    background-color: #d7eaff !important;
-    border: 1px solid #8fb3df !important;
+    background-color: #EAF1FF !important;
+    border: 1px solid #BFD3F2 !important;
     border-radius: 10px !important;
     min-height: 43px !important;
     box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.08) !important;
@@ -213,7 +185,7 @@ header[data-testid="stHeader"] {
 [data-testid="stMain"] div[data-testid="stMultiSelect"] label,
 [data-testid="stMain"] div[data-testid="stTextInput"] label {
     font-weight: 850 !important;
-    color: #1e293b !important;
+    color: #132238 !important;
 }
 
 .alert-grid {
@@ -226,13 +198,13 @@ header[data-testid="stHeader"] {
 .alert-card {
     border-radius: 16px;
     padding: 17px 18px;
-    border: 1px solid #d8dee9;
+    border: 1px solid #DCE4F0;
     box-shadow: 0 8px 20px rgba(15,23,42,0.06);
 }
 
 .alert-title {
     font-size: 13px;
-    color: #475569;
+    color: #61708A;
     font-weight: 900;
     line-height: 1.35;
     min-height: 36px;
@@ -240,40 +212,40 @@ header[data-testid="stHeader"] {
 
 .alert-value {
     font-size: 28px;
-    color: #0f172a;
+    color: #132238;
     font-weight: 950;
     margin-top: 8px;
 }
 
 .alert-note {
     font-size: 12px;
-    color: #475569;
+    color: #61708A;
     margin-top: 6px;
     line-height: 1.3;
 }
 
 .alert-blue {
-    background: linear-gradient(180deg, #dbeafe 0%, #eff6ff 100%);
-    border-color: #bfdbfe;
+    background: #EAF1FF;
+    border-color: #BFD3F2;
 }
 
 .alert-green {
-    background: linear-gradient(180deg, #dcfce7 0%, #f0fdf4 100%);
-    border-color: #bbf7d0;
+    background: #E4F5EC;
+    border-color: #1E9E57;
 }
 
 .alert-yellow {
-    background: linear-gradient(180deg, #fef9c3 0%, #fefce8 100%);
-    border-color: #fde68a;
+    background: #FDF3D8;
+    border-color: #F4B400;
 }
 
 .alert-red {
-    background: linear-gradient(180deg, #fee2e2 0%, #fff1f2 100%);
-    border-color: #fecaca;
+    background: #FBE5E5;
+    border-color: #DC4A4A;
 }
 
 .report-box {
-    border-left: 7px solid #2563eb;
+    border-left: 7px solid #005BBB;
     padding: 24px 28px;
     margin: 18px 0;
 }
@@ -286,16 +258,16 @@ header[data-testid="stHeader"] {
 .report-text {
     font-size: 15px;
     line-height: 1.75;
-    color: #334155;
+    color: #61708A;
     text-align: justify;
 }
 
 .report-meta {
-    background: #f8fafc;
-    border: 1px solid #d8dee9;
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
     border-radius: 12px;
     padding: 12px 14px;
-    color: #475569;
+    color: #61708A;
     font-size: 13px;
     font-weight: 700;
     margin-bottom: 12px;
@@ -310,11 +282,11 @@ header[data-testid="stHeader"] {
 
 .footer {
     text-align: center;
-    color: #64748b;
+    color: #61708A;
     font-size: 13px;
     margin-top: 50px;
     padding: 22px 0 12px 0;
-    border-top: 1px solid #d8dee9;
+    border-top: 1px solid #DCE4F0;
 }
 
 @media (max-width: 1100px) {
@@ -1095,12 +1067,12 @@ def build_report_charts(goal_progress, dep_progress, status_counts, period_dynam
     що й екранні візуалізації, тож графіки в довідці підтверджують текст.
     """
     charts = []
-    _brand = ["#005BBB", "#3b82f6", "#93c5fd", "#FFD500", "#f59e0b", "#ef4444"]
+    _brand = ["#005BBB", "#4D8DFF", "#BFD3F2", "#FFD500", "#FF7A45", "#DC4A4A"]
 
     def _style(fig, h=430):
         fig.update_layout(
             plot_bgcolor="white", paper_bgcolor="white",
-            font=dict(family="Arial", size=13, color="#0f172a"),
+            font=dict(family="Arial", size=13, color="#132238"),
             margin=dict(l=40, r=20, t=50, b=40), height=h,
         )
         return fig
@@ -1789,7 +1761,7 @@ approval_speed = build_approval_speed_analytics(
 
 st.markdown(
     '<div class="card"><div class="card-title">Аналіз повернень на доопрацювання '
-    '<span style="font-size:11px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;'
+    '<span style="font-size:11px;color:#8A6400;background:#FDF3D8;border:1px solid #F4B400;'
     'border-radius:999px;padding:3px 8px;">тест</span></div>'
     '<div class="card-subtitle">Розрахунок виконується за журналом дій і поточним аналітичним зрізом.</div>',
     unsafe_allow_html=True,
@@ -1840,7 +1812,7 @@ st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown(
     '<div class="card"><div class="card-title">Швидкість погодження '
-    '<span style="font-size:11px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;'
+    '<span style="font-size:11px;color:#8A6400;background:#FDF3D8;border:1px solid #F4B400;'
     'border-radius:999px;padding:3px 8px;">тест</span></div>'
     '<div class="card-subtitle">Час розраховано за датою подання і послідовністю подій у журналі.</div>',
     unsafe_allow_html=True,

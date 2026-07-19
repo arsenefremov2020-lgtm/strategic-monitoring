@@ -266,7 +266,7 @@ def _submission_state(code: str, start_raw) -> tuple[str, dict]:
                 core_periods.parse_period(start_raw), _sel_period):
             return legend_badge("Не настав час"), {}
         return legend_badge("Не враховано"), {}
-    return '<span style="color:#94a3b8;">—</span>', {}
+    return '<span style="color:#8A96A8;">—</span>', {}
 
 
 # ------------------------------------------------------------
@@ -296,7 +296,7 @@ st.markdown(
         for k, v in _kpis
     )
     + '</div>'
-    f'<div style="font-size:12px;color:#64748b;margin-top:8px;">Документ: '
+    f'<div style="font-size:12px;color:#61708A;margin-top:8px;">Документ: '
     f'<b>{escape(selected_doc)}</b> · Рік: {escape(str(sel_year))} · '
     f'Квартали: {escape(", ".join(sel_quarters) if sel_quarters else "усі")} · '
     f'Режим: {"офіційні" if params.get("official_only") else "оперативні"} '
@@ -333,7 +333,7 @@ for (_, m), (badge, info) in zip(matched.iterrows(), _states):
         f'<td style="text-align:center;white-space:nowrap;">{badge}</td>'
         f'<td>{escape(info.get("status", ""))}</td>'
         f'<td style="text-align:center;">{escape(info.get("fact", ""))}</td>'
-        f'<td style="white-space:nowrap;font-size:11px;color:#64748b;">'
+        f'<td style="white-space:nowrap;font-size:11px;color:#61708A;">'
         f'{escape(info.get("submitted", ""))}</td>'
         "</tr>"
     )
@@ -367,10 +367,10 @@ _head = (
     "</tr>"
 )
 st.markdown(
-    '<div style="max-height:560px;overflow:auto;border:1px solid #e2e8f0;'
+    '<div style="max-height:560px;overflow:auto;border:1px solid #DCE4F0;'
     'border-radius:10px;">'
     '<table style="width:100%;border-collapse:collapse;font-size:12.5px;">'
-    '<thead style="position:sticky;top:0;z-index:2;background:#0f172a;'
+    '<thead style="position:sticky;top:0;z-index:2;background:#132238;'
     'color:#fff;">'
     f"{_head}</thead><tbody>"
     + "".join(_rows_html)

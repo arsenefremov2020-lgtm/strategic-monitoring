@@ -50,21 +50,8 @@ html, body, [class*="css"] {
 }
 
 .stApp {
-    background: #f0f4f9;
+    background: #F7F9FC;
 }
-
-.stApp::before {
-    content: "";
-    position: fixed;
-    inset: 0;
-    background-image:
-        radial-gradient(circle at 15% 15%, rgba(0,91,187,0.06) 0%, transparent 40%),
-        radial-gradient(circle at 85% 80%, rgba(255,213,0,0.06) 0%, transparent 40%),
-        radial-gradient(circle at 50% 50%, rgba(0,91,187,0.02) 0%, transparent 60%);
-    pointer-events: none;
-    z-index: 0;
-}
-
 .main .block-container {
     max-width: min(1500px, 98vw);
     padding: clamp(0.5rem, 2vw, 1.5rem) clamp(0.5rem, 2vw, 2rem);
@@ -76,7 +63,7 @@ html, body, [class*="css"] {
 .ua-stripe {
     height: 5px;
     border-radius: 0 0 6px 6px;
-    background: linear-gradient(90deg, #005BBB 50%, #FFD700 50%);
+    background: linear-gradient(90deg, #005BBB 50%, #FFD500 50%);
     margin-bottom: 16px;
     box-shadow: 0 2px 8px rgba(0,91,187,0.15);
 }
@@ -84,7 +71,7 @@ html, body, [class*="css"] {
 /* ── Ministry label ── */
 .ministry-label {
     text-align: right;
-    color: #334155;
+    color: #61708A;
     font-size: clamp(11px, 1.1vw, 14px);
     font-weight: 700;
     margin-bottom: 10px;
@@ -93,8 +80,8 @@ html, body, [class*="css"] {
 
 /* ── Header card ── */
 .header-card {
-    background: linear-gradient(135deg, #ffffff 0%, #f8faff 100%);
-    border: 1px solid #dde3ed;
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
     border-left: 5px solid #005BBB;
     border-radius: 12px;
     padding: clamp(16px, 2.2vw, 24px) clamp(16px, 2.5vw, 32px);
@@ -108,14 +95,14 @@ html, body, [class*="css"] {
 .header-title {
     font-size: clamp(20px, 2.5vw, 30px);
     font-weight: 900;
-    color: #0c1a3a;
+    color: #032A63;
     margin: 0 0 6px 0;
     line-height: 1.2;
 }
 
 .header-subtitle {
     font-size: clamp(12px, 1.1vw, 14px);
-    color: #475569;
+    color: #61708A;
     line-height: 1.55;
     max-width: none;
     width: 100%;
@@ -130,12 +117,12 @@ html, body, [class*="css"] {
 }
 
 .pill {
-    background: #eef3fb;
-    border: 1px solid #c2d4f0;
+    background: #EAF1FF;
+    border: 1px solid #BFD3F2;
     border-radius: 20px;
     padding: 5px 12px;
     font-size: clamp(10px, 0.9vw, 12px);
-    color: #1e3a6e;
+    color: #032A63;
     font-weight: 600;
     white-space: nowrap;
 }
@@ -143,7 +130,7 @@ html, body, [class*="css"] {
 /* ── Section card ── */
 .section-card {
     background: #ffffff;
-    border: 1px solid #dde3ed;
+    border: 1px solid #DCE4F0;
     border-radius: 12px;
     padding: clamp(14px, 2vw, 22px) clamp(14px, 2vw, 24px);
     margin-bottom: 18px;
@@ -157,21 +144,21 @@ div[data-testid="stMarkdownContainer"] .section-card:empty {
 .section-title {
     font-size: clamp(14px, 1.3vw, 17px);
     font-weight: 800;
-    color: #0c1a3a;
+    color: #032A63;
     margin: 0 0 14px 0;
 }
 
 .section-subtitle {
     font-size: clamp(11px, 0.95vw, 13px);
-    color: #64748b;
+    color: #61708A;
     margin: 0 0 12px 0;
 }
 
 /* ── Блок формул режиму («реальна» + «спрощена») ── */
 .formula-box {
-    background: #f8fafc;
-    border: 1px solid #dde3ed;
-    border-left: 4px solid #1c3f63;
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
+    border-left: 4px solid #032A63;
     border-radius: 10px;
     padding: 14px 16px;
     margin-bottom: 14px;
@@ -181,7 +168,7 @@ div[data-testid="stMarkdownContainer"] .section-card:empty {
     font-weight: 900;
     text-transform: uppercase;
     letter-spacing: .04em;
-    color: #1c3f63;
+    color: #032A63;
     margin-bottom: 10px;
 }
 .formula-row {
@@ -189,7 +176,7 @@ div[data-testid="stMarkdownContainer"] .section-card:empty {
     grid-template-columns: minmax(160px, 1fr) minmax(220px, 1.4fr) minmax(220px, 1.6fr);
     gap: 10px;
     padding: 8px 0;
-    border-top: 1px solid #e5eaf1;
+    border-top: 1px solid #DCE4F0;
     align-items: start;
 }
 .formula-row:first-of-type {
@@ -198,16 +185,16 @@ div[data-testid="stMarkdownContainer"] .section-card:empty {
 .formula-row .f-label {
     font-size: 12px;
     font-weight: 800;
-    color: #0f172a;
+    color: #132238;
     padding-top: 2px;
 }
 .formula-row .f-real {
     font-family: "Courier New", monospace;
     font-size: 12.5px;
     font-weight: 700;
-    color: #7c2d12;
-    background: #fff7ed;
-    border: 1px solid #fed7aa;
+    color: #FF7A45;
+    background: #FDF3D8;
+    border: 1px solid #FDF3D8;
     border-radius: 6px;
     padding: 6px 8px;
     white-space: pre-wrap;
@@ -215,21 +202,21 @@ div[data-testid="stMarkdownContainer"] .section-card:empty {
 }
 .formula-row .f-simple {
     font-size: 12.5px;
-    color: #334155;
+    color: #61708A;
     line-height: 1.5;
     padding-top: 2px;
 }
 .formula-box .fb-note {
     font-size: 11.5px;
-    color: #64748b;
+    color: #61708A;
     margin-top: 10px;
     line-height: 1.5;
 }
 
 /* ── Filter panel ── */
 .filter-panel {
-    background: linear-gradient(135deg, #f8fbff 0%, #eef3fb 100%);
-    border: 1px solid #c2d4f0;
+    background: #EAF1FF;
+    border: 1px solid #BFD3F2;
     border-radius: 12px;
     padding: clamp(14px, 2vw, 20px) clamp(14px, 2vw, 22px);
     margin-bottom: 20px;
@@ -239,7 +226,7 @@ div[data-testid="stMarkdownContainer"] .section-card:empty {
 .filter-title {
     font-size: clamp(14px, 1.3vw, 17px);
     font-weight: 800;
-    color: #0c1a3a;
+    color: #032A63;
     margin-bottom: 12px;
 }
 
@@ -250,13 +237,13 @@ div[data-testid="stMarkdownContainer"] .section-card:empty {
     flex-wrap: wrap;
     padding: 8px 8px 0 8px;
     margin-bottom: 0;
-    border-bottom: 2px solid #c2d4f0;
-    background: linear-gradient(180deg, #f8fbff 0%, #eef3fb 100%);
+    border-bottom: 2px solid #BFD3F2;
+    background: #EAF1FF;
     border-radius: 12px 12px 0 0;
 }
 .mio-modebar-wrap {
     background: #ffffff;
-    border: 1px solid #dde3ed;
+    border: 1px solid #DCE4F0;
     border-radius: 12px;
     box-shadow: 0 2px 12px rgba(0,91,187,0.06);
     margin-bottom: 18px;
@@ -265,7 +252,7 @@ div[data-testid="stMarkdownContainer"] .section-card:empty {
 .mio-modebar-meta {
     padding: 10px 16px;
     font-size: 12px;
-    color: #475569;
+    color: #61708A;
     font-weight: 600;
 }
 
@@ -290,28 +277,28 @@ div[data-testid="stRadio"].mio-tabs > div { gap: 4px !important; }
     border: 1px solid transparent;
 }
 .mio-chip .dot { width: 9px; height: 9px; border-radius: 50%; }
-.mio-chip.done     { background:#dcfce7; color:#166534; border-color:#bbf7d0; }
-.mio-chip.partial  { background:#fef3c7; color:#92400e; border-color:#fde68a; }
-.mio-chip.notdone  { background:#fee2e2; color:#991b1b; border-color:#fecaca; }
-.mio-chip.notyet   { background:#e2e8f0; color:#475569; border-color:#cbd5e1; }
+.mio-chip.done     { background:#E4F5EC; color:#0C713A; border-color:#1E9E57; }
+.mio-chip.partial  { background:#FDF3D8; color:#8A6400; border-color:#F4B400; }
+.mio-chip.notdone  { background:#FBE5E5; color:#DC4A4A; border-color:#DC4A4A; }
+.mio-chip.notyet   { background:#DCE4F0; color:#61708A; border-color:#DCE4F0; }
 .mio-chip.obsolete { background:#ede9fe; color:#5b21b6; border-color:#ddd6fe; }
-.mio-chip.done .dot     { background:#16a34a; }
-.mio-chip.partial .dot  { background:#d97706; }
-.mio-chip.notdone .dot  { background:#dc2626; }
-.mio-chip.notyet .dot   { background:#94a3b8; }
+.mio-chip.done .dot     { background:#118847; }
+.mio-chip.partial .dot  { background:#FF7A45; }
+.mio-chip.notdone .dot  { background:#DC4A4A; }
+.mio-chip.notyet .dot   { background:#8A96A8; }
 .mio-chip.obsolete .dot { background:#7c3aed; }
 
 /* ── Заглушка «у розробці» ── */
 .mio-placeholder {
     text-align: center;
     padding: 48px 24px;
-    border: 1.5px dashed #c2d4f0;
+    border: 1.5px dashed #BFD3F2;
     border-radius: 14px;
-    background: #f8fbff;
-    color: #475569;
+    background: #EAF1FF;
+    color: #61708A;
 }
 .mio-placeholder .big { font-size: 40px; margin-bottom: 8px; }
-.mio-placeholder .ttl { font-size: 18px; font-weight: 800; color: #0c1a3a; margin-bottom: 6px; }
+.mio-placeholder .ttl { font-size: 18px; font-weight: 800; color: #032A63; margin-bottom: 6px; }
 
 /* ══════════════════════════════════════════════
    Красива таблиця режиму «М_заходи»
@@ -319,7 +306,7 @@ div[data-testid="stRadio"].mio-tabs > div { gap: 4px !important; }
 .mio-tablewrap {
     max-height: 640px;
     overflow: auto;
-    border: 1px solid #dbe3ee;
+    border: 1px solid #DCE4F0;
     border-radius: 14px;
     box-shadow: 0 4px 18px rgba(15,30,60,0.06);
     background: #ffffff;
@@ -327,39 +314,39 @@ div[data-testid="stRadio"].mio-tabs > div { gap: 4px !important; }
 }
 .mio-tablewrap::-webkit-scrollbar { height: 11px; width: 11px; }
 .mio-tablewrap::-webkit-scrollbar-thumb {
-    background: #c2d0e4; border-radius: 8px; border: 2px solid #ffffff;
+    background: #DCE4F0; border-radius: 8px; border: 2px solid #ffffff;
 }
-.mio-tablewrap::-webkit-scrollbar-thumb:hover { background: #9fb4d4; }
-.mio-tablewrap::-webkit-scrollbar-track { background: #f1f5fb; }
+.mio-tablewrap::-webkit-scrollbar-thumb:hover { background: #BFD3F2; }
+.mio-tablewrap::-webkit-scrollbar-track { background: #F7F9FC; }
 
 .mio-table {
     border-collapse: separate;
     border-spacing: 0;
     width: 100%;
     font-size: 12.5px;
-    color: #1e293b;
+    color: #132238;
     min-width: 1080px;
 }
 
 /* ── Заголовки ── */
 .mio-table thead th {
     position: sticky;
-    background: #eef3fb;
+    background: #EAF1FF;
     font-weight: 800;
-    color: #1e3a6e;
+    color: #032A63;
     text-align: center;
     padding: 8px 10px;
-    border-bottom: 1px solid #d4deec;
+    border-bottom: 1px solid #DCE4F0;
     white-space: nowrap;
 }
 .mio-table thead tr.grp th { top: 0; z-index: 3; font-size: 12px; }
-.mio-table thead tr.sub th { top: 35px; z-index: 3; font-weight: 700; font-size: 11px; color: #5b7099; }
-.mio-table thead .grp-q    { background: #eef3fb; }
-.mio-table thead .grp-year { background: #dceafc; color: #0c2f6e; border-left: 2px solid #b6d2f5; border-right: 2px solid #b6d2f5; }
-.mio-table thead .sub-year { background: #dceafc; }
+.mio-table thead tr.sub th { top: 35px; z-index: 3; font-weight: 700; font-size: 11px; color: #61708A; }
+.mio-table thead .grp-q    { background: #EAF1FF; }
+.mio-table thead .grp-year { background: #EAF1FF; color: #032A63; border-left: 2px solid #BFD3F2; border-right: 2px solid #BFD3F2; }
+.mio-table thead .sub-year { background: #EAF1FF; }
 .mio-table thead .grp-plan { background: #f3f0fb; color: #4c1d95; }
-.mio-table thead .sub-f { background: #f6f9fe; }
-.mio-table thead .sub-s { background: #eef3fb; }
+.mio-table thead .sub-f { background: #F7F9FC; }
+.mio-table thead .sub-s { background: #EAF1FF; }
 
 /* ── Комірка-якір (захід), закріплена зліва ── */
 .mio-table th.m-anchor, .mio-table td.m-anchor {
@@ -370,22 +357,22 @@ div[data-testid="stRadio"].mio-tabs > div { gap: 4px !important; }
     min-width: 360px;
     max-width: 360px;
     text-align: left;
-    border-right: 2px solid #dbe3ee;
+    border-right: 2px solid #DCE4F0;
 }
-.mio-table thead th.m-anchor { z-index: 4; background: #e6edf8; vertical-align: middle; }
+.mio-table thead th.m-anchor { z-index: 4; background: #EAF1FF; vertical-align: middle; }
 .mio-table td.m-anchor { background: #ffffff; padding: 9px 12px; vertical-align: top; }
-.mio-table tbody tr:nth-child(even) td.m-anchor { background: #f8fafd; }
-.mio-table tbody tr:hover td.m-anchor { background: #eef5ff; }
+.mio-table tbody tr:nth-child(even) td.m-anchor { background: #F7F9FC; }
+.mio-table tbody tr:hover td.m-anchor { background: #EAF1FF; }
 
 .m-codeline { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin-bottom: 3px; }
 .m-code {
-    font-weight: 900; color: #0c2f6e; font-size: 12.5px;
-    background: #e7f0fd; border: 1px solid #c3d8f5;
+    font-weight: 900; color: #032A63; font-size: 12.5px;
+    background: #EAF1FF; border: 1px solid #BFD3F2;
     padding: 1px 7px; border-radius: 6px; letter-spacing: .01em;
 }
-.m-name { font-weight: 700; color: #16233f; line-height: 1.32; font-size: 12.5px; }
+.m-name { font-weight: 700; color: #032A63; line-height: 1.32; font-size: 12.5px; }
 .m-ind {
-    color: #64748b; font-size: 11px; line-height: 1.3; margin-top: 3px;
+    color: #61708A; font-size: 11px; line-height: 1.3; margin-top: 3px;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
     overflow: hidden;
 }
@@ -393,27 +380,27 @@ div[data-testid="stRadio"].mio-tabs > div { gap: 4px !important; }
     font-size: 9.5px; font-weight: 800; padding: 1px 6px; border-radius: 20px;
     letter-spacing: .02em; white-space: nowrap;
 }
-.tag-goal { background: #eef3fb; color: #1e3a6e; border: 1px solid #c9d8ef; }
-.tag-task { background: #f0fbf6; color: #0f766e; border: 1px solid #b8e6d7; }
-.tag-unit { background: #fbf8ef; color: #92600e; border: 1px solid #ecdcb0; }
+.tag-goal { background: #EAF1FF; color: #032A63; border: 1px solid #DCE4F0; }
+.tag-task { background: #E4F5EC; color: #00A8A8; border: 1px solid #b8e6d7; }
+.tag-unit { background: #FDF3D8; color: #8A6400; border: 1px solid #FDF3D8; }
 
 /* ── Комірки даних ── */
 .mio-table tbody td {
     padding: 7px 8px;
-    border-bottom: 1px solid #eef2f8;
+    border-bottom: 1px solid #F7F9FC;
     text-align: center;
     vertical-align: middle;
     background: #ffffff;
 }
-.mio-table tbody tr:nth-child(even) td { background: #f8fafd; }
-.mio-table tbody tr:hover td { background: #eef5ff; }
+.mio-table tbody tr:nth-child(even) td { background: #F7F9FC; }
+.mio-table tbody tr:hover td { background: #EAF1FF; }
 .mio-table tbody tr:last-child td { border-bottom: none; }
 
-.m-fact { font-weight: 700; color: #0f1f3d; font-variant-numeric: tabular-nums; }
-.m-empty { color: #cbd5e1; font-weight: 700; }
-.m-plan { font-weight: 800; color: #1e293b; font-variant-numeric: tabular-nums;
-          background: #fbfaff !important; }
-.m-styear { border-left: 1px solid #e6edf8; }
+.m-fact { font-weight: 700; color: #032A63; font-variant-numeric: tabular-nums; }
+.m-empty { color: #DCE4F0; font-weight: 700; }
+.m-plan { font-weight: 800; color: #132238; font-variant-numeric: tabular-nums;
+          background: #F7F9FC !important; }
+.m-styear { border-left: 1px solid #EAF1FF; }
 
 /* ── Чипи стану ── */
 .tchip {
@@ -422,34 +409,34 @@ div[data-testid="stRadio"].mio-tabs > div { gap: 4px !important; }
     border: 1px solid transparent;
 }
 .tchip.lg { font-size: 11px; padding: 3px 10px; }
-.tchip.done     { background: #dcfce7; color: #166534; border-color: #bbf7d0; }
-.tchip.partial  { background: #fef3c7; color: #92400e; border-color: #fde68a; }
-.tchip.notdone  { background: #fee2e2; color: #991b1b; border-color: #fecaca; }
-.tchip.notyet   { background: #eef2f7; color: #64748b; border-color: #dde5ef; }
+.tchip.done     { background: #E4F5EC; color: #0C713A; border-color: #1E9E57; }
+.tchip.partial  { background: #FDF3D8; color: #8A6400; border-color: #F4B400; }
+.tchip.notdone  { background: #FBE5E5; color: #DC4A4A; border-color: #DC4A4A; }
+.tchip.notyet   { background: #F7F9FC; color: #61708A; border-color: #DCE4F0; }
 .tchip.obsolete { background: #ede9fe; color: #5b21b6; border-color: #ddd6fe; }
 
 /* ── Прогрес-бар «Факт/План» ── */
 .m-ratio { min-width: 120px; }
 .rbar {
     position: relative; height: 22px; border-radius: 7px; overflow: hidden;
-    background: #eef2f8; border: 1px solid #e2e8f0; min-width: 96px;
+    background: #F7F9FC; border: 1px solid #DCE4F0; min-width: 96px;
 }
 .rfill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 7px 0 0 7px; }
-.rbar.done .rfill     { background: linear-gradient(90deg,#34d399,#16a34a); }
-.rbar.partial .rfill  { background: linear-gradient(90deg,#fbbf24,#d97706); }
-.rbar.notdone .rfill  { background: linear-gradient(90deg,#f87171,#dc2626); }
-.rbar.notyet .rfill   { background: #cbd5e1; }
+.rbar.done .rfill     { background: #118847; }
+.rbar.partial .rfill  { background: #FF7A45; }
+.rbar.notdone .rfill  { background: #DC4A4A; }
+.rbar.notyet .rfill   { background: #DCE4F0; }
 .rlabel {
     position: relative; z-index: 1; display: block; text-align: center;
-    line-height: 22px; font-size: 11px; font-weight: 800; color: #0f1f3d;
+    line-height: 22px; font-size: 11px; font-weight: 800; color: #032A63;
     font-variant-numeric: tabular-nums; text-shadow: 0 1px 2px rgba(255,255,255,.6);
 }
 
 /* ── Streamlit widget overrides ── */
 div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
 div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div {
-    background-color: #d7eaff !important;
-    border: 1px solid #8fb3df !important;
+    background-color: #EAF1FF !important;
+    border: 1px solid #BFD3F2 !important;
     border-radius: 10px !important;
     min-height: 40px !important;
 }
@@ -457,7 +444,7 @@ div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div {
 div[data-testid="stSelectbox"] label,
 div[data-testid="stMultiSelect"] label {
     font-weight: 750 !important;
-    color: #1e293b !important;
+    color: #132238 !important;
 }
 
 /* ── KPI grid ── */
@@ -484,7 +471,7 @@ div[data-testid="stMultiSelect"] label {
 .kpi-title {
     font-size: clamp(10px, 0.85vw, 12px);
     font-weight: 700;
-    color: #475569;
+    color: #61708A;
     min-height: 28px;
     line-height: 1.3;
 }
@@ -492,7 +479,7 @@ div[data-testid="stMultiSelect"] label {
 .kpi-value {
     font-size: clamp(22px, 2.5vw, 32px);
     font-weight: 900;
-    color: #0c1a3a;
+    color: #032A63;
     line-height: 1;
     margin-top: 2px;
 }
@@ -500,21 +487,21 @@ div[data-testid="stMultiSelect"] label {
 .kpi-pct {
     font-size: clamp(11px, 0.95vw, 13px);
     font-weight: 700;
-    color: #64748b;
+    color: #61708A;
     margin-top: 4px;
 }
 
-.kpi-blue   { background: #eff6ff; border-color: #bfdbfe; }
-.kpi-green  { background: #f0fdf4; border-color: #bbf7d0; }
-.kpi-red    { background: #fef2f2; border-color: #fecaca; }
-.kpi-yellow { background: #fffbeb; border-color: #fde68a; }
-.kpi-gray   { background: #f8fafc; border-color: #e2e8f0; }
-.kpi-teal   { background: #f0fdfa; border-color: #99f6e4; }
-.kpi-indigo { background: #eef2ff; border-color: #c7d2fe; }
+.kpi-blue   { background: #EAF1FF; border-color: #BFD3F2; }
+.kpi-green  { background: #E4F5EC; border-color: #1E9E57; }
+.kpi-red    { background: #FBE5E5; border-color: #DC4A4A; }
+.kpi-yellow { background: #FDF3D8; border-color: #F4B400; }
+.kpi-gray   { background: #F7F9FC; border-color: #DCE4F0; }
+.kpi-teal   { background: #E4F5EC; border-color: #00A8A8; }
+.kpi-indigo { background: #EAF1FF; border-color: #BFD3F2; }
 
 /* ── Integral score block ── */
 .integral-block {
-    background: linear-gradient(135deg, #0c1a3a 0%, #1e3a6e 100%);
+    background: #032A63;
     border-radius: 14px;
     padding: 24px 28px;
     color: white;
@@ -530,7 +517,7 @@ div[data-testid="stMultiSelect"] label {
 .integral-label {
     font-size: clamp(11px, 1vw, 13px);
     font-weight: 700;
-    color: #94a3b8;
+    color: #8A96A8;
     text-transform: uppercase;
     letter-spacing: 0.08em;
     margin-bottom: 8px;
@@ -555,7 +542,7 @@ div[data-testid="stMultiSelect"] label {
 /* ── Goal row (like on screenshot) ── */
 .goal-row {
     background: #ffffff;
-    border: 1px solid #e2e8f0;
+    border: 1px solid #DCE4F0;
     border-radius: 10px;
     margin-bottom: 10px;
     overflow: hidden;
@@ -566,8 +553,8 @@ div[data-testid="stMultiSelect"] label {
     align-items: center;
     padding: 12px 16px;
     gap: 12px;
-    background: #f8fafc;
-    border-bottom: 1px solid #e2e8f0;
+    background: #F7F9FC;
+    border-bottom: 1px solid #DCE4F0;
 }
 
 .goal-code-badge {
@@ -583,7 +570,7 @@ div[data-testid="stMultiSelect"] label {
 .goal-name-text {
     font-size: clamp(12px, 1.1vw, 14px);
     font-weight: 700;
-    color: #0c1a3a;
+    color: #032A63;
     flex: 1;
     line-height: 1.35;
 }
@@ -594,13 +581,13 @@ div[data-testid="stMultiSelect"] label {
     white-space: nowrap;
 }
 
-.goal-score-green  { color: #16a34a; }
-.goal-score-yellow { color: #d97706; }
-.goal-score-red    { color: #dc2626; }
+.goal-score-green  { color: #118847; }
+.goal-score-yellow { color: #FF7A45; }
+.goal-score-red    { color: #DC4A4A; }
 
 /* ── Progress bar ── */
 .prog-bar-bg {
-    background: #e2e8f0;
+    background: #DCE4F0;
     border-radius: 99px;
     height: 8px;
     overflow: hidden;
@@ -615,29 +602,29 @@ div[data-testid="stMultiSelect"] label {
 
 /* ── Insight items ── */
 .insight-item {
-    background: #f8fafc;
+    background: #F7F9FC;
     border-left: 4px solid #005BBB;
     border-radius: 0 8px 8px 0;
     padding: clamp(8px, 1vw, 12px) clamp(12px, 1.5vw, 16px);
     margin-bottom: 8px;
     font-size: clamp(12px, 1vw, 14px);
-    color: #1e293b;
+    color: #132238;
     line-height: 1.5;
 }
 
-.insight-item.warn   { border-left-color: #d97706; background: #fffbeb; }
-.insight-item.danger { border-left-color: #dc2626; background: #fef2f2; }
-.insight-item.success { border-left-color: #16a34a; background: #f0fdf4; }
-.insight-item.info   { border-left-color: #0891b2; background: #ecfeff; }
+.insight-item.warn   { border-left-color: #FF7A45; background: #FDF3D8; }
+.insight-item.danger { border-left-color: #DC4A4A; background: #FBE5E5; }
+.insight-item.success { border-left-color: #118847; background: #E4F5EC; }
+.insight-item.info   { border-left-color: #00A8A8; background: #EAF1FF; }
 
 /* ── Methodology box ── */
 .methodology-box {
-    background: #f8fafc;
-    border: 1px solid #dde3ed;
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
     border-radius: 10px;
     padding: 16px 20px;
     font-size: clamp(11px, 0.95vw, 14px);
-    color: #334155;
+    color: #61708A;
     line-height: 1.7;
 }
 
@@ -653,21 +640,21 @@ div[data-testid="stMultiSelect"] label {
 /* ── Divider ── */
 .vis-separator {
     border: none;
-    border-top: 1px solid #e2e8f0;
+    border-top: 1px solid #DCE4F0;
     margin: 22px 0;
 }
 
 /* ── Footer ── */
 .footer {
     text-align: center;
-    color: #94a3b8;
+    color: #8A96A8;
     font-size: clamp(10px, 0.9vw, 12px);
     margin-top: 40px;
     padding: 18px 0 10px;
-    border-top: 1px solid #e2e8f0;
+    border-top: 1px solid #DCE4F0;
 }
 
-.footer strong { color: #475569; }
+.footer strong { color: #61708A; }
 
 @media (max-width: 900px) {
     .kpi-grid-4, .kpi-grid-5, .kpi-grid-6, .kpi-grid-8 {
@@ -731,12 +718,12 @@ def is_positive_yes(value):
 
 def level_color(score):
     if score is None:
-        return "#94a3b8"
+        return "#8A96A8"
     if score >= 80:
-        return "#16a34a"
+        return "#118847"
     if score >= 50:
-        return "#d97706"
-    return "#dc2626"
+        return "#FF7A45"
+    return "#DC4A4A"
 
 
 def code_sort_key(value):
@@ -1626,9 +1613,9 @@ def render_formula_box(title, rows, note=None):
     html = f'<div class="formula-box"><div class="fb-title">{_esc(title)}</div>'
     html += (
         '<div class="formula-row" style="border-top:none;padding-top:0;padding-bottom:6px;">'
-        '<div class="f-label" style="color:#94a3b8;">Крок</div>'
-        '<div class="f-label" style="color:#94a3b8;">Формула (як реально в коді)</div>'
-        '<div class="f-label" style="color:#94a3b8;">Простими словами</div>'
+        '<div class="f-label" style="color:#8A96A8;">Крок</div>'
+        '<div class="f-label" style="color:#8A96A8;">Формула (як реально в коді)</div>'
+        '<div class="f-label" style="color:#8A96A8;">Простими словами</div>'
         '</div>'
     )
     for label, real, simple in rows:
@@ -2184,7 +2171,7 @@ def _render_mzahody_year(strat_df, monitoring_df, year):
         <span class="mio-chip notdone"><span class="dot"></span>Не виконано (&lt;75%)</span>
         <span class="mio-chip notyet"><span class="dot"></span>Не настав час</span>
         <span class="mio-chip obsolete"><span class="dot"></span>Втратило актуальність</span>
-        <span style="margin-left:auto;font-size:12px;color:#64748b;font-weight:700;align-self:center;">
+        <span style="margin-left:auto;font-size:12px;color:#61708A;font-weight:700;align-self:center;">
             Показано {len(df)} із {n_total}
         </span>
     </div>
@@ -2221,7 +2208,7 @@ def render_mode_mzahody(strat_df, monitoring_df, years):
             "Записи збережені в базі та журналах."
         )
     st.markdown(
-        "<div style='font-size:13px;color:#475569;margin-bottom:8px;line-height:1.5;'>"
+        "<div style='font-size:13px;color:#61708A;margin-bottom:8px;line-height:1.5;'>"
         "Квартальні значення (Факт + Стан виконання за I квартал, I півріччя, 9 місяців) "
         "підтягуються з погоджених результатів моніторингу. "
         "Стан виконання за <b>РІК</b> та <b>Співвідношення Факту і Плану</b> "
@@ -2404,7 +2391,7 @@ def _render_rv_meas_year(strat_df, monitoring_df, year):
         <span class="mio-chip notdone"><span class="dot"></span>Не виконано (&le; 75%)</span>
         <span class="mio-chip notyet"><span class="dot"></span>Не настав час (х)</span>
         <span class="mio-chip obsolete"><span class="dot"></span>Втратило актуальність (в/а)</span>
-        <span style="margin-left:auto;font-size:12px;color:#64748b;font-weight:700;align-self:center;">
+        <span style="margin-left:auto;font-size:12px;color:#61708A;font-weight:700;align-self:center;">
             Показано {len(df)} із {n_total}
         </span>
     </div>
@@ -2441,7 +2428,7 @@ def render_mode_rv_meas(strat_df, monitoring_df, years):
         unsafe_allow_html=True
     )
     st.markdown(
-        "<div style='font-size:13px;color:#475569;margin-bottom:8px;line-height:1.5;'>"
+        "<div style='font-size:13px;color:#61708A;margin-bottom:8px;line-height:1.5;'>"
         "Відсоток виконання переводиться зі станів режиму <b>«М_заходи»</b> за довідником моделі: "
         "<b>Виконано → 100%</b>, <b>Частково виконано → 75%</b>, <b>Не виконано → 0%</b>, "
         "<b>Не настав час → «х»</b>, <b>Втратило актуальність → «в/а»</b>. "
@@ -2469,19 +2456,19 @@ def render_mode_rv_meas(strat_df, monitoring_df, years):
 # Локальні стилі ієрархічної таблиці (ціль/завдання)
 _RV_GOALS_CSS = """
 <style>
-.mio-table tr.rv-goal-row > td { background:#eef4fb; border-top:2px solid #cbdcef; }
-.mio-table tr.rv-goal-row:hover > td { background:#e6eef9; }
+.mio-table tr.rv-goal-row > td { background:#F7F9FC; border-top:2px solid #DCE4F0; }
+.mio-table tr.rv-goal-row:hover > td { background:#EAF1FF; }
 .mio-table td.rv-anchor { padding:9px 12px; }
 .mio-table td.rv-anchor .m-code { font-weight:800; }
-.mio-table tr.rv-goal-row td.rv-anchor .m-code { color:#0a3d7a; font-size:14px; }
-.mio-table tr.rv-goal-row td.rv-anchor .rv-name { font-weight:800; color:#0f2747; text-transform:uppercase; letter-spacing:.2px; font-size:12.5px; }
+.mio-table tr.rv-goal-row td.rv-anchor .m-code { color:#032A63; font-size:14px; }
+.mio-table tr.rv-goal-row td.rv-anchor .rv-name { font-weight:800; color:#032A63; text-transform:uppercase; letter-spacing:.2px; font-size:12.5px; }
 .mio-table td.rv-anchor.rv-task { padding-left:30px; position:relative; }
-.mio-table td.rv-anchor.rv-task::before { content:""; position:absolute; left:14px; top:0; bottom:0; width:3px; background:#dbe6f3; border-radius:2px; }
-.mio-table td.rv-anchor.rv-task .rv-name { color:#334155; font-size:12.5px; font-weight:600; }
+.mio-table td.rv-anchor.rv-task::before { content:""; position:absolute; left:14px; top:0; bottom:0; width:3px; background:#DCE4F0; border-radius:2px; }
+.mio-table td.rv-anchor.rv-task .rv-name { color:#61708A; font-size:12.5px; font-weight:600; }
 .rv-badge { display:inline-block; font-size:10px; font-weight:800; padding:1px 7px; border-radius:999px; margin-left:8px; vertical-align:middle; }
-.rv-badge.goal { background:#0a3d7a; color:#fff; }
-.rv-badge.task { background:#e2ecf8; color:#1d4e89; border:1px solid #cdddf0; }
-.rv-cnt { font-size:10.5px; color:#64748b; font-weight:700; margin-left:6px; }
+.rv-badge.goal { background:#032A63; color:#fff; }
+.rv-badge.task { background:#DCE4F0; color:#005BBB; border:1px solid #DCE4F0; }
+.rv-cnt { font-size:10.5px; color:#61708A; font-weight:700; margin-left:6px; }
 </style>
 """
 
@@ -2621,7 +2608,7 @@ def _render_rv_goals_year(strat_df, monitoring_df, year):
         <span class="mio-chip partial"><span class="dot"></span>Частково виконано (75% &lt; ... &lt; 100%)</span>
         <span class="mio-chip notdone"><span class="dot"></span>Не виконано (&le; 75%)</span>
         <span class="mio-chip notyet"><span class="dot"></span>Не настав час (х)</span>
-        <span style="margin-left:auto;font-size:12px;color:#64748b;font-weight:700;align-self:center;">
+        <span style="margin-left:auto;font-size:12px;color:#61708A;font-weight:700;align-self:center;">
             Показано {len(df)} рядків
         </span>
     </div>
@@ -2659,7 +2646,7 @@ def render_mode_rv_goals(strat_df, monitoring_df, years):
         unsafe_allow_html=True
     )
     st.markdown(
-        "<div style='font-size:13px;color:#475569;margin-bottom:8px;line-height:1.5;'>"
+        "<div style='font-size:13px;color:#61708A;margin-bottom:8px;line-height:1.5;'>"
         "Бали виконання агрегуються вгору з режиму <b>«РВ (Заходи)»</b> за ієрархією кодів: "
         "<b>завдання</b> = середнє балів його <b>заходів</b>, <b>стратегічна ціль</b> = середнє балів її "
         "<b>завдань</b> (дворівнева агрегація). Стани <b>«х»</b> (не настав час) і <b>«в/а»</b> "
@@ -2690,23 +2677,23 @@ _MIO_GT_CSS = """
 .mgt-score { display:inline-flex; align-items:center; gap:5px; font-weight:800;
   font-variant-numeric:tabular-nums; padding:3px 9px; border-radius:999px;
   font-size:12px; border:1px solid transparent; white-space:nowrap; }
-.mgt-score.s-green { background:#e8f7ee; color:#0b7a3b; border-color:#bbf7d0; }
-.mgt-score.s-amber { background:#fff7e6; color:#92600e; border-color:#f5e0b0; }
-.mgt-score.s-red   { background:#fdecec; color:#b42318; border-color:#fecaca; }
-.mgt-score.s-dark  { background:#ecedf2; color:#334155; border-color:#cbd5e1; }
-.mgt-score.s-done  { background:#e8f7ee; color:#0b7a3b; border-color:#bbf7d0; }
-.mgt-score.s-na    { background:transparent; color:#94a3b8; border:none; font-weight:700; }
-.mgt-chg { font-weight:700; font-variant-numeric:tabular-nums; color:#1e293b; }
-.mgt-chg.up   { color:#0b7a3b; }
-.mgt-chg.down { color:#b42318; }
-.mgt-chg.na   { color:#94a3b8; font-weight:600; }
-.mio-table td.mgt-plan { font-weight:800; color:#0c2f6e; background:#f3f7fe;
+.mgt-score.s-green { background:#E4F5EC; color:#0C713A; border-color:#1E9E57; }
+.mgt-score.s-amber { background:#FDF3D8; color:#8A6400; border-color:#FDF3D8; }
+.mgt-score.s-red   { background:#FBE5E5; color:#DC4A4A; border-color:#DC4A4A; }
+.mgt-score.s-dark  { background:#ecedf2; color:#61708A; border-color:#DCE4F0; }
+.mgt-score.s-done  { background:#E4F5EC; color:#0C713A; border-color:#1E9E57; }
+.mgt-score.s-na    { background:transparent; color:#8A96A8; border:none; font-weight:700; }
+.mgt-chg { font-weight:700; font-variant-numeric:tabular-nums; color:#132238; }
+.mgt-chg.up   { color:#0C713A; }
+.mgt-chg.down { color:#DC4A4A; }
+.mgt-chg.na   { color:#8A96A8; font-weight:600; }
+.mio-table td.mgt-plan { font-weight:800; color:#032A63; background:#F7F9FC;
   font-variant-numeric:tabular-nums; }
-.mio-table thead .grp-fact { background:#eef3fb; color:#334155; }
+.mio-table thead .grp-fact { background:#EAF1FF; color:#61708A; }
 .mgt-legend { display:flex; flex-wrap:wrap; gap:14px; margin:4px 0 12px;
-  font-size:12px; color:#475569; }
+  font-size:12px; color:#61708A; }
 .mgt-legend span b { font-weight:800; }
-.mgt-tag-goal { background:#eaf1ff; color:#1d4ed8; border:1px solid #c7dafd; }
+.mgt-tag-goal { background:#eaf1ff; color:#005BBB; border:1px solid #BFD3F2; }
 .mgt-tag-task { background:#f3eefc; color:#6d28d9; border:1px solid #ddc9f7; }
 </style>
 """
@@ -2813,7 +2800,7 @@ def render_mode_mio_gt(strat_df, monitoring_df, years):
         unsafe_allow_html=True
     )
     st.markdown(
-        "<div style='font-size:13px;color:#475569;margin-bottom:8px;line-height:1.5;'>"
+        "<div style='font-size:13px;color:#61708A;margin-bottom:8px;line-height:1.5;'>"
         "Для кожного показника цілі/завдання — звітні факти (2021/2024/2025), факт за "
         "роки 2026–2028 (з погоджених подань), <b>зміна до попереднього року</b> та "
         "<b>оцінка прогресу у досягненні цільового орієнтиру на кінець 2028</b>. "
@@ -3131,35 +3118,35 @@ _INT_CSS = """
 .int-pill { display:inline-flex; align-items:center; gap:5px; font-weight:800;
   font-variant-numeric:tabular-nums; padding:3px 9px; border-radius:999px;
   font-size:12px; border:1px solid transparent; white-space:nowrap; }
-.int-pill.s-green { background:#e8f7ee; color:#0b7a3b; border-color:#bbf7d0; }
-.int-pill.s-amber { background:#fff7e6; color:#92600e; border-color:#f5e0b0; }
-.int-pill.s-red   { background:#fdecec; color:#b42318; border-color:#fecaca; }
-.int-pill.s-dark  { background:#ecedf2; color:#334155; border-color:#cbd5e1; }
-.int-pill.s-na    { background:transparent; color:#94a3b8; border:none; font-weight:700; }
+.int-pill.s-green { background:#E4F5EC; color:#0C713A; border-color:#1E9E57; }
+.int-pill.s-amber { background:#FDF3D8; color:#8A6400; border-color:#FDF3D8; }
+.int-pill.s-red   { background:#FBE5E5; color:#DC4A4A; border-color:#DC4A4A; }
+.int-pill.s-dark  { background:#ecedf2; color:#61708A; border-color:#DCE4F0; }
+.int-pill.s-na    { background:transparent; color:#8A96A8; border:none; font-weight:700; }
 .int-comp { font-weight:700; font-variant-numeric:tabular-nums; font-size:12px;
   padding:2px 7px; border-radius:6px; white-space:nowrap; }
-.int-comp.c-i { color:#0c5db5; background:#eef4fc; }
+.int-comp.c-i { color:#005BBB; background:#EAF1FF; }
 .int-comp.c-j { color:#6d28d9; background:#f5eefd; }
-.int-comp.c-k { color:#0b7a3b; background:#ecfaf1; }
-.int-comp.int-na { color:#94a3b8; background:transparent; font-weight:600; }
+.int-comp.c-k { color:#0C713A; background:#E4F5EC; }
+.int-comp.int-na { color:#8A96A8; background:transparent; font-weight:600; }
 .int-final { display:inline-flex; align-items:center; gap:5px; font-weight:900;
   font-variant-numeric:tabular-nums; padding:4px 11px; border-radius:999px;
   font-size:13px; border:1px solid transparent; white-space:nowrap; }
-.int-final.s-green { background:#dcfce7; color:#166534; border-color:#86efac; }
-.int-final.s-amber { background:#fef3c7; color:#92400e; border-color:#fcd34d; }
-.int-final.s-red   { background:#fee2e2; color:#991b1b; border-color:#fca5a5; }
-.int-final.s-dark  { background:#e2e8f0; color:#334155; border-color:#cbd5e1; }
-.int-final.int-na  { background:transparent; color:#94a3b8; border:none; }
-.mio-table td.int-fact { font-variant-numeric:tabular-nums; font-weight:700; color:#1e293b; }
-.mio-table td.int-empty { color:#cbd5e1; font-weight:600; }
-.mio-table td.int-final-td { background:#f6f9ff; }
-.mio-table thead .grp-int { background:#0c2f6e; color:#fff; }
-.mio-table thead .sub-int { background:#eef3fb; color:#334155; font-size:10.5px; }
-.mio-table thead .sub-int.col-final { background:#dde8fb; font-weight:800; color:#0c2f6e; }
+.int-final.s-green { background:#E4F5EC; color:#0C713A; border-color:#1E9E57; }
+.int-final.s-amber { background:#FDF3D8; color:#8A6400; border-color:#F4B400; }
+.int-final.s-red   { background:#FBE5E5; color:#DC4A4A; border-color:#DC4A4A; }
+.int-final.s-dark  { background:#DCE4F0; color:#61708A; border-color:#DCE4F0; }
+.int-final.int-na  { background:transparent; color:#8A96A8; border:none; }
+.mio-table td.int-fact { font-variant-numeric:tabular-nums; font-weight:700; color:#132238; }
+.mio-table td.int-empty { color:#DCE4F0; font-weight:600; }
+.mio-table td.int-final-td { background:#F7F9FC; }
+.mio-table thead .grp-int { background:#032A63; color:#fff; }
+.mio-table thead .sub-int { background:#EAF1FF; color:#61708A; font-size:10.5px; }
+.mio-table thead .sub-int.col-final { background:#DCE4F0; font-weight:800; color:#032A63; }
 .int-weights { display:flex; flex-wrap:wrap; gap:14px; margin:4px 0 12px;
-  font-size:12px; color:#475569; }
+  font-size:12px; color:#61708A; }
 .int-weights b { font-weight:800; }
-.int-formula { font-size:12.5px; color:#0c2f6e; background:#eef4fc; border:1px solid #cfe0fa;
+.int-formula { font-size:12.5px; color:#032A63; background:#EAF1FF; border:1px solid #BFD3F2;
   border-radius:8px; padding:8px 12px; margin:2px 0 12px; font-variant-numeric:tabular-nums; }
 </style>
 """
@@ -3207,7 +3194,7 @@ def render_mode_integral(strat_df, monitoring_df, years):
         unsafe_allow_html=True
     )
     st.markdown(
-        "<div style='font-size:13px;color:#475569;margin-bottom:8px;line-height:1.5;'>"
+        "<div style='font-size:13px;color:#61708A;margin-bottom:8px;line-height:1.5;'>"
         "Зважена оцінка <b>20/30/50</b>, що зводить три попередні режими докупи на рівні "
         "<b>стратегічної цілі</b>. Кожен рядок — показник цілі/завдання; надблок — рік. "
         "<b>Факт</b> і <b>оцінка прогресу</b> підтягуються з «<b>МіО цілі/завдання</b>», "
@@ -3775,7 +3762,7 @@ def _render_financing_year(strat_df, monitoring_df, fin_index, year):
         <span class="mio-chip notyet"><span class="dot"></span>&lt; 0,9 (результат випереджає витрати)</span>
         <span class="mio-chip partial"><span class="dot"></span>1–1,5 (помірний перевитрат)</span>
         <span class="mio-chip notdone"><span class="dot"></span>&gt; 1,5 (витрат значно більше за результат)</span>
-        <span style="margin-left:auto;font-size:12px;color:#64748b;font-weight:700;align-self:center;">
+        <span style="margin-left:auto;font-size:12px;color:#61708A;font-weight:700;align-self:center;">
             Показано {len(df)} із {n_total}
         </span>
     </div>
@@ -3816,7 +3803,7 @@ def render_mode_financing(strat_df, monitoring_df, years):
         unsafe_allow_html=True
     )
     st.markdown(
-        "<div style='font-size:13px;color:#475569;margin-bottom:8px;line-height:1.5;'>"
+        "<div style='font-size:13px;color:#61708A;margin-bottom:8px;line-height:1.5;'>"
         "До кожного року — бюджетний розріз заходів за методикою аркуша "
         "«МіО Фінансування»: <b>КПКВК</b>, <b>інше джерело фінансування</b>, "
         "<b>План</b> і <b>Факт</b> у млрд грн. "
@@ -3845,68 +3832,68 @@ def render_mode_financing(strat_df, monitoring_df, years):
 
 _INFOGR_CSS = """
 <style>
-.infogr-header { background:linear-gradient(135deg,#1c3f63,#15314f); border-bottom:4px solid #d4a017;
+.infogr-header { background:#032A63; border-bottom:4px solid #F4B400;
   border-radius:10px 10px 0 0; padding:14px 22px; display:flex; justify-content:space-between;
   align-items:center; gap:16px; }
 .infogr-header .ih-title { color:#fff; font-size:13px; font-weight:800; line-height:1.45; }
-.infogr-header .ih-subtitle { color:#f3c95a; font-size:13px; font-weight:800; white-space:nowrap; }
+.infogr-header .ih-subtitle { color:#F4B400; font-size:13px; font-weight:800; white-space:nowrap; }
 .infogr-planned-wrap { display:flex; align-items:center; gap:22px; background:#fff;
-  border:1px solid #d8dee9; border-top:none; border-radius:0 0 10px 10px; padding:18px 22px; }
+  border:1px solid #DCE4F0; border-top:none; border-radius:0 0 10px 10px; padding:18px 22px; }
 .ip-icon { font-size:42px; line-height:1; }
-.infogr-planned-label { font-weight:800; color:#0f172a; font-size:13px; white-space:nowrap; }
+.infogr-planned-label { font-weight:800; color:#132238; font-size:13px; white-space:nowrap; }
 .ip-bars { flex:2; display:flex; flex-direction:column; gap:7px; min-width:0; }
 .ip-row { display:flex; align-items:center; gap:8px; }
-.ip-label { width:74px; font-size:11px; font-weight:800; color:#334155; text-align:right; flex-shrink:0; }
+.ip-label { width:74px; font-size:11px; font-weight:800; color:#61708A; text-align:right; flex-shrink:0; }
 .ip-bar { height:28px; border-radius:4px; display:flex; align-items:center; justify-content:flex-end;
   padding-right:12px; color:#fff; font-weight:900; font-size:16px; }
 .infogr-stat { text-align:center; flex-shrink:0; min-width:90px; }
 .infogr-stat .is-icon { font-size:36px; line-height:1; }
-.infogr-stat .is-val { font-size:19px; font-weight:900; color:#0f172a; margin-top:2px; }
-.infogr-stat .is-lbl { font-size:10.5px; font-weight:800; color:#475569; letter-spacing:.2px; }
+.infogr-stat .is-val { font-size:19px; font-weight:900; color:#132238; margin-top:2px; }
+.infogr-stat .is-lbl { font-size:10.5px; font-weight:800; color:#61708A; letter-spacing:.2px; }
 .infogr-year-wrap { text-align:right; flex-shrink:0; }
-.infogr-year-wrap .iy-lbl { font-size:11px; font-weight:800; color:#475569; margin-bottom:2px; }
-.infogr-donut-title { font-weight:800; font-size:12.5px; color:#0f172a; text-align:center;
+.infogr-year-wrap .iy-lbl { font-size:11px; font-weight:800; color:#61708A; margin-bottom:2px; }
+.infogr-donut-title { font-weight:800; font-size:12.5px; color:#132238; text-align:center;
   text-transform:uppercase; margin-bottom:2px; }
-.infogr-target-mark { text-align:center; font-size:11px; font-weight:800; color:#0f172a;
-  border-top:2px solid #0f172a; padding-top:4px; margin-top:46px; }
-.infogr-radar-title { font-weight:800; font-size:13px; color:#0f172a; text-transform:uppercase; }
-.infogr-radar-sub { font-size:11px; font-weight:800; color:#c2860b; }
+.infogr-target-mark { text-align:center; font-size:11px; font-weight:800; color:#132238;
+  border-top:2px solid #132238; padding-top:4px; margin-top:46px; }
+.infogr-radar-title { font-weight:800; font-size:13px; color:#132238; text-transform:uppercase; }
+.infogr-radar-sub { font-size:11px; font-weight:800; color:#8A6400; }
 .infogr-axis-row { display:flex; align-items:center; gap:8px; margin-bottom:5px; }
-.infogr-axis-label { width:42px; font-size:11px; font-weight:800; color:#334155; flex-shrink:0; }
+.infogr-axis-label { width:42px; font-size:11px; font-weight:800; color:#61708A; flex-shrink:0; }
 .infogr-axis-pct { width:50px; font-size:11.5px; font-weight:800; flex-shrink:0; }
-.infogr-axis-bar-bg { flex:1; height:9px; background:#f1f5f9; border-radius:5px; position:relative; min-width:0; }
+.infogr-axis-bar-bg { flex:1; height:9px; background:#F7F9FC; border-radius:5px; position:relative; min-width:0; }
 .infogr-axis-bar-fill { height:100%; border-radius:5px; }
-.infogr-axis-flag { width:54px; font-size:11px; font-weight:700; color:#64748b; flex-shrink:0; }
+.infogr-axis-flag { width:54px; font-size:11px; font-weight:700; color:#61708A; flex-shrink:0; }
 .infogr-goal-row { display:grid; grid-template-columns:38px 2.3fr 0.7fr 1.1fr 1.3fr 0.9fr;
-  align-items:center; gap:8px; padding:9px 10px; border-bottom:1px solid #e2e8f0; }
-.infogr-goal-row.head { font-size:10.5px; font-weight:800; color:#64748b; text-transform:uppercase;
-  border-bottom:2px solid #0f172a; text-align:center; }
+  align-items:center; gap:8px; padding:9px 10px; border-bottom:1px solid #DCE4F0; }
+.infogr-goal-row.head { font-size:10.5px; font-weight:800; color:#61708A; text-transform:uppercase;
+  border-bottom:2px solid #132238; text-align:center; }
 .infogr-goal-row.head .igr-name { text-align:left; }
 .infogr-goal-icon { font-size:22px; text-align:center; }
-.infogr-goal-name { font-weight:800; font-size:12px; color:#0f172a; }
-.infogr-goal-num { text-align:center; font-weight:800; font-size:13.5px; color:#0f172a; }
-.infogr-goal-meas-bar { height:7px; border-radius:4px; background:#e2e8f0; margin-top:3px; }
-.infogr-goal-meas-fill { height:100%; border-radius:4px; background:#0c5db5; }
+.infogr-goal-name { font-weight:800; font-size:12px; color:#132238; }
+.infogr-goal-num { text-align:center; font-weight:800; font-size:13.5px; color:#132238; }
+.infogr-goal-meas-bar { height:7px; border-radius:4px; background:#DCE4F0; margin-top:3px; }
+.infogr-goal-meas-fill { height:100%; border-radius:4px; background:#005BBB; }
 
 /* ── Інфограф_СЦ.З.з ── */
-.iz-goaltitle { font-weight:800; font-size:14px; color:#0f172a; text-transform:uppercase;
+.iz-goaltitle { font-weight:800; font-size:14px; color:#132238; text-transform:uppercase;
   padding:10px 4px 4px; }
-.iz-kpi-row { display:flex; align-items:center; gap:26px; background:#fff; border:1px solid #d8dee9;
+.iz-kpi-row { display:flex; align-items:center; gap:26px; background:#fff; border:1px solid #DCE4F0;
   border-radius:0 0 10px 10px; padding:16px 22px; flex-wrap:wrap; }
 .iz-kpi { text-align:center; min-width:90px; }
-.iz-kpi .kl { font-size:11px; font-weight:800; color:#475569; }
-.iz-kpi .kv { font-size:24px; font-weight:900; color:#0f172a; }
+.iz-kpi .kl { font-size:11px; font-weight:800; color:#61708A; }
+.iz-kpi .kv { font-size:24px; font-weight:900; color:#132238; }
 .iz-ind-table { width:100%; border-collapse:collapse; margin-top:8px; font-size:12px; }
-.iz-ind-table th { background:#1c3f63; color:#fff; font-size:10.5px; font-weight:800;
+.iz-ind-table th { background:#032A63; color:#fff; font-size:10.5px; font-weight:800;
   text-transform:uppercase; padding:6px 8px; text-align:center; }
 .iz-ind-table th.iz-left { text-align:left; }
-.iz-ind-table td { padding:6px 8px; border-bottom:1px solid #e2e8f0; text-align:center; }
-.iz-ind-table td.iz-left { text-align:left; font-weight:600; color:#0f172a; }
-.iz-task-card { background:#fff; border:1px solid #d8dee9; border-radius:8px; padding:14px;
+.iz-ind-table td { padding:6px 8px; border-bottom:1px solid #DCE4F0; text-align:center; }
+.iz-ind-table td.iz-left { text-align:left; font-weight:600; color:#132238; }
+.iz-task-card { background:#fff; border:1px solid #DCE4F0; border-radius:8px; padding:14px;
   margin-bottom:14px; }
-.iz-task-title { font-weight:800; font-size:12.5px; color:#1c3f63; text-transform:uppercase; }
-.iz-task-name { font-size:11.5px; color:#475569; margin-bottom:8px; }
-.iz-task-score-bar { height:18px; border-radius:4px; background:#e2e8f0; position:relative;
+.iz-task-title { font-weight:800; font-size:12.5px; color:#032A63; text-transform:uppercase; }
+.iz-task-name { font-size:11.5px; color:#61708A; margin-bottom:8px; }
+.iz-task-score-bar { height:18px; border-radius:4px; background:#DCE4F0; position:relative;
   margin-bottom:10px; }
 .iz-task-score-fill { height:100%; border-radius:4px; display:flex; align-items:center;
   justify-content:flex-end; padding-right:8px; color:#fff; font-weight:800; font-size:11px; }
@@ -4009,11 +3996,11 @@ def render_mode_infogr_sc(strat_df, monitoring_df, years):
             '<div class="infogr-planned-label">ЗАПЛАНОВАНО:</div>'
             '<div class="ip-bars">'
             f'<div class="ip-row"><span class="ip-label">ЦІЛЕЙ</span>'
-            f'<div class="ip-bar" style="width:{_bar_width(n_goals, vmax)}%;background:#aed1e8;">{n_goals}</div></div>'
+            f'<div class="ip-bar" style="width:{_bar_width(n_goals, vmax)}%;background:#BFD3F2;">{n_goals}</div></div>'
             f'<div class="ip-row"><span class="ip-label">ЗАВДАННЯ</span>'
-            f'<div class="ip-bar" style="width:{_bar_width(n_tasks, vmax)}%;background:#5a93b8;">{n_tasks}</div></div>'
+            f'<div class="ip-bar" style="width:{_bar_width(n_tasks, vmax)}%;background:#4D8DFF;">{n_tasks}</div></div>'
             f'<div class="ip-row"><span class="ip-label">ЗАХОДІВ</span>'
-            f'<div class="ip-bar" style="width:{_bar_width(n_measures, vmax)}%;background:#1c3f63;">{n_measures}</div></div>'
+            f'<div class="ip-bar" style="width:{_bar_width(n_measures, vmax)}%;background:#032A63;">{n_measures}</div></div>'
             '</div>'
             '<div class="infogr-stat"><div class="is-icon">🗄️</div>'
             f'<div class="is-val">{n_budget_progs}</div><div class="is-lbl">БЮДЖЕТНИХ<br>ПРОГРАМ</div></div>'
@@ -4068,12 +4055,12 @@ def render_mode_infogr_sc(strat_df, monitoring_df, years):
                 })
                 fig = px.pie(
                     donut_df, names="Статус", values="Значення", color="Статус",
-                    color_discrete_map={"Виконано": color, "Залишок": "#dbe6ee"},
+                    color_discrete_map={"Виконано": color, "Залишок": "#DCE4F0"},
                     hole=0.68,
                 )
                 fig.update_traces(textinfo="none", sort=False)
                 fig.add_annotation(text=f"{pct:.2f}%", showarrow=False,
-                                    font=dict(size=22, color="#0f172a", family="Inter"))
+                                    font=dict(size=22, color="#132238", family="Inter"))
                 fig.update_layout(height=230, margin=dict(l=6, r=6, t=6, b=6),
                                    paper_bgcolor="white", showlegend=False)
                 st.plotly_chart(fig, use_container_width=True)
@@ -4083,8 +4070,8 @@ def render_mode_infogr_sc(strat_df, monitoring_df, years):
                     unsafe_allow_html=True,
                 )
 
-    _render_donut(col1, "ЗАГАЛЬНИЙ ПРОГРЕС<br>ВИКОНАННЯ СТРАТПЛАНУ", avg_progress, "#1c3f63")
-    _render_donut(col2, "ФІНАНСУВАННЯ<br>ВИКОНАННЯ БЮДЖЕТНИХ ПРОГРАМ", fin_pct, "#16a34a")
+    _render_donut(col1, "ЗАГАЛЬНИЙ ПРОГРЕС<br>ВИКОНАННЯ СТРАТПЛАНУ", avg_progress, "#032A63")
+    _render_donut(col2, "ФІНАНСУВАННЯ<br>ВИКОНАННЯ БЮДЖЕТНИХ ПРОГРАМ", fin_pct, "#118847")
 
     # ── Радар: інтегральна оцінка за два суміжні роки ──
     st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
@@ -4099,8 +4086,8 @@ def render_mode_infogr_sc(strat_df, monitoring_df, years):
 
     rcol1, rcol2 = st.columns([1.3, 1], gap="large")
     cats = [f"СЦ{i+1}" for i in range(len(goal_codes_sorted))]
-    radar_colors = {radar_years[0]: "#9fc4dd"} if len(radar_years) > 1 else {}
-    radar_colors[sel_year] = "#1c3f63"
+    radar_colors = {radar_years[0]: "#BFD3F2"} if len(radar_years) > 1 else {}
+    radar_colors[sel_year] = "#032A63"
 
     int_by_goal_year = {}
     for y in radar_years:
@@ -4138,13 +4125,13 @@ def render_mode_infogr_sc(strat_df, monitoring_df, years):
 
     with rcol2:
         st.markdown(
-            '<div style="font-size:11px;font-weight:800;color:#c2860b;text-align:right;'
+            '<div style="font-size:11px;font-weight:800;color:#8A6400;text-align:right;'
             'margin-bottom:4px;">за звітний рік</div>',
             unsafe_allow_html=True,
         )
         for g, c in zip(goal_codes_sorted, cats):
             v = _num0(int_by_goal.get(g))
-            color = "#16a34a" if v >= 80 else "#dc2626"
+            color = "#118847" if v >= 80 else "#DC4A4A"
             st.markdown(
                 '<div class="infogr-axis-row">'
                 f'<span class="infogr-axis-label">{c.lower()}</span>'
@@ -4158,7 +4145,7 @@ def render_mode_infogr_sc(strat_df, monitoring_df, years):
 
     # ── Таблиця стратегічних цілей ──
     st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
-    st.markdown(f"<div style='font-weight:800;font-size:13px;color:#0f172a;'>{sel_year} РІК</div>",
+    st.markdown(f"<div style='font-weight:800;font-size:13px;color:#132238;'>{sel_year} РІК</div>",
                 unsafe_allow_html=True)
     st.markdown(
         '<div class="infogr-goal-row head">'
@@ -4338,11 +4325,11 @@ def render_mode_infogr_sczz(strat_df, monitoring_df, years):
             number={"suffix": "%", "font": {"size": 26}},
             gauge={
                 "axis": {"range": [0, 100]},
-                "bar": {"color": "#1c3f63"},
+                "bar": {"color": "#032A63"},
                 "steps": [
-                    {"range": [0, 50], "color": "#fca5a5"},
-                    {"range": [50, 90], "color": "#fde68a"},
-                    {"range": [90, 100], "color": "#86efac"},
+                    {"range": [0, 50], "color": "#DC4A4A"},
+                    {"range": [50, 90], "color": "#F4B400"},
+                    {"range": [90, 100], "color": "#1E9E57"},
                 ],
             },
             title={"text": "ІНТЕГРАЛЬНА<br>ОЦІНКА", "font": {"size": 12}},
@@ -4371,7 +4358,7 @@ def render_mode_infogr_sczz(strat_df, monitoring_df, years):
                     if nums:
                         t_score = sum(nums) / len(nums) * 100.0
                 t_score = _num0(t_score)
-                t_color = "#16a34a" if t_score >= 80 else ("#f59e0b" if t_score >= 50 else "#dc2626")
+                t_color = "#118847" if t_score >= 80 else ("#FF7A45" if t_score >= 50 else "#DC4A4A")
 
                 t_ind_rows = pd.DataFrame()
                 if not mio_table.empty:
@@ -4386,9 +4373,9 @@ def render_mode_infogr_sczz(strat_df, monitoring_df, years):
                         score_str = f"{score_y:.0f}%" if isinstance(score_y, (int, float)) else raw_value(score_y)
                         ind_html += (
                             '<div style="display:flex;justify-content:space-between;font-size:11px;'
-                            'padding:4px 0;border-bottom:1px solid #f1f5f9;">'
-                            f'<span style="color:#334155;">{raw_value(r["Індикатор"])}</span>'
-                            f'<span style="font-weight:800;color:#0f172a;white-space:nowrap;'
+                            'padding:4px 0;border-bottom:1px solid #F7F9FC;">'
+                            f'<span style="color:#61708A;">{raw_value(r["Індикатор"])}</span>'
+                            f'<span style="font-weight:800;color:#132238;white-space:nowrap;'
                             f'padding-left:10px;">{raw_value(fact_y)} · {score_str}</span></div>'
                         )
 
@@ -4443,20 +4430,20 @@ def render_mode_infogr_sczz(strat_df, monitoring_df, years):
                     bucket_counts['"в/а"/"х"'] += 1
 
         st.markdown(
-            f"<div style='font-weight:800;font-size:12.5px;color:#1c3f63;margin-top:10px;'>"
+            f"<div style='font-weight:800;font-size:12.5px;color:#032A63;margin-top:10px;'>"
             f"СТАН ВИКОНАННЯ ЗАХОДІВ ЗАВДАННЯ {tcode.rstrip('.')}</div>",
             unsafe_allow_html=True,
         )
         scol1, scol2 = st.columns([2, 1.4])
         with scol1:
             st.markdown(
-                f"<div style='font-size:12px;color:#334155;margin-bottom:4px;'>"
+                f"<div style='font-size:12px;color:#61708A;margin-bottom:4px;'>"
                 f"Заплановано: <b>{n_t_measures}</b> заходів &nbsp;·&nbsp; "
                 f"Зведена оцінка виконання заходів: <b>{t_score:.0f}%</b></div>",
                 unsafe_allow_html=True,
             )
             chips = "".join(
-                f'<span class="iz-status-chip" style="background:#eef2f7;color:#0f172a;">'
+                f'<span class="iz-status-chip" style="background:#F7F9FC;color:#132238;">'
                 f'{label} {cnt} з {n_t_measures}</span>'
                 for label, cnt in result_counts.items()
             )
@@ -4464,7 +4451,7 @@ def render_mode_infogr_sczz(strat_df, monitoring_df, years):
         with scol2:
             bucket_str = " · ".join(f"{k}: {v}" for k, v in bucket_counts.items())
             st.markdown(
-                f"<div style='font-size:11px;color:#475569;'>Розподіл заходів за оцінкою "
+                f"<div style='font-size:11px;color:#61708A;'>Розподіл заходів за оцінкою "
                 f"виконання:<br>{bucket_str}</div>",
                 unsafe_allow_html=True,
             )
@@ -4485,7 +4472,7 @@ def render_mode_placeholder(mode_label):
         <div class="big">🚧</div>
         <div class="ttl">Режим «{name}» — у розробці</div>
         <div>{desc}</div>
-        <div style="margin-top:10px;font-size:13px;color:#64748b;">
+        <div style="margin-top:10px;font-size:13px;color:#61708A;">
             Реалізуємо поетапно, за тією ж логікою формул, що й «М_заходи».
         </div>
     </div>
@@ -4557,10 +4544,10 @@ def _mio_export_figures(facts, _goals_df):
     _f_years = [str(f["year"]) for f in facts]
     fig_status = go.Figure()
     for label, key, color in [
-        (ST_DONE, "done", "#22c55e"),
-        (ST_PARTIAL, "partial", "#eab308"),
-        (ST_NOTDONE, "notdone", "#ef4444"),
-        ("Виключено (час / актуальність)", "excluded", "#94a3b8"),
+        (ST_DONE, "done", "#1E9E57"),
+        (ST_PARTIAL, "partial", "#F4B400"),
+        (ST_NOTDONE, "notdone", "#DC4A4A"),
+        ("Виключено (час / актуальність)", "excluded", "#8A96A8"),
     ]:
         fig_status.add_trace(go.Bar(
             name=label, x=_f_years, y=[f[key] for f in facts],
@@ -4581,7 +4568,7 @@ def _mio_export_figures(facts, _goals_df):
                 fig_goals = go.Figure(go.Bar(
                     x=_goals_df[_glab].astype(str) if _glab
                     else _goals_df.index.astype(str),
-                    y=_goals_df[_gc], marker_color="#2563eb",
+                    y=_goals_df[_gc], marker_color="#005BBB",
                 ))
                 fig_goals.update_layout(
                     title="Інтегральна оцінка за цілями",

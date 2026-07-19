@@ -66,13 +66,7 @@ html, body, [class*="css"] {
 }
 
 .stApp {
-    background:
-        linear-gradient(rgba(15,23,42,0.025) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(15,23,42,0.025) 1px, transparent 1px),
-        radial-gradient(circle at top right, rgba(37,99,235,0.09), transparent 28%),
-        radial-gradient(circle at bottom left, rgba(22,163,74,0.07), transparent 30%),
-        linear-gradient(180deg, #f7f9fc 0%, #eef3f8 100%);
-    background-size: 36px 36px, 36px 36px, auto, auto, auto;
+    background: #F7F9FC;
 }
 
 .main .block-container {
@@ -98,15 +92,15 @@ html, body, [class*="css"] {
 
 .hero-card {
     background: rgba(255,255,255,0.95);
-    border: 1px solid #d8dee9;
+    border: 1px solid #DCE4F0;
     border-radius: 18px;
     padding: 26px 30px;
     box-shadow: 0 10px 26px rgba(15,23,42,0.07);
 }
 
 .ministry-card {
-    background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(248,250,252,0.96));
-    border: 1px solid #d8dee9;
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
     border-radius: 18px;
     padding: 22px 24px;
     box-shadow: 0 10px 26px rgba(15,23,42,0.055);
@@ -115,7 +109,7 @@ html, body, [class*="css"] {
 .hero-kicker {
     font-size: 13px;
     font-weight: 800;
-    color: #1d4ed8;
+    color: #005BBB;
     text-transform: uppercase;
     letter-spacing: .04em;
     margin-bottom: 8px;
@@ -124,26 +118,26 @@ html, body, [class*="css"] {
 .hero-title {
     font-size: 34px;
     font-weight: 950;
-    color: #0f172a;
+    color: #132238;
     line-height: 1.15;
     margin-bottom: 10px;
 }
 
 .hero-subtitle {
-    color: #475569;
+    color: #61708A;
     font-size: 15px;
     line-height: 1.55;
 }
 
 .ministry-title {
-    color: #0f172a;
+    color: #132238;
     font-weight: 900;
     font-size: 16px;
     margin-bottom: 8px;
 }
 
 .ministry-line {
-    color: #475569;
+    color: #61708A;
     font-size: 13px;
     line-height: 1.5;
 }
@@ -156,18 +150,18 @@ html, body, [class*="css"] {
 }
 
 .status-pill {
-    background: #f8fafc;
-    border: 1px solid #d8dee9;
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
     border-radius: 999px;
     padding: 7px 11px;
     font-size: 13px;
-    color: #334155;
+    color: #61708A;
     font-weight: 700;
 }
 
 .card {
     background: rgba(255,255,255,0.94);
-    border: 1px solid #d8dee9;
+    border: 1px solid #DCE4F0;
     border-radius: 16px;
     padding: 20px 22px;
     margin: 18px 0;
@@ -177,19 +171,19 @@ html, body, [class*="css"] {
 .card-title {
     font-size: 20px;
     font-weight: 900;
-    color: #0f172a;
+    color: #132238;
     margin-bottom: 8px;
 }
 
 .card-subtitle {
-    color: #64748b;
+    color: #61708A;
     font-size: 14px;
     margin-bottom: 12px;
 }
 
 .filter-panel {
-    background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(241,246,253,0.98));
-    border: 1px solid #cbd8ea;
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
     border-radius: 18px;
     padding: 18px 20px 10px 20px;
     margin-top: 12px;
@@ -198,8 +192,8 @@ html, body, [class*="css"] {
 
 [data-testid="stMain"] div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
 [data-testid="stMain"] div[data-testid="stTextInput"] input {
-    background-color: #d7eaff !important;
-    border: 1px solid #8fb3df !important;
+    background-color: #EAF1FF !important;
+    border: 1px solid #BFD3F2 !important;
     border-radius: 10px !important;
     min-height: 43px !important;
     box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.08) !important;
@@ -208,7 +202,7 @@ html, body, [class*="css"] {
 [data-testid="stMain"] div[data-testid="stSelectbox"] label,
 [data-testid="stMain"] div[data-testid="stTextInput"] label {
     font-weight: 750 !important;
-    color: #1e293b !important;
+    color: #132238 !important;
 }
 
 /* Passport grid - flexible layout */
@@ -228,8 +222,8 @@ html, body, [class*="css"] {
 .col-12 { grid-column: span 12; }
 
 .passport-cell {
-    background: #f8fafc;
-    border: 1px solid #d8dee9;
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
     border-radius: 14px;
     padding: 14px 16px;
     min-height: 90px;
@@ -237,7 +231,7 @@ html, body, [class*="css"] {
 }
 
 .passport-label {
-    color: #64748b;
+    color: #61708A;
     font-size: 12px;
     margin-bottom: 6px;
     line-height: 1.35;
@@ -247,14 +241,14 @@ html, body, [class*="css"] {
 }
 
 .passport-value {
-    color: #0f172a;
+    color: #132238;
     font-weight: 800;
     font-size: 15px;
     line-height: 1.35;
 }
 
 .passport-muted {
-    color: #64748b;
+    color: #61708A;
     font-size: 13px;
     line-height: 1.45;
     margin-top: 4px;
@@ -269,8 +263,8 @@ html, body, [class*="css"] {
 }
 
 .plan-chip {
-    background: linear-gradient(135deg, #eff6ff, #e0f2fe);
-    border: 1px solid #bfdbfe;
+    background: #EAF1FF;
+    border: 1px solid #BFD3F2;
     border-radius: 12px;
     padding: 8px 14px;
     display: flex;
@@ -281,7 +275,7 @@ html, body, [class*="css"] {
 
 .plan-chip-year {
     font-size: 11px;
-    color: #64748b;
+    color: #61708A;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -290,7 +284,7 @@ html, body, [class*="css"] {
 .plan-chip-val {
     font-size: 18px;
     font-weight: 900;
-    color: #1d4ed8;
+    color: #005BBB;
     line-height: 1.2;
     margin-top: 2px;
 }
@@ -304,22 +298,22 @@ html, body, [class*="css"] {
 }
 
 .finance-block {
-    background: linear-gradient(135deg, #f0fdf4, #f7f9fc);
-    border: 1px solid #bbf7d0;
+    background: #F7F9FC;
+    border: 1px solid #1E9E57;
     border-radius: 12px;
     padding: 12px 14px;
 }
 
 .finance-block-alt {
-    background: linear-gradient(135deg, #fffbeb, #f7f9fc);
-    border: 1px solid #fde68a;
+    background: #FDF3D8;
+    border: 1px solid #F4B400;
     border-radius: 12px;
     padding: 12px 14px;
 }
 
 .finance-source {
     font-size: 11px;
-    color: #64748b;
+    color: #61708A;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -329,18 +323,18 @@ html, body, [class*="css"] {
 .finance-kpkvk {
     font-size: 15px;
     font-weight: 900;
-    color: #064e3b;
+    color: #0C713A;
 }
 
 .finance-amount {
     font-size: 12px;
-    color: #475569;
+    color: #61708A;
     margin-top: 4px;
 }
 
 .finance-single {
-    background: linear-gradient(135deg, #f0fdf4, #f7f9fc);
-    border: 1px solid #bbf7d0;
+    background: #F7F9FC;
+    border: 1px solid #1E9E57;
     border-radius: 12px;
     padding: 12px 14px;
     margin-top: 8px;
@@ -354,7 +348,7 @@ html, body, [class*="css"] {
 
 .split-box > div:first-child {
     padding-right: 16px;
-    border-right: 1px solid #cbd5e1;
+    border-right: 1px solid #DCE4F0;
 }
 
 .split-box > div:last-child {
@@ -369,9 +363,9 @@ html, body, [class*="css"] {
 }
 
 .badge {
-    background: #eef6ff;
-    border: 1px solid #bfdbfe;
-    color: #1d4ed8;
+    background: #EAF1FF;
+    border: 1px solid #BFD3F2;
+    color: #005BBB;
     border-radius: 999px;
     padding: 7px 11px;
     font-size: 13px;
@@ -379,27 +373,27 @@ html, body, [class*="css"] {
 }
 
 .badge-green {
-    background: #dcfce7;
-    border: 1px solid #bbf7d0;
-    color: #166534;
+    background: #E4F5EC;
+    border: 1px solid #1E9E57;
+    color: #0C713A;
 }
 
 .badge-yellow {
-    background: #fef9c3;
-    border: 1px solid #fde68a;
-    color: #854d0e;
+    background: #FDF3D8;
+    border: 1px solid #F4B400;
+    color: #8A6400;
 }
 
 .badge-red {
-    background: #fee2e2;
-    border: 1px solid #fecaca;
-    color: #991b1b;
+    background: #FBE5E5;
+    border: 1px solid #DC4A4A;
+    color: #DC4A4A;
 }
 
 .badge-gray {
-    background: #f1f5f9;
-    border: 1px solid #cbd5e1;
-    color: #475569;
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
+    color: #61708A;
 }
 
 /* Квартальна шкала — bar chart style */
@@ -419,7 +413,7 @@ html, body, [class*="css"] {
 .quarter-bar-label {
     font-size: 12px;
     font-weight: 800;
-    color: #64748b;
+    color: #61708A;
     text-transform: uppercase;
     letter-spacing: 0.04em;
     margin-bottom: 6px;
@@ -427,7 +421,7 @@ html, body, [class*="css"] {
 }
 
 .quarter-bar-outer {
-    background: #e2e8f0;
+    background: #DCE4F0;
     border-radius: 8px;
     height: 10px;
     overflow: hidden;
@@ -442,16 +436,16 @@ html, body, [class*="css"] {
 
 .quarter-card {
     border-radius: 16px;
-    border: 1px solid #d8dee9;
+    border: 1px solid #DCE4F0;
     padding: 16px;
-    background: #f8fafc;
+    background: #F7F9FC;
     min-height: 145px;
     overflow-wrap: anywhere;
 }
 
 .quarter-title {
     font-weight: 950;
-    color: #0f172a;
+    color: #132238;
     margin-bottom: 8px;
     font-size: 16px;
 }
@@ -459,13 +453,13 @@ html, body, [class*="css"] {
 .quarter-value {
     font-size: 23px;
     font-weight: 950;
-    color: #0f172a;
+    color: #132238;
     margin-bottom: 5px;
 }
 
 .quarter-plan {
     font-size: 13px;
-    color: #475569;
+    color: #61708A;
     line-height: 1.45;
 }
 
@@ -478,14 +472,14 @@ html, body, [class*="css"] {
     padding: 5px 9px;
 }
 
-.q-approved { background: #dcfce7; border-color: #bbf7d0; }
-.q-approved .quarter-status { background: #bbf7d0; color: #166534; }
-.q-waiting { background: #fef9c3; border-color: #fde68a; }
-.q-waiting .quarter-status { background: #fde68a; color: #854d0e; }
-.q-returned { background: #fee2e2; border-color: #fecaca; }
-.q-returned .quarter-status { background: #fecaca; color: #991b1b; }
-.q-empty { background: #f8fafc; }
-.q-empty .quarter-status { background: #e2e8f0; color: #475569; }
+.q-approved { background: #E4F5EC; border-color: #1E9E57; }
+.q-approved .quarter-status { background: #1E9E57; color: #0C713A; }
+.q-waiting { background: #FDF3D8; border-color: #F4B400; }
+.q-waiting .quarter-status { background: #F4B400; color: #8A6400; }
+.q-returned { background: #FBE5E5; border-color: #DC4A4A; }
+.q-returned .quarter-status { background: #DC4A4A; color: #DC4A4A; }
+.q-empty { background: #F7F9FC; }
+.q-empty .quarter-status { background: #DCE4F0; color: #61708A; }
 
 /* Progress status badge */
 .progress-status-badge {
@@ -499,15 +493,15 @@ html, body, [class*="css"] {
     margin-top: 8px;
 }
 
-.progress-status-done { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
-.progress-status-partial { background: #fef9c3; color: #854d0e; border: 1px solid #fde68a; }
-.progress-status-low { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
-.progress-status-na { background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }
+.progress-status-done { background: #E4F5EC; color: #0C713A; border: 1px solid #1E9E57; }
+.progress-status-partial { background: #FDF3D8; color: #8A6400; border: 1px solid #F4B400; }
+.progress-status-low { background: #FBE5E5; color: #DC4A4A; border: 1px solid #DC4A4A; }
+.progress-status-na { background: #F7F9FC; color: #61708A; border: 1px solid #DCE4F0; }
 .progress-status-obsolete { background: #f3e8ff; color: #6b21a8; border: 1px solid #d8b4fe; }
 
 div[data-testid="stMetric"] {
     background: rgba(255,255,255,0.9);
-    border: 1px solid #d8dee9;
+    border: 1px solid #DCE4F0;
     border-radius: 14px;
     padding: 14px 16px;
     box-shadow: 0 4px 12px rgba(15,23,42,0.04);
@@ -535,7 +529,7 @@ div[data-testid="stMetricValue"] { font-size: 30px !important; }
     display: flex;
     align-items: center;
     gap: 14px;
-    background: linear-gradient(135deg, #005BBB 0%, #2563eb 45%, #FFD500 100%);
+    background: #005BBB;
     border-radius: 18px;
     padding: 22px 28px;
     border: 1px solid rgba(255,255,255,0.32);
@@ -580,7 +574,7 @@ div[data-testid="stMetricValue"] { font-size: 30px !important; }
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
-    background: linear-gradient(135deg, #005BBB 0%, #2563eb 45%, #FFD500 100%) !important;
+    background: #005BBB !important;
     color: #ffffff !important;
     border-radius: 18px !important;
     padding: 22px 28px !important;
@@ -611,11 +605,11 @@ div[data-testid="stMetricValue"] { font-size: 30px !important; }
 
 .footer {
     text-align: center;
-    color: #94a3b8;
+    color: #8A96A8;
     font-size: clamp(10px, 0.9vw, 12px);
     margin-top: 40px;
     padding: 18px 0 10px;
-    border-top: 1px solid #e2e8f0;
+    border-top: 1px solid #DCE4F0;
 }
 
 @media (max-width: 1100px) {
@@ -628,7 +622,7 @@ div[data-testid="stMetricValue"] { font-size: 30px !important; }
     }
     .split-box > div:first-child {
         border-right: none;
-        border-bottom: 1px solid #cbd5e1;
+        border-bottom: 1px solid #DCE4F0;
         padding-right: 0;
         padding-bottom: 12px;
         margin-bottom: 12px;
@@ -862,14 +856,14 @@ def gauge_chart(value, title):
         title={"text": title},
         gauge={
             "axis": {"range": [0, 100]},
-            "bar": {"color": "#1d4ed8"},
+            "bar": {"color": "#005BBB"},
             "steps": [
-                {"range": [0, 35], "color": "#fee2e2"},
-                {"range": [35, 75], "color": "#fef3c7"},
-                {"range": [75, 100], "color": "#dcfce7"},
+                {"range": [0, 35], "color": "#FBE5E5"},
+                {"range": [35, 75], "color": "#FDF3D8"},
+                {"range": [75, 100], "color": "#E4F5EC"},
             ],
             "threshold": {
-                "line": {"color": "#111827", "width": 4},
+                "line": {"color": "#132238", "width": 4},
                 "thickness": 0.75,
                 "value": value
             }
@@ -1492,7 +1486,7 @@ render_html(
         <div class="badge">Департамент: {display_value(selected_measure.get("department", ""))}</div>
         <div class="badge">Моніторингових заявок: {total_requests}</div>
     </div>
-    <div style="font-size:24px;font-weight:900;color:#0f172a;line-height:1.25;margin-top:10px;margin-bottom:16px;">
+    <div style="font-size:24px;font-weight:900;color:#132238;line-height:1.25;margin-top:10px;margin-bottom:16px;">
         {display_value(selected_measure.get("name", ""))}
     </div>
     """
@@ -1605,8 +1599,8 @@ if card_auto_list:
     _a = card_auto_list[0]
     st.markdown(
         f"""
-        <div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:12px;
-             padding:12px 16px;margin:10px 0;color:#78350f;font-weight:700;">
+        <div style="background:#FDF3D8;border:1px solid #FF7A45;border-radius:12px;
+             padding:12px 16px;margin:10px 0;color:#FF7A45;font-weight:700;">
             ⚡ За цим заходом є НЕПІДТВЕРДЖЕНІ дані, які система зарахувала автоматично:
             подане значення <b>{_a['value']}</b> за {_a['quarter']} кв. {_a['year']} відповідає
             річному цільовому орієнтиру (<b>{_a['target']}</b>) або краще. Заявка перебуває на
@@ -1620,8 +1614,8 @@ if card_auto_list:
 elif card_data_mode == operational.MODE_OPERATIONAL and "_operational" in measure_requests.columns         and bool(measure_requests["_operational"].any()):
     st.markdown(
         """
-        <div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:12px;
-             padding:12px 16px;margin:10px 0;color:#1e3a8a;font-weight:700;">
+        <div style="background:#EAF1FF;border:1px solid #BFD3F2;border-radius:12px;
+             padding:12px 16px;margin:10px 0;color:#032A63;font-weight:700;">
             ⚡ Оперативна оцінка: враховано подання, що перебуває на етапі погодження після
             координатора (подане значення нижче річного орієнтира, тому авто-зарахування
             як «Виконано» не застосовано).
@@ -1699,7 +1693,7 @@ render_html(
         <div class="badge">Повернень: {returned_count}</div>
         <div class="badge">Статус: {escape(exec_status)}</div>
     </div>
-    <div style="color:#475569;font-size:14px;line-height:1.55;">{escape(conclusion)}</div>
+    <div style="color:#61708A;font-size:14px;line-height:1.55;">{escape(conclusion)}</div>
     """
 )
 
@@ -1817,9 +1811,9 @@ if view_mode in ["Огляд", "Квартальна динаміка"]:
         if fact_n is not None and plan_num_val and plan_num_val > 0:
             q_pct = min(round((fact_n / plan_num_val) * 100), 100)
 
-        bar_color_css = "#22c55e" if css == "q-approved" else (
-            "#f59e0b" if css == "q-waiting" else (
-                "#ef4444" if css == "q-returned" else "#cbd5e1"
+        bar_color_css = "#1E9E57" if css == "q-approved" else (
+            "#FF7A45" if css == "q-waiting" else (
+                "#DC4A4A" if css == "q-returned" else "#DCE4F0"
             )
         )
 
@@ -1872,7 +1866,7 @@ if view_mode in ["Огляд", "Квартальна динаміка"]:
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
-        yaxis=dict(gridcolor="#e2e8f0", rangemode="tozero"),
+        yaxis=dict(gridcolor="#DCE4F0", rangemode="tozero"),
         xaxis=dict(showgrid=False),
     )
 
@@ -1940,7 +1934,7 @@ if can_view_submission_history and view_mode in ["Огляд", "Історія �
 
 render_html(
     '<div class="card"><div class="card-title">Друк картки заходу '
-    '<span style="font-size:11px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;'
+    '<span style="font-size:11px;color:#8A6400;background:#FDF3D8;border:1px solid #F4B400;'
     'border-radius:999px;padding:3px 8px;">тест</span></div>'
     '<div class="card-subtitle">PDF містить паспортні дані, стан за періодами та історію погодження. '
     'Довгі назви переносяться повністю.</div>'

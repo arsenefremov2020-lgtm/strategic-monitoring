@@ -41,36 +41,8 @@ header[data-testid="stHeader"] {
     background: transparent !important;
 }
 .stApp {
-    background:
-        radial-gradient(circle at top right, rgba(37,99,235,0.08), transparent 28%),
-        radial-gradient(circle at bottom left, rgba(22,163,74,0.07), transparent 30%),
-        linear-gradient(180deg, #f6f8fb 0%, #eef2f7 100%);
+    background: #F7F9FC;
 }
-
-.stApp::before {
-    content: "";
-    position: fixed;
-    top: -160px;
-    right: -120px;
-    width: 460px;
-    height: 460px;
-    border-radius: 50%;
-    background: rgba(37, 99, 235, 0.045);
-    z-index: 0;
-}
-
-.stApp::after {
-    content: "";
-    position: fixed;
-    bottom: -180px;
-    left: -120px;
-    width: 390px;
-    height: 390px;
-    border-radius: 50%;
-    background: rgba(22, 163, 74, 0.045);
-    z-index: 0;
-}
-
 .main .block-container {
     max-width: 1550px;
     padding-top: 1.2rem;
@@ -87,7 +59,7 @@ header[data-testid="stHeader"] {
 
 .ministry-label {
     text-align: right;
-    color: #475569;
+    color: #61708A;
     font-size: 14px;
     font-weight: 700;
     margin-bottom: 8px;
@@ -101,7 +73,7 @@ header[data-testid="stHeader"] {
 .note-box,
 .search-result-box {
     background: rgba(255,255,255,0.94);
-    border: 1px solid #d8dee9;
+    border: 1px solid #DCE4F0;
     box-shadow: 0 6px 18px rgba(15,23,42,0.045);
 }
 
@@ -115,13 +87,13 @@ header[data-testid="stHeader"] {
 .header-title {
     font-size: 32px;
     font-weight: 900;
-    color: #0f172a;
+    color: #132238;
     margin-bottom: 8px;
 }
 
 .header-subtitle {
     font-size: 15px;
-    color: #475569;
+    color: #61708A;
     line-height: 1.55;
 }
 
@@ -133,16 +105,16 @@ header[data-testid="stHeader"] {
 }
 
 .status-pill {
-    background: #f8fafc;
-    border: 1px solid #d8dee9;
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
     border-radius: 10px;
     padding: 10px 12px;
     font-size: 13px;
-    color: #334155;
+    color: #61708A;
 }
 
 .cta-box {
-    background: linear-gradient(90deg, #15803d, #16a34a);
+    background: #118847;
     color: white;
     border-radius: 16px;
     padding: 22px 26px;
@@ -167,7 +139,7 @@ header[data-testid="stHeader"] {
 .guide-title,
 .info-card-title,
 .search-result-title {
-    color: #0f172a;
+    color: #132238;
     font-weight: 900;
 }
 
@@ -186,13 +158,13 @@ header[data-testid="stHeader"] {
     min-height: 58px;
     padding: 10px 12px;
     border-radius: 14px;
-    background: linear-gradient(180deg, #f8fafc 0%, #eef4fb 100%);
-    border: 1px solid #d8dee9;
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
     display: flex;
     align-items: center;
     justify-content: center;
     text-align: center;
-    color: #334155;
+    color: #61708A;
     font-size: 13px;
     font-weight: 800;
     line-height: 1.25;
@@ -227,8 +199,8 @@ header[data-testid="stHeader"] {
 }
 
 .summary-card {
-    background: #f8fafc;
-    border: 1px solid #d8dee9;
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
     border-radius: 13px;
     padding: 14px 15px;
     min-height: 96px;
@@ -238,7 +210,7 @@ header[data-testid="stHeader"] {
 }
 
 .summary-label {
-    color: #64748b;
+    color: #61708A;
     font-size: 12px;
     font-weight: 800;
     line-height: 1.35;
@@ -247,7 +219,7 @@ header[data-testid="stHeader"] {
 }
 
 .summary-value {
-    color: #0f172a;
+    color: #132238;
     font-size: 24px;
     line-height: 1;
     font-weight: 950;
@@ -268,7 +240,7 @@ header[data-testid="stHeader"] {
 .info-card {
     border-radius: 14px;
     padding: 17px 19px;
-    color: #1f2937;
+    color: #032A63;
     line-height: 1.55;
 }
 
@@ -286,8 +258,8 @@ header[data-testid="stHeader"] {
     border-radius: 18px;
     padding: 24px 26px 26px 26px;
     margin: 18px 0 24px 0;
-    background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(241,246,253,0.98));
-    border: 1px solid #cbd8ea;
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
     box-shadow: 0 10px 24px rgba(15,23,42,0.07);
 }
 
@@ -297,7 +269,7 @@ header[data-testid="stHeader"] {
 }
 
 .filter-subtitle {
-    color: #1e293b;
+    color: #132238;
     font-size: 15px;
     font-weight: 950;
     margin: 18px 0 10px 0;
@@ -308,8 +280,8 @@ header[data-testid="stHeader"] {
 [data-testid="stMain"] div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
 [data-testid="stMain"] div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div,
 [data-testid="stMain"] div[data-testid="stTextInput"] input {
-    background-color: #d7eaff !important;
-    border: 1px solid #8fb3df !important;
+    background-color: #EAF1FF !important;
+    border: 1px solid #BFD3F2 !important;
     border-radius: 10px !important;
     min-height: 43px !important;
     box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.08) !important;
@@ -319,7 +291,7 @@ header[data-testid="stHeader"] {
 [data-testid="stMain"] div[data-testid="stMultiSelect"] label,
 [data-testid="stMain"] div[data-testid="stTextInput"] label {
     font-weight: 750 !important;
-    color: #1e293b !important;
+    color: #132238 !important;
 }
 
 div[data-testid="stExpander"] {
@@ -328,7 +300,7 @@ div[data-testid="stExpander"] {
 }
 
 div[data-testid="stExpander"] > details > summary {
-    background: linear-gradient(90deg, #1d4ed8, #0f55e8) !important;
+    background: #005BBB !important;
     color: white !important;
     border-radius: 13px !important;
     padding: 18px 22px !important;
@@ -343,7 +315,7 @@ div[data-testid="stExpander"] > details > summary p {
 }
 
 div[data-testid="stExpander"] div[data-testid="stExpander"] > details > summary {
-    background: linear-gradient(90deg, #1f2937, #374151) !important;
+    background: #032A63 !important;
     color: white !important;
     border-radius: 11px !important;
     padding: 15px 18px !important;
@@ -360,14 +332,14 @@ div[data-testid="stExpander"] div[data-testid="stExpander"] > details > summary 
 .section-title {
     font-size: 16px;
     font-weight: 850;
-    color: #111827;
+    color: #132238;
     margin: 18px 0 12px 0;
 }
 
 .note-box {
     border-radius: 10px;
     padding: 13px 17px;
-    color: #374151;
+    color: #032A63;
     margin: 12px 0 18px 0;
     font-size: 14px;
     line-height: 1.55;
@@ -376,7 +348,7 @@ div[data-testid="stExpander"] div[data-testid="stExpander"] > details > summary 
 .table-scroll {
     overflow: auto;
     width: 100%;
-    border: 1px solid #d1d5db;
+    border: 1px solid #DCE4F0;
     border-radius: 10px;
     margin-bottom: 18px;
     background: white;
@@ -388,7 +360,7 @@ div[data-testid="stExpander"] div[data-testid="stExpander"] > details > summary 
 
 .th-sub {
     display: block;
-    color: #64748b;
+    color: #61708A;
     font-size: 11px;
     font-weight: 600;
     margin-top: 2px;
@@ -399,7 +371,7 @@ div[data-testid="stExpander"] div[data-testid="stExpander"] > details > summary 
     overflow-y: auto;
     font-size: 10px;
     line-height: 1.3;
-    color: #64748b;
+    color: #61708A;
     font-weight: 500;
     margin-top: 2px;
     text-align: left;
@@ -412,10 +384,10 @@ table.custom-table {
 }
 
 table.custom-table th {
-    background-color: #e9eef7;
-    color: #111827;
+    background-color: #EAF1FF;
+    color: #132238;
     padding: 9px 10px;
-    border: 1px solid #d1d5db;
+    border: 1px solid #DCE4F0;
     text-align: center;
     vertical-align: middle;
     white-space: normal;
@@ -441,7 +413,7 @@ table.custom-table thead tr:nth-child(3) th {
 
 table.custom-table td {
     padding: 8px 10px;
-    border: 1px solid #d1d5db;
+    border: 1px solid #DCE4F0;
     vertical-align: middle;
     text-align: center;
     white-space: normal;
@@ -451,7 +423,7 @@ table.custom-table td {
 }
 
 table.custom-table tr:nth-child(even) {
-    background-color: #f8fafc;
+    background-color: #F7F9FC;
 }
 
 table.custom-table tr:nth-child(odd) {
@@ -477,32 +449,33 @@ table.custom-table tr:nth-child(odd) {
 }
 
 td.status-review {
-    background-color: #dbeafe !important;
-    color: #1e3a8a;
+    background-color: #E3EDFF !important;
+    color: #032A63;
     font-weight: 850;
 }
 
 td.status-approved {
-    background-color: #dcfce7 !important;
-    color: #166534;
+    background-color: #E4F5EC !important;
+    color: #0C713A;
     font-weight: 850;
 }
 
 td.status-returned {
-    background-color: #fef3c7 !important;
-    color: #92400e;
+    background-color: #FDF3D8 !important;
+    color: #8A6400;
     font-weight: 850;
 }
 
 td.status-empty {
-    background-color: #fee2e2 !important;
-    color: #991b1b;
+    background-color: #FBE5E5 !important;
+    color: #DC4A4A;
     font-weight: 850;
 }
 
 td.status-notyet {
-    background-color: #e0e7ef !important;
-    color: #334155;
+    background-color: #FFFFFF !important;
+    border-color: #DCE4F0 !important;
+    color: #61708A;
     font-weight: 850;
 }
 
@@ -512,7 +485,7 @@ td.status-notyet {
     padding: 1px 6px;
     border-radius: 4px;
     background-color: #6d28d9;
-    color: #f8fafc !important;
+    color: #F7F9FC !important;
     font-size: 10px;
     font-weight: 700;
     white-space: nowrap;
@@ -527,8 +500,8 @@ td.status-notyet {
 }
 
 td.risk-cell {
-    background-color: #fee2e2 !important;
-    color: #991b1b;
+    background-color: #FBE5E5 !important;
+    color: #DC4A4A;
     font-weight: 850;
 }
 
@@ -546,15 +519,15 @@ td.risk-cell {
 
 .footer {
     text-align: center;
-    color: #64748b;
+    color: #61708A;
     font-size: 13px;
     margin-top: 50px;
     padding: 22px 0 12px 0;
-    border-top: 1px solid #d8dee9;
+    border-top: 1px solid #DCE4F0;
 }
 
 .footer strong {
-    color: #334155;
+    color: #61708A;
 }
 
 .submit-main-button {
@@ -567,7 +540,7 @@ td.risk-cell {
     margin-top: 16px;
     margin-bottom: 34px;
 
-    background: linear-gradient(135deg, #047857 0%, #16a34a 55%, #22c55e 100%);
+    background: #118847;
     color: #ffffff !important;
 
     border-radius: 18px;
@@ -582,6 +555,7 @@ td.risk-cell {
 }
 
 .submit-main-button:hover {
+    background: #0C713A !important;
     color: #ffffff !important;
     filter: brightness(1.05);
     transform: translateY(-1px);
@@ -1156,7 +1130,7 @@ def two_line_header(top, bottom):
     bottom_text = escape(str(bottom))
 
     if bottom_text:
-        return f"{top_text}<br><span style='font-size:11px;font-weight:700;color:#475569;'>{bottom_text}</span>"
+        return f"{top_text}<br><span style='font-size:11px;font-weight:700;color:#61708A;'>{bottom_text}</span>"
 
     return top_text
 
@@ -1297,9 +1271,9 @@ def render_indicator_table(rows):
         <tr>
             <th class="col-indicator" rowspan="2">Індикатор</th>
             <th class="col-unit" rowspan="2">Одиниці виміру</th>
-            <th class="col-year" rowspan="2">2021<br><span style='font-size:11px;color:#475569;'>базовий рівень (факт)</span></th>
-            <th class="col-year" rowspan="2">2024<br><span style='font-size:11px;color:#475569;'>звіт</span></th>
-            <th class="col-year" rowspan="2">2025<br><span style='font-size:11px;color:#475569;'>факт</span></th>
+            <th class="col-year" rowspan="2">2021<br><span style='font-size:11px;color:#61708A;'>базовий рівень (факт)</span></th>
+            <th class="col-year" rowspan="2">2024<br><span style='font-size:11px;color:#61708A;'>звіт</span></th>
+            <th class="col-year" rowspan="2">2025<br><span style='font-size:11px;color:#61708A;'>факт</span></th>
             <th class="col-long" rowspan="2">Останнє подане значення<span class="th-sub">моніторинг індикатора</span></th>
             <th class="col-long" rowspan="2">Проміжний цільовий орієнтир на кінець 2028 року<span class="th-sub">(для цілей і завдань)</span></th>
             <th class="col-long" rowspan="2">Цільовий орієнтир на кінець 2034 року для цілей і завдань<div class="th-note-scroll">відповідає цілі, визначеній в НЕС-2030, ЦСР-2030 для показників, де це зазначено. Ціль перенесена на 2034 рік через «втрату» 4-х років — 2022-2025 внаслідок повномасштабної війни. Інші індикативні значення мають встановлюватись такими, що є кількісно узгодженими з цілями НЕС і ЦСР</div></th>
@@ -1423,13 +1397,13 @@ def render_measure_table(measures, monitoring_df, quarter_data, selected_years, 
             <th class="col-product" rowspan="3">Тип продукту</th>
             <th class="col-indicator" rowspan="3">Індикатор</th>
             <th class="col-unit" rowspan="3">Одиниці виміру</th>
-            <th class="col-year" rowspan="3">2021<br><span style='font-size:11px;color:#475569;'>базовий рівень (факт)</span></th>
-            <th class="col-year" rowspan="3">2024<br><span style='font-size:11px;color:#475569;'>звіт</span></th>
-            <th class="col-year" rowspan="3">2025<br><span style='font-size:11px;color:#475569;'>факт</span></th>
+            <th class="col-year" rowspan="3">2021<br><span style='font-size:11px;color:#61708A;'>базовий рівень (факт)</span></th>
+            <th class="col-year" rowspan="3">2024<br><span style='font-size:11px;color:#61708A;'>звіт</span></th>
+            <th class="col-year" rowspan="3">2025<br><span style='font-size:11px;color:#61708A;'>факт</span></th>
     """
 
     for year in [2026, 2027, 2028]:
-        html += f"<th class='col-year' rowspan='3'>{year}<br><span style='font-size:11px;color:#475569;'>цільовий орієнтир для заходів на рік</span></th>"
+        html += f"<th class='col-year' rowspan='3'>{year}<br><span style='font-size:11px;color:#61708A;'>цільовий орієнтир для заходів на рік</span></th>"
 
         year_quarters = [label for y, _, label in quarter_columns if int(y) == year]
 
@@ -1455,13 +1429,13 @@ def render_measure_table(measures, monitoring_df, quarter_data, selected_years, 
         </tr>
         <tr>
             <th class="col-budget">КПКВК</th>
-            <th class="col-budget">2026<br><span style='font-size:11px;color:#475569;'>затверджено, млрд грн</span></th>
-            <th class="col-budget">2027<br><span style='font-size:11px;color:#475569;'>прогноз, млрд грн</span></th>
-            <th class="col-budget">2028<br><span style='font-size:11px;color:#475569;'>прогноз, млрд грн</span></th>
-            <th class="col-budget-source">Джерело<br><span style='font-size:11px;color:#475569;'>МТД, кошти партнерів, інші небюджетні джерела</span></th>
-            <th class="col-budget">2026<br><span style='font-size:11px;color:#475569;'>план</span></th>
-            <th class="col-budget">2027<br><span style='font-size:11px;color:#475569;'>прогноз</span></th>
-            <th class="col-budget">2028<br><span style='font-size:11px;color:#475569;'>прогноз</span></th>
+            <th class="col-budget">2026<br><span style='font-size:11px;color:#61708A;'>затверджено, млрд грн</span></th>
+            <th class="col-budget">2027<br><span style='font-size:11px;color:#61708A;'>прогноз, млрд грн</span></th>
+            <th class="col-budget">2028<br><span style='font-size:11px;color:#61708A;'>прогноз, млрд грн</span></th>
+            <th class="col-budget-source">Джерело<br><span style='font-size:11px;color:#61708A;'>МТД, кошти партнерів, інші небюджетні джерела</span></th>
+            <th class="col-budget">2026<br><span style='font-size:11px;color:#61708A;'>план</span></th>
+            <th class="col-budget">2027<br><span style='font-size:11px;color:#61708A;'>прогноз</span></th>
+            <th class="col-budget">2028<br><span style='font-size:11px;color:#61708A;'>прогноз</span></th>
         </tr>
     </thead>
     <tbody>
@@ -1869,10 +1843,10 @@ with st.form("main_filters_form"):
         if is_scope_lockable_user(current_user) and not is_scope_override_active("app"):
             _own_label = get_user_ssp_index(current_user) or "—"
             st.markdown(
-                "<div style='font-size:13px;font-weight:900;color:#1e293b;margin-bottom:4px;'>"
+                "<div style='font-size:13px;font-weight:900;color:#132238;margin-bottom:4px;'>"
                 "Індекс самостійного структурного підрозділу</div>"
-                f"<div style='background:#f1f5f9;border:1px solid #cbd5e1;border-radius:10px;"
-                f"padding:10px 12px;font-weight:800;color:#0f172a;'>деп./упр. {_own_label} "
+                f"<div style='background:#F7F9FC;border:1px solid #DCE4F0;border-radius:10px;"
+                f"padding:10px 12px;font-weight:800;color:#132238;'>деп./упр. {_own_label} "
                 f" · Ваш ССП: №{_own_label}</div>",
                 unsafe_allow_html=True,
             )
@@ -1886,7 +1860,7 @@ with st.form("main_filters_form"):
 
     with top_2:
         st.markdown(
-            "<div style='font-size:13px;font-weight:900;color:#1e293b;margin-bottom:4px;'>Звітний період (рік, квартал)</div>",
+            "<div style='font-size:13px;font-weight:900;color:#132238;margin-bottom:4px;'>Звітний період (рік, квартал)</div>",
             unsafe_allow_html=True
         )
         st.multiselect(
@@ -1899,7 +1873,7 @@ with st.form("main_filters_form"):
 
     with top_3:
         st.markdown(
-            "<div style='font-size:13px;font-weight:900;color:#1e293b;margin-bottom:4px;'>&nbsp;</div>",
+            "<div style='font-size:13px;font-weight:900;color:#132238;margin-bottom:4px;'>&nbsp;</div>",
             unsafe_allow_html=True
         )
         st.multiselect(

@@ -14,27 +14,35 @@ from __future__ import annotations
 
 # ── Поточна палітра системи ──
 COLORS = {
-    "primary":        "#005BBB",   # головний синій
-    "primary_dark":   "#0c2f6e",
+    "primary":        "#005BBB",
+    "primary_dark":   "#032A63",
     "accent_yellow":  "#FFD500",
-    "background":     "#f6f8fc",
-    "card":           "#ffffff",
-    "text":           "#0f172a",
-    "text_secondary": "#475569",
-    "border":         "#d8dee9",
-    "success":        "#16a34a",
-    "success_bg":     "#dcfce7",
-    "warning":        "#d97706",
-    "warning_bg":     "#fef9c3",
-    "danger":         "#dc2626",
-    "danger_bg":      "#fee2e2",
-    "muted":          "#94a3b8",
+    "background":     "#F7F9FC",
+    "card":           "#FFFFFF",
+    "text":           "#132238",
+    "text_secondary": "#61708A",
+    "border":         "#DCE4F0",
+    "success":        "#1E9E57",
+    "success_bg":     "#E4F5EC",
+    "warning":        "#F4B400",
+    "warning_bg":     "#FDF3D8",
+    "danger":         "#DC4A4A",
+    "danger_bg":      "#FBE5E5",
+    "info":           "#4D8DFF",
+    "progress":       "#00A8A8",
+    "risk":           "#FF7A45",
+    "muted":          "#8A96A8",
+    "sidebar":        "#032A63",
+    "cta_green":      "#118847",
+    "cta_green_hover":"#0C713A",
+    "btn_secondary":  "#EAF1FF",
+    "btn_secondary_hover": "#D9E7FF",
 }
 
 # Послідовність кольорів для графіків Plotly (фірмова)
 PLOTLY_COLORWAY = [
-    "#005BBB", "#16a34a", "#d97706", "#dc2626",
-    "#7c3aed", "#0891b2", "#be185d", "#4d7c0f",
+    "#005BBB", "#00A8A8", "#4D8DFF", "#FF7A45",
+    "#1E9E57", "#F4B400", "#8A96A8", "#032A63",
 ]
 
 
@@ -63,12 +71,12 @@ def apply_plotly_theme() -> None:
         colorway=PLOTLY_COLORWAY,
         font=dict(family="Segoe UI, Arial, sans-serif", size=12,
                   color=COLORS["text"]),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="#FFFFFF",
+        plot_bgcolor="#FFFFFF",
         margin=dict(l=40, r=20, t=40, b=40),
         legend=dict(title_text=""),
-        xaxis=dict(gridcolor="#e8edf5", zerolinecolor="#d8dee9"),
-        yaxis=dict(gridcolor="#e8edf5", zerolinecolor="#d8dee9"),
+        xaxis=dict(gridcolor="#DCE4F0", zerolinecolor="#DCE4F0"),
+        yaxis=dict(gridcolor="#DCE4F0", zerolinecolor="#DCE4F0"),
     )
     pio.templates["mineconomy"] = template
     pio.templates.default = "plotly_white+mineconomy"

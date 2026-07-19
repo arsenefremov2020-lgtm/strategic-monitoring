@@ -147,7 +147,7 @@ def render_own_ssp_badge(user: dict | None, *, label: str = "Ваш ССП") -> 
     st.markdown(
         "<div style='font-size:13px;font-weight:700;margin-bottom:4px;'>"
         "Самостійний структурний підрозділ</div>"
-        f"<div style='background:#f1f5f9;border:1px solid #cbd5e1;border-radius:10px;"
+        f"<div style='background:#F7F9FC;border:1px solid #DCE4F0;border-radius:10px;"
         f"padding:9px 12px;font-weight:800;'>{label}: №{idx}</div>",
         unsafe_allow_html=True,
     )
@@ -233,7 +233,7 @@ def render_request_timeline(logs_df, *, title: str | None = None,
 
     if title:
         st.markdown(
-            f'<div style="font-size:13px;font-weight:800;color:#0f172a;'
+            f'<div style="font-size:13px;font-weight:800;color:#132238;'
             f'margin-bottom:6px;">{_escape(title)}</div>',
             unsafe_allow_html=True,
         )
@@ -250,38 +250,38 @@ def render_request_timeline(logs_df, *, title: str | None = None,
         old_status = clean(event.get("old_status"))
         new_status = clean(event.get("new_status"))
         comment = clean(event.get("admin_comment"))
-        dot = "#22c55e" if new_status == "Погоджено" else (
-            "#ef4444" if "Повернуто" in new_status else (
-                "#8b5cf6" if "закрит" in action.lower() else "#3b82f6"
+        dot = "#1E9E57" if new_status == "Погоджено" else (
+            "#DC4A4A" if "Повернуто" in new_status else (
+                "#8b5cf6" if "закрит" in action.lower() else "#4D8DFF"
             )
         )
         transition = ""
         if old_status and new_status and old_status != new_status:
             transition = (
                 f'<br><span style="display:inline-block;margin-top:3px;padding:2px 7px;'
-                f'border-radius:999px;background:#f1f5f9;color:#475569;font-size:11px;">'
+                f'border-radius:999px;background:#F7F9FC;color:#61708A;font-size:11px;">'
                 f'{_escape(old_status)} → {_escape(new_status)}</span>'
             )
         elif new_status:
             transition = (
                 f'<br><span style="display:inline-block;margin-top:3px;padding:2px 7px;'
-                f'border-radius:999px;background:#eff6ff;color:#1d4ed8;font-size:11px;">'
+                f'border-radius:999px;background:#EAF1FF;color:#005BBB;font-size:11px;">'
                 f'{_escape(new_status)}</span>'
             )
         items.append(
             f'<div style="display:flex;gap:10px;margin-bottom:10px;">'
             f'<div style="width:10px;min-width:10px;height:10px;border-radius:50%;'
             f'background:{dot};margin-top:5px;"></div>'
-            f'<div style="font-size:12.5px;line-height:1.45;color:#0f172a;">'
+            f'<div style="font-size:12.5px;line-height:1.45;color:#132238;">'
             f'<b>{_escape(when)}</b> — {_escape(action)}'
             f'{transition}'
-            + (f'<br><span style="color:#334155;">Коментар: {_escape(comment)}</span>' if comment else "")
-            + (f'<br><span style="color:#64748b;font-size:11.5px;">Ким змінено: {_escape(actor)}</span>' if actor else "")
+            + (f'<br><span style="color:#61708A;">Коментар: {_escape(comment)}</span>' if comment else "")
+            + (f'<br><span style="color:#61708A;font-size:11.5px;">Ким змінено: {_escape(actor)}</span>' if actor else "")
             + '</div></div>'
         )
 
     st.markdown(
-        '<div style="border-left:2px solid #e2e8f0;padding-left:12px;'
+        '<div style="border-left:2px solid #DCE4F0;padding-left:12px;'
         'margin:4px 0 10px 2px;">' + "".join(items) + "</div>",
         unsafe_allow_html=True,
     )

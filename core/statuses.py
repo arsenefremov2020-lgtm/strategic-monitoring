@@ -49,10 +49,10 @@ STATUS_SCORES = {
 
 # Кольори бейджів статусів (поточна палітра системи)
 STATUS_COLORS = {
-    ST_DONE:     {"bg": "#dcfce7", "fg": "#166534", "border": "#86efac"},
-    ST_PARTIAL:  {"bg": "#fef9c3", "fg": "#854d0e", "border": "#fde047"},
-    ST_NOTDONE:  {"bg": "#fee2e2", "fg": "#991b1b", "border": "#fca5a5"},
-    ST_NOTYET:   {"bg": "#e0e7ef", "fg": "#334155", "border": "#cbd5e1"},
+    ST_DONE:     {"bg": "#E4F5EC", "fg": "#0C713A", "border": "#1E9E57"},
+    ST_PARTIAL:  {"bg": "#FDF3D8", "fg": "#8A6400", "border": "#F4B400"},
+    ST_NOTDONE:  {"bg": "#FBE5E5", "fg": "#DC4A4A", "border": "#DC4A4A"},
+    ST_NOTYET:   {"bg": "#FFFFFF", "fg": "#61708A", "border": "#DCE4F0"},
     ST_OBSOLETE: {"bg": "#ede9fe", "fg": "#5b21b6", "border": "#c4b5fd"},
 }
 
@@ -140,11 +140,11 @@ LEGEND_STATES = [
 ]
 
 LEGEND_COLORS = {
-    "На розгляді":             {"bg": "#dbeafe", "fg": "#1e40af", "border": "#93c5fd"},
-    "На доопрацюванні":        {"bg": "#fef9c3", "fg": "#854d0e", "border": "#fde047"},
-    "Погоджено":               {"bg": "#dcfce7", "fg": "#166534", "border": "#86efac"},
-    "Не настав час":           {"bg": "#e0e7ef", "fg": "#334155", "border": "#cbd5e1"},
-    "Не враховано":            {"bg": "#fee2e2", "fg": "#991b1b", "border": "#fca5a5"},
+    "На розгляді":             {"bg": "#E3EDFF", "fg": "#032A63", "border": "#4D8DFF"},
+    "На доопрацюванні":        {"bg": "#FDF3D8", "fg": "#8A6400", "border": "#F4B400"},
+    "Погоджено":               {"bg": "#E4F5EC", "fg": "#0C713A", "border": "#1E9E57"},
+    "Не настав час":           {"bg": "#FFFFFF", "fg": "#61708A", "border": "#DCE4F0"},
+    "Не враховано":            {"bg": "#FBE5E5", "fg": "#DC4A4A", "border": "#DC4A4A"},
     "Закрито адміністратором": {"bg": "#ede9fe", "fg": "#5b21b6", "border": "#c4b5fd"},
 }
 

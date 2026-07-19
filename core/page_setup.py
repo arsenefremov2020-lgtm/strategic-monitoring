@@ -20,7 +20,6 @@ from __future__ import annotations
 import streamlit as st
 
 from core.errors import log_cosmetic_error
-
 from core.config import APP_VERSION
 from core.theme import inject_theme, apply_plotly_theme
 from core.ui import load_css
@@ -29,62 +28,24 @@ from core.navigation import render_role_page_links, require_page_access
 
 
 def _hide_streamlit_fixed_chrome() -> None:
-    """Прибирає фіксовані верхню й нижню службові панелі Streamlit.
+    """Прибирає лише нижню службову sticky-область Streamlit.
 
-    Верхня панель перекривала верх сторінки під час прокрутки. Нижня область
-    Streamlit складається з двох частин: sticky-контейнера ``stBottom`` і
-    окремого flex-spacer перед ним. Якщо приховати лише ``stBottom``, spacer
-    лишається та утворює великий нерухомий порожній блок поверх нижньої
-    частини сторінки. Тому прибираються обидві частини. Наш власний футер
-    ``.app-footer`` не зачіпається.
+    Верхній ``stHeader`` навмисно не модифікується CSS-ом. У Streamlit 1.59.x
+    саме верхній chrome відповідає, зокрема, за системні елементи керування
+    бічною панеллю. Попередня реалізація приховувала ``stToolbar`` і вимикала
+    ``pointer-events`` для всього header, а потім намагалася точково повернути
+    кнопку sidebar через внутрішні ``data-testid``. Така прив'язка крихка:
+    при зміні DOM кнопка розгортання може зникнути разом із батьківським
+    контейнером.
+
+    Зайві елементи верхнього меню тепер прибираються штатною конфігурацією
+    ``client.toolbarMode = "minimal"`` у ``.streamlit/config.toml``.
+    Тут залишається тільки очищення нижньої sticky-області та її spacer.
+    Наш власний футер ``.app-footer`` не зачіпається.
     """
     st.markdown(
         """
         <style>
-        /*
-         * Верхня службова панель Streamlit.
-         *
-         * Панель НЕ ховається (display:none заборонено): у Streamlit 1.59
-         * саме в ній живуть кнопка згортання/розгортання бічної панелі та
-         * емблема (st.logo) при згорнутому sidebar. Повне приховування
-         * робило згорнуту бічну панель неможливо відкрити.
-         *
-         * Підхід: смужка лишається, але стає повністю прозорою і не
-         * перехоплює кліки; службові елементи (тулбар Share/Deploy, меню,
-         * статус-віджет, кольорова декоративна смужка) ховаються адресно;
-         * кнопка бічної панелі та емблема залишаються видимими і
-         * клікабельними.
-         */
-        header[data-testid="stHeader"],
-        div[data-testid="stHeader"] {
-            background: transparent !important;
-            box-shadow: none !important;
-            border: none !important;
-            height: auto !important;
-            min-height: 0 !important;
-            pointer-events: none !important;
-        }
-        header[data-testid="stHeader"] [data-testid="stToolbar"],
-        header[data-testid="stHeader"] [data-testid="stMainMenu"],
-        header[data-testid="stHeader"] [data-testid="stAppDeployButton"],
-        header[data-testid="stHeader"] [data-testid="stStatusWidget"],
-        header[data-testid="stHeader"] [data-testid="stDecoration"] {
-            display: none !important;
-            visibility: hidden !important;
-        }
-        header[data-testid="stHeader"] [data-testid="stExpandSidebarButton"],
-        header[data-testid="stHeader"] [data-testid="stSidebarCollapsedControl"],
-        header[data-testid="stHeader"] [data-testid="stSidebarCollapseButton"],
-        header[data-testid="stHeader"] [data-testid="stLogoLink"],
-        header[data-testid="stHeader"] [data-testid="stLogo"] {
-            visibility: visible !important;
-            pointer-events: auto !important;
-        }
-        header[data-testid="stHeader"] [data-testid="stExpandSidebarButton"],
-        header[data-testid="stHeader"] [data-testid="stSidebarCollapsedControl"] {
-            display: flex !important;
-        }
-
         /*
          * Нижня sticky-область Streamlit. Селектори без прив'язки до типу
          * HTML-тега залишаються працездатними при внутрішніх змінах розмітки.
@@ -109,8 +70,7 @@ def _hide_streamlit_fixed_chrome() -> None:
 
         /*
          * Streamlit 1.59.x додає перед stBottom окремий flex-spacer без
-         * data-testid. Саме він лишав великий порожній блок після приховування
-         * stBottom. :has() точно знаходить тільки spacer, що безпосередньо
+         * data-testid. :has() точно знаходить тільки spacer, що безпосередньо
          * передує нижньому контейнеру, і не зачіпає звичайний контент сторінки.
          */
         [data-testid="stMain"] > div:not([data-testid]):has(+ [data-testid="stBottom"]) {
@@ -137,7 +97,7 @@ def _hide_streamlit_fixed_chrome() -> None:
             margin: 0 !important;
         }
 
-        /* Після приховування службових панелей не лишаємо резервних відступів. */
+        /* Після приховування нижньої службової області не лишаємо відступів. */
         div.block-container,
         .main .block-container,
         [data-testid="stMainBlockContainer"] {

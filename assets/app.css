@@ -11,7 +11,7 @@
 /* ── 1. Панель сповіщень ── */
 .app-notification-panel {
     background: rgba(255,255,255,0.96);
-    border: 1px solid #d8dee9;
+    border: 1px solid #DCE4F0;
     border-radius: 16px;
     padding: 16px 18px;
     margin: 14px 0 18px 0;
@@ -20,7 +20,7 @@
 .app-notification-title {
     font-size: 18px;
     font-weight: 900;
-    color: #0f172a;
+    color: #132238;
     margin-bottom: 8px;
 }
 .app-notification-grid {
@@ -29,8 +29,8 @@
     gap: 10px;
 }
 .app-notification-card {
-    background: #f8fafc;
-    border: 1px solid #d8dee9;
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
     border-radius: 12px;
     padding: 12px 14px;
 }
@@ -38,13 +38,36 @@
     display: block;
     font-size: 22px;
     line-height: 1.1;
-    color: #0f172a;
+    color: #132238;
     margin-bottom: 4px;
 }
 .app-notification-card span {
-    color: #475569;
+    color: #61708A;
     font-size: 12px;
     font-weight: 800;
+}
+
+
+/* ============================================================
+   Темна корпоративна бічна панель
+   ============================================================ */
+section[data-testid="stSidebar"] {
+    background-color: #032A63 !important;
+    background-image: none !important;
+    color: #FFFFFF !important;
+}
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h1,
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h2,
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h3,
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h4,
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h5,
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h6 {
+    color: #FFFFFF !important;
+}
+section[data-testid="stSidebar"] [data-testid="stLogo"] {
+    background-color: #FFFFFF !important;
+    border-radius: 8px !important;
+    padding: 6px !important;
 }
 
 /* ============================================================
@@ -97,7 +120,7 @@ section[data-testid="stSidebar"] div[data-testid="stPageLink"] a {
     border-color: transparent !important;
     border-radius: 8px !important;
     box-shadow: none !important;
-    color: #0F172A !important;
+    color: #FFFFFF !important;
     font-size: 14px !important;
     font-weight: 700 !important;
     font-style: normal !important;
@@ -132,7 +155,7 @@ section[data-testid="stSidebar"] div[data-testid="stPageLink"] a p {
     padding-bottom: 0 !important;
     padding-left: 0 !important;
     overflow: hidden !important;
-    color: #0F172A !important;
+    color: #FFFFFF !important;
     font-size: 14px !important;
     font-weight: 700 !important;
     font-style: normal !important;
@@ -155,13 +178,13 @@ section[data-testid="stSidebar"] div[data-testid="stPageLink"] a svg {
 }
 
 section[data-testid="stSidebar"] div[data-testid="stPageLink"] a:hover {
-    background-color: rgba(15, 23, 42, 0.06) !important;
+    background-color: rgba(255,255,255,0.10) !important;
     background-image: none !important;
     border-width: 0 !important;
     border-style: none !important;
     border-color: transparent !important;
     box-shadow: none !important;
-    color: #0F172A !important;
+    color: #FFFFFF !important;
     text-decoration-line: none !important;
     transform: none !important;
     filter: none !important;
@@ -169,14 +192,14 @@ section[data-testid="stSidebar"] div[data-testid="stPageLink"] a:hover {
 
 section[data-testid="stSidebar"] div[data-testid="stPageLink"] a[aria-current="page"],
 section[data-testid="stSidebar"] div[data-testid="stPageLink"] a[aria-current="page"]:hover {
-    background-color: #EAF2FF !important;
+    background-color: #005BBB !important;
     background-image: none !important;
     border-width: 0 !important;
     border-style: none !important;
     border-color: transparent !important;
     border-radius: 8px !important;
     box-shadow: none !important;
-    color: #0F172A !important;
+    color: #FFFFFF !important;
     font-weight: 700 !important;
     text-decoration-line: none !important;
     transform: none !important;
@@ -185,13 +208,13 @@ section[data-testid="stSidebar"] div[data-testid="stPageLink"] a[aria-current="p
 
 section[data-testid="stSidebar"] div[data-testid="stPageLink"] a:active,
 section[data-testid="stSidebar"] div[data-testid="stPageLink"] a[aria-current="page"]:active {
-    background-color: #DDEBFF !important;
+    background-color: rgba(255,255,255,0.16) !important;
     background-image: none !important;
     border-width: 0 !important;
     border-style: none !important;
     border-color: transparent !important;
     box-shadow: none !important;
-    color: #0F172A !important;
+    color: #FFFFFF !important;
     transform: none !important;
     filter: none !important;
 }
@@ -441,7 +464,7 @@ div.block-container {
 }
 header[data-testid="stHeader"] {
     /* Д14: контент при прокрутці не «просвічує» крізь верхню панель */
-    background: rgba(246, 248, 252, 0.88);
+    background: rgba(247, 249, 252, 0.88);
     backdrop-filter: blur(4px);
 }
 
@@ -465,10 +488,10 @@ div[data-baseweb="popover"] li {
 .table-scroll {
     position: relative;
     background:
-        linear-gradient(to right, #ffffff 30%, rgba(255,255,255,0)),
-        linear-gradient(to left,  #ffffff 30%, rgba(255,255,255,0)) 100% 0,
-        radial-gradient(farthest-side at 0 50%, rgba(15,23,42,.14), transparent),
-        radial-gradient(farthest-side at 100% 50%, rgba(15,23,42,.14), transparent) 100% 0;
+        #FFFFFF,
+        #FFFFFF 100% 0,
+        #F7F9FC,
+        #F7F9FC 100% 0;
     background-repeat: no-repeat;
     background-size: 46px 100%, 46px 100%, 16px 100%, 16px 100%;
     background-attachment: local, local, scroll, scroll;
@@ -488,14 +511,14 @@ div[data-baseweb="popover"] li {
 .app-footer {
     margin-top: 36px;
     padding: 18px 12px 8px 12px;
-    border-top: 1px solid #d8dee9;
+    border-top: 1px solid #DCE4F0;
     text-align: center;
-    color: #64748b;
+    color: #61708A;
     font-size: 12px;
     line-height: 1.6;
 }
 .app-footer strong {
-    color: #475569;
+    color: #61708A;
 }
 
 /* ============================================================
@@ -516,7 +539,7 @@ div[data-testid="stNumberInput"] input,
 div[data-testid="stDateInput"] input,
 div[data-testid="stSelectbox"] div[data-baseweb="select"] *,
 div[data-testid="stMultiSelect"] div[data-baseweb="select"] * {
-    color: #0f172a !important;
+    color: #132238 !important;
     font-weight: 700 !important;
 }
 
@@ -526,15 +549,15 @@ div[data-testid="stNumberInput"] input,
 div[data-testid="stDateInput"] input,
 div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
 div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div {
-    background-color: #EAF2FF !important;
-    border: 1px solid #bcd6f7 !important;
+    background-color: #EAF1FF !important;
+    border: 1px solid #BFD3F2 !important;
     border-radius: 10px !important;
 }
 
 /* Плейсхолдер — трохи світліший за основний текст, але все одно читабельний */
 div[data-testid="stTextInput"] input::placeholder,
 div[data-testid="stTextArea"] textarea::placeholder {
-    color: #475569 !important;
+    color: #61708A !important;
     font-weight: 600 !important;
     opacity: 1 !important;
 }
@@ -545,11 +568,11 @@ div[data-baseweb="popover"] ul[role="listbox"] {
 }
 div[data-baseweb="popover"] li,
 div[data-baseweb="popover"] li * {
-    color: #0f172a !important;
+    color: #132238 !important;
     font-weight: 700 !important;
 }
 div[data-baseweb="popover"] li[aria-selected="true"] {
-    background-color: #EAF2FF !important;
+    background-color: #EAF1FF !important;
 }
 
 /* "Пігулки" обраних значень у multiselect — той самий стиль */
@@ -583,7 +606,7 @@ section[data-testid="stSidebar"] [data-auth-sidebar-title="login"] {
     padding-right: 0 !important;
     padding-bottom: 0 !important;
     padding-left: 0 !important;
-    color: #0F172A !important;
+    color: #FFFFFF !important;
     font-size: 20px !important;
     font-weight: 700 !important;
     font-style: normal !important;
@@ -611,7 +634,7 @@ section[data-testid="stSidebar"] div[data-testid="stForm"] {
     background-image: none !important;
     border-width: 1px !important;
     border-style: solid !important;
-    border-color: #D6DAE3 !important;
+    border-color: rgba(255,255,255,0.28) !important;
     border-radius: 8px !important;
     box-shadow: none !important;
     transform: none !important;
@@ -633,7 +656,7 @@ section[data-testid="stSidebar"] div[data-testid="stForm"] div[data-testid="stTe
     padding-right: 0 !important;
     padding-bottom: 0 !important;
     padding-left: 0 !important;
-    color: #0F172A !important;
+    color: #FFFFFF !important;
     font-size: 14px !important;
     font-weight: 400 !important;
     font-style: normal !important;
@@ -651,7 +674,7 @@ section[data-testid="stSidebar"] div[data-testid="stForm"] div[data-testid="stTe
     padding-right: 0 !important;
     padding-bottom: 0 !important;
     padding-left: 0 !important;
-    color: #0F172A !important;
+    color: #FFFFFF !important;
     font-size: 14px !important;
     font-weight: 400 !important;
     font-style: normal !important;
@@ -665,15 +688,15 @@ section[data-testid="stSidebar"] div[data-testid="stForm"] div[data-testid="stTe
     height: 40px !important;
     min-height: 40px !important;
     max-height: 40px !important;
-    caret-color: #005BBB !important;
+    caret-color: #4D8DFF !important;
 }
 
 section[data-testid="stSidebar"] div[data-testid="stForm"] div[data-testid="stTextInput"] input:focus {
     border-width: 1px !important;
     border-style: solid !important;
-    border-color: #005BBB !important;
+    border-color: #4D8DFF !important;
     box-shadow: none !important;
-    caret-color: #005BBB !important;
+    caret-color: #4D8DFF !important;
 }
 
 section[data-testid="stSidebar"] div[data-testid="stForm"] div[data-testid="stTextInput"] button {
@@ -699,7 +722,7 @@ section[data-testid="stSidebar"] div[data-testid="stForm"] div[data-testid="stTe
     border-color: transparent !important;
     border-radius: 0 !important;
     box-shadow: none !important;
-    color: #64748B !important;
+    color: #C7D2E4 !important;
     transform: none !important;
     filter: none !important;
     transition: none !important;
@@ -713,7 +736,7 @@ section[data-testid="stSidebar"] div[data-testid="stForm"] div[data-testid="stTe
     border-style: none !important;
     border-color: transparent !important;
     box-shadow: none !important;
-    color: #005BBB !important;
+    color: #FFFFFF !important;
     transform: none !important;
     filter: none !important;
 }
@@ -737,14 +760,14 @@ section[data-testid="stSidebar"] div[data-testid="stButton"] button {
     padding-right: 16px !important;
     padding-bottom: 8px !important;
     padding-left: 16px !important;
-    background-color: #FFFFFF !important;
+    background-color: #EAF1FF !important;
     background-image: none !important;
     border-width: 1px !important;
     border-style: solid !important;
-    border-color: #D6DAE3 !important;
+    border-color: transparent !important;
     border-radius: 8px !important;
     box-shadow: none !important;
-    color: #0F172A !important;
+    color: #132238 !important;
     font-size: 14px !important;
     font-weight: 400 !important;
     font-style: normal !important;
@@ -761,26 +784,26 @@ section[data-testid="stSidebar"] div[data-testid="stButton"] button {
 
 section[data-testid="stSidebar"] div[data-testid="stFormSubmitButton"] button:hover,
 section[data-testid="stSidebar"] div[data-testid="stButton"] button:hover {
-    background-color: #FFFFFF !important;
+    background-color: #D9E7FF !important;
     background-image: none !important;
     border-width: 1px !important;
     border-style: solid !important;
-    border-color: #005BBB !important;
+    border-color: transparent !important;
     box-shadow: none !important;
-    color: #005BBB !important;
+    color: #132238 !important;
     transform: none !important;
     filter: none !important;
 }
 
 section[data-testid="stSidebar"] div[data-testid="stFormSubmitButton"] button:active,
 section[data-testid="stSidebar"] div[data-testid="stButton"] button:active {
-    background-color: #EAF2FF !important;
+    background-color: #EAF1FF !important;
     background-image: none !important;
     border-width: 1px !important;
     border-style: solid !important;
-    border-color: #005BBB !important;
+    border-color: transparent !important;
     box-shadow: none !important;
-    color: #005BBB !important;
+    color: #132238 !important;
     transform: none !important;
     filter: none !important;
 }
@@ -798,14 +821,14 @@ section[data-testid="stSidebar"] [data-auth-sidebar-notice="success"] {
     padding-right: 16px !important;
     padding-bottom: 12px !important;
     padding-left: 16px !important;
-    background-color: #E7F6EC !important;
+    background-color: #1E9E57 !important;
     background-image: none !important;
     border-width: 0 !important;
     border-style: none !important;
     border-color: transparent !important;
     border-radius: 8px !important;
     box-shadow: none !important;
-    color: #177233 !important;
+    color: #FFFFFF !important;
     font-size: 14px !important;
     font-weight: 400 !important;
     font-style: normal !important;
@@ -829,14 +852,14 @@ section[data-testid="stSidebar"] [data-auth-sidebar-notice="warning"] {
     padding-right: 16px !important;
     padding-bottom: 12px !important;
     padding-left: 16px !important;
-    background-color: #FFF7DB !important;
+    background-color: #F4B400 !important;
     background-image: none !important;
     border-width: 0 !important;
     border-style: none !important;
     border-color: transparent !important;
     border-radius: 8px !important;
     box-shadow: none !important;
-    color: #7A5B00 !important;
+    color: #132238 !important;
     font-size: 14px !important;
     font-weight: 400 !important;
     font-style: normal !important;
@@ -866,7 +889,7 @@ section[data-testid="stSidebar"] [data-auth-sidebar-profile="true"] {
     padding-right: 0 !important;
     padding-bottom: 0 !important;
     padding-left: 0 !important;
-    color: #5B6472 !important;
+    color: #C7D2E4 !important;
     font-size: 14px !important;
     font-weight: 400 !important;
     font-style: normal !important;
@@ -891,7 +914,7 @@ section[data-testid="stSidebar"] [data-auth-sidebar-profile-line="true"] {
     padding-right: 0 !important;
     padding-bottom: 0 !important;
     padding-left: 0 !important;
-    color: #5B6472 !important;
+    color: #C7D2E4 !important;
     font-size: 14px !important;
     font-weight: 400 !important;
     font-style: normal !important;
@@ -903,7 +926,7 @@ section[data-testid="stSidebar"] [data-auth-sidebar-profile-line="true"] {
 }
 
 section[data-testid="stSidebar"] [data-auth-sidebar-profile="true"] a {
-    color: #005BBB !important;
+    color: #9CC3FF !important;
     font-size: 14px !important;
     font-weight: 400 !important;
     font-style: normal !important;
@@ -915,20 +938,20 @@ section[data-testid="stSidebar"] [data-auth-sidebar-profile="true"] a {
 }
 
 section[data-testid="stSidebar"] [data-auth-sidebar-profile="true"] a:hover {
-    color: #005BBB !important;
+    color: #9CC3FF !important;
     text-decoration-line: underline !important;
 }
 
 /* ─── KPI CARDS (глобально: Паспорт ССП, Фільтр за документом, Центр задач) ─── */
 .admin-kpi-card {
-    background: #f8fafc;
-    border: 1px solid #dde3ef;
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
     border-radius: 11px;
     padding: 11px 13px;
     min-height: 82px;
 }
 .admin-kpi-label {
-    color: #64748b;
+    color: #61708A;
     font-size: 11px;
     font-weight: 700;
     margin-bottom: 5px;
@@ -936,7 +959,7 @@ section[data-testid="stSidebar"] [data-auth-sidebar-profile="true"] a:hover {
     text-transform: uppercase;
 }
 .admin-kpi-value {
-    color: #0f172a;
+    color: #132238;
     font-size: 19px;
     font-weight: 850;
     line-height: 1.2;

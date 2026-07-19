@@ -196,8 +196,8 @@ html, body, [class*="css"] {
     box-shadow: 0 10px 24px rgba(15,23,42,0.07);
 }
 
-div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
-div[data-testid="stTextInput"] input {
+[data-testid="stMain"] div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
+[data-testid="stMain"] div[data-testid="stTextInput"] input {
     background-color: #d7eaff !important;
     border: 1px solid #8fb3df !important;
     border-radius: 10px !important;
@@ -205,8 +205,8 @@ div[data-testid="stTextInput"] input {
     box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.08) !important;
 }
 
-div[data-testid="stSelectbox"] label,
-div[data-testid="stTextInput"] label {
+[data-testid="stMain"] div[data-testid="stSelectbox"] label,
+[data-testid="stMain"] div[data-testid="stTextInput"] label {
     font-weight: 750 !important;
     color: #1e293b !important;
 }

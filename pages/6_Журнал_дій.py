@@ -219,10 +219,10 @@ header[data-testid="stHeader"] {
 }
 
 /* Помітніші поля відбору */
-div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div,
-div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
-div[data-testid="stDateInput"] input,
-div[data-testid="stTextInput"] input {
+[data-testid="stMain"] div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div,
+[data-testid="stMain"] div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
+[data-testid="stMain"] div[data-testid="stDateInput"] input,
+[data-testid="stMain"] div[data-testid="stTextInput"] input {
     background: #f8fbff !important;
     border: 1px solid #93c5fd !important;
     border-radius: 12px !important;
@@ -236,8 +236,8 @@ div[data-testid="stMultiSelect"] span[data-baseweb="tag"] {
     font-weight: 850 !important;
 }
 
-div[data-testid="stDateInput"] input:focus,
-div[data-testid="stTextInput"] input:focus {
+[data-testid="stMain"] div[data-testid="stDateInput"] input:focus,
+[data-testid="stMain"] div[data-testid="stTextInput"] input:focus {
     border-color: #1d4ed8 !important;
     box-shadow: 0 0 0 3px rgba(37,99,235,0.15) !important;
 }
@@ -263,8 +263,8 @@ div[data-testid="stTextInput"] input:focus {
     line-height: 1.55;
 }
 
-div.stButton > button,
-div.stDownloadButton > button {
+[data-testid="stMain"] div.stButton > button,
+[data-testid="stMain"] div.stDownloadButton > button {
     border-radius: 12px;
     padding: 10px 16px;
     font-weight: 850;

@@ -246,7 +246,7 @@ div[data-testid="stToggle"] label {
 }
 
 /* Reset button */
-div[data-testid="stButton"] button {
+[data-testid="stMain"] div[data-testid="stButton"] button {
     border-radius: 8px !important;
     font-weight: 700 !important;
     font-size: clamp(11px, 0.95vw, 13px) !important;

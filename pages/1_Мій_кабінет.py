@@ -116,21 +116,21 @@ header[data-testid="stHeader"] {
     margin-top: 12px;
     box-shadow: 0 10px 24px rgba(15,23,42,0.07);
 }
-div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
-div[data-testid="stTextInput"] input,
-div[data-testid="stTextArea"] textarea {
+[data-testid="stMain"] div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
+[data-testid="stMain"] div[data-testid="stTextInput"] input,
+[data-testid="stMain"] div[data-testid="stTextArea"] textarea {
     background-color: #d7eaff !important;
     border: 1px solid #8fb3df !important;
     border-radius: 10px !important;
     box-shadow: inset 0 1px 2px rgba(15,23,42,0.08) !important;
 }
-div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
-div[data-testid="stTextInput"] input {
+[data-testid="stMain"] div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
+[data-testid="stMain"] div[data-testid="stTextInput"] input {
     min-height: 43px !important;
 }
-div[data-testid="stSelectbox"] label,
-div[data-testid="stTextInput"] label,
-div[data-testid="stTextArea"] label {
+[data-testid="stMain"] div[data-testid="stSelectbox"] label,
+[data-testid="stMain"] div[data-testid="stTextInput"] label,
+[data-testid="stMain"] div[data-testid="stTextArea"] label {
     font-weight: 750 !important;
     color: #1e293b !important;
 }
@@ -264,7 +264,7 @@ div[data-testid="stMetric"] {
     box-shadow: 0 4px 12px rgba(15,23,42,0.04);
 }
 
-div.stButton > button {
+[data-testid="stMain"] div.stButton > button {
     border-radius: 14px;
     padding: 12px 18px;
     font-weight: 900;
@@ -273,7 +273,7 @@ div.stButton > button {
     color: #1d4ed8 !important;
     box-shadow: 0 8px 18px rgba(37,99,235,0.10);
 }
-div.stButton > button:hover {
+[data-testid="stMain"] div.stButton > button:hover {
     filter: brightness(1.03);
     transform: translateY(-1px);
     border-color: #93c5fd;

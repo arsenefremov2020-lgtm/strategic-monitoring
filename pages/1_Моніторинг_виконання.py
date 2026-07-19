@@ -384,9 +384,9 @@ header[data-testid="stHeader"] {
     max-width: 1280px;
 }
 
-div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
-div[data-testid="stTextInput"] input,
-div[data-testid="stTextArea"] textarea {
+[data-testid="stMain"] div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
+[data-testid="stMain"] div[data-testid="stTextInput"] input,
+[data-testid="stMain"] div[data-testid="stTextArea"] textarea {
     background-color: #d7eaff !important;
     border: 1px solid #8fb3df !important;
     border-radius: 10px !important;
@@ -394,9 +394,9 @@ div[data-testid="stTextArea"] textarea {
     box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.08) !important;
 }
 
-div[data-testid="stSelectbox"] label,
-div[data-testid="stTextInput"] label,
-div[data-testid="stTextArea"] label {
+[data-testid="stMain"] div[data-testid="stSelectbox"] label,
+[data-testid="stMain"] div[data-testid="stTextInput"] label,
+[data-testid="stMain"] div[data-testid="stTextArea"] label {
     font-weight: 750 !important;
     color: #1e293b !important;
 }
@@ -498,7 +498,7 @@ div[data-testid="stDataEditor"] [data-testid="stCheckbox"] {
     justify-content: center !important;
 }
 
-div[data-testid="stButton"] > button {
+[data-testid="stMain"] div[data-testid="stButton"] > button {
     width: 100%;
     min-height: 68px;
     background: linear-gradient(135deg, #dc2626 0%, #f97316 52%, #facc15 100%) !important;
@@ -511,7 +511,7 @@ div[data-testid="stButton"] > button {
     box-shadow: 0 18px 34px rgba(249,115,22,0.34), inset 0 1px 0 rgba(255,255,255,0.25) !important;
 }
 
-div[data-testid="stButton"] > button:hover {
+[data-testid="stMain"] div[data-testid="stButton"] > button:hover {
     filter: brightness(1.05);
     transform: translateY(-1px);
 }

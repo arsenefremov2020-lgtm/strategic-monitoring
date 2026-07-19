@@ -503,24 +503,24 @@ header[data-testid="stHeader"] {
 }
 
 /* ─── SELECTBOX / INPUTS ─── */
-div[data-testid="stSelectbox"] > div > div,
-div[data-testid="stTextInput"] input,
-div[data-testid="stTextArea"] textarea {
+[data-testid="stMain"] div[data-testid="stSelectbox"] > div > div,
+[data-testid="stMain"] div[data-testid="stTextInput"] input,
+[data-testid="stMain"] div[data-testid="stTextArea"] textarea {
     background: #ffffff !important;
     border: 1.5px solid #c7d4e8 !important;
     color: #0f172a !important;
     border-radius: 9px !important;
 }
 
-div[data-testid="stSelectbox"] > div > div:hover,
-div[data-testid="stTextInput"] input:hover,
-div[data-testid="stTextArea"] textarea:hover {
+[data-testid="stMain"] div[data-testid="stSelectbox"] > div > div:hover,
+[data-testid="stMain"] div[data-testid="stTextInput"] input:hover,
+[data-testid="stMain"] div[data-testid="stTextArea"] textarea:hover {
     border-color: #3b82f6 !important;
 }
 
-div[data-testid="stSelectbox"] label,
-div[data-testid="stTextInput"] label,
-div[data-testid="stTextArea"] label {
+[data-testid="stMain"] div[data-testid="stSelectbox"] label,
+[data-testid="stMain"] div[data-testid="stTextInput"] label,
+[data-testid="stMain"] div[data-testid="stTextArea"] label {
     color: #475569 !important;
     font-size: 13px !important;
     font-weight: 600 !important;
@@ -573,7 +573,7 @@ div[data-testid="stMetric"] div[data-testid="stMetricValue"] {
 }
 
 /* Buttons */
-div.stButton > button {
+[data-testid="stMain"] div.stButton > button {
     border-radius: 9px;
     padding: 9px 16px;
     font-weight: 700;
@@ -583,12 +583,12 @@ div.stButton > button {
     transition: all 0.15s;
 }
 
-div.stButton > button:hover {
+[data-testid="stMain"] div.stButton > button:hover {
     background: #dbeafe;
     border-color: #93c5fd;
 }
 
-div[data-testid="stFormSubmitButton"] button {
+[data-testid="stMain"] div[data-testid="stFormSubmitButton"] button {
     border-radius: 11px;
     padding: 12px 18px;
     font-weight: 900;
@@ -599,7 +599,7 @@ div[data-testid="stFormSubmitButton"] button {
     transition: all 0.15s;
 }
 
-div[data-testid="stFormSubmitButton"] button:hover {
+[data-testid="stMain"] div[data-testid="stFormSubmitButton"] button:hover {
     background: linear-gradient(135deg, #2563eb, #3b82f6);
     box-shadow: 0 5px 18px rgba(37,99,235,0.5);
 }

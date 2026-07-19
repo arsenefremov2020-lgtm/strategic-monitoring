@@ -1,5 +1,6 @@
 [client]
 showSidebarNavigation = false
+toolbarMode = "minimal"
 
 [theme]
 # Єдиний, приємно-синій/прозоро-блакитний фон для всіх полів

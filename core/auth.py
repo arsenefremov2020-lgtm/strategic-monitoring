@@ -12,6 +12,7 @@ import logging
 import os
 import time
 from datetime import datetime, time as datetime_time, timedelta
+from html import escape
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -410,31 +411,68 @@ def _enforce_and_touch_activity() -> bool:
     return True
 
 
+def _render_sidebar_auth_notice(message: str, kind: str) -> None:
+    """Render a semantic auth notice whose appearance is controlled by assets/app.css."""
+    safe_kind = "success" if kind == "success" else "warning"
+    st.sidebar.markdown(
+        f'<div data-auth-sidebar-notice="{safe_kind}">{escape(str(message))}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_sidebar_auth_profile(user: dict) -> None:
+    """Render authenticated-user metadata as one stable sidebar block."""
+    full_name = escape(str(user.get("full_name") or "Користувач"))
+    role_label = escape(str(user.get("role_label") or get_role_label(user.get("role"))))
+    lines = [
+        f'<div data-auth-sidebar-profile-line="true">Користувач: {full_name}</div>',
+        f'<div data-auth-sidebar-profile-line="true">Роль: {role_label}</div>',
+    ]
+
+    email = str(user.get("email") or "").strip()
+    if email:
+        safe_email = escape(email)
+        safe_mailto = escape(email, quote=True)
+        lines.append(
+            '<div data-auth-sidebar-profile-line="true">'
+            f'Email: <a href="mailto:{safe_mailto}">{safe_email}</a></div>'
+        )
+
+    ssp = str(user.get("ssp") or "").strip()
+    if ssp:
+        lines.append(
+            '<div data-auth-sidebar-profile-line="true">'
+            f'ССП: {escape(ssp)}</div>'
+        )
+
+    st.sidebar.markdown(
+        '<div data-auth-sidebar-profile="true">' + "".join(lines) + "</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def render_login_form() -> dict:
     init_auth_state()
     _restore_from_cookie()
     _enforce_and_touch_activity()
     user = get_current_user()
 
-    st.sidebar.markdown("### Вхід до системи")
+    st.sidebar.markdown(
+        '<div data-auth-sidebar-title="login">Вхід до системи</div>',
+        unsafe_allow_html=True,
+    )
 
     timeout_message = st.session_state.pop(SESSION_TIMEOUT_MESSAGE_KEY, None)
     if timeout_message and not is_authenticated():
-        st.sidebar.warning(timeout_message)
+        _render_sidebar_auth_notice(timeout_message, "warning")
 
     if is_authenticated():
-        full_name = user.get("full_name") or "Користувач"
-        role_label = user.get("role_label") or get_role_label(user.get("role"))
-        st.sidebar.success("Вхід виконано")
-        st.sidebar.caption(f"Користувач: {full_name}")
-        st.sidebar.caption(f"Роль: {role_label}")
-        if user.get("email"):
-            st.sidebar.caption(f"Email: {user.get('email')}")
-        if user.get("ssp"):
-            st.sidebar.caption(f"ССП: {user.get('ssp')}")
+        _render_sidebar_auth_notice("Вхід виконано", "success")
+        _render_sidebar_auth_profile(user)
         if not _auth_secret():
-            st.sidebar.warning(
-                "Запам’ятовування входу вимкнено: адміністратор ще не додав секрет cookie."
+            _render_sidebar_auth_notice(
+                "Запам’ятовування входу вимкнено: адміністратор ще не додав секрет cookie.",
+                "warning",
             )
         if st.sidebar.button("Вийти з системи", key="logout_button"):
             logout_user()
@@ -462,16 +500,3 @@ def render_login_form() -> dict:
         st.sidebar.error(login_error)
     return get_current_user()
 
-
-def render_current_user_info() -> None:
-    user = get_current_user()
-    st.sidebar.markdown("---")
-    st.sidebar.caption("Поточний користувач")
-    full_name = user.get("full_name") or "Користувач без реєстрації"
-    role_label = user.get("role_label") or get_role_label(user.get("role"))
-    st.sidebar.caption(f"Ім'я: {full_name}")
-    st.sidebar.caption(f"Роль: {role_label}")
-    if user.get("email"):
-        st.sidebar.caption(f"Email: {user.get('email')}")
-    if user.get("ssp"):
-        st.sidebar.caption(f"ССП: {user.get('ssp')}")

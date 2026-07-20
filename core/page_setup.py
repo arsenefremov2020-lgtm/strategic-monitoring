@@ -165,15 +165,15 @@ def _hide_streamlit_fixed_chrome() -> None:
         }
 
         /*
-         * Прибираємо власний верхній відступ службової шапки sidebar,
-         * щоб логотип починався від верху панелі без зайвого поля.
-         * Порожня службова шапка над логотипом стискається до нуля, а
-         * внутрішній верхній відступ вмісту панелі обнуляється — логотип
-         * піднімається до самого верху.
+         * Логотип має стояти в самому верху панелі. Службова шапка sidebar
+         * (stSidebarHeader) над ним має власну висоту, паддінги і резервує
+         * місце під кнопку згортання — усе це стискаємо до нуля. Логотип
+         * додатково підтягуємо вгору невеликим негативним відступом, щоб він
+         * сів упритул до верхнього краю панелі.
          */
         section[data-testid="stSidebar"] [data-testid="stSidebarHeader"] {
-            padding-top: 0 !important;
-            padding-bottom: 0 !important;
+            padding: 0 !important;
+            margin: 0 !important;
             min-height: 0 !important;
             height: auto !important;
         }
@@ -185,7 +185,7 @@ def _hide_streamlit_fixed_chrome() -> None:
         }
 
         section[data-testid="stSidebar"] div[data-mineco-logo="true"] {
-            margin-top: 0 !important;
+            margin-top: -8px !important;
         }
         </style>
         """,

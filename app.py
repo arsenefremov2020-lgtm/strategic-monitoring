@@ -1,7 +1,6 @@
 from textwrap import dedent
 import re
 import io
-from datetime import datetime
 from html import escape
 
 import pandas as pd
@@ -16,10 +15,12 @@ from core.text_utils import (
     raw_value, clean_value, strip_leading_code, extract_ssp_index,
 )
 from core.statuses import status_score as unified_status_score
+from core import statuses as core_statuses
+from core.period_locks import all_periods_locked, is_period_locked
+from core.timeutils import now_kyiv
 from core import monitoring_data
 from core import exports as core_exports
 from core.strategic_data import load_strat_matrix as core_load_strat_matrix
-from core.approval_schemes import ALL_WAITING_STATUSES
 from core.access import (
     is_scope_lockable_user,
     is_scope_override_active,
@@ -97,21 +98,6 @@ header[data-testid="stHeader"] {
     line-height: 1.55;
 }
 
-.system-status {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 10px;
-    margin-top: 14px;
-}
-
-.status-pill {
-    background: #F7F9FC;
-    border: 1px solid #DCE4F0;
-    border-radius: 10px;
-    padding: 10px 12px;
-    font-size: 13px;
-    color: #61708A;
-}
 
 .cta-box {
     background: #118847;
@@ -232,7 +218,7 @@ header[data-testid="stHeader"] {
 
 .info-grid {
     display: grid;
-    grid-template-columns: 1.2fr 1fr;
+    grid-template-columns: 0.85fr 1.15fr;
     gap: 14px;
     margin-bottom: 20px;
 }
@@ -277,22 +263,6 @@ header[data-testid="stHeader"] {
     border-bottom: 1px solid rgba(148,163,184,0.35);
 }
 
-[data-testid="stMain"] div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
-[data-testid="stMain"] div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div,
-[data-testid="stMain"] div[data-testid="stTextInput"] input {
-    background-color: #EAF1FF !important;
-    border: 1px solid #BFD3F2 !important;
-    border-radius: 10px !important;
-    min-height: 43px !important;
-    box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.08) !important;
-}
-
-[data-testid="stMain"] div[data-testid="stSelectbox"] label,
-[data-testid="stMain"] div[data-testid="stMultiSelect"] label,
-[data-testid="stMain"] div[data-testid="stTextInput"] label {
-    font-weight: 750 !important;
-    color: #132238 !important;
-}
 
 div[data-testid="stExpander"] {
     border: none;
@@ -449,54 +419,50 @@ table.custom-table tr:nth-child(odd) {
 }
 
 td.status-review {
-    background-color: #E3EDFF !important;
+    background-color: transparent !important;
     color: #032A63;
     font-weight: 850;
 }
 
 td.status-approved {
-    background-color: #E4F5EC !important;
+    background-color: transparent !important;
     color: #0C713A;
     font-weight: 850;
 }
 
 td.status-returned {
-    background-color: #FDF3D8 !important;
+    background-color: transparent !important;
     color: #8A6400;
     font-weight: 850;
 }
 
 td.status-empty {
-    background-color: #FBE5E5 !important;
+    background-color: transparent !important;
     color: #DC4A4A;
     font-weight: 850;
 }
 
 td.status-notyet {
-    background-color: #FFFFFF !important;
+    background-color: transparent !important;
     border-color: #DCE4F0 !important;
     color: #61708A;
     font-weight: 850;
 }
 
-.closeout-badge {
-    display: inline-block;
-    margin-left: 6px;
-    padding: 1px 6px;
-    border-radius: 4px;
-    background-color: #6d28d9;
-    color: #F7F9FC !important;
-    font-size: 10px;
-    font-weight: 700;
-    white-space: nowrap;
-    vertical-align: middle;
-}
 
-/* Клітинка періоду, закритого адміністратором вручну */
-.status-manual-closeout {
-    background-color: #ede9fe !important;
+/* Значення періоду, закритого адміністратором вручну: фіолетовий стандарт збережено */
+td.status-manual-closeout {
+    background-color: transparent !important;
     color: #5b21b6;
     font-weight: 850;
+}
+td.status-manual-closeout .cell-nowrap,
+td.status-manual-closeout .cell-fixed {
+    display: inline-block;
+    background-color: #ede9fe;
+    color: #5b21b6;
+    border-radius: 5px;
+    padding: 1px 5px;
 }
 
 td.risk-cell {
@@ -573,9 +539,6 @@ td.risk-cell {
         grid-template-columns: 1fr;
     }
 
-    .system-status {
-        grid-template-columns: repeat(2, 1fr);
-    }
 }
 </style>
 """,
@@ -655,20 +618,6 @@ def make_cell(value, mode="fixed"):
 
     return f'<span class="cell-fixed" title="{title}">{title}</span>'
 
-
-def business_days_between(start, end):
-    if pd.isna(start) or pd.isna(end):
-        return 0
-
-    start_date = start.date()
-    end_date = end.date()
-
-    if end_date <= start_date:
-        return 0
-
-    return len(pd.bdate_range(start=start_date, end=end_date, inclusive="right"))
-
-
 # ------------------------------------------------------------
 # Data loading
 # ------------------------------------------------------------
@@ -691,95 +640,13 @@ from core.closeouts import load_manual_closeouts
 
 
 # ------------------------------------------------------------
-# Monitoring status logic
+# Monitoring status logic — єдина реалізація в core.statuses
 # ------------------------------------------------------------
 
-def get_measure_records(monitoring_df, code, selected_years, selected_quarters):
-    if monitoring_df.empty:
-        return pd.DataFrame()
-
-    years_as_str = [str(y) for y in selected_years]
-    quarters_as_str = [str(q).replace(" квартал", "").strip() for q in selected_quarters]
-
-    data = monitoring_df.copy()
-    data = data[data["strat_code"].astype(str).str.strip() == str(code).strip()]
-
-    if years_as_str:
-        data = data[data["year"].astype(str).str.strip().isin(years_as_str)]
-
-    if quarters_as_str:
-        data = data[data["quarter"].astype(str).str.strip().isin(quarters_as_str)]
-
-    return data.copy()
-
-
-def is_overdue_review_record(row):
-    # Уніфіковано: «на розгляді» = БУДЬ-ЯКА ланка схеми погодження,
-    # а не лише координатор (Очікує погодження).
-    if raw_value(row.get("approval_status", "")) not in ALL_WAITING_STATUSES:
-        return False
-
-    submitted = pd.to_datetime(row.get("submitted_at", None), errors="coerce")
-
-    if pd.isna(submitted):
-        return False
-
-    return business_days_between(submitted, pd.Timestamp.now()) > 5
-
-
-def get_record_visual_status(row):
-    approval = raw_value(row.get("approval_status", ""))
-    execution_status = raw_value(row.get("status", ""))
-
-    if execution_status == "Не настав час":
-        return "Не настав час"
-
-    if approval == "Погоджено":
-        return "Погоджено"
-
-    if approval == "Повернуто на доопрацювання":
-        return "На доопрацюванні"
-
-    if approval in ALL_WAITING_STATUSES:
-        return "Не враховано" if is_overdue_review_record(row) else "На розгляді"
-
-    return "Не враховано"
-
-
-def visual_status_class(status):
-    if status == "Погоджено":
-        return "status-approved"
-
-    if status == "На розгляді":
-        return "status-review"
-
-    if status == "На доопрацюванні":
-        return "status-returned"
-
-    if status == "Не настав час":
-        return "status-notyet"
-
-    return "status-empty"
-
-
-def get_measure_status(monitoring_df, code, selected_years, selected_quarters):
-    records = get_measure_records(monitoring_df, code, selected_years, selected_quarters)
-
-    if records.empty:
-        return "Не враховано"
-
-    statuses = [get_record_visual_status(row) for _, row in records.iterrows()]
-
-    if "Погоджено" in statuses:
-        return "Погоджено"
-
-    if "На розгляді" in statuses:
-        return "На розгляді"
-
-    if "На доопрацюванні" in statuses:
-        return "На доопрацюванні"
-
-    return "Не враховано"
+get_measure_records = core_statuses.get_measure_records
+get_record_visual_status = core_statuses.get_record_visual_status
+get_measure_status = core_statuses.get_measure_status
+visual_status_class = core_statuses.visual_status_class
 
 
 def has_monitoring_submission(monitoring_df, code, selected_years, selected_quarters):
@@ -808,22 +675,16 @@ def has_measure_risks(monitoring_df, code, selected_years, selected_quarters):
 
 def measure_matches_status_mode(monitoring_df, code, selected_years, selected_quarters, mode):
     status = get_measure_status(monitoring_df, code, selected_years, selected_quarters)
-
     if mode == "Усі заходи стратегічного плану":
         return True
-
     if mode == "Лише погоджені":
         return status == "Погоджено"
-
     if mode == "Лише на розгляді":
         return status == "На розгляді"
-
     if mode == "Лише на доопрацюванні":
         return status == "На доопрацюванні"
-
     if mode == "Лише не враховані":
         return status == "Не враховано"
-
     return True
 
 # ------------------------------------------------------------
@@ -1044,8 +905,10 @@ def count_filtered_status(filtered_measures, status_name):
     return len(filtered_measures[filtered_measures["monitoring_status"] == status_name])
 
 
-def calculate_completion(filtered_measures):
+def calculate_completion(filtered_measures, years=None, quarters=None):
     if filtered_measures.empty:
+        return 0, 0
+    if years is not None and quarters is not None and all_periods_locked(years, quarters):
         return 0, 0
 
     done_count = len(filtered_measures[filtered_measures["monitoring_status"] == "Погоджено"])
@@ -1467,15 +1330,16 @@ def render_measure_table(measures, monitoring_df, quarter_data, selected_years, 
                 item = quarter_data.get(code, {}).get(key, None)
 
                 if item is None:
-                    html += "<td class='col-year status-empty'></td>"
+                    if is_period_locked(y, q):
+                        html += f"<td class='col-year status-notyet'>{make_cell('—', 'nowrap')}</td>"
+                    else:
+                        html += "<td class='col-year status-empty'></td>"
                 else:
                     value = item.get("value", "")
+                    if is_period_locked(y, q) and not raw_value(value):
+                        value = "—"
                     cell_class = item.get("class", "status-empty")
-                    closeout_badge = (
-                        " <span class='closeout-badge' title='Закрито вручну адміністратором'>🔒 Закрито вручну</span>"
-                        if item.get("manual_closeout") else ""
-                    )
-                    html += f"<td class='col-year {cell_class}'>{make_cell(value, 'nowrap')}{closeout_badge}</td>"
+                    html += f"<td class='col-year {cell_class}'>{make_cell(value, 'nowrap')}</td>"
 
         html += f"<td class='col-long'>{make_cell(measure.get('source_global', ''), 'fixed')}</td>"
         html += f"<td class='col-long'>{make_cell(measure.get('source_national', ''), 'fixed')}</td>"
@@ -1575,7 +1439,9 @@ for closeout_code, closeout_year, closeout_quarter in manual_closeouts:
     closeout_key = f"{closeout_year}_{closeout_quarter}"
     quarter_data.setdefault(closeout_code, {}).setdefault(closeout_key, {"value": "", "visual_status": "", "class": "status-empty"})
     quarter_data[closeout_code][closeout_key]["manual_closeout"] = True
-    quarter_data[closeout_code][closeout_key]["class"] = "status-manual-closeout"
+    quarter_data[closeout_code][closeout_key]["class"] = (
+        "status-notyet" if is_period_locked(closeout_year, closeout_quarter) else "status-manual-closeout"
+    )
 
 default_state()
 
@@ -1664,17 +1530,6 @@ deputy_options = sorted([
 # Header
 # ------------------------------------------------------------
 
-last_update = datetime.now().strftime("%d.%m.%Y %H:%M")
-
-if not monitoring_df.empty and "submitted_at" in monitoring_df.columns:
-    try:
-        last_update_value = pd.to_datetime(monitoring_df["submitted_at"], errors="coerce").max()
-
-        if pd.notna(last_update_value):
-            last_update = last_update_value.strftime("%d.%m.%Y %H:%M")
-    except Exception as exc:
-        log_cosmetic_error("Форматування часу останнього оновлення на головній", exc)
-
 st.markdown('<div class="ua-line"></div>', unsafe_allow_html=True)
 
 st.markdown(
@@ -1693,16 +1548,12 @@ st.markdown(
         <div class="header-subtitle">
             Інтерактивна демо-версія системи моніторингу, аналізу та оцінки виконання заходів і прогресу досягнення завдань та стратегічних цілей
         </div>
-        <div class="system-status">
-            <div class="status-pill">● Supabase: активний</div>
-            <div class="status-pill">● Моніторинг: працює</div>
-            <div class="status-pill">● Статус системи: стабільний</div>
-            <div class="status-pill">● Оновлено: {last_update}</div>
-        </div>
     </div>
     """,
     unsafe_allow_html=True
 )
+
+render_auto_refresh_notice("app", minutes=5)
 
 if str(ANNOUNCEMENT or "").strip():
     st.warning(str(ANNOUNCEMENT).strip(), icon="📢")
@@ -1715,13 +1566,6 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
-
-# ------------------------------------------------------------
-# Автоматичне оновлення даних із бази
-# ------------------------------------------------------------
-
-render_auto_refresh_notice("app", minutes=5)
-
 
 # ------------------------------------------------------------
 # Flow block
@@ -1753,24 +1597,28 @@ total_measures = len(all_measures)
 
 submitted_count = unique_measure_count(monitoring_df)
 
+_monitoring_visual = monitoring_df.copy()
+if not _monitoring_visual.empty:
+    _monitoring_visual["_visual_status"] = _monitoring_visual.apply(get_record_visual_status, axis=1)
+
 reviewed_count = unique_measure_count(
-    monitoring_df,
-    lambda x: x["approval_status"].isin(["Погоджено", "Повернуто на доопрацювання"])
+    _monitoring_visual,
+    lambda x: x["_visual_status"].isin(["Погоджено", "На доопрацюванні"])
 )
 
 waiting_count = unique_measure_count(
-    monitoring_df,
-    lambda x: x.apply(lambda row: get_record_visual_status(row) == "На розгляді", axis=1)
+    _monitoring_visual,
+    lambda x: x["_visual_status"] == "На розгляді"
 )
 
 returned_count = unique_measure_count(
-    monitoring_df,
-    lambda x: x["approval_status"] == "Повернуто на доопрацювання"
+    _monitoring_visual,
+    lambda x: x["_visual_status"] == "На доопрацюванні"
 )
 
 approved_count = unique_measure_count(
-    monitoring_df,
-    lambda x: x["approval_status"] == "Погоджено"
+    _monitoring_visual,
+    lambda x: x["_visual_status"] == "Погоджено"
 )
 
 current_state_cards = "".join([
@@ -1815,7 +1663,7 @@ st.markdown(
             <div class="legend-item">🟩 Погоджено — відомості узгоджено та враховано.</div>
             <div class="legend-item">⬜ Не настав час — період виконання заходу ще не почався або він не має враховуватися в розрахунках за обраний період</div>
             <div class="legend-item">🟥 Не враховано — відомості не подані або перебувають на погодженні більше 5 робочих днів</div>
-            <div class="legend-item">🟪 Закрито адміністратором — захід закрито вручну на підставі внутрішньої інформації чи іншого звітного документа (підтверджено супер-адміном); клітинка підсвічується фіолетовим із позначкою 🔒</div>
+            <div class="legend-item">🟪 Закрито адміністратором — захід закрито вручну на підставі внутрішньої інформації чи іншого звітного документа (підтверджено супер-адміном); подане значення відображається фіолетовим</div>
         </div>
     </div>
     """,
@@ -1827,14 +1675,8 @@ st.markdown(
 # Filters
 # ------------------------------------------------------------
 
-st.markdown(
-    """
-    <div class="filter-box">
-        <div class="filter-title">Параметри відбору (для перегляду)</div>
-        <div class="filter-subtitle">Основні параметри</div>
-    """,
-    unsafe_allow_html=True
-)
+st.markdown('<div class="filter-title">Параметри відбору (для перегляду)</div>', unsafe_allow_html=True)
+st.markdown('<div class="filter-subtitle">Основні параметри</div>', unsafe_allow_html=True)
 
 with st.form("main_filters_form"):
     top_1, top_2, top_3, top_4 = st.columns([1.35, 0.8, 0.8, 1.15])
@@ -1891,59 +1733,47 @@ with st.form("main_filters_form"):
             key="status_mode_main"
         )
 
-    st.markdown('<div class="filter-subtitle">Додаткові параметри</div>', unsafe_allow_html=True)
+    with st.expander("Додаткові параметри", expanded=False):
+        bottom_1, bottom_2, bottom_3 = st.columns([1.1, 1.0, 1.8])
 
-    bottom_1, bottom_2, bottom_3 = st.columns([1.1, 1.0, 1.8])
+        with bottom_1:
+            st.multiselect(
+                "Стратегічна ціль",
+                list(goal_options.values()),
+                key="selected_goal_codes_main",
+                placeholder="Оберіть стратегічну ціль"
+            )
 
-    with bottom_1:
-        st.multiselect(
-            "Стратегічна ціль",
-            list(goal_options.values()),
-            key="selected_goal_codes_main",
-            placeholder="Оберіть стратегічну ціль"
-        )
+        with bottom_2:
+            st.multiselect(
+                "Тип продукту",
+                product_type_options,
+                key="selected_product_types_main",
+                placeholder="Оберіть тип продукту"
+            )
 
-    with bottom_2:
-        st.multiselect(
-            "Тип продукту",
-            product_type_options,
-            key="selected_product_types_main",
-            placeholder="Оберіть тип продукту"
-        )
+        with bottom_3:
+            st.text_input(
+                "Додаткові параметри пошуку (код завдання, заходу, ключові слова)",
+                key="search_main",
+                placeholder="Введіть код, назву або ключове слово"
+            )
 
-    with bottom_3:
-        st.text_input(
-            "Додаткові параметри пошуку (код завдання, заходу, ключові слова)",
-            key="search_main",
-            placeholder="Введіть код, назву або ключове слово"
-        )
-
-    form_spacer, form_submit_col = st.columns([2.4, 1])
-
-    with form_spacer:
-        st.empty()
-
-    with form_submit_col:
+    apply_col, reset_col = st.columns([1, 1])
+    with apply_col:
         st.form_submit_button(
             "Застосувати параметри відбору",
             use_container_width=True,
             on_click=apply_main_filters_form
         )
+    with reset_col:
+        st.form_submit_button(
+            "Скинути фільтри",
+            use_container_width=True,
+            on_click=reset_main_filters
+        )
 
-reset_spacer, reset_toggle_col, reset_col = st.columns([1.7, 1.5, 1])
-
-with reset_spacer:
-    st.empty()
-
-with reset_toggle_col:
-    render_scope_toggle("app", current_user)
-
-with reset_col:
-    st.button(
-        "Скинути фільтри",
-        use_container_width=True,
-        on_click=reset_main_filters
-    )
+render_scope_toggle("app", current_user)
 
 
 # ------------------------------------------------------------
@@ -2048,7 +1878,7 @@ if selected_ssp_indices or raw_value(search_query):
 visible_goals = goals[goals["code"].astype(str).str.strip().isin(filtered_goal_codes)].copy()
 visible_tasks = tasks_all[tasks_all["code"].astype(str).str.strip().isin(filtered_task_codes)].copy()
 
-done_count, completion_percent = calculate_completion(filtered_measures)
+done_count, completion_percent = calculate_completion(filtered_measures, selected_years, selected_quarters)
 
 approved_filtered = count_filtered_status(filtered_measures, "Погоджено")
 waiting_filtered = count_filtered_status(filtered_measures, "На розгляді")
@@ -2084,107 +1914,6 @@ st.caption(
     f"Параметри: {selected_status_mode}. "
     f"Заходів із ризиками: {risk_count}."
 )
-
-if not filtered_measures.empty:
-    st.download_button(
-        "Завантажити в Excel",
-        data=build_export_excel(filtered_measures, quarter_data, selected_years, selected_quarters),
-        file_name="strategic_monitoring_export.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
-
-    # ── Повне вивантаження: АБСОЛЮТНО ВСІ колонки + квартальні дані (правка №15) ──
-    with st.expander("📦 Повне вивантаження (усі колонки матриці + квартальні дані за обраними фільтрами)"):
-        st.caption(
-            "Excel з усіма колонками стратегічної матриці для відфільтрованих заходів "
-            "(індикатори, базові/фактичні/цільові значення, стратегічні орієнтири, джерела, "
-            "виконавці, дати, КПКВК і фінансування) + по кожному обраному року/кварталу — "
-            "подане значення, статус виконання, статус погодження та позначка ручного закриття."
-        )
-
-        def build_full_export_excel():
-            _col_labels = {
-                "code": "Код", "name": "Назва", "type_marker": "Тип рядка",
-                "product_type": "Тип продукту", "indicator": "Індикатор",
-                "unit": "Одиниці виміру", "base_2021": "2021 (базовий)",
-                "fact_2024": "2024 (звіт)", "fact_2025": "2025 (факт)",
-                "target_2026": "2026 (цільовий орієнтир)",
-                "target_2027": "2027 (цільовий орієнтир)",
-                "target_2028": "2028 (цільовий орієнтир)",
-                "strategic_target_2028": "Стратегічний орієнтир 2028",
-                "strategic_target_2034": "Стратегічний орієнтир 2034",
-                "source_global": "Глобальний рівень", "source_national": "Національний рівень",
-                "resp_main": "Головний виконавець", "resp_co_1": "Співвиконавець 1",
-                "resp_co_2": "Співвиконавець 2", "deputy_minister_raw": "Заступник Міністра",
-                "measure_period_years": "Період (років)",
-                "measure_start_date": "Початкова дата", "measure_end_date": "Кінцева дата",
-                "budget_kpkvk": "КПКВК", "budget_2026_approved": "ДБ 2026 (затверджено)",
-                "budget_2027_forecast": "ДБ 2027 (прогноз)", "budget_2028_forecast": "ДБ 2028 (прогноз)",
-                "other_source": "Інше джерело", "other_2026_plan": "Інші 2026 (план)",
-                "other_2027_forecast": "Інші 2027 (прогноз)", "other_2028_forecast": "Інші 2028 (прогноз)",
-                "object_type": "Тип об'єкта", "parent_goal_code": "Код СЦ", "parent_task_code": "Код завдання",
-            }
-            _skip = {"type_marker", "department"}
-            _full = filtered_measures.copy()
-            _cols = [c for c in _full.columns if c not in _skip and not str(c).startswith("_")]
-            _full = _full[_cols].rename(columns={c: _col_labels.get(c, c) for c in _cols})
-
-            # Квартальні дані за обраними фільтрами року/кварталу
-            _codes = filtered_measures["code"].astype(str).str.strip().tolist()
-            _mon = monitoring_df.copy()
-            for _c in ["strat_code", "year", "quarter", "numeric_value", "status", "approval_status"]:
-                if _c not in _mon.columns:
-                    _mon[_c] = ""
-            for _y in selected_years:
-                for _q in selected_quarters:
-                    _sub = _mon[
-                        (_mon["year"].astype(str).str.strip() == str(_y))
-                        & (_mon["quarter"].astype(str).str.strip() == str(_q))
-                    ]
-                    _by_code = {}
-                    for _, _r in _sub.iterrows():
-                        _by_code.setdefault(raw_value(_r.get("strat_code")), _r)
-                    _prefix = f"{_q} кв. {_y}"
-                    _full[f"{_prefix} — значення"] = [
-                        raw_value(_by_code.get(c, {}).get("numeric_value", "")) if c in _by_code else ""
-                        for c in _codes
-                    ]
-                    _full[f"{_prefix} — статус виконання"] = [
-                        raw_value(_by_code.get(c, {}).get("status", "")) if c in _by_code else ""
-                        for c in _codes
-                    ]
-                    _full[f"{_prefix} — статус погодження"] = [
-                        raw_value(_by_code.get(c, {}).get("approval_status", "")) if c in _by_code else ""
-                        for c in _codes
-                    ]
-                    _full[f"{_prefix} — закрито адміном"] = [
-                        "Так" if (c, str(_y), str(_q)) in manual_closeouts else ""
-                        for c in _codes
-                    ]
-
-            _buf = core_exports.write_styled_excel(
-                {"Повні дані": _full},
-                freeze_first_col=2,  # Код + Назва завжди видно під час горизонтальної прокрутки
-                extra_sheets_no_style={
-                    "Параметри вивантаження": pd.DataFrame({
-                        "Параметр": ["Роки", "Квартали", "ССП", "Режим", "Сформовано"],
-                        "Значення": [
-                            years_label, quarters_label, ssp_label, selected_status_mode,
-                            datetime.now().strftime("%d.%m.%Y %H:%M"),
-                        ],
-                    }),
-                },
-            )
-            return _buf
-
-        st.download_button(
-            "⬇️ Завантажити повний Excel",
-            data=build_full_export_excel(),
-            file_name=f"SP_повне_вивантаження_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="full_export_download",
-        )
-
 
 # ------------------------------------------------------------
 # Strategic plan view
@@ -2248,7 +1977,7 @@ else:
         goal_task_codes = set(goal_filtered_measures["parent_task_code"].astype(str).str.strip()) if not goal_filtered_measures.empty else set()
         tasks = tasks_all[tasks_all["code"].astype(str).str.strip().isin(goal_task_codes)].copy()
 
-        goal_done, goal_percent = calculate_completion(goal_filtered_measures)
+        goal_done, goal_percent = calculate_completion(goal_filtered_measures, selected_years, selected_quarters)
 
         goal_label = (
             f"{goal_code} {goal_name} | "
@@ -2290,7 +2019,7 @@ else:
                 if task_measures.empty and not task_indicators:
                     continue
 
-                task_done, task_percent = calculate_completion(task_measures)
+                task_done, task_percent = calculate_completion(task_measures, selected_years, selected_quarters)
 
                 task_label = (
                     f"{task_code} {task_name} | "
@@ -2344,7 +2073,31 @@ if str(current_user.get("role") or "") in {ROLE_SSP, ROLE_SSP_HEAD, ROLE_UNIT_HE
     if st.button("🖊️ Подати відомості", use_container_width=True, key="go_to_monitoring_submission"):
         st.switch_page("pages/1_Моніторинг_виконання.py")
 
-st.markdown("</div>", unsafe_allow_html=True)
+# ------------------------------------------------------------
+# Єдиний повний Excel-експорт — у самому низу сторінки
+# ------------------------------------------------------------
+
+_export_bytes = core_exports.build_main_monitoring_export(
+    strat_df=df,
+    filtered_measures=filtered_measures,
+    monitoring_df=monitoring_df,
+    indicator_monitoring_df=indicator_monitoring_df,
+    selected_years=selected_years,
+    selected_quarters=selected_quarters,
+    selected_ssp_indices=selected_ssp_indices,
+    selected_product_types=selected_product_types,
+    search_query=search_query,
+    manual_closeouts=manual_closeouts,
+)
+
+st.download_button(
+    "⬇️ Завантажити Excel",
+    data=_export_bytes,
+    file_name=f"SP_моніторинг_{now_kyiv().strftime('%Y%m%d_%H%M')}.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    key="main_full_excel_export",
+    use_container_width=False,
+)
 
 # ------------------------------------------------------------
 # Footer

@@ -380,17 +380,17 @@ table {
     min-width: 0 !important;
 }
 
+/*
+   Стабільна оболонка поля: стилізуємо кореневий BaseWeb-контейнер,
+   а не конкретний вкладений > div. Це однаково працює для одиночного
+   selectbox і multiselect незалежно від їхньої внутрішньої DOM-структури.
+*/
 [data-testid="stMain"] div[data-testid="stSelectbox"] div[data-baseweb="select"],
-[data-testid="stMain"] div[data-testid="stMultiSelect"] div[data-baseweb="select"] {
-    max-width: 100% !important;
-}
-
-/* Єдина рамка, фон, радіус, мінімальна висота і типографіка поля. */
-[data-testid="stMain"] div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
-[data-testid="stMain"] div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div,
-[data-testid="stMain"] div[data-testid="stTextInput"] input {
+[data-testid="stMain"] div[data-testid="stMultiSelect"] div[data-baseweb="select"],
+[data-testid="stMain"] div[data-testid="stTextInput"] div[data-baseweb="input"] {
     box-sizing: border-box !important;
     width: 100% !important;
+    max-width: 100% !important;
     min-height: 43px !important;
     background-color: #EAF1FF !important;
     border: 1px solid #BFD3F2 !important;
@@ -398,18 +398,40 @@ table {
     color: #132238 !important;
     font-weight: 700 !important;
     box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.08) !important;
+    overflow: hidden !important;
 }
 
-/* Значення й службові внутрішні шари лежать прямо на фоні поля. */
-[data-testid="stMain"] div[data-testid="stSelectbox"] div[data-baseweb="select"] > div *,
-[data-testid="stMain"] div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div * {
+/*
+   Внутрішні шари всіх трьох типів полів прозорі: текст лежить прямо
+   на єдиному блакитному фоні оболонки без темно-синіх прошарків.
+   Додаткові селектори role=combobox покривають одиночний selectbox.
+*/
+[data-testid="stMain"] div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
+[data-testid="stMain"] div[data-testid="stSelectbox"] div[data-baseweb="select"] [role="combobox"],
+[data-testid="stMain"] div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div,
+[data-testid="stMain"] div[data-testid="stMultiSelect"] div[data-baseweb="select"] [role="combobox"],
+[data-testid="stMain"] div[data-testid="stTextInput"] div[data-baseweb="input"] > div,
+[data-testid="stMain"] div[data-testid="stTextInput"] input {
+    min-height: 41px !important;
     background-color: transparent !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    color: #132238 !important;
+    font-weight: 700 !important;
+    box-shadow: none !important;
+    outline: none !important;
+}
+
+[data-testid="stMain"] div[data-testid="stSelectbox"] div[data-baseweb="select"] *,
+[data-testid="stMain"] div[data-testid="stMultiSelect"] div[data-baseweb="select"] *,
+[data-testid="stMain"] div[data-testid="stTextInput"] div[data-baseweb="input"] * {
     color: #132238 !important;
     font-weight: 700 !important;
 }
 
 [data-testid="stMain"] div[data-testid="stTextInput"] input,
 [data-testid="stMain"] div[data-testid="stTextInput"] input::placeholder {
+    background-color: transparent !important;
     color: #132238 !important;
     font-weight: 700 !important;
     opacity: 1 !important;
@@ -438,15 +460,29 @@ table {
     box-shadow: none !important;
 }
 
-/* Фокус не змінює фон або типографіку — лише трохи підсилює рамку. */
-[data-testid="stMain"] div[data-testid="stSelectbox"] div[data-baseweb="select"]:focus-within > div,
-[data-testid="stMain"] div[data-testid="stMultiSelect"] div[data-baseweb="select"]:focus-within > div,
-[data-testid="stMain"] div[data-testid="stTextInput"] input:focus {
+/* Hover/focus не змінюють фон або типографіку — лише трохи підсилюють рамку. */
+[data-testid="stMain"] div[data-testid="stSelectbox"] div[data-baseweb="select"]:hover,
+[data-testid="stMain"] div[data-testid="stMultiSelect"] div[data-baseweb="select"]:hover,
+[data-testid="stMain"] div[data-testid="stTextInput"] div[data-baseweb="input"]:hover,
+[data-testid="stMain"] div[data-testid="stSelectbox"] div[data-baseweb="select"]:focus-within,
+[data-testid="stMain"] div[data-testid="stMultiSelect"] div[data-baseweb="select"]:focus-within,
+[data-testid="stMain"] div[data-testid="stTextInput"] div[data-baseweb="input"]:focus-within {
     background-color: #EAF1FF !important;
     color: #132238 !important;
     font-weight: 700 !important;
     border-color: #7EA6E0 !important;
     outline: none !important;
+}
+
+[data-testid="stMain"] div[data-testid="stSelectbox"] div[data-baseweb="select"]:hover *,
+[data-testid="stMain"] div[data-testid="stMultiSelect"] div[data-baseweb="select"]:hover *,
+[data-testid="stMain"] div[data-testid="stTextInput"] div[data-baseweb="input"]:hover *,
+[data-testid="stMain"] div[data-testid="stSelectbox"] div[data-baseweb="select"]:focus-within *,
+[data-testid="stMain"] div[data-testid="stMultiSelect"] div[data-baseweb="select"]:focus-within *,
+[data-testid="stMain"] div[data-testid="stTextInput"] div[data-baseweb="input"]:focus-within * {
+    background-color: transparent !important;
+    color: #132238 !important;
+    font-weight: 700 !important;
 }
 
 /* Випадаюче меню: компактне, читабельне, без темно-синього hover/selected. */

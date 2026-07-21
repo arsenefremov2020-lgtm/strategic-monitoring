@@ -27,7 +27,7 @@ from __future__ import annotations
 import pandas as pd
 
 from core.approval_schemes import ALL_WAITING_STATUSES
-from core.period_locks import all_periods_locked, is_period_locked
+from core.period_locks import all_periods_locked, exclude_locked_periods, is_period_locked
 from core.timeutils import now_kyiv
 
 # ── Канонічні статуси моделі (Excel $AR$1:$AR$5) ──
@@ -153,17 +153,32 @@ LEGEND_COLORS = {
 }
 
 
-def legend_badge(state: object, extra_style: str = "") -> str:
-    """Готовий HTML-бейдж стану подання за єдиною легендою системи."""
+def legend_badge(
+    state: object,
+    extra_style: str = "",
+    *,
+    display_value: object | None = None,
+) -> str:
+    """Готовий HTML-бейдж за єдиною легендою системи.
+
+    За замовчуванням показує назву стану. ``display_value`` дозволяє
+    використати той самий колірний механізм для фактичного значення
+    (наприклад, у квартальній клітинці головної таблиці).
+    """
+    from html import escape as _escape
+
     s = clean(state)
     c = LEGEND_COLORS.get(s, LEGEND_COLORS["Не враховано"])
     label = s if s in LEGEND_COLORS else "Не враховано"
-    if label == "Закрито адміністратором":
-        label = "🔒 Закрито адміністратором"
+    if display_value is None:
+        if label == "Закрито адміністратором":
+            label = "🔒 Закрито адміністратором"
+    else:
+        label = clean(display_value) or "—"
     return (
         f'<span style="display:inline-block;padding:2px 10px;border-radius:20px;'
         f'font-size:11px;font-weight:800;background:{c["bg"]};color:{c["fg"]};'
-        f'border:1px solid {c["border"]};{extra_style}">{label}</span>'
+        f'border:1px solid {c["border"]};{extra_style}">{_escape(label)}</span>'
     )
 
 
@@ -237,7 +252,7 @@ def get_measure_records(monitoring_df: pd.DataFrame, code, selected_years, selec
 
 
 def get_measure_status(monitoring_df: pd.DataFrame, code, selected_years, selected_quarters) -> str:
-    """Агрегований статус заходу; повністю заблокована вибірка завжди «Не настав час»."""
+    """Агрегований статус заходу; period_locks не спотворюють змішані вибірки."""
     if all_periods_locked(selected_years or [], selected_quarters or []):
         return ST_NOTYET
 
@@ -245,8 +260,17 @@ def get_measure_status(monitoring_df: pd.DataFrame, code, selected_years, select
     if records.empty:
         return "Не враховано"
 
-    # Заблоковані періоди не впливають на статус незаблокованих кварталів.
-    statuses = [get_record_visual_status(row) for _, row in records.iterrows()]
+    # Якщо вибрано і заблоковані, і робочі квартали, записи заблокованих
+    # кварталів повністю ігноруємо. Інакше наявність даних лише в Q1/Q2 2026
+    # могла помилково дати «Не настав час» для вибірки, що також містить Q3/Q4.
+    effective_records = exclude_locked_periods(records)
+    if effective_records.empty:
+        return "Не враховано"
+
+    statuses = [
+        get_record_visual_status(row)
+        for _, row in effective_records.iterrows()
+    ]
     effective = [status for status in statuses if status != ST_NOTYET]
     if not effective and ST_NOTYET in statuses:
         return ST_NOTYET

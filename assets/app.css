@@ -352,12 +352,13 @@ table {
 
 /* ============================================================
    === ЄДИНИЙ ШАБЛОН ФІЛЬТРІВ СИСТЕМИ (правити тільки тут) ===
-   Єдине джерело оформлення фільтрів для всіх сторінок:
-   selectbox, multiselect, text_input, підписи полів, пігулки
-   обраних значень і випадаючі меню.
+   Єдине джерело оформлення фільтрів для всіх сторінок.
+   Актуальна DOM-модель Streamlit: React Aria; стабільні якорі —
+   data-testid, role та data-rac. Emotion-класи й BaseWeb не використовуються.
+   Шаблон не застосовується всередині sidebar, DataEditor і DataFrame.
    ============================================================ */
 
-/* Підписи: підтримуємо як спільний HTML-клас, так і штатні label Streamlit. */
+/* Підписи: спільний HTML-клас і штатні label Streamlit. */
 .filter-field-label:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *),
 div[data-testid="stSelectbox"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) label p,
 div[data-testid="stMultiSelect"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) label p,
@@ -372,7 +373,7 @@ div[data-testid="stTextInput"]:not(section[data-testid="stSidebar"] *):not(div[d
     margin: 0 0 4px 0;
 }
 
-/* Усі фільтри не виходять за межі колонки. */
+/* Контейнери фільтрів не виходять за межі колонки. */
 div[data-testid="stSelectbox"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *),
 div[data-testid="stMultiSelect"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *),
 div[data-testid="stTextInput"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) {
@@ -381,146 +382,138 @@ div[data-testid="stTextInput"]:not(section[data-testid="stSidebar"] *):not(div[d
 }
 
 /*
-   Стабільна оболонка поля: стилізуємо кореневий BaseWeb-контейнер,
-   а не конкретний вкладений > div. Це однаково працює для одиночного
-   selectbox і multiselect незалежно від їхньої внутрішньої DOM-структури.
+   Видима оболонка React Aria для selectbox/multiselect.
+   Саме role="group" малює рамку та фон; emotion-класи не використовуємо.
 */
-div[data-testid="stSelectbox"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) div[data-baseweb="select"],
-div[data-testid="stMultiSelect"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) div[data-baseweb="select"],
-div[data-testid="stTextInput"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) div[data-baseweb="input"] {
+div[data-testid="stSelectbox"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) [role="group"],
+div[data-testid="stMultiSelect"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) [role="group"] {
     box-sizing: border-box !important;
     width: 100% !important;
     max-width: 100% !important;
     min-height: 43px !important;
+    background: #EAF1FF !important;
     background-color: #EAF1FF !important;
     border: 1px solid #BFD3F2 !important;
     border-radius: 10px !important;
     color: #132238 !important;
     font-weight: 700 !important;
     box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.08) !important;
-    overflow: hidden !important;
+    outline: none !important;
+}
+
+/* TextInput: у React Aria видиму площу поля надійно представляє сам input. */
+div[data-testid="stTextInput"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) input {
+    box-sizing: border-box !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-height: 43px !important;
+    background: #EAF1FF !important;
+    background-color: #EAF1FF !important;
+    border: 1px solid #BFD3F2 !important;
+    border-radius: 10px !important;
+    color: #132238 !important;
+    font-weight: 700 !important;
+    box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.08) !important;
+    outline: none !important;
 }
 
 /*
-   Внутрішні шари всіх трьох типів полів прозорі: текст лежить прямо
-   на єдиному блакитному фоні оболонки без темно-синіх прошарків.
-   Додаткові селектори role=combobox покривають одиночний selectbox.
+   Внутрішні шари selectbox/multiselect прозорі: текст, combobox і кнопки
+   лежать безпосередньо на #EAF1FF, без темно-синіх проміжних підкладок.
 */
-div[data-testid="stSelectbox"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) div[data-baseweb="select"] > div,
-div[data-testid="stSelectbox"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) div[data-baseweb="select"] [role="combobox"],
-div[data-testid="stMultiSelect"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) div[data-baseweb="select"] > div,
-div[data-testid="stMultiSelect"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) div[data-baseweb="select"] [role="combobox"],
-div[data-testid="stTextInput"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) div[data-baseweb="input"] > div,
-div[data-testid="stTextInput"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) input {
-    min-height: 41px !important;
+div[data-testid="stSelectbox"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) [role="group"] input,
+div[data-testid="stSelectbox"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) [role="group"] [role="combobox"],
+div[data-testid="stSelectbox"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) [role="group"] button,
+div[data-testid="stMultiSelect"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) [role="group"] input,
+div[data-testid="stMultiSelect"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) [role="group"] [role="combobox"],
+div[data-testid="stMultiSelect"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) [role="group"] button {
+    background: transparent !important;
     background-color: transparent !important;
-    border: 0 !important;
-    border-radius: 0 !important;
+    border-color: transparent !important;
     color: #132238 !important;
     font-weight: 700 !important;
     box-shadow: none !important;
     outline: none !important;
 }
 
-div[data-testid="stSelectbox"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) div[data-baseweb="select"] *,
-div[data-testid="stMultiSelect"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) div[data-baseweb="select"] *,
-div[data-testid="stTextInput"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) div[data-baseweb="input"] * {
+/* Текст, вибране значення, плейсхолдер та іконки успадковують єдину типографіку. */
+div[data-testid="stSelectbox"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) [role="group"] *,
+div[data-testid="stMultiSelect"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) [role="group"] *,
+div[data-testid="stTextInput"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) input,
+div[data-testid="stTextInput"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) input::placeholder {
     color: #132238 !important;
     font-weight: 700 !important;
 }
 
-div[data-testid="stTextInput"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) input,
+div[data-testid="stSelectbox"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) input::placeholder,
+div[data-testid="stMultiSelect"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) input::placeholder,
 div[data-testid="stTextInput"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) input::placeholder {
-    background-color: transparent !important;
     color: #132238 !important;
     font-weight: 700 !important;
     opacity: 1 !important;
 }
 
-/* Овальні пігулки multiselect: без темно-синього прошарку. */
-div[data-testid="stMultiSelect"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) [data-baseweb="tag"] {
-    background-color: #EAF1FF !important;
-    color: #132238 !important;
-    border: 1px solid #BFD3F2 !important;
-    border-radius: 999px !important;
-    box-shadow: none !important;
-    font-weight: 700 !important;
-}
+/*
+   Пігулки multiselect навмисно не перевизначаємо через нестабільний клас:
+   у поточній React-Aria-розмітці немає підтвердженого стабільного окремого
+   атрибута для chip/tag. Загальні правила group не додають їм темної заливки.
+*/
 
-div[data-testid="stMultiSelect"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) [data-baseweb="tag"] * {
-    background-color: transparent !important;
-    color: #132238 !important;
-    font-weight: 700 !important;
-}
-
-div[data-testid="stMultiSelect"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) [data-baseweb="tag"]:hover,
-div[data-testid="stMultiSelect"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) [data-baseweb="tag"]:focus {
+/* Hover/focus-within: фон незмінний, підсилюється лише колір рамки. */
+div[data-testid="stSelectbox"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) [role="group"]:hover,
+div[data-testid="stMultiSelect"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) [role="group"]:hover,
+div[data-testid="stSelectbox"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) [role="group"]:focus-within,
+div[data-testid="stMultiSelect"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) [role="group"]:focus-within,
+div[data-testid="stSelectbox"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) [role="group"][data-focus-within],
+div[data-testid="stMultiSelect"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) [role="group"][data-focus-within],
+div[data-testid="stTextInput"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) input:hover,
+div[data-testid="stTextInput"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) input:focus {
+    background: #EAF1FF !important;
     background-color: #EAF1FF !important;
-    color: #132238 !important;
-    box-shadow: none !important;
-}
-
-/* Hover/focus не змінюють фон або типографіку — лише трохи підсилюють рамку. */
-div[data-testid="stSelectbox"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) div[data-baseweb="select"]:hover,
-div[data-testid="stMultiSelect"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) div[data-baseweb="select"]:hover,
-div[data-testid="stTextInput"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) div[data-baseweb="input"]:hover,
-div[data-testid="stSelectbox"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) div[data-baseweb="select"]:focus-within,
-div[data-testid="stMultiSelect"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) div[data-baseweb="select"]:focus-within,
-div[data-testid="stTextInput"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) div[data-baseweb="input"]:focus-within {
-    background-color: #EAF1FF !important;
-    color: #132238 !important;
-    font-weight: 700 !important;
     border-color: #7EA6E0 !important;
+    color: #132238 !important;
+    font-weight: 700 !important;
     outline: none !important;
 }
 
-div[data-testid="stSelectbox"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) div[data-baseweb="select"]:hover *,
-div[data-testid="stMultiSelect"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) div[data-baseweb="select"]:hover *,
-div[data-testid="stTextInput"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) div[data-baseweb="input"]:hover *,
-div[data-testid="stSelectbox"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) div[data-baseweb="select"]:focus-within *,
-div[data-testid="stMultiSelect"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) div[data-baseweb="select"]:focus-within *,
-div[data-testid="stTextInput"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) div[data-baseweb="input"]:focus-within * {
+/* React Aria listbox: біле меню, темний текст, світло-блакитний hover/selected. */
+[role="listbox"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) {
+    max-width: min(620px, 92vw) !important;
+    background: #FFFFFF !important;
+    background-color: #FFFFFF !important;
+    color: #132238 !important;
+}
+
+[role="listbox"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) [role="option"] {
+    background: transparent !important;
     background-color: transparent !important;
     color: #132238 !important;
     font-weight: 700 !important;
-}
-
-/* Випадаюче меню: компактне, читабельне, без темно-синього hover/selected. */
-div[data-baseweb="popover"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) {
-    max-width: min(620px, 92vw) !important;
-}
-
-div[data-baseweb="popover"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) ul[role="listbox"] {
-    max-width: min(620px, 92vw) !important;
-    background-color: #FFFFFF !important;
-}
-
-div[data-baseweb="popover"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) li,
-div[data-baseweb="popover"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) li * {
-    color: #132238 !important;
-    font-weight: 700 !important;
-}
-
-div[data-baseweb="popover"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) li {
     white-space: normal !important;
     line-height: 1.3 !important;
 }
 
-div[data-baseweb="popover"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) li[aria-selected="true"],
-div[data-baseweb="popover"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) li:hover,
-div[data-baseweb="popover"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) li:focus {
-    background-color: #EAF1FF !important;
+[role="listbox"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) [role="option"] *,
+[role="listbox"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) [role="option"][aria-selected="true"],
+[role="listbox"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) [role="option"][data-selected],
+[role="listbox"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) [role="option"][data-hovered],
+[role="listbox"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) [role="option"][data-focused],
+[role="listbox"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) [role="option"]:hover,
+[role="listbox"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) [role="option"]:focus {
     color: #132238 !important;
+    font-weight: 700 !important;
 }
 
-/* Data editor/dataframe не підпорядковуються шаблону звичайних фільтрів. */
-div[data-testid="stDataEditor"] input,
-div[data-testid="stDataEditor"] div[data-baseweb="select"] *,
-div[data-testid="stDataFrame"] input,
-div[data-testid="stDataFrame"] div[data-baseweb="select"] * {
-    font-weight: inherit !important;
-    background-color: initial !important;
+[role="listbox"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) [role="option"][aria-selected="true"],
+[role="listbox"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) [role="option"][data-selected],
+[role="listbox"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) [role="option"][data-hovered],
+[role="listbox"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) [role="option"][data-focused],
+[role="listbox"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) [role="option"]:hover,
+[role="listbox"]:not(section[data-testid="stSidebar"] *):not(div[data-testid="stDataEditor"] *):not(div[data-testid="stDataFrame"] *) [role="option"]:focus {
+    background: #EAF1FF !important;
+    background-color: #EAF1FF !important;
 }
+
 
 div[data-testid="column"] {
     min-width: 0 !important;

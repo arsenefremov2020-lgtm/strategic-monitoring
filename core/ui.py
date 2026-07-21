@@ -113,14 +113,14 @@ def render_auto_refresh_notice(page_key: str, *, minutes: int = 5, show_note: bo
     Використовується тільки на сторінках, де користувач прямо погодив TTL 5 хв:
     Головна, Dashboard, Картка заходу, Фільтр за документом, Оцінка МіО.
     """
-    from datetime import datetime
+    from core.timeutils import now_kyiv
     import streamlit.components.v1 as components
 
     ms = max(1, int(minutes)) * 60 * 1000
     if show_note:
         st.info(
             f"Дані автоматично оновлюються кожні {minutes} хвилин. "
-            f"Останнє оновлення сторінки: {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+            f"Останнє оновлення сторінки: {now_kyiv().strftime('%d.%m.%Y %H:%M')}"
         )
     # Малий невидимий компонент. Не чіпає session_state, просто оновлює вкладку браузера.
     components.html(

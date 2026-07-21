@@ -8,15 +8,15 @@ technical details in the interface.
 
 from __future__ import annotations
 
+from core.timeutils import now_kyiv
+
 import logging
 from datetime import datetime
 from typing import Callable, TypeVar
-from zoneinfo import ZoneInfo
 
 import streamlit as st
 
 T = TypeVar("T")
-KYIV_TZ = ZoneInfo("Europe/Kyiv")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("monitoring_app")
@@ -24,7 +24,7 @@ logger = logging.getLogger("monitoring_app")
 
 def create_incident_code() -> str:
     """Return an incident code based on the current Kyiv date and time."""
-    return datetime.now(KYIV_TZ).strftime("%Y%m%d-%H%M%S")
+    return now_kyiv().strftime("%Y%m%d-%H%M%S")
 
 
 def log_exception(context: str, error: BaseException, *, incident_code: str | None = None) -> str:

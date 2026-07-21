@@ -11,12 +11,12 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import quote
-from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
 
-KYIV_TZ = ZoneInfo("Europe/Kyiv")
+from core.timeutils import KYIV_TZ, now_kyiv
+
 WAITING_STATUS_LABELS = {
     "Очікує погодження": "Координатор",
     "Очікує: Керівник ССП": "Керівник ССП",
@@ -57,7 +57,7 @@ def quarter_to_roman(value: Any) -> str:
 
 
 def kyiv_now() -> datetime:
-    return datetime.now(KYIV_TZ)
+    return now_kyiv()
 
 
 def format_kyiv_datetime(value: Any, fallback: str = "—") -> str:

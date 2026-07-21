@@ -17,6 +17,7 @@ import io
 from datetime import datetime
 from pathlib import Path
 
+from core.timeutils import now_kyiv
 from core.errors import log_cosmetic_error, show_warning
 
 
@@ -176,7 +177,7 @@ def build_presentation_pdf(
     c.setFillColorRGB(*GREY)
     c.drawString(40, page_h / 2 - 26, period_text[:90])
     c.setFont(font_r, 12)
-    c.drawString(40, 60, f"Сформовано: {datetime.now().strftime('%d.%m.%Y %H:%M')}")
+    c.drawString(40, 60, f"Сформовано: {now_kyiv().strftime('%d.%m.%Y %H:%M')}")
     footer(page_no)
     c.showPage()
 
@@ -552,4 +553,581 @@ def dataframes_to_docx_landscape(
 
     buffer = io.BytesIO()
     doc.save(buffer)
+    return buffer.getvalue()
+
+# ------------------------------------------------------------
+# Головний Excel-експорт сторінки app.py
+# ------------------------------------------------------------
+
+_MATRIX_DARK_BLUE = "#032A63"
+_MATRIX_DARK_ORANGE = "#C65911"
+_MATRIX_GOAL_BLUE = "#5B9BD5"
+_MATRIX_TASK_BLUE = "#D9EAF7"
+_MATRIX_WHITE = "#FFFFFF"
+_MATRIX_GREY = "#F2F2F2"
+_MATRIX_TEXT = "#132238"
+
+
+def _export_clean(value) -> str:
+    if value is None:
+        return ""
+    try:
+        import pandas as pd
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    text = str(value).strip()
+    return "" if text.lower() in {"nan", "none", "nat"} else text
+
+
+def _quarter_roman(value) -> str:
+    from core.periods import quarter_key
+    return quarter_key(value)
+
+
+def _latest_period_records(monitoring_df):
+    """Індекс (code, year, quarter) -> найактуальніший запис."""
+    import pandas as pd
+    result = {}
+    if monitoring_df is None or monitoring_df.empty:
+        return result
+    data = monitoring_df.copy()
+    for col in ["strat_code", "year", "quarter", "submitted_at", "id"]:
+        if col not in data.columns:
+            data[col] = ""
+    data["_submitted_sort"] = pd.to_datetime(data["submitted_at"], errors="coerce", utc=True)
+    data["_id_sort"] = pd.to_numeric(data["id"], errors="coerce").fillna(-1)
+    data = data.sort_values(["_submitted_sort", "_id_sort"], na_position="first")
+    for _, row in data.iterrows():
+        key = (
+            _export_clean(row.get("strat_code")),
+            _export_clean(row.get("year")),
+            _quarter_roman(row.get("quarter")),
+        )
+        if all(key):
+            result[key] = row
+    return result
+
+
+def _indicator_latest_value(indicator_df, row, year) -> str:
+    """Останнє подане значення конкретного індикатора за роком."""
+    import pandas as pd
+    if indicator_df is None or indicator_df.empty:
+        return ""
+    data = indicator_df.copy()
+    code = _export_clean(row.get("code"))
+    indicator_name = _export_clean(row.get("indicator"))
+    if "strat_code" not in data.columns:
+        return ""
+    data = data[data["strat_code"].astype(str).str.strip() == code]
+    if "year" in data.columns:
+        data = data[data["year"].astype(str).str.strip() == str(year)]
+    if indicator_name and "indicator_name" in data.columns:
+        exact = data[data["indicator_name"].astype(str).str.strip() == indicator_name]
+        if not exact.empty:
+            data = exact
+    if data.empty:
+        return ""
+    if "submitted_at" not in data.columns:
+        data["submitted_at"] = ""
+    if "id" not in data.columns:
+        data["id"] = ""
+    data["_submitted_sort"] = pd.to_datetime(data["submitted_at"], errors="coerce", utc=True)
+    data["_id_sort"] = pd.to_numeric(data["id"], errors="coerce").fillna(-1)
+    data = data.sort_values(["_submitted_sort", "_id_sort"], ascending=[False, False])
+    return _export_clean(data.iloc[0].get("numeric_value", ""))
+
+
+def _indicator_matches_export_filters(row, selected_ssp_indices=None, selected_product_types=None, search_query="") -> bool:
+    from core.text_utils import extract_ssp_index
+    selected_ssp_indices = {str(x).strip() for x in (selected_ssp_indices or []) if str(x).strip()}
+    if selected_ssp_indices:
+        values = [row.get("resp_main", ""), row.get("resp_co_1", ""), row.get("resp_co_2", "")]
+        indexes = {extract_ssp_index(v) for v in values if _export_clean(v)}
+        if not (indexes & selected_ssp_indices):
+            return False
+    selected_product_types = {_export_clean(x) for x in (selected_product_types or []) if _export_clean(x)}
+    if selected_product_types and _export_clean(row.get("product_type")) not in selected_product_types:
+        return False
+    query = _export_clean(search_query).lower()
+    if query:
+        haystack = " ".join(_export_clean(row.get(col, "")) for col in [
+            "code", "name", "indicator", "product_type", "resp_main", "resp_co_1", "resp_co_2"
+        ]).lower()
+        if query not in haystack:
+            return False
+    return True
+
+
+def _goal_number(code: str) -> str:
+    import re
+    match = re.search(r"\d+", _export_clean(code))
+    return match.group(0) if match else _export_clean(code)
+
+
+def _approval_route_and_current(record) -> tuple[str, str, str]:
+    """(координатор, діюча схема, поточний статус погодження)."""
+    from core.approval_schemes import parse_chain, parse_stage, chain_route_text, current_stage
+    if record is None:
+        return "", "", ""
+    chain = parse_chain(record.get("approval_chain", ""))
+    coordinator = ""
+    for stage in chain:
+        if _export_clean(stage.get("role")) == "admin" or "координатор" in _export_clean(stage.get("label")).lower():
+            coordinator = _export_clean(stage.get("name")) or _export_clean(stage.get("email"))
+            break
+    scheme = _export_clean(record.get("scheme_label"))
+    route = chain_route_text(chain)
+    if scheme and route:
+        scheme_text = f"{scheme}: {route}"
+    else:
+        scheme_text = scheme or route
+
+    approval = _export_clean(record.get("approval_status"))
+    if approval == "Погоджено":
+        current = "Погоджено"
+    elif approval == "Повернуто на доопрацювання":
+        current = "Повернуто на доопрацювання"
+    else:
+        stage = current_stage(chain, parse_stage(record.get("chain_stage")))
+        if stage:
+            who = _export_clean(stage.get("name")) or _export_clean(stage.get("email"))
+            label = _export_clean(stage.get("label"))
+            current = f"{label} ({who})" if who else label
+        else:
+            current = approval
+    return coordinator, scheme_text, current
+
+
+def _load_export_logs():
+    import pandas as pd
+    try:
+        from core.db import fetch_all
+        return pd.DataFrame(fetch_all("monitoring_logs", "*", order=("changed_at", False)))
+    except Exception:
+        return pd.DataFrame()
+
+
+def _approval_history(logs_df, request_id) -> str:
+    import pandas as pd
+    if logs_df is None or logs_df.empty or request_id in (None, "") or "request_id" not in logs_df.columns:
+        return ""
+    try:
+        rid = int(float(str(request_id)))
+        data = logs_df[pd.to_numeric(logs_df["request_id"], errors="coerce") == rid].copy()
+    except Exception:
+        return ""
+    if data.empty:
+        return ""
+    if "changed_at" not in data.columns:
+        data["changed_at"] = ""
+    data["_sort"] = pd.to_datetime(data["changed_at"], errors="coerce", utc=True)
+    data = data.sort_values("_sort", na_position="last")
+    parts = []
+    for _, row in data.iterrows():
+        ts = pd.to_datetime(row.get("changed_at"), errors="coerce", utc=True)
+        if pd.notna(ts):
+            try:
+                stamp = ts.tz_convert("Europe/Kyiv").strftime("%d.%m.%Y %H:%M")
+            except Exception:
+                stamp = str(ts)
+        else:
+            stamp = ""
+        actor = _export_clean(row.get("actor_name")) or _export_clean(row.get("changed_by")) or _export_clean(row.get("actor_email"))
+        action = _export_clean(row.get("action"))
+        old_status = _export_clean(row.get("old_status"))
+        new_status = _export_clean(row.get("new_status"))
+        transition = " → ".join(x for x in [old_status, new_status] if x)
+        comment = _export_clean(row.get("admin_comment"))
+        item = " · ".join(x for x in [stamp, actor, action, transition, comment] if x)
+        if item:
+            parts.append(item)
+    return "\n".join(parts)
+
+
+def _write_matrix_sheet(
+    workbook,
+    strat_df,
+    filtered_measures,
+    monitoring_df,
+    indicator_monitoring_df,
+    selected_years,
+    selected_quarters,
+    selected_ssp_indices,
+    selected_product_types,
+    search_query,
+):
+    import pandas as pd
+    from core.period_locks import is_period_locked
+    from core.text_utils import strip_leading_code
+
+    ws = workbook.add_worksheet("Матриця стратег. результатів")
+
+    title_fmt = workbook.add_format({"bold": True, "font_color": _MATRIX_DARK_BLUE, "font_size": 16, "align": "left", "valign": "vcenter"})
+    header_blue = workbook.add_format({"bold": True, "font_color": "#FFFFFF", "bg_color": _MATRIX_DARK_BLUE, "align": "center", "valign": "vcenter", "text_wrap": True, "border": 1, "border_color": "#FFFFFF"})
+    header_orange = workbook.add_format({"bold": True, "font_color": "#FFFFFF", "bg_color": _MATRIX_DARK_ORANGE, "align": "center", "valign": "vcenter", "text_wrap": True, "border": 1, "border_color": "#FFFFFF"})
+    number_fmt = workbook.add_format({"bold": True, "font_color": _MATRIX_TEXT, "align": "center", "valign": "vcenter", "border": 1, "border_color": _BORDER_COLOR})
+    goal_fmt = workbook.add_format({"bg_color": _MATRIX_GOAL_BLUE, "font_color": "#FFFFFF", "bold": True, "valign": "top", "text_wrap": True, "border": 1, "border_color": _BORDER_COLOR})
+    task_fmt = workbook.add_format({"bg_color": _MATRIX_TASK_BLUE, "font_color": _MATRIX_TEXT, "bold": True, "valign": "top", "text_wrap": True, "border": 1, "border_color": _BORDER_COLOR})
+    measure_white = workbook.add_format({"bg_color": _MATRIX_WHITE, "font_color": _MATRIX_TEXT, "valign": "top", "text_wrap": True, "border": 1, "border_color": _BORDER_COLOR})
+    measure_grey = workbook.add_format({"bg_color": _MATRIX_GREY, "font_color": _MATRIX_TEXT, "valign": "top", "text_wrap": True, "border": 1, "border_color": _BORDER_COLOR})
+
+    selected_years = [int(y) for y in (selected_years or [])]
+    selected_quarters = [_quarter_roman(q) for q in (selected_quarters or []) if _quarter_roman(q)]
+    q_label = {"I": "Q1", "II": "Q2", "III": "Q3", "IV": "Q4"}
+
+    # Структура колонок. A — службова порожня; нумерація починається з B=1.
+    columns = [
+        {"key": "_a", "kind": "blue"},
+        {"key": "_group", "kind": "blue"},
+        {"key": "_code", "kind": "blue"},
+        {"key": "name", "kind": "blue", "single": "Стратегічні цілі, завдання та заходи до них"},
+        {"key": "product_type", "kind": "blue", "single": "Тип продукту"},
+        {"key": "indicator", "kind": "blue", "single": "Індикатор"},
+        {"key": "unit", "kind": "blue", "single": "Одиниці виміру"},
+        {"key": "base_2021", "kind": "orange", "year": "2021", "sub": "базовий рівень (факт)"},
+        {"key": "fact_2024", "kind": "orange", "year": "2024", "sub": "звіт"},
+        {"key": "fact_2025", "kind": "orange", "year": "2025", "sub": "факт"},
+    ]
+    for year in [2026, 2027, 2028]:
+        columns.append({"key": f"target_{year}", "kind": "orange", "year": str(year), "sub": "цільовий орієнтир для заходів на рік"})
+        if year in selected_years:
+            for quarter in selected_quarters:
+                columns.append({"key": f"q_{year}_{quarter}", "kind": "orange", "single": f"{year} {q_label.get(quarter, quarter)}", "quarter": (year, quarter)})
+
+    # Роки 2029–2033 не мають окремих планових колонок у затвердженій матриці;
+    # їхні обрані квартальні зрізи ставимо після планового блоку 2028.
+    for year in [y for y in selected_years if y in {2029, 2030, 2031, 2032, 2033}]:
+        for quarter in selected_quarters:
+            columns.append({"key": f"q_{year}_{quarter}", "kind": "orange", "single": f"{year} {q_label.get(quarter, quarter)}", "quarter": (year, quarter)})
+
+    columns.append({"key": "strategic_target_2028", "kind": "orange", "single": "Проміжний цільовий орієнтир на кінець 2028 року"})
+    columns.append({"key": "strategic_target_2034", "kind": "orange", "single": "Цільовий орієнтир на кінець 2034 року для цілей і завдань (відповідає цілі, визначеній в НЕС-2030, ЦСР-2030 для показників, де це зазначено. Ціль перенесена на 2034 рік через «втрату» 4-х років — 2022–2025 внаслідок повномасштабної війни. Інші індикативні значення мають встановлюватися такими, що є кількісно узгодженими з цілями НЕС і ЦСР)"})
+    if 2034 in selected_years:
+        for quarter in selected_quarters:
+            columns.append({"key": f"q_2034_{quarter}", "kind": "orange", "single": f"2034 {q_label.get(quarter, quarter)}", "quarter": (2034, quarter)})
+
+    # Службові маркери для багаторівневої шапки.
+    source_global_idx = len(columns)
+    columns += [
+        {"key": "source_global", "kind": "blue"},
+        {"key": "source_national", "kind": "blue"},
+    ]
+    resp_idx = len(columns)
+    columns += [
+        {"key": "resp_main", "kind": "blue"},
+        {"key": "resp_co", "kind": "blue"},
+        {"key": "deputy_minister_raw", "kind": "blue", "single": "Заступник Міністра"},
+        {"key": "measure_period_years", "kind": "blue", "single": "Період дії заходу в межах планового періоду, років"},
+        {"key": "measure_start_date", "kind": "blue", "single": "Початкова дата"},
+        {"key": "measure_end_date", "kind": "blue", "single": "Кінцева дата"},
+    ]
+    finance_idx = len(columns)
+    columns += [
+        {"key": "budget_kpkvk", "kind": "blue"},
+        {"key": "budget_2026_approved", "kind": "blue"},
+        {"key": "budget_2027_forecast", "kind": "blue"},
+        {"key": "budget_2028_forecast", "kind": "blue"},
+        {"key": "other_source", "kind": "blue"},
+        {"key": "other_2026_plan", "kind": "blue"},
+        {"key": "other_2027_forecast", "kind": "blue"},
+        {"key": "other_2028_forecast", "kind": "blue"},
+    ]
+
+    last_col = len(columns) - 1
+    ws.merge_range(0, 0, 0, 3, "Матриця стратегічних результатів", title_fmt)
+    ws.set_row(0, 24)
+    ws.set_row(1, 8)
+
+    # Рядки 3–5 (xlsxwriter zero-based 2–4).
+    for idx, col in enumerate(columns):
+        fmt = header_orange if col.get("kind") == "orange" else header_blue
+        if col.get("single"):
+            ws.merge_range(2, idx, 4, idx, col["single"], fmt)
+        elif col.get("year"):
+            ws.write(2, idx, col["year"], fmt)
+            ws.merge_range(3, idx, 4, idx, col["sub"], fmt)
+        elif idx < 3:
+            ws.merge_range(2, idx, 4, idx, "", fmt)
+
+    source_title = "Джерело даних (для індикаторів)/Підстава для включення (для заходів)"
+    ws.merge_range(2, source_global_idx, 3, source_global_idx, source_title, header_blue)
+    ws.write(4, source_global_idx, "Глобальний рівень", header_blue)
+    ws.merge_range(2, source_global_idx + 1, 3, source_global_idx + 1, source_title, header_blue)
+    ws.write(4, source_global_idx + 1, "Національний рівень", header_blue)
+
+    ws.merge_range(2, resp_idx, 3, resp_idx + 1, "Відповідальні самостійні структурні підрозділи", header_blue)
+    ws.write(4, resp_idx, "Головний виконавець", header_blue)
+    ws.write(4, resp_idx + 1, "Співвиконавець", header_blue)
+
+    ws.merge_range(2, finance_idx, 2, finance_idx + 7, "Фінансування", header_blue)
+    ws.merge_range(3, finance_idx, 3, finance_idx + 3, "Державний бюджет України", header_blue)
+    ws.merge_range(3, finance_idx + 4, 3, finance_idx + 7, "Інші джерела", header_blue)
+    finance_headers = [
+        "КПКВК", "2026 затверджено, млрд грн", "2027 прогноз, млрд грн", "2028 прогноз, млрд грн",
+        "Джерело (МТД, кошти партнерів, інші небюджетні джерела)", "2026 план", "2027 прогноз", "2028 прогноз",
+    ]
+    for offset, label in enumerate(finance_headers):
+        ws.write(4, finance_idx + offset, label, header_blue)
+
+    # Нумерація рядка 6: B=1, A порожня.
+    ws.write(5, 0, "", number_fmt)
+    for idx in range(1, last_col + 1):
+        ws.write(5, idx, idx, number_fmt)
+
+    ws.freeze_panes(6, 0)
+    ws.set_row(2, 42)
+    ws.set_row(3, 42)
+    ws.set_row(4, 58)
+
+    # Ширини.
+    widths = {0: 3, 1: 18, 2: 20, 3: 48, 4: 22, 5: 42, 6: 18}
+    for idx in range(len(columns)):
+        width = widths.get(idx, 18)
+        key = columns[idx]["key"]
+        if key.startswith("q_"):
+            width = 14
+        elif key in {"source_global", "source_national"}:
+            width = 34
+        elif key in {"resp_main", "resp_co", "deputy_minister_raw"}:
+            width = 24
+        elif key in {"other_source"}:
+            width = 34
+        ws.set_column(idx, idx, width)
+
+    record_index = _latest_period_records(monitoring_df)
+
+    measures = filtered_measures.copy() if filtered_measures is not None else pd.DataFrame()
+    if measures.empty:
+        return ws
+    goal_codes = list(dict.fromkeys(measures["parent_goal_code"].astype(str).str.strip().tolist()))
+    task_codes = list(dict.fromkeys(measures["parent_task_code"].astype(str).str.strip().tolist()))
+    goals = strat_df[(strat_df["object_type"] == "goal") & strat_df["code"].astype(str).str.strip().isin(goal_codes)].copy()
+    tasks = strat_df[(strat_df["object_type"] == "task") & strat_df["code"].astype(str).str.strip().isin(task_codes)].copy()
+
+    def indicator_rows_for(kind: str, code: str):
+        if kind == "goal":
+            rows = strat_df[
+                (strat_df["object_type"].isin(["goal", "goal_indicator"]))
+                & (strat_df["parent_goal_code"].astype(str).str.strip().eq(code) | strat_df["code"].astype(str).str.strip().eq(code))
+                & (strat_df["parent_task_code"].astype(str).str.strip() == "")
+            ].copy()
+        else:
+            rows = strat_df[
+                (strat_df["object_type"].isin(["task", "task_indicator"]))
+                & (strat_df["parent_task_code"].astype(str).str.strip().eq(code) | strat_df["code"].astype(str).str.strip().eq(code))
+            ].copy()
+        return [
+            row for _, row in rows.iterrows()
+            if _export_clean(row.get("indicator"))
+            and _indicator_matches_export_filters(
+                row, selected_ssp_indices, selected_product_types, search_query
+            )
+        ]
+
+    def row_values(source, row_type: str, group="", code_value=""):
+        values = {col["key"]: "" for col in columns}
+        values["_group"] = group
+        values["_code"] = code_value
+        if source is not None:
+            for col in columns:
+                key = col["key"]
+                if key == "resp_co":
+                    values[key] = "; ".join(x for x in [_export_clean(source.get("resp_co_1")), _export_clean(source.get("resp_co_2"))] if x)
+                elif key.startswith("q_"):
+                    year, quarter = col["quarter"]
+                    if row_type == "measure":
+                        record = record_index.get((_export_clean(source.get("code")), str(year), quarter))
+                        actual = _export_clean(record.get("numeric_value")) if record is not None else ""
+                        if is_period_locked(year, quarter) and not actual:
+                            actual = "Не настав час"
+                        values[key] = actual
+                elif key in source:
+                    values[key] = _export_clean(source.get(key))
+            if row_type == "indicator":
+                for key, year in [("base_2021", 2021), ("fact_2024", 2024), ("fact_2025", 2025), ("target_2026", 2026), ("target_2027", 2027), ("target_2028", 2028)]:
+                    current = _export_clean(values.get(key))
+                    if current.lower() in {"x", "х"}:
+                        latest = _indicator_latest_value(indicator_monitoring_df, source, year)
+                        if latest:
+                            values[key] = latest
+        if row_type == "indicator":
+            values["name"] = ""
+        return [values[col["key"]] for col in columns]
+
+    out_row = 6
+    zebra = 0
+    for _, goal in goals.iterrows():
+        goal_code = _export_clean(goal.get("code"))
+        goal_measures = measures[measures["parent_goal_code"].astype(str).str.strip() == goal_code]
+        if goal_measures.empty:
+            continue
+        goal_name = strip_leading_code(goal.get("name", ""), goal_code)
+        values = row_values(None, "goal", f"Стратегічна ціль {_goal_number(goal_code)}", goal_name)
+        for col_idx, value in enumerate(values):
+            ws.write(out_row, col_idx, value, goal_fmt)
+        out_row += 1
+        for indicator_row in indicator_rows_for("goal", goal_code):
+            values = row_values(indicator_row, "indicator")
+            for col_idx, value in enumerate(values):
+                ws.write(out_row, col_idx, value, goal_fmt)
+            out_row += 1
+
+        goal_task_codes = list(dict.fromkeys(goal_measures["parent_task_code"].astype(str).str.strip().tolist()))
+        goal_tasks = tasks[tasks["code"].astype(str).str.strip().isin(goal_task_codes)]
+        for _, task in goal_tasks.iterrows():
+            task_code = _export_clean(task.get("code"))
+            task_name = strip_leading_code(task.get("name", ""), task_code)
+            values = row_values(None, "task", "Завдання:", "")
+            # За ТЗ назва завдання — у колонці D.
+            values[3] = task_name
+            for col_idx, value in enumerate(values):
+                ws.write(out_row, col_idx, value, task_fmt)
+            out_row += 1
+            for indicator_row in indicator_rows_for("task", task_code):
+                values = row_values(indicator_row, "indicator")
+                for col_idx, value in enumerate(values):
+                    ws.write(out_row, col_idx, value, task_fmt)
+                out_row += 1
+
+            task_measures = goal_measures[goal_measures["parent_task_code"].astype(str).str.strip() == task_code]
+            for measure_idx, (_, measure) in enumerate(task_measures.iterrows()):
+                code = _export_clean(measure.get("code"))
+                values = row_values(measure, "measure", "Заходи:" if measure_idx == 0 else "", code)
+                values[3] = strip_leading_code(measure.get("name", ""), code)
+                fmt = measure_grey if zebra % 2 else measure_white
+                zebra += 1
+                for col_idx, value in enumerate(values):
+                    ws.write(out_row, col_idx, value, fmt)
+                out_row += 1
+
+    return ws
+
+
+def _build_detailed_export_df(filtered_measures, monitoring_df, selected_years, selected_quarters, manual_closeouts):
+    import pandas as pd
+    from core.period_locks import is_period_locked
+    from core.text_utils import strip_leading_code
+
+    q_label = {"I": "Q1", "II": "Q2", "III": "Q3", "IV": "Q4"}
+    records = _latest_period_records(monitoring_df)
+    logs_df = _load_export_logs()
+    manual_closeouts = set(manual_closeouts or set())
+    rows = []
+    for _, measure in filtered_measures.iterrows():
+        code = _export_clean(measure.get("code"))
+        row = {
+            "Код": code,
+            "Захід": strip_leading_code(measure.get("name", ""), code),
+            "Тип продукту": _export_clean(measure.get("product_type")),
+            "Індикатор": _export_clean(measure.get("indicator")),
+            "Одиниці виміру": _export_clean(measure.get("unit")),
+            "Головний виконавець": _export_clean(measure.get("resp_main")),
+            "Співвиконавець": "; ".join(x for x in [_export_clean(measure.get("resp_co_1")), _export_clean(measure.get("resp_co_2"))] if x),
+        }
+        for year in selected_years or []:
+            for quarter in selected_quarters or []:
+                q = _quarter_roman(quarter)
+                prefix = f"{year} {q_label.get(q, q)}"
+                record = records.get((code, str(year), q))
+                locked = is_period_locked(year, q)
+                actual = _export_clean(record.get("numeric_value")) if record is not None else ""
+                if locked and not actual:
+                    actual = "—"
+                row[prefix] = actual
+                if locked:
+                    status = "Не настав час"
+                elif record is not None:
+                    status = _export_clean(record.get("status"))
+                elif (code, str(year), q) in manual_closeouts:
+                    status = "Виконано"
+                else:
+                    status = ""
+                coordinator, route, current = _approval_route_and_current(record)
+                history = _approval_history(logs_df, record.get("id")) if record is not None else ""
+                scheme_history = route
+                if history:
+                    scheme_history = (scheme_history + "\n\nІсторія погоджень:\n" + history).strip()
+                row[f"{prefix} — Статус заходу"] = status
+                row[f"{prefix} — Відповідальна особа від ССП"] = _export_clean(record.get("responsible_person")) if record is not None else ""
+                row[f"{prefix} — Координатор"] = coordinator
+                row[f"{prefix} — Опис прогресу виконання"] = _export_clean(record.get("progress_text")) if record is not None else ""
+                row[f"{prefix} — Ризики/проблеми/відхилення"] = _export_clean(record.get("risks")) if record is not None else ""
+                row[f"{prefix} — Посилання на НПА"] = _export_clean(record.get("npa_link")) if record is not None else ""
+                row[f"{prefix} — Діюча схема погодження"] = scheme_history
+                row[f"{prefix} — Поточний статус погодження"] = current
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def build_main_monitoring_export(
+    *,
+    strat_df,
+    filtered_measures,
+    monitoring_df,
+    indicator_monitoring_df,
+    selected_years,
+    selected_quarters,
+    selected_ssp_indices=None,
+    selected_product_types=None,
+    search_query="",
+    manual_closeouts=None,
+) -> bytes:
+    """Єдиний двовкладковий Excel головної сторінки за застосованими фільтрами."""
+    import io
+    import pandas as pd
+
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+        workbook = writer.book
+        matrix_ws = _write_matrix_sheet(
+            workbook,
+            strat_df,
+            filtered_measures,
+            monitoring_df,
+            indicator_monitoring_df,
+            selected_years,
+            selected_quarters,
+            selected_ssp_indices,
+            selected_product_types,
+            search_query,
+        )
+        writer.sheets["Матриця стратег. результатів"] = matrix_ws
+
+        detail_df = _build_detailed_export_df(
+            filtered_measures,
+            monitoring_df,
+            selected_years,
+            selected_quarters,
+            manual_closeouts,
+        )
+        sheet_name = "Детальні моніторингові дані"
+        ws = workbook.add_worksheet(sheet_name)
+        writer.sheets[sheet_name] = ws
+        header_fmt = workbook.add_format({
+            "bold": True, "font_color": _HEADER_FG, "bg_color": _HEADER_BG,
+            "align": "center", "valign": "vcenter", "text_wrap": True,
+            "border": 1, "border_color": "#FFFFFF",
+        })
+        cell_fmt = workbook.add_format({"valign": "top", "text_wrap": True, "border": 1, "border_color": _BORDER_COLOR})
+        band_fmt = workbook.add_format({"valign": "top", "text_wrap": True, "border": 1, "border_color": _BORDER_COLOR, "bg_color": _BAND_BG})
+        for col_idx, col_name in enumerate(detail_df.columns):
+            ws.write(0, col_idx, col_name, header_fmt)
+            width = min(max(len(str(col_name)) + 2, 14), 42)
+            if "Опис прогресу" in str(col_name) or "Ризики" in str(col_name) or "Діюча схема" in str(col_name):
+                width = 45
+            ws.set_column(col_idx, col_idx, width)
+        for row_idx in range(len(detail_df)):
+            fmt = band_fmt if row_idx % 2 else cell_fmt
+            for col_idx, col_name in enumerate(detail_df.columns):
+                value = detail_df.iloc[row_idx][col_name]
+                if value is None or (isinstance(value, float) and pd.isna(value)):
+                    value = ""
+                ws.write(row_idx + 1, col_idx, value, fmt)
+        if len(detail_df.columns):
+            ws.freeze_panes(1, 2)
+            ws.autofilter(0, 0, len(detail_df), len(detail_df.columns) - 1)
+            ws.set_row(0, 42)
+
     return buffer.getvalue()

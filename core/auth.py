@@ -14,9 +14,10 @@ import time
 from datetime import datetime, time as datetime_time, timedelta
 from html import escape
 from typing import Any
-from zoneinfo import ZoneInfo
 
 import streamlit as st
+
+from core.timeutils import KYIV_TZ, now_kyiv
 
 try:
     import extra_streamlit_components as stx
@@ -46,7 +47,6 @@ AUTH_COOKIE_NAME = "strategic_monitoring_auth"
 AUTH_LOGOUT_TOMBSTONE = "__strategic_monitoring_logged_out__"
 AUTH_COOKIE_REFRESH_SECONDS = 30
 INACTIVITY_TIMEOUT_SECONDS = 60 * 60
-KYIV_TZ = ZoneInfo("Europe/Kyiv")
 LOGGER = logging.getLogger(__name__)
 
 
@@ -55,7 +55,7 @@ def _now_epoch() -> int:
 
 
 def _kyiv_now() -> datetime:
-    return datetime.now(KYIV_TZ)
+    return now_kyiv()
 
 
 def _end_of_kyiv_day() -> datetime:

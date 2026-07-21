@@ -26,6 +26,10 @@ from __future__ import annotations
 
 import pandas as pd
 
+from core.approval_schemes import ALL_WAITING_STATUSES
+from core.period_locks import all_periods_locked, is_period_locked
+from core.timeutils import now_kyiv
+
 # ── Канонічні статуси моделі (Excel $AR$1:$AR$5) ──
 ST_DONE = "Виконано"
 ST_PARTIAL = "Частково виконано"
@@ -161,3 +165,108 @@ def legend_badge(state: object, extra_style: str = "") -> str:
         f'font-size:11px;font-weight:800;background:{c["bg"]};color:{c["fg"]};'
         f'border:1px solid {c["border"]};{extra_style}">{label}</span>'
     )
+
+
+# ── Єдина логіка візуального статусу моніторингового запису ──
+
+def business_days_between(start, end) -> int:
+    """Кількість робочих днів; поточний момент передається у київському часі."""
+    start_ts = pd.to_datetime(start, errors="coerce")
+    end_ts = pd.to_datetime(end, errors="coerce")
+    if pd.isna(start_ts) or pd.isna(end_ts):
+        return 0
+    # Для порівняння календарних дат приводимо aware timestamps до Києва.
+    try:
+        if getattr(start_ts, "tzinfo", None) is not None:
+            start_ts = start_ts.tz_convert("Europe/Kyiv")
+    except Exception:
+        pass
+    try:
+        if getattr(end_ts, "tzinfo", None) is not None:
+            end_ts = end_ts.tz_convert("Europe/Kyiv")
+    except Exception:
+        pass
+    start_date = start_ts.date()
+    end_date = end_ts.date()
+    if end_date <= start_date:
+        return 0
+    return len(pd.bdate_range(start=start_date, end=end_date, inclusive="right"))
+
+
+def is_overdue_review_record(row) -> bool:
+    approval = clean(row.get("approval_status", ""))
+    if approval not in ALL_WAITING_STATUSES:
+        return False
+    submitted = pd.to_datetime(row.get("submitted_at", None), errors="coerce", utc=True)
+    if pd.isna(submitted):
+        return False
+    return business_days_between(submitted, pd.Timestamp(now_kyiv())) > 5
+
+
+def get_record_visual_status(row) -> str:
+    """Єдина точка визначення візуального статусу запису; period_locks має найвищий пріоритет."""
+    if is_period_locked(row.get("year", ""), row.get("quarter", "")):
+        return ST_NOTYET
+
+    approval = clean(row.get("approval_status", ""))
+    execution_status = clean(row.get("status", ""))
+
+    if execution_status == ST_NOTYET:
+        return ST_NOTYET
+    if approval == "Погоджено":
+        return "Погоджено"
+    if approval == "Повернуто на доопрацювання":
+        return "На доопрацюванні"
+    if approval in ALL_WAITING_STATUSES:
+        return "Не враховано" if is_overdue_review_record(row) else "На розгляді"
+    return "Не враховано"
+
+
+def get_measure_records(monitoring_df: pd.DataFrame, code, selected_years, selected_quarters) -> pd.DataFrame:
+    if monitoring_df is None or monitoring_df.empty:
+        return pd.DataFrame()
+    years_as_str = [str(y).strip() for y in (selected_years or [])]
+    quarters_as_str = [str(q).replace(" квартал", "").strip() for q in (selected_quarters or [])]
+    data = monitoring_df.copy()
+    data = data[data["strat_code"].astype(str).str.strip() == str(code).strip()]
+    if years_as_str:
+        data = data[data["year"].astype(str).str.strip().isin(years_as_str)]
+    if quarters_as_str:
+        data = data[data["quarter"].astype(str).str.strip().isin(quarters_as_str)]
+    return data.copy()
+
+
+def get_measure_status(monitoring_df: pd.DataFrame, code, selected_years, selected_quarters) -> str:
+    """Агрегований статус заходу; повністю заблокована вибірка завжди «Не настав час»."""
+    if all_periods_locked(selected_years or [], selected_quarters or []):
+        return ST_NOTYET
+
+    records = get_measure_records(monitoring_df, code, selected_years, selected_quarters)
+    if records.empty:
+        return "Не враховано"
+
+    # Заблоковані періоди не впливають на статус незаблокованих кварталів.
+    statuses = [get_record_visual_status(row) for _, row in records.iterrows()]
+    effective = [status for status in statuses if status != ST_NOTYET]
+    if not effective and ST_NOTYET in statuses:
+        return ST_NOTYET
+    if "Погоджено" in effective:
+        return "Погоджено"
+    if "На розгляді" in effective:
+        return "На розгляді"
+    if "На доопрацюванні" in effective:
+        return "На доопрацюванні"
+    return "Не враховано"
+
+
+def visual_status_class(status: object) -> str:
+    value = clean(status)
+    if value == "Погоджено":
+        return "status-approved"
+    if value == "На розгляді":
+        return "status-review"
+    if value == "На доопрацюванні":
+        return "status-returned"
+    if value == ST_NOTYET:
+        return "status-notyet"
+    return "status-empty"

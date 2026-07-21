@@ -1,6 +1,7 @@
 from textwrap import dedent
 import re
 import io
+from datetime import datetime
 from html import escape
 
 import pandas as pd
@@ -104,7 +105,7 @@ header[data-testid="stHeader"] {
     color: white;
     border-radius: 16px;
     padding: 22px 26px;
-    margin: 14px 0 18px 0;
+    margin: 7px 0 18px 0;
     box-shadow: 0 10px 24px rgba(22,163,74,0.25);
 }
 
@@ -297,6 +298,44 @@ div[data-testid="stExpander"] div[data-testid="stExpander"] > details > summary 
     color: white !important;
     font-size: 15px !important;
     font-weight: 800 !important;
+}
+
+/* Компактний expander додаткових параметрів: візуально як на Dashboard. */
+.st-key-main_additional_parameters div[data-testid="stExpander"] {
+    border: 1px solid #DCE4F0 !important;
+    border-radius: 10px !important;
+    margin: 8px 0 14px 0 !important;
+    background: #FFFFFF !important;
+    overflow: hidden;
+}
+
+.st-key-main_additional_parameters div[data-testid="stExpander"] > details > summary {
+    background: #F7F9FC !important;
+    color: #132238 !important;
+    border-radius: 9px !important;
+    padding: 9px 12px !important;
+    min-height: 38px !important;
+    font-weight: 700 !important;
+    box-shadow: none !important;
+}
+
+.st-key-main_additional_parameters div[data-testid="stExpander"] > details > summary:hover {
+    background: #EEF3F9 !important;
+}
+
+.st-key-main_additional_parameters div[data-testid="stExpander"] > details > summary p {
+    color: #132238 !important;
+    font-size: 14px !important;
+    font-weight: 700 !important;
+}
+
+.st-key-main_additional_parameters div[data-testid="stExpander"] > details > summary svg {
+    color: #61708A !important;
+    fill: #61708A !important;
+}
+
+.main-filter-subtitle {
+    margin-top: 0 !important;
 }
 
 .section-title {
@@ -1676,9 +1715,12 @@ st.markdown(
 # ------------------------------------------------------------
 
 st.markdown('<div class="filter-title">Параметри відбору (для перегляду)</div>', unsafe_allow_html=True)
-st.markdown('<div class="filter-subtitle">Основні параметри</div>', unsafe_allow_html=True)
 
 with st.form("main_filters_form"):
+    st.markdown(
+        '<div class="filter-subtitle main-filter-subtitle">Основні параметри</div>',
+        unsafe_allow_html=True,
+    )
     top_1, top_2, top_3, top_4 = st.columns([1.35, 0.8, 0.8, 1.15])
 
     with top_1:
@@ -1733,31 +1775,32 @@ with st.form("main_filters_form"):
             key="status_mode_main"
         )
 
-    with st.expander("Додаткові параметри", expanded=False):
-        bottom_1, bottom_2, bottom_3 = st.columns([1.1, 1.0, 1.8])
+    with st.container(key="main_additional_parameters"):
+        with st.expander("Додаткові параметри", expanded=False):
+            bottom_1, bottom_2, bottom_3 = st.columns([1.1, 1.0, 1.8])
 
-        with bottom_1:
-            st.multiselect(
-                "Стратегічна ціль",
-                list(goal_options.values()),
-                key="selected_goal_codes_main",
-                placeholder="Оберіть стратегічну ціль"
-            )
+            with bottom_1:
+                st.multiselect(
+                    "Стратегічна ціль",
+                    list(goal_options.values()),
+                    key="selected_goal_codes_main",
+                    placeholder="Оберіть стратегічну ціль"
+                )
 
-        with bottom_2:
-            st.multiselect(
-                "Тип продукту",
-                product_type_options,
-                key="selected_product_types_main",
-                placeholder="Оберіть тип продукту"
-            )
+            with bottom_2:
+                st.multiselect(
+                    "Тип продукту",
+                    product_type_options,
+                    key="selected_product_types_main",
+                    placeholder="Оберіть тип продукту"
+                )
 
-        with bottom_3:
-            st.text_input(
-                "Додаткові параметри пошуку (код завдання, заходу, ключові слова)",
-                key="search_main",
-                placeholder="Введіть код, назву або ключове слово"
-            )
+            with bottom_3:
+                st.text_input(
+                    "Додаткові параметри пошуку (код завдання, заходу, ключові слова)",
+                    key="search_main",
+                    placeholder="Введіть код, назву або ключове слово"
+                )
 
     apply_col, reset_col = st.columns([1, 1])
     with apply_col:

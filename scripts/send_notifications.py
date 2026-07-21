@@ -58,7 +58,6 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -68,8 +67,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core.data_types import normalise_closeout_frame, normalise_monitoring_frame  # noqa: E402
 from core.db import fetch_all  # noqa: E402
 from core.emails import send_email  # noqa: E402
+from core.timeutils import now_kyiv  # noqa: E402
 
-KYIV_TZ = ZoneInfo("Europe/Kyiv")
 DEADLINE_DAY = 15    # подання до 15 числа місяця, наступного за звітним кварталом
 REMINDER_DAYS_BEFORE = [10, 5, 2, 1]   # за скільки днів до дедлайну нагадуємо
 STALE_DAYS = 5                          # "заявка висить понад N днів"
@@ -82,10 +81,6 @@ FORCE_RUN = os.environ.get("NOTIFICATIONS_FORCE_RUN", "0") == "1"
 # ------------------------------------------------------------
 # Службові
 # ------------------------------------------------------------
-
-def now_kyiv() -> datetime:
-    """Current civil time in Kyiv with automatic winter/summer offset."""
-    return datetime.now(KYIV_TZ)
 
 
 def clean(value) -> str:

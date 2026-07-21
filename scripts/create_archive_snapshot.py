@@ -7,7 +7,6 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from supabase import create_client
 
@@ -16,16 +15,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.archive import build_archive_payload, create_archive_snapshot  # noqa: E402
+from core.timeutils import now_kyiv  # noqa: E402
 
-KYIV_TZ = ZoneInfo("Europe/Kyiv")
 DRY_RUN = os.environ.get("ARCHIVE_DRY_RUN", "0") == "1"
 FORCE_RUN = os.environ.get("ARCHIVE_FORCE_RUN", "0") == "1"
 SCHEDULE_MONTHS = {1: (4, -1), 4: (1, 0), 7: (2, 0), 10: (3, 0)}
 ROMAN = {1: "I", 2: "II", 3: "III", 4: "IV"}
-
-
-def now_kyiv() -> datetime:
-    return datetime.now(KYIV_TZ)
 
 
 def reporting_period(now: datetime) -> tuple[int, int]:

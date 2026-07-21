@@ -338,6 +338,20 @@ div[data-testid="stExpander"] div[data-testid="stExpander"] > details > summary 
     margin-top: 0 !important;
 }
 
+.filter-field-label {
+    color: #132238;
+    font-size: 13px;
+    font-weight: 900;
+    line-height: 1.35;
+    margin: 0 0 4px 0;
+}
+
+/* На головній приховуємо лише технічний iframe автооновлення,
+   щоб він не створював зайвий вертикальний проміжок під блакитним повідомленням. */
+.st-key-main_auto_refresh_notice [data-testid="stElementContainer"]:has(iframe) {
+    display: none !important;
+}
+
 .section-title {
     font-size: 16px;
     font-weight: 850;
@@ -720,8 +734,6 @@ def measure_matches_status_mode(monitoring_df, code, selected_years, selected_qu
         return status == "Погоджено"
     if mode == "Лише на розгляді":
         return status == "На розгляді"
-    if mode == "Лише на доопрацюванні":
-        return status == "На доопрацюванні"
     if mode == "Лише не враховані":
         return status == "Не враховано"
     return True
@@ -1370,15 +1382,27 @@ def render_measure_table(measures, monitoring_df, quarter_data, selected_years, 
 
                 if item is None:
                     if is_period_locked(y, q):
-                        html += f"<td class='col-year status-notyet'>{make_cell('—', 'nowrap')}</td>"
+                        badge = core_statuses.legend_badge(
+                            "Не настав час",
+                            display_value="—",
+                        )
+                        html += f"<td class='col-year'>{badge}</td>"
                     else:
                         html += "<td class='col-year status-empty'></td>"
                 else:
-                    value = item.get("value", "")
-                    if is_period_locked(y, q) and not raw_value(value):
-                        value = "—"
-                    cell_class = item.get("class", "status-empty")
-                    html += f"<td class='col-year {cell_class}'>{make_cell(value, 'nowrap')}</td>"
+                    value = raw_value(item.get("value", "")) or "—"
+                    if is_period_locked(y, q):
+                        badge_state = "Не настав час"
+                    elif item.get("manual_closeout"):
+                        badge_state = "Закрито адміністратором"
+                    else:
+                        badge_state = item.get("visual_status", "Не враховано")
+
+                    badge = core_statuses.legend_badge(
+                        badge_state,
+                        display_value=value,
+                    )
+                    html += f"<td class='col-year'>{badge}</td>"
 
         html += f"<td class='col-long'>{make_cell(measure.get('source_global', ''), 'fixed')}</td>"
         html += f"<td class='col-long'>{make_cell(measure.get('source_national', ''), 'fixed')}</td>"
@@ -1410,8 +1434,8 @@ def default_state():
     defaults = {
         "expand_all_goals": False,
         "ssp_filter": [],
-        "selected_years_main": [2026],
-        "selected_quarters_main": ["I"],
+        "selected_years_main": [],
+        "selected_quarters_main": [],
         "status_mode_main": "Усі заходи стратегічного плану",
         "selected_goal_codes_main": [],
         "selected_product_types_main": [],
@@ -1424,18 +1448,18 @@ def default_state():
 
 
 def reset_main_filters():
-    st.session_state.ssp_filter = []
-    st.session_state.selected_years_main = [2026]
-    st.session_state.selected_quarters_main = ["I"]
-    st.session_state.status_mode_main = "Усі заходи стратегічного плану"
-    st.session_state.selected_goal_codes_main = []
-    st.session_state.selected_product_types_main = []
-    st.session_state.search_main = ""
-    st.session_state.expand_all_goals = False
-    st.session_state.applied_filters = {
+    st.session_state["ssp_filter"] = []
+    st.session_state["selected_years_main"] = []
+    st.session_state["selected_quarters_main"] = []
+    st.session_state["status_mode_main"] = "Усі заходи стратегічного плану"
+    st.session_state["selected_goal_codes_main"] = []
+    st.session_state["selected_product_types_main"] = []
+    st.session_state["search_main"] = ""
+    st.session_state["expand_all_goals"] = False
+    st.session_state["applied_filters"] = {
         "ssp_filter": [],
-        "selected_years_main": [2026],
-        "selected_quarters_main": ["I"],
+        "selected_years_main": [],
+        "selected_quarters_main": [],
         "status_mode_main": "Усі заходи стратегічного плану",
         "selected_goal_codes_main": [],
         "selected_product_types_main": [],
@@ -1444,14 +1468,21 @@ def reset_main_filters():
 
 
 def apply_main_filters_form():
-    st.session_state.applied_filters = {
-        "ssp_filter": st.session_state.ssp_filter,
-        "selected_years_main": st.session_state.selected_years_main,
-        "selected_quarters_main": st.session_state.selected_quarters_main,
-        "status_mode_main": st.session_state.status_mode_main,
-        "selected_goal_codes_main": st.session_state.selected_goal_codes_main,
-        "selected_product_types_main": st.session_state.selected_product_types_main,
-        "search_main": st.session_state.search_main
+    """Безпечно зберігає значення форми, навіть якщо окремого ключа ще немає."""
+    st.session_state["applied_filters"] = {
+        "ssp_filter": list(st.session_state.get("ssp_filter") or []),
+        "selected_years_main": list(st.session_state.get("selected_years_main") or []),
+        "selected_quarters_main": list(st.session_state.get("selected_quarters_main") or []),
+        "status_mode_main": st.session_state.get(
+            "status_mode_main", "Усі заходи стратегічного плану"
+        ),
+        "selected_goal_codes_main": list(
+            st.session_state.get("selected_goal_codes_main") or []
+        ),
+        "selected_product_types_main": list(
+            st.session_state.get("selected_product_types_main") or []
+        ),
+        "search_main": st.session_state.get("search_main", "") or "",
     }
 
 
@@ -1541,7 +1572,6 @@ status_options = [
     "Усі заходи стратегічного плану",
     "Лише погоджені",
     "Лише на розгляді",
-    "Лише на доопрацюванні",
     "Лише не враховані"
 ]
 
@@ -1592,7 +1622,8 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-render_auto_refresh_notice("app", minutes=5)
+with st.container(key="main_auto_refresh_notice"):
+    render_auto_refresh_notice("app", minutes=5)
 
 if str(ANNOUNCEMENT or "").strip():
     st.warning(str(ANNOUNCEMENT).strip(), icon="📢")
@@ -1714,6 +1745,10 @@ st.markdown(
 # Filters
 # ------------------------------------------------------------
 
+# Старе значення вилученого режиму не повинно ламати selectbox після rerun.
+if st.session_state.get("status_mode_main") not in status_options:
+    st.session_state["status_mode_main"] = status_options[0]
+
 st.markdown('<div class="filter-title">Параметри відбору (для перегляду)</div>', unsafe_allow_html=True)
 
 with st.form("main_filters_form"):
@@ -1723,56 +1758,67 @@ with st.form("main_filters_form"):
     )
     top_1, top_2, top_3, top_4 = st.columns([1.35, 0.8, 0.8, 1.15])
 
+    _scope_field_locked = (
+        is_scope_lockable_user(current_user)
+        and not is_scope_override_active("app")
+    )
+    _own_ssp_index = get_user_ssp_index(current_user) if _scope_field_locked else None
+    _ssp_widget_options = list(all_ssp_indices)
+    if _own_ssp_index and _own_ssp_index not in _ssp_widget_options:
+        _ssp_widget_options = [_own_ssp_index, *_ssp_widget_options]
+    if _scope_field_locked:
+        st.session_state["ssp_filter"] = [_own_ssp_index] if _own_ssp_index else []
+
     with top_1:
-        if is_scope_lockable_user(current_user) and not is_scope_override_active("app"):
-            _own_label = get_user_ssp_index(current_user) or "—"
-            st.markdown(
-                "<div style='font-size:13px;font-weight:900;color:#132238;margin-bottom:4px;'>"
-                "Індекс самостійного структурного підрозділу</div>"
-                f"<div style='background:#F7F9FC;border:1px solid #DCE4F0;border-radius:10px;"
-                f"padding:10px 12px;font-weight:800;color:#132238;'>деп./упр. {_own_label} "
-                f" · Ваш ССП: №{_own_label}</div>",
-                unsafe_allow_html=True,
-            )
-        else:
-            st.multiselect(
-                "Індекс самостійного структурного підрозділу",
-                all_ssp_indices,
-                key="ssp_filter",
-                placeholder="Оберіть індекс ССП"
-            )
+        st.markdown(
+            '<div class="filter-field-label">Індекс самостійного структурного підрозділу</div>',
+            unsafe_allow_html=True,
+        )
+        st.multiselect(
+            "Індекс самостійного структурного підрозділу",
+            _ssp_widget_options,
+            key="ssp_filter",
+            placeholder="Оберіть індекс ССП",
+            label_visibility="collapsed",
+            disabled=_scope_field_locked,
+        )
 
     with top_2:
         st.markdown(
-            "<div style='font-size:13px;font-weight:900;color:#132238;margin-bottom:4px;'>Звітний період (рік, квартал)</div>",
-            unsafe_allow_html=True
+            '<div class="filter-field-label">Звітний період</div>',
+            unsafe_allow_html=True,
         )
         st.multiselect(
             "Рік",
             year_options,
             key="selected_years_main",
             placeholder="Рік",
-            label_visibility="collapsed"
+            label_visibility="collapsed",
         )
 
     with top_3:
         st.markdown(
-            "<div style='font-size:13px;font-weight:900;color:#132238;margin-bottom:4px;'>&nbsp;</div>",
-            unsafe_allow_html=True
+            '<div class="filter-field-label">&nbsp;</div>',
+            unsafe_allow_html=True,
         )
         st.multiselect(
             "Квартал",
             quarter_options,
             key="selected_quarters_main",
             placeholder="Квартал",
-            label_visibility="collapsed"
+            label_visibility="collapsed",
         )
 
     with top_4:
+        st.markdown(
+            '<div class="filter-field-label">Режим перегляду даних</div>',
+            unsafe_allow_html=True,
+        )
         st.selectbox(
             "Режим перегляду даних",
             status_options,
-            key="status_mode_main"
+            key="status_mode_main",
+            label_visibility="collapsed",
         )
 
     with st.container(key="main_additional_parameters"):
@@ -1780,26 +1826,41 @@ with st.form("main_filters_form"):
             bottom_1, bottom_2, bottom_3 = st.columns([1.1, 1.0, 1.8])
 
             with bottom_1:
+                st.markdown(
+                    '<div class="filter-field-label">Стратегічна ціль</div>',
+                    unsafe_allow_html=True,
+                )
                 st.multiselect(
                     "Стратегічна ціль",
                     list(goal_options.values()),
                     key="selected_goal_codes_main",
-                    placeholder="Оберіть стратегічну ціль"
+                    placeholder="Оберіть стратегічну ціль",
+                    label_visibility="collapsed",
                 )
 
             with bottom_2:
+                st.markdown(
+                    '<div class="filter-field-label">Тип продукту</div>',
+                    unsafe_allow_html=True,
+                )
                 st.multiselect(
                     "Тип продукту",
                     product_type_options,
                     key="selected_product_types_main",
-                    placeholder="Оберіть тип продукту"
+                    placeholder="Оберіть тип продукту",
+                    label_visibility="collapsed",
                 )
 
             with bottom_3:
+                st.markdown(
+                    '<div class="filter-field-label">Додаткові параметри пошуку (код завдання, заходу, ключові слова)</div>',
+                    unsafe_allow_html=True,
+                )
                 st.text_input(
                     "Додаткові параметри пошуку (код завдання, заходу, ключові слова)",
                     key="search_main",
-                    placeholder="Введіть код, назву або ключове слово"
+                    placeholder="Введіть код, назву або ключове слово",
+                    label_visibility="collapsed",
                 )
 
     apply_col, reset_col = st.columns([1, 1])
@@ -1807,13 +1868,13 @@ with st.form("main_filters_form"):
         st.form_submit_button(
             "Застосувати параметри відбору",
             use_container_width=True,
-            on_click=apply_main_filters_form
+            on_click=apply_main_filters_form,
         )
     with reset_col:
         st.form_submit_button(
             "Скинути фільтри",
             use_container_width=True,
-            on_click=reset_main_filters
+            on_click=reset_main_filters,
         )
 
 render_scope_toggle("app", current_user)
@@ -1823,29 +1884,28 @@ render_scope_toggle("app", current_user)
 # Filter processing (за останньо застосованими параметрами)
 # ------------------------------------------------------------
 
-applied = st.session_state.applied_filters
+applied = st.session_state.get("applied_filters", {})
 
-selected_ssp_indices = applied["ssp_filter"]
+selected_ssp_indices = list(applied.get("ssp_filter") or [])
 
-# Пункт 1 нового ТЗ: ролі, звужені до власного ССП (ССП, керівник ССП,
-# керівник управління, заступник керівника ССП), за замовчуванням бачать
-# на цій вкладці лише своє ССП — без окремого фільтра (тому додаткового
-# вибору тут не показуємо, це вже враховано у виджеті нижче). Це
-# єдина точка, через яку СРАЗУ і заходи (apply_measure_filters), і
-# індикатори (build_indicator_rows) отримують звуження — обидва вже
-# використовують саме selected_ssp_indices. Кнопка "Переглянути загальну
-# інформацію" (з page_setup) знімає це звуження на цій вкладці.
+# Поле ССП завжди існує. Для ролей, замкнених на власний ССП, воно disabled
+# до режиму загальної інформації; серверне звуження лишається додатковим
+# захистом від випадкового послаблення scope через session_state.
 if is_scope_lockable_user(current_user) and not is_scope_override_active("app"):
     _own_ssp_index = get_user_ssp_index(current_user)
     if _own_ssp_index:
         selected_ssp_indices = [_own_ssp_index]
 
-selected_years = applied["selected_years_main"]
-selected_quarters = applied["selected_quarters_main"]
-selected_status_mode = applied["status_mode_main"]
-selected_goal_labels = applied["selected_goal_codes_main"]
-selected_product_types = applied["selected_product_types_main"]
-search_query = applied["search_main"]
+selected_years_raw = list(applied.get("selected_years_main") or [])
+selected_quarters_raw = list(applied.get("selected_quarters_main") or [])
+selected_status_mode = applied.get(
+    "status_mode_main", "Усі заходи стратегічного плану"
+)
+if selected_status_mode not in status_options:
+    selected_status_mode = status_options[0]
+selected_goal_labels = list(applied.get("selected_goal_codes_main") or [])
+selected_product_types = list(applied.get("selected_product_types_main") or [])
+search_query = applied.get("search_main", "") or ""
 
 selected_goal_codes = [
     code
@@ -1853,11 +1913,15 @@ selected_goal_codes = [
     if label in selected_goal_labels
 ]
 
-if not selected_years:
-    selected_years = [2026]
-
-if not selected_quarters:
-    selected_quarters = ["I", "II", "III", "IV"]
+# Порожній вибір періоду візуально лишається порожнім, але для вибірки та
+# розрахунків означає весь поточний рік і всі чотири квартали.
+_current_year = now_kyiv().year
+selected_years = [
+    year for year in year_options if year in selected_years_raw
+] or [_current_year]
+selected_quarters = [
+    quarter for quarter in quarter_options if quarter in selected_quarters_raw
+] or list(quarter_options)
 
 filtered_measures = apply_measure_filters(
     all_measures,

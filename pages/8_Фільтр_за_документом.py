@@ -18,6 +18,7 @@ from html import escape
 import pandas as pd
 import streamlit as st
 
+from core.timeutils import now_kyiv
 from core.page_setup import page_setup, render_footer
 from core.strategic_data import load_strat_matrix, strip_leading_code
 from core import monitoring_data
@@ -26,6 +27,7 @@ from core.access import filter_actions_for_user
 from core.ui import render_scope_toggle, render_auto_refresh_notice, load_css
 from core.statuses import legend_badge
 from core.closeouts import load_manual_closeouts
+from core.period_locks import all_periods_locked, is_period_locked
 from core import exports as core_exports
 from core.errors import log_cosmetic_error
 from config.npa_documents import (
@@ -243,6 +245,13 @@ def _submission_state(code: str, start_raw) -> tuple[str, dict]:
     """(бейдж стану подання, останні відомості) — за єдиною легендою."""
     if not latest.empty and code in latest.index:
         row = latest.loc[code]
+        if is_period_locked(row.get("year"), row.get("quarter")):
+            return legend_badge("Не настав час"), {
+                "status": "Не настав час",
+                "fact": raw(row.get("numeric_value")),
+                "progress": raw(row.get("progress_text")),
+                "submitted": raw(row.get("submitted_at"))[:16].replace("T", " "),
+            }
         ap = raw(row.get("approval_status"))
         if ap == "Погоджено":
             b = legend_badge("Погоджено")
@@ -258,7 +267,9 @@ def _submission_state(code: str, start_raw) -> tuple[str, dict]:
         }
     if sel_year != "Усі":
         _quarters = sel_quarters or ["IV"]
-        if any((code, str(sel_year), q) in manual_closeouts for q in _quarters):
+        if all_periods_locked([sel_year], _quarters):
+            return legend_badge("Не настав час"), {"status": "Не настав час"}
+        if any((code, str(sel_year), q) in manual_closeouts and not is_period_locked(sel_year, q) for q in _quarters):
             return legend_badge("Закрито адміністратором"), {}
         _q_last = _quarters[-1]
         _sel_period = int(sel_year) * 10 + core_periods.quarter_to_number(_q_last)
@@ -391,7 +402,7 @@ params_df = pd.DataFrame([
     {"Параметр": "Режим",
      "Значення": "офіційні" if params.get("official_only") else "оперативні"},
     {"Параметр": "Сформовано",
-     "Значення": datetime.now().strftime("%d.%m.%Y %H:%M")},
+     "Значення": now_kyiv().strftime("%d.%m.%Y %H:%M")},
 ])
 xlsx = core_exports.write_styled_excel(
     {"Заходи за документом": pd.DataFrame(export_rows)},

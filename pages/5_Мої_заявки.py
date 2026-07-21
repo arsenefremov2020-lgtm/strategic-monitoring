@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+from core.period_locks import is_period_locked
 from core.data_types import prepare_monitoring_payload
 from core.db import fetch_all, get_supabase_client
 from core.errors import log_cosmetic_error, show_incident, show_warning
@@ -10,6 +11,7 @@ from datetime import datetime, timezone
 from html import escape
 import re
 from core.page_setup import page_setup, render_footer
+from core.timeutils import now_kyiv
 from core.ui import render_request_timeline
 from core.stage4 import (
     format_kyiv_datetime,
@@ -610,6 +612,11 @@ if not filtered.empty:
     filtered["_submitted_sort"] = pd.to_datetime(filtered["submitted_at"], errors="coerce")
     filtered = filtered.sort_values(["_returned_rank", "_submitted_sort"], ascending=[True, False]).drop(columns=["_returned_rank", "_submitted_sort"], errors="ignore")
 
+filtered["_visual_status"] = filtered.apply(
+    lambda row: "Не настав час" if is_period_locked(row.get("year"), row.get("quarter")) else row.get("status", ""),
+    axis=1,
+)
+
 st.caption(f"Знайдено відомостей: {len(filtered)}")
 st.markdown('</div></div>', unsafe_allow_html=True)
 
@@ -645,7 +652,7 @@ show_df = filtered.rename(columns={
     "year": "Рік",
     "quarter": "Квартал",
     "strat_code": "Код заходу",
-    "status": "Статус виконання",
+    "_visual_status": "Статус виконання",
     "numeric_value": "Фактичне значення",
     "approval_status": "Статус погодження",
     "responsible_person": "Відповідальна особа",
@@ -711,7 +718,7 @@ st.markdown(f"""
 <div class="info-grid">
     <div class="info-card info-card-blue">
         <div class="info-label">Статус виконання</div>
-        <div class="info-value">{display_text(selected_row["status"])}</div>
+        <div class="info-value">{display_text(selected_row["_visual_status"])}</div>
     </div>
     <div class="info-card info-card-green">
         <div class="info-label">Фактичне значення</div>
@@ -833,7 +840,7 @@ st.markdown('</div>', unsafe_allow_html=True)
 
 # ── У кого зараз заявка та чи потрібна ваша дія (ТЗ 8.14 / 8.17) ──
 def _render_holder_strip():
-    _now = datetime.now(timezone.utc)
+    _now = now_kyiv()
 
     # Скільки днів заявка на поточному кроці: від останньої дії в журналі,
     # а якщо дій ще не було — від моменту подання.

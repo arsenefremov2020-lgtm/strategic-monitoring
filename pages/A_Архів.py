@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from core.period_locks import apply_locked_status
 from core.archive import (
     decode_snapshot_payload,
     export_snapshot_docx,
@@ -214,6 +215,8 @@ except Exception as exc:
 def show_table(title: str, key: str, empty_message: str) -> None:
     st.markdown(f"### {title}")
     frame = pd.DataFrame(payload.get(key, []) or [])
+    if key in {"monitoring_requests", "monitoring_request_versions"}:
+        frame = apply_locked_status(frame, status_col="status")
     if frame.empty:
         st.info(empty_message)
     else:
@@ -231,6 +234,7 @@ with tab_requests:
     show_table("Заявки на момент архівації", "monitoring_requests", "У знімку немає заявок.")
     with st.expander("Версії заявок", expanded=False):
         frame = pd.DataFrame(payload.get("monitoring_request_versions", []) or [])
+        frame = apply_locked_status(frame, status_col="status")
         if frame.empty:
             st.info("У знімку немає версій заявок.")
         else:

@@ -18,6 +18,7 @@ from core.config import FILE_PATH, SHEET_NAME
 from core.excel_loader import read_excel_sheet
 from datetime import datetime, timezone
 from core.page_setup import page_setup, render_footer
+from core.timeutils import now_kyiv
 from core.strategic_data import load_strat_matrix as core_load_strat_matrix
 from core import monitoring_data
 
@@ -703,7 +704,7 @@ def days_waiting(value):
     dt = to_datetime(value)
     if not dt:
         return None
-    return (datetime.now(timezone.utc) - dt).days
+    return (now_kyiv() - dt).days
 
 
 def split_ssp_values(value):
@@ -831,7 +832,7 @@ def render_requests_status_viewer(requests_frame):
     _ts = pd.to_datetime(clean(_prow.get("submitted_at")), errors="coerce", utc=True)
     _days = ""
     if pd.notna(_ts):
-        _days = f" · подано {max(0, (datetime.now(timezone.utc) - _ts.to_pydatetime()).days)} дн. тому"
+        _days = f" · подано {max(0, (now_kyiv() - _ts.to_pydatetime()).days)} дн. тому"
 
     if _p_appr == "Погоджено":
         _where = "✅ Погодження завершено — заявка закрита"
@@ -1033,7 +1034,7 @@ def analyze_request(row, plan_val_str):
         try:
             end_dt = pd.to_datetime(end_d, errors="coerce")
             if not pd.isna(end_dt):
-                if end_dt < pd.Timestamp.now():
+                if end_dt.date() < now_kyiv().date():
                     closed = {"Виконано", "Втратило актуальність"}
                     if status not in closed:
                         deadline_overdue = True

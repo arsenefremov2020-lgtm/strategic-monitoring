@@ -24,6 +24,8 @@ from core.access import (
 from core.closeouts import load_manual_closeouts
 from core.strategic_data import load_strat_matrix as load_full_strat_matrix
 from core import monitoring_data
+from core import statuses as core_statuses
+from core.period_locks import is_period_locked
 from core import approval_schemes as schemes
 from core import notify_events
 from core.validation import validate_fact_value, status_completion_warning, value_reaches_target
@@ -625,19 +627,7 @@ def has_target_for_year(row, year):
     return not is_empty_or_nd(row.get(col, ""))
 
 
-def get_record_visual_status(row):
-    approval = raw_value(row.get("approval_status", ""))
-
-    if approval == "Погоджено":
-        return "Погоджено"
-
-    if approval == "Повернуто на доопрацювання":
-        return "Повернуто на доопрацювання"
-
-    if approval in {"Очікує погодження", "На розгляді", "Очікує розгляду"}:
-        return "Очікує розгляду"
-
-    return "Не враховано"
+get_record_visual_status = core_statuses.get_record_visual_status
 
 
 def subset_monitoring_for_selection(monitoring_df, selected_codes, selected_year, selected_quarter):
@@ -1462,6 +1452,11 @@ with f4:
 
 st.markdown("</div>", unsafe_allow_html=True)
 
+if is_period_locked(selected_year, selected_quarter):
+    st.info("Не настав час — моніторинг за цей період не проводиться")
+    render_footer()
+    st.stop()
+
 
 # ------------------------------------------------------------
 # Filtering
@@ -1521,19 +1516,19 @@ else:
 
     reviewed_count = unique_measure_count(
         monitoring_selected[
-            monitoring_selected["visual_status"].isin(["Погоджено", "Повернуто на доопрацювання"])
+            monitoring_selected["visual_status"].isin(["Погоджено", "На доопрацюванні"])
         ]
     )
 
     waiting_count = unique_measure_count(
         monitoring_selected[
-            monitoring_selected["visual_status"] == "Очікує розгляду"
+            monitoring_selected["visual_status"] == "На розгляді"
         ]
     )
 
     returned_count = unique_measure_count(
         monitoring_selected[
-            monitoring_selected["visual_status"] == "Повернуто на доопрацювання"
+            monitoring_selected["visual_status"] == "На доопрацюванні"
         ]
     )
 

@@ -1,5 +1,7 @@
 import streamlit as st
 import pandas as pd
+from core.period_locks import apply_locked_status
+from core.timeutils import now_kyiv
 from core.data_types import normalise_monitoring_frame
 from core.db import fetch_all, get_supabase_client
 from core.ui import load_css, render_request_timeline
@@ -529,6 +531,7 @@ def prepare_requests(requests_df):
     if "approval_status" not in prepared.columns:
         prepared["approval_status"] = "Невідомо"
 
+    prepared = apply_locked_status(prepared, status_col="status")
     return prepared
 
 
@@ -542,6 +545,7 @@ def prepare_versions(versions_df):
         prepared["created_at_dt"] = prepared["created_at"].apply(parse_datetime)
         prepared = prepared.sort_values("created_at_dt", ascending=False, na_position="last")
 
+    prepared = apply_locked_status(prepared, status_col="status")
     return prepared
 
 
@@ -991,7 +995,7 @@ st.markdown(f"""
         <div class="badge">● Audit dashboard</div>
         <div class="badge badge-green">● Журнал дій</div>
         <div class="badge badge-yellow">● Заявки на модерації</div>
-        <div class="badge">● Оновлено: {datetime.now().strftime('%d.%m.%Y %H:%M')}</div>
+        <div class="badge">● Оновлено: {now_kyiv().strftime('%d.%m.%Y %H:%M')}</div>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -1273,8 +1277,7 @@ st.markdown('</div>', unsafe_allow_html=True)
 # ЗАЯВКИ, ЩО ОЧІКУЮТЬ ПОНАД 5 ДНІВ (ТЗ Жур.16)
 # ──────────────────────────────────────────────
 try:
-    from datetime import timezone as _tz
-    _stale_now = datetime.now(_tz.utc)
+    _stale_now = now_kyiv()
     _stale_src = requests_df.copy()
     if not _stale_src.empty and "approval_status" in _stale_src.columns:
         _stale_src = _stale_src[
@@ -1428,7 +1431,7 @@ with ec1:
     st.download_button(
         "Завантажити журнал і заявки XLSX",
         data=excel_file,
-        file_name=f"audit_log_requests_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+        file_name=f"audit_log_requests_{now_kyiv().strftime('%Y%m%d_%H%M')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True
     )
@@ -1442,7 +1445,7 @@ with ec2:
         st.download_button(
             "Завантажити журнал DOCX (альбомний)",
             data=_docx_file,
-            file_name=f"audit_log_requests_{datetime.now().strftime('%Y%m%d_%H%M')}.docx",
+            file_name=f"audit_log_requests_{now_kyiv().strftime('%Y%m%d_%H%M')}.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             use_container_width=True
         )

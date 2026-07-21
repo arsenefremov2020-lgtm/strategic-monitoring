@@ -6,6 +6,8 @@ from html import escape
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+from core.period_locks import exclude_locked_periods, is_period_locked
+from core.timeutils import now_kyiv
 from core.db import fetch_all, get_supabase_client
 from core.deputies import DEPUTY_MINISTER_BY_SSP
 from core.ui import load_css
@@ -589,6 +591,8 @@ def prepare_period_slice(measures, requests_df, year, quarter):
     active = active.merge(period_requests[merge_cols], left_on="code", right_on="strat_code", how="left")
 
     active["status"] = active["status"].fillna("Не подано").replace("", "Не подано")
+    if is_period_locked(year, quarter):
+        active["status"] = core_statuses.ST_NOTYET
     active["numeric_value"] = active["numeric_value"].fillna("")
     active["risks"] = active["risks"].fillna("")
     active["progress_text"] = active["progress_text"].fillna("")
@@ -600,8 +604,16 @@ def prepare_period_slice(measures, requests_df, year, quarter):
         lambda r: r["plan_fact_percent"] if pd.notna(r["plan_fact_percent"]) else r["status_score"],
         axis=1
     )
+    if is_period_locked(year, quarter):
+        # Заблокований квартал залишається у плані, але не бере участі
+        # у знаменнику/середньому відсотка виконання.
+        active["status_score"] = float("nan")
+        active["performance_score"] = float("nan")
+        active["expected_progress"] = float("nan")
     active["period_deviation"] = active["performance_score"] - active["expected_progress"]
     active["traffic_light"] = active["performance_score"].apply(traffic_light)
+    if is_period_locked(year, quarter):
+        active["traffic_light"] = core_statuses.ST_NOTYET
     active["has_submission"] = active["status"] != "Не подано"
     active["has_text_risk"] = active["risks"].astype(str).str.strip() != ""
     active["is_problem_status"] = active["status"].isin(["Потребує уваги", "Прострочено", "Не розпочато", "Не подано"])
@@ -650,8 +662,9 @@ def build_metrics(active):
     total = len(active)
     submitted = int(active["has_submission"].sum()) if total else 0
     coverage = round(submitted / total * 100, 2) if total else 0
-    completion = round(active["performance_score"].mean(), 2) if total else 0
-    expected = round(active["expected_progress"].mean(), 2) if total else 0
+    completion_base = exclude_locked_periods(active, year_col="report_year", quarter_col="report_quarter")
+    completion = round(completion_base["performance_score"].mean(), 2) if not completion_base.empty else 0
+    expected = round(completion_base["expected_progress"].mean(), 2) if not completion_base.empty else 0
     deviation = round(completion - expected, 2)
     unique_measures = active["code"].nunique() if total else 0
     goals = active["goal_code"].nunique() if total else 0
@@ -1036,7 +1049,7 @@ def create_excel_report(active, period_requests, goal_progress, dep_progress, ta
         ["Стратегічні цілі", filter_label(filters["goal_labels"], "Усі")],
         ["Завдання", filter_label(filters["task_labels"], "Усі")],
         ["Типи продукту", filter_label(filters["product_types"], "Усі")],
-        ["Дата формування", datetime.now().strftime("%d.%m.%Y %H:%M")],
+        ["Дата формування", now_kyiv().strftime("%d.%m.%Y %H:%M")],
         ["Унікальних заходів", metrics["unique_measures"]],
         ["Покриття моніторингом", f"{metrics['coverage']}%"],
         ["Виконання СП", f"{metrics['completion']}%"],
@@ -1260,7 +1273,7 @@ st.markdown(
         <div class="badge">● Динаміка виконання</div>
         <div class="badge">● Стратегічні цілі / завдання / ССП</div>
         <div class="badge badge-green">● DOCX та Excel</div>
-        <div class="badge badge-yellow">● Оновлено: {datetime.now().strftime('%d.%m.%Y %H:%M')}</div>
+        <div class="badge badge-yellow">● Оновлено: {now_kyiv().strftime('%d.%m.%Y %H:%M')}</div>
     </div>
 </div>
 """,

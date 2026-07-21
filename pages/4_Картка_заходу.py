@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+from core.timeutils import now_kyiv
 from core.db import fetch_all, get_supabase_client
 from core.deputies import DEPUTY_MINISTER_BY_SSP
 from core.ui import load_css, render_request_timeline
@@ -9,6 +10,7 @@ from core.config import FILE_PATH, SHEET_NAME
 from core.excel_loader import read_excel_sheet
 from core import operational
 from core.closeouts import load_manual_closeouts
+from core.period_locks import apply_locked_status, is_period_locked
 from datetime import datetime
 from html import escape
 from textwrap import dedent
@@ -1129,7 +1131,7 @@ render_html(
             <div class="status-pill-wrap">
                 <div class="status-pill">&#9679; Режим: картка заходу</div>
                 <div class="status-pill">&#9679; Джерело: Excel + Supabase</div>
-                <div class="status-pill">&#9679; Оновлено: {datetime.now().strftime("%d.%m.%Y %H:%M")}</div>
+                <div class="status-pill">&#9679; Оновлено: {now_kyiv().strftime("%d.%m.%Y %H:%M")}</div>
             </div>
         </div>
     </div>
@@ -1367,6 +1369,7 @@ if not requests_df.empty and "strat_code" in requests_df.columns:
     measure_requests = requests_df[
         requests_df["strat_code"].astype(str).str.strip() == selected_code
     ].copy()
+    measure_requests = apply_locked_status(measure_requests, status_col="status")
 
 raw_measure_requests = measure_requests.copy()
 _measure_request_ids = (
@@ -1410,11 +1413,13 @@ if card_data_mode == operational.MODE_OPERATIONAL and not measure_requests.empty
         _tv = selected_measure.get(f"target_{_yr}", "")
         _tgt_map[(selected_code, _yr)] = "" if _tv is None else str(_tv)
     measure_requests, card_auto_list = operational.apply_operational_mode(measure_requests, _tgt_map)
+    measure_requests = apply_locked_status(measure_requests, status_col="status")
 
-# Ручне закриття цього заходу (офіційне, показується завжди)
+# Ручне закриття цього заходу (офіційне, показується завжди поза period_locks)
 _card_closeouts = load_manual_closeouts()
 card_closed_periods = sorted(
-    f"{q} кв. {y}" for (c, y, q) in _card_closeouts if c == selected_code
+    f"{q} кв. {y}" for (c, y, q) in _card_closeouts
+    if c == selected_code and not is_period_locked(y, q)
 )
 
 has_monitoring = not measure_requests.empty
@@ -1423,7 +1428,8 @@ approved_requests = pd.DataFrame()
 
 if has_monitoring and "approval_status" in measure_requests.columns:
     approved_requests = measure_requests[
-        measure_requests["approval_status"].astype(str) == "Погоджено"
+        (measure_requests["approval_status"].astype(str) == "Погоджено")
+        & ~measure_requests.apply(lambda r: is_period_locked(r.get("year"), r.get("quarter")), axis=1)
     ].copy()
 
 latest_request = None
@@ -1443,7 +1449,10 @@ elif not approved_requests.empty:
 # Build execution_statuses from approved requests across quarters
 execution_statuses = []
 if has_monitoring and "status" in measure_requests.columns:
-    execution_statuses = measure_requests["status"].dropna().tolist()
+    _unlocked_requests = measure_requests[
+        ~measure_requests.apply(lambda r: is_period_locked(r.get("year"), r.get("quarter")), axis=1)
+    ]
+    execution_statuses = _unlocked_requests["status"].dropna().tolist()
 
 target_value = selected_measure.get("target_2026", "")
 latest_actual = latest_approved.get("numeric_value", "") if latest_approved is not None else ""
@@ -1786,8 +1795,8 @@ if view_mode in ["Огляд", "Квартальна динаміка"]:
         if q_data.empty:
             css = "q-empty"
             value = "—"
-            approval = "Не подано"
-            status = ""
+            approval = "Не настав час" if is_period_locked(card_link_year, q) else "Не подано"
+            status = "Не настав час" if is_period_locked(card_link_year, q) else ""
             submitted = ""
             fact_n = None
         else:
@@ -1800,7 +1809,12 @@ if view_mode in ["Огляд", "Квартальна динаміка"]:
             value = clean(latest_q.get("numeric_value", ""))
             status = clean(latest_q.get("status", ""))
             submitted = clean(latest_q.get("submitted_at", ""))
-            css = get_quarter_css(approval)
+            if is_period_locked(card_link_year, q):
+                approval = "Не настав час"
+                status = "Не настав час"
+                css = "q-empty"
+            else:
+                css = get_quarter_css(approval)
             fact_n = to_number(value)
 
         line_labels.append(f"{q} кв.")

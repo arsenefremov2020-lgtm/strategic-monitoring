@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+from core.period_locks import is_period_locked
+from core.timeutils import now_kyiv
 from core.db import get_supabase_client
 from core.deputies import DEPUTY_MINISTER_BY_SSP
 from core.config import FILE_PATH, SHEET_NAME
@@ -49,22 +51,10 @@ html, body, [class*="css"] {
 }
 
 .stApp {
-    background: #f0f4f9;
+    background: #F7F9FC;
 }
 
 /* Subtle geometric background pattern */
-.stApp::before {
-    content: "";
-    position: fixed;
-    inset: 0;
-    background-image:
-        radial-gradient(circle at 15% 15%, rgba(0,91,187,0.06) 0%, transparent 40%),
-        radial-gradient(circle at 85% 80%, rgba(255,213,0,0.06) 0%, transparent 40%),
-        radial-gradient(circle at 50% 50%, rgba(0,91,187,0.02) 0%, transparent 60%);
-    pointer-events: none;
-    z-index: 0;
-}
-
 .main .block-container {
     max-width: min(1500px, 98vw);
     padding: clamp(0.5rem, 2vw, 1.5rem) clamp(0.5rem, 2vw, 2rem);
@@ -76,7 +66,7 @@ html, body, [class*="css"] {
 .ua-stripe {
     height: 5px;
     border-radius: 0 0 6px 6px;
-    background: linear-gradient(90deg, #005BBB 50%, #FFD700 50%);
+    background: linear-gradient(90deg, #005BBB 50%, #FFD500 50%);
     margin-bottom: 16px;
     box-shadow: 0 2px 8px rgba(0,91,187,0.15);
 }
@@ -84,7 +74,7 @@ html, body, [class*="css"] {
 /* ── Ministry label ── */
 .ministry-label {
     text-align: right;
-    color: #334155;
+    color: #61708A;
     font-size: clamp(11px, 1.1vw, 14px);
     font-weight: 700;
     margin-bottom: 10px;
@@ -93,8 +83,8 @@ html, body, [class*="css"] {
 
 /* ── Header card ── */
 .header-card {
-    background: linear-gradient(135deg, #ffffff 0%, #f8faff 100%);
-    border: 1px solid #dde3ed;
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
     border-left: 5px solid #005BBB;
     border-radius: 12px;
     padding: clamp(16px, 2.5vw, 28px) clamp(16px, 2.5vw, 32px);
@@ -115,14 +105,14 @@ html, body, [class*="css"] {
 .header-title {
     font-size: clamp(20px, 2.5vw, 30px);
     font-weight: 900;
-    color: #0c1a3a;
+    color: #032A63;
     margin: 0 0 6px 0;
     line-height: 1.2;
 }
 
 .header-subtitle {
     font-size: clamp(12px, 1.1vw, 14px);
-    color: #475569;
+    color: #61708A;
     line-height: 1.6;
     max-width: none;
     width: 100%;
@@ -138,12 +128,12 @@ html, body, [class*="css"] {
 }
 
 .pill {
-    background: #eef3fb;
-    border: 1px solid #c2d4f0;
+    background: #EAF1FF;
+    border: 1px solid #BFD3F2;
     border-radius: 20px;
     padding: 5px 12px;
     font-size: clamp(10px, 0.9vw, 12px);
-    color: #1e3a6e;
+    color: #032A63;
     font-weight: 600;
     white-space: nowrap;
 }
@@ -151,7 +141,7 @@ html, body, [class*="css"] {
 /* ── Section card ── */
 .section-card {
     background: #ffffff;
-    border: 1px solid #dde3ed;
+    border: 1px solid #DCE4F0;
     border-radius: 12px;
     padding: clamp(14px, 2vw, 22px) clamp(14px, 2vw, 24px);
     margin-bottom: 18px;
@@ -165,20 +155,20 @@ div[data-testid="stMarkdownContainer"] .section-card:empty {
 .section-title {
     font-size: clamp(15px, 1.4vw, 19px);
     font-weight: 800;
-    color: #0c1a3a;
+    color: #032A63;
     margin: 0 0 4px 0;
 }
 
 .section-subtitle {
     font-size: clamp(11px, 0.95vw, 13px);
-    color: #64748b;
+    color: #61708A;
     margin: 0 0 14px 0;
 }
 
 /* ── Filter panel ── */
 .filter-panel {
-    background: linear-gradient(135deg, #f8fbff 0%, #eef3fb 100%);
-    border: 1px solid #c2d4f0;
+    background: #EAF1FF;
+    border: 1px solid #BFD3F2;
     border-radius: 12px;
     padding: clamp(14px, 2vw, 20px) clamp(14px, 2vw, 22px);
     margin-bottom: 20px;
@@ -195,13 +185,13 @@ div[data-testid="stMarkdownContainer"] .section-card:empty {
 .filter-title {
     font-size: clamp(14px, 1.3vw, 17px);
     font-weight: 800;
-    color: #0c1a3a;
+    color: #032A63;
 }
 
 .filter-hint {
     font-size: clamp(10px, 0.9vw, 12px);
-    color: #64748b;
-    background: #e9f0fb;
+    color: #61708A;
+    background: #EAF1FF;
     border-radius: 6px;
     padding: 3px 8px;
 }
@@ -209,7 +199,7 @@ div[data-testid="stMarkdownContainer"] .section-card:empty {
 .filter-group-label {
     font-size: clamp(10px, 0.85vw, 11.5px);
     font-weight: 700;
-    color: #475569;
+    color: #61708A;
     text-transform: uppercase;
     letter-spacing: 0.06em;
     margin: 10px 0 6px 2px;
@@ -219,7 +209,7 @@ div[data-testid="stMarkdownContainer"] .section-card:empty {
 div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div,
 div[data-testid="stSelectbox"] div[data-baseweb="select"] > div {
     background-color: #ffffff !important;
-    border: 1.5px solid #c2d4f0 !important;
+    border: 1.5px solid #BFD3F2 !important;
     border-radius: 8px !important;
     min-height: 38px !important;
     font-size: clamp(11px, 1vw, 13px) !important;
@@ -234,14 +224,14 @@ div[data-testid="stSelectbox"] div[data-baseweb="select"] > div:focus-within {
 div[data-testid="stMultiSelect"] label,
 div[data-testid="stSelectbox"] label {
     font-weight: 700 !important;
-    color: #1e3a6e !important;
+    color: #032A63 !important;
     font-size: clamp(11px, 0.95vw, 13px) !important;
 }
 
 /* toggle */
 div[data-testid="stToggle"] label {
     font-weight: 700 !important;
-    color: #1e3a6e !important;
+    color: #032A63 !important;
     font-size: clamp(11px, 0.95vw, 13px) !important;
 }
 
@@ -265,22 +255,22 @@ div[data-testid="stToggle"] label {
 }
 
 .conclusion-risk-high {
-    background: linear-gradient(135deg, #fff1f1 0%, #fee2e2 100%);
-    border-left: 5px solid #dc2626;
-    border: 1px solid #fecaca;
-    border-left: 5px solid #dc2626;
+    background: #FBE5E5;
+    border-left: 5px solid #DC4A4A;
+    border: 1px solid #DC4A4A;
+    border-left: 5px solid #DC4A4A;
 }
 
 .conclusion-risk-medium {
-    background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
-    border: 1px solid #fde68a;
-    border-left: 5px solid #d97706;
+    background: #FDF3D8;
+    border: 1px solid #F4B400;
+    border-left: 5px solid #FF7A45;
 }
 
 .conclusion-risk-low {
-    background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
-    border: 1px solid #bbf7d0;
-    border-left: 5px solid #16a34a;
+    background: #E4F5EC;
+    border: 1px solid #1E9E57;
+    border-left: 5px solid #118847;
 }
 
 .conclusion-badge {
@@ -291,9 +281,9 @@ div[data-testid="stToggle"] label {
     white-space: nowrap;
 }
 
-.badge-red { background: #dc2626; color: #fff; }
-.badge-yellow { background: #d97706; color: #fff; }
-.badge-green { background: #16a34a; color: #fff; }
+.badge-red { background: #DC4A4A; color: #fff; }
+.badge-yellow { background: #FF7A45; color: #fff; }
+.badge-green { background: #118847; color: #fff; }
 
 .conclusion-meta {
     display: flex;
@@ -308,12 +298,12 @@ div[data-testid="stToggle"] label {
     padding: 4px 11px;
     font-size: clamp(10px, 0.9vw, 12px);
     font-weight: 600;
-    color: #334155;
+    color: #61708A;
 }
 
 .conclusion-text {
     font-size: clamp(12px, 1vw, 14px);
-    color: #475569;
+    color: #61708A;
     margin-top: 6px;
     width: 100%;
 }
@@ -338,7 +328,7 @@ div[data-testid="stToggle"] label {
 .kpi-title {
     font-size: clamp(10px, 0.85vw, 12px);
     font-weight: 700;
-    color: #475569;
+    color: #61708A;
     min-height: 28px;
     line-height: 1.3;
 }
@@ -346,7 +336,7 @@ div[data-testid="stToggle"] label {
 .kpi-value {
     font-size: clamp(22px, 2.5vw, 32px);
     font-weight: 900;
-    color: #0c1a3a;
+    color: #032A63;
     line-height: 1;
     margin-top: 2px;
 }
@@ -354,34 +344,38 @@ div[data-testid="stToggle"] label {
 .kpi-pct {
     font-size: clamp(11px, 0.95vw, 13px);
     font-weight: 700;
-    color: #64748b;
+    color: #61708A;
     margin-top: 4px;
 }
 
-.kpi-blue  { background: #eff6ff; border-color: #bfdbfe; }
-.kpi-green { background: #f0fdf4; border-color: #bbf7d0; }
-.kpi-red   { background: #fef2f2; border-color: #fecaca; }
-.kpi-yellow{ background: #fffbeb; border-color: #fde68a; }
-.kpi-gray  { background: #f8fafc; border-color: #e2e8f0; }
+.kpi-blue  { background: #E3EDFF; border-color: #BFD3F2; }
+.kpi-blue .kpi-value { color: #4D8DFF; }
+.kpi-green { background: #E4F5EC; border-color: #1E9E57; }
+.kpi-red   { background: #FBE5E5; border-color: #DC4A4A; }
+.kpi-red .kpi-value { color: #FF7A45; }
+.kpi-yellow{ background: #FDF3D8; border-color: #F4B400; }
+.kpi-yellow .kpi-value { color: #FF7A45; }
+.kpi-gray  { background: #F7F9FC; border-color: #DCE4F0; }
+.kpi-gray .kpi-value { color: #8A96A8; }
 .kpi-card { display:block; text-decoration:none !important; cursor:pointer; color:inherit !important; }
 .kpi-card:hover { transform:translateY(-2px); box-shadow:0 8px 18px rgba(15,23,42,.10); }
-.kpi-card.kpi-active { outline:3px solid rgba(37,99,235,.22); border-color:#60a5fa; }
+.kpi-card.kpi-active { outline:3px solid rgba(37,99,235,.22); border-color:#4D8DFF; }
 
 /* ── Insight items ── */
 .insight-item {
-    background: #f8fafc;
+    background: #F7F9FC;
     border-left: 4px solid #005BBB;
     border-radius: 0 8px 8px 0;
     padding: clamp(8px, 1vw, 12px) clamp(12px, 1.5vw, 16px);
     margin-bottom: 8px;
     font-size: clamp(12px, 1vw, 14px);
-    color: #1e293b;
+    color: #132238;
     line-height: 1.5;
 }
 
-.insight-item.warn { border-left-color: #d97706; background: #fffbeb; }
-.insight-item.danger { border-left-color: #dc2626; background: #fef2f2; }
-.insight-item.info { border-left-color: #0891b2; background: #ecfeff; }
+.insight-item.warn { border-left-color: #FF7A45; background: #FDF3D8; }
+.insight-item.danger { border-left-color: #DC4A4A; background: #FBE5E5; }
+.insight-item.info { border-left-color: #00A8A8; background: #EAF1FF; }
 
 /* ── Linear indicator rows ── */
 .indicator-row {
@@ -393,12 +387,12 @@ div[data-testid="stToggle"] label {
     justify-content: space-between;
     font-size: clamp(11px, 0.95vw, 13px);
     font-weight: 600;
-    color: #334155;
+    color: #61708A;
     margin-bottom: 4px;
 }
 
 .indicator-bar-bg {
-    background: #e2e8f0;
+    background: #DCE4F0;
     border-radius: 99px;
     height: 8px;
     overflow: hidden;
@@ -413,7 +407,7 @@ div[data-testid="stToggle"] label {
 /* ── Chart container ── */
 .chart-wrap {
     background: #ffffff;
-    border: 1px solid #e9eef5;
+    border: 1px solid #EAF1FF;
     border-radius: 10px;
     padding: clamp(10px, 1.5vw, 16px);
     margin-bottom: 10px;
@@ -422,7 +416,7 @@ div[data-testid="stToggle"] label {
 .chart-title {
     font-size: clamp(12px, 1.1vw, 15px);
     font-weight: 800;
-    color: #0c1a3a;
+    color: #032A63;
     margin-bottom: 6px;
 }
 
@@ -430,34 +424,34 @@ div[data-testid="stToggle"] label {
 div[data-testid="stDataFrame"] {
     border-radius: 10px;
     overflow: hidden;
-    border: 1px solid #dde3ed !important;
+    border: 1px solid #DCE4F0 !important;
 }
 
 /* ── Methodology ── */
 .methodology-box {
-    background: #f8fafc;
-    border: 1px solid #dde3ed;
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
     border-radius: 10px;
     padding: 16px 20px;
     font-size: clamp(11px, 0.95vw, 13px);
-    color: #334155;
+    color: #61708A;
     line-height: 1.7;
 }
 
 /* ── Footer ── */
 .footer {
     text-align: center;
-    color: #94a3b8;
+    color: #8A96A8;
     font-size: clamp(10px, 0.9vw, 12px);
     margin-top: 40px;
     padding: 18px 0 10px;
-    border-top: 1px solid #e2e8f0;
+    border-top: 1px solid #DCE4F0;
 }
 
 /* ── Separator ── */
 .vis-separator {
     border: none;
-    border-top: 1px solid #e2e8f0;
+    border-top: 1px solid #DCE4F0;
     margin: 22px 0;
 }
 
@@ -468,7 +462,7 @@ div[data-testid="stDataFrame"] {
 .pres-overlay {
     position: fixed;
     inset: 0;
-    background: #0a0f1e;
+    background: #032A63;
     z-index: 9999;
     overflow-y: auto;
     font-family: 'Helvetica Neue', 'Arial', sans-serif;
@@ -512,14 +506,14 @@ div[data-testid="stDataFrame"] {
 }
 
 .pres-dot.active {
-    background: #FFD700;
+    background: #FFD500;
     width: 24px;
     border-radius: 4px;
 }
 
 .pres-ua-bar {
     height: 3px;
-    background: linear-gradient(90deg, #005BBB 50%, #FFD700 50%);
+    background: linear-gradient(90deg, #005BBB 50%, #FFD500 50%);
     width: 100%;
 }
 
@@ -548,16 +542,14 @@ div[data-testid="stDataFrame"] {
 
 /* Slide 1 — Title slide */
 .pres-slide-title {
-    background: radial-gradient(ellipse at 20% 50%, rgba(0,91,187,0.25) 0%, transparent 60%),
-                radial-gradient(ellipse at 80% 30%, rgba(255,215,0,0.1) 0%, transparent 50%),
-                #0a0f1e;
+    background: #032A63;
 }
 
 .pres-title-eyebrow {
     font-size: 11px;
     letter-spacing: 0.2em;
     text-transform: uppercase;
-    color: #FFD700;
+    color: #FFD500;
     font-weight: 700;
     margin-bottom: 20px;
 }
@@ -598,18 +590,15 @@ div[data-testid="stDataFrame"] {
 
 /* Slide 2 — Conclusion / Status */
 .pres-slide-conclusion {
-    background: radial-gradient(ellipse at 80% 20%, rgba(220,38,38,0.15) 0%, transparent 50%),
-                #0d1117;
+    background: #032A63;
 }
 
 .pres-slide-conclusion.ok {
-    background: radial-gradient(ellipse at 80% 20%, rgba(22,163,74,0.12) 0%, transparent 50%),
-                #0d1117;
+    background: #032A63;
 }
 
 .pres-slide-conclusion.medium {
-    background: radial-gradient(ellipse at 80% 20%, rgba(217,119,6,0.12) 0%, transparent 50%),
-                #0d1117;
+    background: #032A63;
 }
 
 .pres-section-label {
@@ -632,9 +621,9 @@ div[data-testid="stDataFrame"] {
     margin-bottom: 20px;
 }
 
-.pres-verdict-badge.high { background: rgba(220,38,38,0.2); border: 1.5px solid #dc2626; color: #fca5a5; }
-.pres-verdict-badge.medium { background: rgba(217,119,6,0.2); border: 1.5px solid #d97706; color: #fde68a; }
-.pres-verdict-badge.low { background: rgba(22,163,74,0.2); border: 1.5px solid #16a34a; color: #86efac; }
+.pres-verdict-badge.high { background: rgba(220,38,38,0.2); border: 1.5px solid #DC4A4A; color: #DC4A4A; }
+.pres-verdict-badge.medium { background: rgba(217,119,6,0.2); border: 1.5px solid #FF7A45; color: #F4B400; }
+.pres-verdict-badge.low { background: rgba(22,163,74,0.2); border: 1.5px solid #118847; color: #1E9E57; }
 
 .pres-verdict-text {
     font-size: clamp(13px, 1.2vw, 16px);
@@ -646,7 +635,7 @@ div[data-testid="stDataFrame"] {
 
 /* Slide 3 — KPI Metrics */
 .pres-slide-kpis {
-    background: #0d1117;
+    background: #032A63;
 }
 
 .pres-kpi-grid {
@@ -676,11 +665,11 @@ div[data-testid="stDataFrame"] {
     border-radius: 14px 14px 0 0;
 }
 
-.pres-kpi-card.blue::before { background: #005BBB; }
-.pres-kpi-card.green::before { background: #16a34a; }
-.pres-kpi-card.red::before { background: #dc2626; }
-.pres-kpi-card.yellow::before { background: #d97706; }
-.pres-kpi-card.gray::before { background: #475569; }
+.pres-kpi-card.blue::before { background: #4D8DFF; }
+.pres-kpi-card.green::before { background: #00A8A8; }
+.pres-kpi-card.red::before { background: #FF7A45; }
+.pres-kpi-card.yellow::before { background: #F4B400; }
+.pres-kpi-card.gray::before { background: #8A96A8; }
 
 .pres-kpi-label {
     font-size: 11px;
@@ -705,7 +694,7 @@ div[data-testid="stDataFrame"] {
 
 /* Slide 4 — Goals */
 .pres-slide-goals {
-    background: linear-gradient(160deg, #0d1117 60%, rgba(0,91,187,0.06) 100%);
+    background: #032A63;
 }
 
 .pres-goal-bar-wrap {
@@ -762,7 +751,7 @@ div[data-testid="stDataFrame"] {
 
 /* Slide 5 — Risk */
 .pres-slide-risks {
-    background: #0d1117;
+    background: #032A63;
 }
 
 .pres-risk-grid {
@@ -785,18 +774,18 @@ div[data-testid="stDataFrame"] {
 .pres-risk-card.low { background: rgba(22,163,74,0.1); border: 1.5px solid rgba(22,163,74,0.25); }
 
 .pres-risk-label { font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
-.pres-risk-card.high .pres-risk-label { color: #fca5a5; }
-.pres-risk-card.medium .pres-risk-label { color: #fde68a; }
-.pres-risk-card.low .pres-risk-label { color: #86efac; }
+.pres-risk-card.high .pres-risk-label { color: #DC4A4A; }
+.pres-risk-card.medium .pres-risk-label { color: #F4B400; }
+.pres-risk-card.low .pres-risk-label { color: #1E9E57; }
 
 .pres-risk-val {
     font-size: clamp(40px, 5vw, 64px);
     font-weight: 900;
     line-height: 1;
 }
-.pres-risk-card.high .pres-risk-val { color: #f87171; }
-.pres-risk-card.medium .pres-risk-val { color: #fbbf24; }
-.pres-risk-card.low .pres-risk-val { color: #4ade80; }
+.pres-risk-card.high .pres-risk-val { color: #DC4A4A; }
+.pres-risk-card.medium .pres-risk-val { color: #F4B400; }
+.pres-risk-card.low .pres-risk-val { color: #1E9E57; }
 
 .pres-risk-sub { font-size: 13px; color: rgba(255,255,255,0.4); font-weight: 600; }
 
@@ -1250,20 +1239,20 @@ def gauge_chart(value, title):
     fig = go.Figure(go.Indicator(
         mode="gauge+number",
         value=value,
-        number={"suffix": "%", "font": {"size": 28, "color": "#0c1a3a"}},
-        title={"text": title, "font": {"size": 14, "color": "#475569"}},
+        number={"suffix": "%", "font": {"size": 28, "color": "#032A63"}},
+        title={"text": title, "font": {"size": 14, "color": "#61708A"}},
         gauge={
-            "axis": {"range": [0, 100], "tickcolor": "#94a3b8", "tickfont": {"size": 11}},
-            "bar": {"color": "#005BBB", "thickness": 0.3},
+            "axis": {"range": [0, 100], "tickcolor": "#8A96A8", "tickfont": {"size": 11}},
+            "bar": {"color": "#00A8A8", "thickness": 0.3},
             "bgcolor": "white",
             "borderwidth": 0,
             "steps": [
-                {"range": [0, 35], "color": "#fee2e2"},
-                {"range": [35, 70], "color": "#fef3c7"},
-                {"range": [70, 100], "color": "#dcfce7"},
+                {"range": [0, 35], "color": "#FBE5E5"},
+                {"range": [35, 70], "color": "#FDF3D8"},
+                {"range": [70, 100], "color": "#E4F5EC"},
             ],
             "threshold": {
-                "line": {"color": "#0c1a3a", "width": 3},
+                "line": {"color": "#032A63", "width": 3},
                 "thickness": 0.75,
                 "value": value
             }
@@ -1371,6 +1360,7 @@ def prepare_period_data(strat_df, requests_df, year, quarter, department="Усі
 
     selected_q_num = quarter_to_number(quarter)
     selected_period_num = int(year) * 10 + selected_q_num
+    period_locked = is_period_locked(year, quarter)
 
     measures["period_state"] = measures.apply(
         lambda r: get_period_state(r.get("start_num"), r.get("end_num"), selected_period_num),
@@ -1436,6 +1426,8 @@ def prepare_period_data(strat_df, requests_df, year, quarter, department="Усі
 
     active["status"] = active["status"].fillna("Не подано")
     active.loc[active["period_state"] == "not_started", "status"] = "Не настав час"
+    if period_locked:
+        active["status"] = "Не настав час"
     active["numeric_value"] = active["numeric_value"].fillna("")
     active["risks"] = active["risks"].fillna("")
     active["progress_text"] = active["progress_text"].fillna("")
@@ -1453,6 +1445,8 @@ def prepare_period_data(strat_df, requests_df, year, quarter, department="Усі
         axis=1
     )
     active.loc[active["period_state"] == "not_started", ["status_score", "performance_score"]] = None
+    if period_locked:
+        active[["status_score", "performance_score"]] = None
     active["included_in_assessment"] = ~active["status_display"].isin([
         "Не настав час", "Втратило актуальність"
     ])
@@ -1613,12 +1607,12 @@ def explode_departments(active):
 def style_rank_table(row, total_rows):
     place = row["Місце"]
     if place <= 3:
-        return ["background-color: #dcfce7; color: #14532d; font-weight: 800; text-align: center"] * len(row)
+        return ["background-color: #E4F5EC; color: #0C713A; font-weight: 800; text-align: center"] * len(row)
     if place <= 10:
-        return ["background-color: #e0f2fe; color: #0c4a6e; text-align: center"] * len(row)
+        return ["background-color: #EAF1FF; color: #032A63; text-align: center"] * len(row)
     if place > max(total_rows - 7, 10):
-        return ["background-color: #fee2e2; color: #7f1d1d; text-align: center"] * len(row)
-    return ["background-color: #f8fafc; color: #334155; text-align: center"] * len(row)
+        return ["background-color: #FBE5E5; color: #DC4A4A; text-align: center"] * len(row)
+    return ["background-color: #F7F9FC; color: #61708A; text-align: center"] * len(row)
 
 
 def collapse_to_latest_measure_rows(df):
@@ -1640,26 +1634,26 @@ def collapse_to_latest_measure_rows(df):
 
 
 # ─── Plotly theme helper ───────────────────────────────────────────────────────
-CHART_COLORS = ["#005BBB", "#FFD700", "#0891b2", "#16a34a", "#d97706", "#9333ea", "#dc2626", "#64748b"]
+CHART_COLORS = ["#005BBB", "#00A8A8", "#4D8DFF", "#FF7A45", "#1E9E57", "#F4B400", "#8A96A8", "#032A63"]
 
 RISK_COLORS = {
-    "Критичний ризик": "#dc2626",
-    "Середній ризик": "#d97706",
-    "Низький ризик": "#16a34a",
-    "Не оцінюється": "#94a3b8"
+    "Критичний ризик": "#FF7A45",
+    "Середній ризик": "#F4B400",
+    "Низький ризик": "#1E9E57",
+    "Не оцінюється": "#8A96A8"
 }
 
 TRAFFIC_COLORS = {
-    "🟢 У графіку": "#16a34a",
-    "🟡 Часткове виконання": "#d97706",
-    "🔴 Відстає": "#dc2626",
-    "⚪ Не оцінюється": "#94a3b8"
+    "🟢 У графіку": "#00A8A8",
+    "🟡 Часткове виконання": "#F4B400",
+    "🔴 Відстає": "#FF7A45",
+    "⚪ Не оцінюється": "#8A96A8"
 }
 
 CHART_LAYOUT = dict(
     paper_bgcolor="rgba(0,0,0,0)",
     plot_bgcolor="rgba(0,0,0,0)",
-    font=dict(family="Helvetica Neue, Arial, sans-serif", size=12, color="#334155")
+    font=dict(family="Helvetica Neue, Arial, sans-serif", size=12, color="#61708A")
 )
 
 
@@ -1717,7 +1711,7 @@ st.markdown(f"""
         <div class="pill">📋 Dashboard</div>
         <div class="pill">🗄 Excel + Supabase</div>
         <div class="pill">✅ Погоджені заявки</div>
-        <div class="pill">🕐 {datetime.now().strftime("%d.%m.%Y %H:%M")}</div>
+        <div class="pill">🕐 {now_kyiv().strftime("%d.%m.%Y %H:%M")}</div>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -1900,7 +1894,7 @@ with st.container():
             st.markdown(
                 "<div style='font-size:13px;font-weight:700;margin-bottom:4px;'>"
                 "🏢 Індекс самостійного структурного підрозділу</div>"
-                f"<div style='background:#f1f5f9;border:1px solid #cbd5e1;border-radius:10px;"
+                f"<div style='background:#F7F9FC;border:1px solid #DCE4F0;border-radius:10px;"
                 f"padding:9px 12px;font-weight:800;'>Ваш ССП: №{_own_dash_ssp}</div>",
                 unsafe_allow_html=True,
             )
@@ -2241,7 +2235,7 @@ if presentation_mode:
                     if _pdf_bytes:
                         st.download_button(
                             "⬇️ Завантажити PDF", data=_pdf_bytes,
-                            file_name=f"presentation_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+                            file_name=f"presentation_{now_kyiv().strftime('%Y%m%d_%H%M')}.pdf",
                             mime="application/pdf", key="dl_pres_pdf", use_container_width=True,
                         )
                     else:
@@ -2262,11 +2256,11 @@ if presentation_mode:
         for _, gr in gp_sorted.iterrows():
             pct = min(max(float(gr["Виконання"]), 0), 100)
             if pct >= 70:
-                bar_color = "#16a34a"
+                bar_color = "#118847"
             elif pct >= 35:
-                bar_color = "#d97706"
+                bar_color = "#FF7A45"
             else:
-                bar_color = "#dc2626"
+                bar_color = "#DC4A4A"
             short_name = str(gr["strategic_goal"])[:45] + ("…" if len(str(gr["strategic_goal"])) > 45 else "")
             goal_rows_html += f"""
             <div class="pres-goal-row">
@@ -2328,8 +2322,8 @@ if presentation_mode:
     pres_fin_bars_html = ""
     _fin_types_slide = [
         ("Державний бюджет", pres_fin_db, "#005BBB"),
-        ("МТД / кошти партнерів", pres_fin_mtd, "#0891b2"),
-        ("Без фінансування", pres_fin_no, "#94a3b8"),
+        ("МТД / кошти партнерів", pres_fin_mtd, "#00A8A8"),
+        ("Без фінансування", pres_fin_no, "#8A96A8"),
     ]
     for _label, _cnt, _color in _fin_types_slide:
         _pct_v = round(_cnt / pres_fin_total * 100, 1) if pres_fin_total else 0
@@ -2357,7 +2351,7 @@ if presentation_mode:
         for _, _krow in _kp_tbl.iterrows():
             _b_str = f"{_krow['_Бюджет']:.2f}" if pd.notna(_krow["_Бюджет"]) and _krow["_Бюджет"] > 0 else "—"
             pres_kpkvk_html += (
-                f'<div style="display:flex;justify-content:space-between;align-items:center;'                f'padding:10px 0;border-bottom:1px solid rgba(255,255,255,.06);">'                f'<span style="font-size:14px;font-weight:800;color:#FFD700;">{_krow["budget_kpkvk"]}</span>'                f'<span style="font-size:12px;color:rgba(255,255,255,.5);">{int(_krow["_Заходів"])} заходів</span>'                f'<span style="font-size:12px;color:rgba(255,255,255,.7);font-weight:700;">{_b_str} млрд грн</span>'                f'</div>'
+                f'<div style="display:flex;justify-content:space-between;align-items:center;'                f'padding:10px 0;border-bottom:1px solid rgba(255,255,255,.06);">'                f'<span style="font-size:14px;font-weight:800;color:#FFD500;">{_krow["budget_kpkvk"]}</span>'                f'<span style="font-size:12px;color:rgba(255,255,255,.5);">{int(_krow["_Заходів"])} заходів</span>'                f'<span style="font-size:12px;color:rgba(255,255,255,.7);font-weight:700;">{_b_str} млрд грн</span>'                f'</div>'
             )
     if not pres_kpkvk_html:
         pres_kpkvk_html = '<div style="color:rgba(255,255,255,.3);margin-top:12px;">КПКВК не визначено</div>'
@@ -2372,13 +2366,13 @@ if presentation_mode:
     top5_data = top5_data.sort_values("risk_score", ascending=False).head(5)
 
     for _, tr in top5_data.iterrows():
-        risk_color = "#f87171" if tr["auto_risk"] == "Критичний ризик" else "#fbbf24"
+        risk_color = "#DC4A4A" if tr["auto_risk"] == "Критичний ризик" else "#F4B400"
         dep_short = str(tr.get("department", ""))[:12]
         name_short = str(tr.get("name", ""))[:70] + ("…" if len(str(tr.get("name", ""))) > 70 else "")
         top5_html += (
             f'<div style="display:flex;align-items:flex-start;gap:14px;padding:14px 0;'
             f'border-bottom:1px solid rgba(255,255,255,0.06);">'
-            f'<div style="background:{risk_color};color:#0a0f1e;font-size:10px;font-weight:900;'
+            f'<div style="background:{risk_color};color:#032A63;font-size:10px;font-weight:900;'
             f'border-radius:6px;padding:3px 8px;white-space:nowrap;margin-top:2px;">'
             f'{tr.get("auto_risk","")}</div>'
             f'<div style="flex:1;">'
@@ -2398,45 +2392,45 @@ if presentation_mode:
     import streamlit.components.v1 as components
     _pres_css = """
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: #0a0f1e; font-family: 'Helvetica Neue', Arial, sans-serif; overflow-x: hidden; }
-    .pres-overlay { min-height: 100vh; background: #0a0f1e; overflow-y: auto; }
-    .pres-ua-bar { height: 3px; background: linear-gradient(90deg,#005BBB 50%,#FFD700 50%); width: 100%; }
+    body { background: #032A63; font-family: 'Helvetica Neue', Arial, sans-serif; overflow-x: hidden; }
+    .pres-overlay { min-height: 100vh; background: #032A63; overflow-y: auto; }
+    .pres-ua-bar { height: 3px; background: linear-gradient(90deg,#005BBB 50%,#FFD500 50%); width: 100%; }
     .pres-nav { position: sticky; top: 0; z-index: 100; background: rgba(10,15,30,0.95); backdrop-filter: blur(12px); border-bottom: 1px solid rgba(255,255,255,0.08); display: flex; align-items: center; justify-content: space-between; padding: 10px 32px; }
     .pres-nav-title { color: rgba(255,255,255,0.5); font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 600; }
     .pres-nav-dots { display: flex; gap: 8px; align-items: center; }
     .pres-dot { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,0.2); }
-    .pres-dot.active { background: #FFD700; width: 24px; border-radius: 4px; }
+    .pres-dot.active { background: #FFD500; width: 24px; border-radius: 4px; }
     .pres-slide { min-height: 100vh; display: flex; flex-direction: column; justify-content: center; padding: 48px 64px; position: relative; border-bottom: 1px solid rgba(255,255,255,0.04); }
     .pres-slide:last-child { border-bottom: none; }
     .pres-slide-num { position: absolute; top: 24px; right: 40px; font-size: 11px; color: rgba(255,255,255,0.2); letter-spacing: 0.1em; font-weight: 600; }
-    .pres-slide-title { background: radial-gradient(ellipse at 20% 50%, rgba(0,91,187,0.25) 0%, transparent 60%), radial-gradient(ellipse at 80% 30%, rgba(255,215,0,0.1) 0%, transparent 50%), #0a0f1e; }
-    .pres-title-eyebrow { font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: #FFD700; font-weight: 700; margin-bottom: 20px; }
+    .pres-slide-title { background: #032A63; }
+    .pres-title-eyebrow { font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: #FFD500; font-weight: 700; margin-bottom: 20px; }
     .pres-title-h1 { font-size: clamp(32px,4vw,56px); font-weight: 900; color: #fff; line-height: 1.1; margin-bottom: 16px; max-width: 800px; }
     .pres-title-sub { font-size: clamp(14px,1.4vw,18px); color: rgba(255,255,255,0.5); max-width: 600px; line-height: 1.6; margin-bottom: 40px; }
     .pres-filter-pills { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
     .pres-filter-pill { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); border-radius: 20px; padding: 6px 16px; font-size: 12px; color: rgba(255,255,255,0.7); font-weight: 600; }
-    .pres-slide-conclusion { background: radial-gradient(ellipse at 80% 20%, rgba(220,38,38,0.15) 0%, transparent 50%), #0d1117; }
-    .pres-slide-conclusion.ok { background: radial-gradient(ellipse at 80% 20%, rgba(22,163,74,0.12) 0%, transparent 50%), #0d1117; }
-    .pres-slide-conclusion.medium { background: radial-gradient(ellipse at 80% 20%, rgba(217,119,6,0.12) 0%, transparent 50%), #0d1117; }
+    .pres-slide-conclusion { background: #032A63; }
+    .pres-slide-conclusion.ok { background: #032A63; }
+    .pres-slide-conclusion.medium { background: #032A63; }
     .pres-section-label { font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: rgba(255,255,255,0.35); font-weight: 700; margin-bottom: 24px; }
     .pres-verdict-badge { display: inline-flex; align-items: center; gap: 10px; padding: 10px 24px; border-radius: 10px; font-size: clamp(18px,2vw,26px); font-weight: 900; margin-bottom: 20px; }
-    .pres-verdict-badge.high { background: rgba(220,38,38,0.2); border: 1.5px solid #dc2626; color: #fca5a5; }
-    .pres-verdict-badge.medium { background: rgba(217,119,6,0.2); border: 1.5px solid #d97706; color: #fde68a; }
-    .pres-verdict-badge.low { background: rgba(22,163,74,0.2); border: 1.5px solid #16a34a; color: #86efac; }
+    .pres-verdict-badge.high { background: rgba(220,38,38,0.2); border: 1.5px solid #DC4A4A; color: #DC4A4A; }
+    .pres-verdict-badge.medium { background: rgba(217,119,6,0.2); border: 1.5px solid #FF7A45; color: #F4B400; }
+    .pres-verdict-badge.low { background: rgba(22,163,74,0.2); border: 1.5px solid #118847; color: #1E9E57; }
     .pres-verdict-text { font-size: clamp(13px,1.2vw,16px); color: rgba(255,255,255,0.55); max-width: 680px; line-height: 1.7; margin-bottom: 40px; }
-    .pres-slide-kpis { background: #0d1117; }
+    .pres-slide-kpis { background: #032A63; }
     .pres-kpi-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 20px; margin-top: 32px; }
     .pres-kpi-card { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 14px; padding: 28px 24px; display: flex; flex-direction: column; gap: 6px; position: relative; overflow: hidden; }
     .pres-kpi-card::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px; border-radius: 14px 14px 0 0; }
-    .pres-kpi-card.blue::before { background: #005BBB; }
-    .pres-kpi-card.green::before { background: #16a34a; }
-    .pres-kpi-card.red::before { background: #dc2626; }
-    .pres-kpi-card.yellow::before { background: #d97706; }
-    .pres-kpi-card.gray::before { background: #475569; }
+    .pres-kpi-card.blue::before { background: #4D8DFF; }
+    .pres-kpi-card.green::before { background: #00A8A8; }
+    .pres-kpi-card.red::before { background: #FF7A45; }
+    .pres-kpi-card.yellow::before { background: #F4B400; }
+    .pres-kpi-card.gray::before { background: #8A96A8; }
     .pres-kpi-label { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(255,255,255,0.4); }
     .pres-kpi-value { font-size: clamp(36px,4vw,56px); font-weight: 900; color: #fff; line-height: 1; }
     .pres-kpi-sub { font-size: 13px; color: rgba(255,255,255,0.35); font-weight: 600; }
-    .pres-slide-goals { background: linear-gradient(160deg,#0d1117 60%,rgba(0,91,187,0.06) 100%); }
+    .pres-slide-goals { background: #032A63; }
     .pres-goal-bar-wrap { margin-top: 28px; display: flex; flex-direction: column; gap: 14px; }
     .pres-goal-row { display: flex; align-items: center; gap: 16px; }
     .pres-goal-code { font-size: 11px; font-weight: 800; color: rgba(255,255,255,0.4); min-width: 36px; text-align: right; }
@@ -2444,20 +2438,20 @@ if presentation_mode:
     .pres-goal-bar-bg { flex: 2; background: rgba(255,255,255,0.06); border-radius: 99px; height: 10px; overflow: hidden; }
     .pres-goal-bar-fill { height: 100%; border-radius: 99px; }
     .pres-goal-pct { font-size: 13px; font-weight: 800; color: #fff; min-width: 44px; text-align: right; }
-    .pres-slide-risks { background: #0d1117; }
+    .pres-slide-risks { background: #032A63; }
     .pres-risk-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 20px; margin-top: 32px; }
     .pres-risk-card { border-radius: 14px; padding: 28px 24px; display: flex; flex-direction: column; gap: 8px; }
     .pres-risk-card.high { background: rgba(220,38,38,0.12); border: 1.5px solid rgba(220,38,38,0.3); }
     .pres-risk-card.medium { background: rgba(217,119,6,0.1); border: 1.5px solid rgba(217,119,6,0.25); }
     .pres-risk-card.low { background: rgba(22,163,74,0.1); border: 1.5px solid rgba(22,163,74,0.25); }
     .pres-risk-label { font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
-    .pres-risk-card.high .pres-risk-label { color: #fca5a5; }
-    .pres-risk-card.medium .pres-risk-label { color: #fde68a; }
-    .pres-risk-card.low .pres-risk-label { color: #86efac; }
+    .pres-risk-card.high .pres-risk-label { color: #DC4A4A; }
+    .pres-risk-card.medium .pres-risk-label { color: #F4B400; }
+    .pres-risk-card.low .pres-risk-label { color: #1E9E57; }
     .pres-risk-val { font-size: clamp(40px,5vw,64px); font-weight: 900; line-height: 1; }
-    .pres-risk-card.high .pres-risk-val { color: #f87171; }
-    .pres-risk-card.medium .pres-risk-val { color: #fbbf24; }
-    .pres-risk-card.low .pres-risk-val { color: #4ade80; }
+    .pres-risk-card.high .pres-risk-val { color: #DC4A4A; }
+    .pres-risk-card.medium .pres-risk-val { color: #F4B400; }
+    .pres-risk-card.low .pres-risk-val { color: #1E9E57; }
     .pres-risk-sub { font-size: 13px; color: rgba(255,255,255,0.4); font-weight: 600; }
     .pres-slide-h2 { font-size: clamp(24px,2.8vw,38px); font-weight: 900; color: #fff; margin-bottom: 4px; line-height: 1.15; }
     .pres-slide-hsub { font-size: clamp(12px,1.1vw,15px); color: rgba(255,255,255,0.4); margin-bottom: 0; }
@@ -2529,7 +2523,7 @@ if presentation_mode:
             <div class="pres-filter-pills">
                 {filter_pills_html}
                 <span class="pres-filter-pill">📌 {total_active} активних заходів</span>
-                <span class="pres-filter-pill">🕐 {datetime.now().strftime('%d.%m.%Y %H:%M')}</span>
+                <span class="pres-filter-pill">🕐 {now_kyiv().strftime('%d.%m.%Y %H:%M')}</span>
             </div>
         </div>
 
@@ -2553,7 +2547,7 @@ if presentation_mode:
                 </div>
                 <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:20px 18px;">
                     <div style="font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.35);margin-bottom:8px;">Відхилення</div>
-                    <div style="font-size:44px;font-weight:900;color:{'#f87171' if deviation_current < 0 else '#4ade80'};line-height:1;">{deviation_current:+.1f}</div>
+                    <div style="font-size:44px;font-weight:900;color:{'#DC4A4A' if deviation_current < 0 else '#1E9E57'};line-height:1;">{deviation_current:+.1f}</div>
                     <div style="font-size:12px;color:rgba(255,255,255,.35);margin-top:4px;">В.п. від планового рівня</div>
                 </div>
             </div>
@@ -2611,8 +2605,8 @@ if presentation_mode:
 
             <div class="pres-metric-rows" style="max-width:680px;margin-top:40px;">
                 {pres_bar('Виконання СП', completion, '#005BBB')}
-                {pres_bar('Покриття моніторингом', coverage, '#0891b2')}
-                {pres_bar('Частка без ризику', round(100 - risk_share, 1), '#16a34a')}
+                {pres_bar('Покриття моніторингом', coverage, '#00A8A8')}
+                {pres_bar('Частка без ризику', round(100 - risk_share, 1), '#118847')}
             </div>
         </div>
 
@@ -2665,7 +2659,7 @@ if presentation_mode:
         <div class="pres-exit-hint">↑ прокрутіть вверх · вимкніть тумблер щоб вийти</div>
 
         <!-- ══ SLIDE 6 — TOP-5 ПРОБЛЕМНІ ЗАХОДИ ══ -->
-        <div class="pres-slide" style="background:#0d1117;">
+        <div class="pres-slide" style="background:#032A63;">
             <div class="pres-slide-num">06 / 07</div>
             <div class="pres-section-label">Увага керівництва</div>
             <div class="pres-slide-h2">Топ-5 критичних заходів</div>
@@ -2677,7 +2671,7 @@ if presentation_mode:
 
 
         <!-- ══ SLIDE 7 — ФІНАНСУВАННЯ ══ -->
-        <div class="pres-slide" style="background:linear-gradient(160deg,#0d1117 60%,rgba(0,91,187,0.08) 100%);">
+        <div class="pres-slide" style="background:#032A63;">
             <div class="pres-slide-num">07 / 07</div>
             <div class="pres-section-label">Фінансування заходів</div>
             <div class="pres-slide-h2">Структура та обсяги фінансування</div>
@@ -2760,12 +2754,12 @@ if _selected_kpi in _kpi_detail_frames:
     _selected_item = next(item for item in _main_kpi_items if item["key"] == _selected_kpi)
     _detail_frame = _kpi_detail_frames[_selected_kpi]
     st.markdown(
-        '<div style="margin-top:16px;padding:16px 18px;background:#fff;border:1px solid #d8dee9;'
-        'border-radius:14px;"><div style="font-size:17px;font-weight:900;color:#0f172a;">'
+        '<div style="margin-top:16px;padding:16px 18px;background:#fff;border:1px solid #DCE4F0;'
+        'border-radius:14px;"><div style="font-size:17px;font-weight:900;color:#132238;">'
         f'Деталізація KPI: {_selected_item["title"]} '
-        '<span style="font-size:11px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;'
+        '<span style="font-size:11px;color:#8A6400;background:#FDF3D8;border:1px solid #F4B400;'
         'border-radius:999px;padding:3px 8px;">тест</span></div>'
-        f'<div style="font-size:13px;color:#64748b;margin-top:4px;">На картці: {_selected_item["count"]}; '
+        f'<div style="font-size:13px;color:#61708A;margin-top:4px;">На картці: {_selected_item["count"]}; '
         f'у деталізації: {len(_detail_frame)}. Повторне натискання згортає блок.</div></div>',
         unsafe_allow_html=True,
     )
@@ -2939,12 +2933,12 @@ with _f1:
     _bar_w = max(0.0, min(float(_flex_pct), 100.0))
     st.markdown(
         f"""
-        <div style="background:#ffffff;border:1px solid #d8dee9;border-radius:14px;
+        <div style="background:#ffffff;border:1px solid #DCE4F0;border-radius:14px;
                     padding:14px 16px;">
-          <div style="font-size:12px;font-weight:800;color:#475569;">Виконання за обраною базою</div>
-          <div style="font-size:30px;font-weight:900;color:#0c1a3a;line-height:1.15;">{_flex_pct}%</div>
-          <div style="font-size:11px;color:#64748b;margin-bottom:8px;">{_num} із {_den} заходів</div>
-          <div style="height:8px;background:#eef2f9;border-radius:6px;overflow:hidden;">
+          <div style="font-size:12px;font-weight:800;color:#61708A;">Виконання за обраною базою</div>
+          <div style="font-size:30px;font-weight:900;color:#032A63;line-height:1.15;">{_flex_pct}%</div>
+          <div style="font-size:11px;color:#61708A;margin-bottom:8px;">{_num} із {_den} заходів</div>
+          <div style="height:8px;background:#F7F9FC;border-radius:6px;overflow:hidden;">
             <div style="height:8px;width:{_bar_w}%;background:#005BBB;border-radius:6px;"></div>
           </div>
         </div>
@@ -2980,10 +2974,10 @@ with ind_col1:
 with ind_col2:
     st.markdown('<div class="chart-wrap" style="height:100%;padding-top:20px;">', unsafe_allow_html=True)
     render_indicator_bar("Виконання СП", completion, 100, "#005BBB")
-    render_indicator_bar("Покриття моніторингом", coverage, 100, "#0891b2")
+    render_indicator_bar("Покриття моніторингом", coverage, 100, "#00A8A8")
     dev_display = round(100 + deviation_current, 1)
-    render_indicator_bar("Відхилення за звітний період", round(100 + deviation_current, 1), 100, "#d97706")
-    render_indicator_bar("Частка заходів без ризику", round(100 - risk_share, 1), 100, "#16a34a")
+    render_indicator_bar("Відхилення за звітний період", round(100 + deviation_current, 1), 100, "#FF7A45")
+    render_indicator_bar("Частка заходів без ризику", round(100 - risk_share, 1), 100, "#118847")
     st.markdown("</div>", unsafe_allow_html=True)
 
 st.markdown("</div>", unsafe_allow_html=True)
@@ -3100,7 +3094,7 @@ if view_mode in ["Усі візуалізації", "Стратегічні ці
             text=goal_sorted["Виконання"].apply(lambda x: f"{x:.2f}%"),
             hover_data={"Активних_заходів": True, "Покриття_%": True, "Ризикових": True},
             color="Виконання",
-            color_continuous_scale=["#dc2626", "#fef08a", "#16a34a"],
+            color_continuous_scale=["#DC4A4A", "#FDF3D8", "#118847"],
             range_color=[0, 100],
         )
         fig_goals.update_traces(
@@ -3111,7 +3105,7 @@ if view_mode in ["Усі візуалізації", "Стратегічні ці
         fig_goals.update_layout(
             **CHART_LAYOUT,
             height=max(200, len(goal_sorted) * 38 + 40),
-            xaxis=dict(range=[0, 115], showgrid=True, gridcolor="#f1f5f9", ticksuffix="%"),
+            xaxis=dict(range=[0, 115], showgrid=True, gridcolor="#F7F9FC", ticksuffix="%"),
             yaxis=dict(showgrid=False, categoryorder="array", categoryarray=goal_sorted["label"].tolist()[::-1]),
             coloraxis_showscale=False,
             margin=dict(l=10, r=60, t=10, b=10)
@@ -3151,8 +3145,8 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
         .set_table_styles([{
             "selector": "th",
             "props": [
-                ("text-align", "center"), ("background-color", "#e9eef7"),
-                ("color", "#111827"), ("font-weight", "900"), ("border", "1px solid #d8dee9")
+                ("text-align", "center"), ("background-color", "#EAF1FF"),
+                ("color", "#132238"), ("font-weight", "900"), ("border", "1px solid #DCE4F0")
             ]
         }])
     )
@@ -3178,7 +3172,7 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
         text=top_deps["Виконання"].apply(lambda x: f"{x:.2f}%"),
         hover_data={"Активних_заходів": True, "Покриття_%": True, "Ризикових": True, "Критичних": True},
         color="Виконання",
-        color_continuous_scale=["#dc2626", "#fef08a", "#16a34a"],
+        color_continuous_scale=["#DC4A4A", "#FDF3D8", "#118847"],
         range_color=[0, 100],
     )
     fig_dep.update_traces(
@@ -3200,7 +3194,7 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
         yaxis=dict(
             range=[0, 115],
             showgrid=True,
-            gridcolor="#f1f5f9",
+            gridcolor="#F7F9FC",
             ticksuffix="%"
         ),
         coloraxis_showscale=False,
@@ -3244,7 +3238,7 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
         text=deputy_progress_sorted["Виконання"].apply(lambda x: f"{x:.2f}%"),
         hover_data={"Активних_заходів": True, "Покриття_%": True, "Ризикових": True},
         color="Виконання",
-        color_continuous_scale=["#dc2626", "#fef08a", "#16a34a"],
+        color_continuous_scale=["#DC4A4A", "#FDF3D8", "#118847"],
         range_color=[0, 100],
         custom_data=["Заступник_Міністра", "Активних_заходів", "Покриття_%", "Ризикових"]
     )
@@ -3275,7 +3269,7 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
         yaxis=dict(
             range=[0, 115],
             showgrid=True,
-            gridcolor="#f1f5f9",
+            gridcolor="#F7F9FC",
             ticksuffix="%"
         ),
         coloraxis_showscale=False,
@@ -3346,7 +3340,7 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
                 categoryorder="array",
                 categoryarray=stacked_vis["ssp_department"].drop_duplicates().tolist()
             ),
-            yaxis=dict(showgrid=True, gridcolor="#f1f5f9"),
+            yaxis=dict(showgrid=True, gridcolor="#F7F9FC"),
         )
         apply_safe_plotly_layout(fig_risk_bar, has_legend=True)
         st.plotly_chart(fig_risk_bar, use_container_width=True)
@@ -3371,20 +3365,20 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
             fillcolor="rgba(22,163,74,0.05)", line_width=0, layer="below")
         # Лінії розподілу
         fig_scatter.add_shape(type="line", x0=50, x1=50, y0=0, y1=100,
-            line=dict(color="#cbd5e1", dash="dot", width=1))
+            line=dict(color="#DCE4F0", dash="dot", width=1))
         fig_scatter.add_shape(type="line", x0=0, x1=100, y0=50, y1=50,
-            line=dict(color="#cbd5e1", dash="dot", width=1))
+            line=dict(color="#DCE4F0", dash="dot", width=1))
 
         for _, row in scatter_df.iterrows():
             pct_risk = row["Частка_ризик"]
             perf = row["Виконання"]
             cnt = row["Активних_заходів"]
             if pct_risk >= 50 and perf < 50:
-                color = "#dc2626"
+                color = "#DC4A4A"
             elif pct_risk < 50 and perf >= 50:
-                color = "#16a34a"
+                color = "#118847"
             else:
-                color = "#d97706"
+                color = "#FF7A45"
             fig_scatter.add_trace(go.Scatter(
                 x=[perf], y=[pct_risk],
                 mode="markers+text",
@@ -3392,7 +3386,7 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
                             line=dict(color="white", width=1.5)),
                 text=[row["dep_short"]],
                 textposition="top center",
-                textfont=dict(size=9, color="#334155"),
+                textfont=dict(size=9, color="#61708A"),
                 hovertemplate=(
                     f"<b>{row['ssp_department']}</b><br>"
                     f"Виконання: {perf:.2f}%<br>"
@@ -3405,15 +3399,15 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
         fig_scatter.update_layout(
             **CHART_LAYOUT,
             height=420,
-            xaxis=dict(title="Виконання, %", range=[-10, 115], showgrid=True, gridcolor="#f1f5f9", ticksuffix="%"),
-            yaxis=dict(title="Частка ризикових заходів, %", range=[-10, 112], showgrid=True, gridcolor="#f1f5f9", ticksuffix="%"),
+            xaxis=dict(title="Виконання, %", range=[-10, 115], showgrid=True, gridcolor="#F7F9FC", ticksuffix="%"),
+            yaxis=dict(title="Частка ризикових заходів, %", range=[-10, 112], showgrid=True, gridcolor="#F7F9FC", ticksuffix="%"),
             margin=dict(l=60, r=20, t=20, b=60)
         )
         # Підписи квадрантів
         for txt, x, y, col in [
-            ("🔴 Критична зона", 25, 95, "#dc2626"),
-            ("🟡 Увага", 75, 25, "#d97706"),
-            ("🟢 Норма", 75, 95, "#16a34a"),
+            ("🔴 Критична зона", 25, 95, "#DC4A4A"),
+            ("🟡 Увага", 75, 25, "#FF7A45"),
+            ("🟢 Норма", 75, 95, "#118847"),
         ]:
             fig_scatter.add_annotation(x=x, y=y, text=txt, showarrow=False,
                 font=dict(size=10, color=col), xanchor="center",
@@ -3471,8 +3465,8 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
         markers=True,
         color_discrete_map={
             "Виконання": "#005BBB",
-            "Покриття": "#0891b2",
-            "Відхилення за звітний період": "#dc2626"
+            "Покриття": "#00A8A8",
+            "Відхилення за звітний період": "#DC4A4A"
         }
     )
     fig_trend.update_traces(line_width=2.5, marker_size=7)
@@ -3480,7 +3474,7 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
         **CHART_LAYOUT,
         height=340,
         xaxis=dict(showgrid=False, tickangle=-20),
-        yaxis=dict(showgrid=True, gridcolor="#f1f5f9", ticksuffix="%"),
+        yaxis=dict(showgrid=True, gridcolor="#F7F9FC", ticksuffix="%"),
     )
     fig_trend.update_layout(legend_title_text="Показник")
     apply_safe_plotly_layout(fig_trend, has_legend=True)
@@ -3501,7 +3495,7 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
         wf_df["label"] = wf_df["goal_code"].astype(str) + " " + wf_df["strategic_goal"].astype(str).str[:30]
         wf_df = wf_df.sort_values("Відхилення", ascending=True)
 
-        colors_wf = ["#dc2626" if v < 0 else "#16a34a" for v in wf_df["Відхилення"]]
+        colors_wf = ["#DC4A4A" if v < 0 else "#118847" for v in wf_df["Відхилення"]]
 
         fig_wf = go.Figure(go.Waterfall(
             name="Відхилення",
@@ -3511,17 +3505,17 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
             x=list(wf_df["Відхилення"]) + [deviation_current],
             text=[f"{v:+.1f}%" for v in wf_df["Відхилення"]] + [f"{deviation_current:+.1f}%"],
             textposition="outside",
-            connector=dict(line=dict(color="#e2e8f0", width=1)),
-            increasing=dict(marker=dict(color="#16a34a")),
-            decreasing=dict(marker=dict(color="#dc2626")),
+            connector=dict(line=dict(color="#DCE4F0", width=1)),
+            increasing=dict(marker=dict(color="#118847")),
+            decreasing=dict(marker=dict(color="#DC4A4A")),
             totals=dict(marker=dict(color="#005BBB")),
         ))
         fig_wf.update_layout(
             **CHART_LAYOUT,
             height=max(260, len(wf_df) * 36 + 80),
-            xaxis=dict(title="Відхилення, в.п.", showgrid=True, gridcolor="#f1f5f9", ticksuffix="%",
+            xaxis=dict(title="Відхилення, в.п.", showgrid=True, gridcolor="#F7F9FC", ticksuffix="%",
                        range=[-115, 15],
-                       zeroline=True, zerolinecolor="#94a3b8", zerolinewidth=1.5),
+                       zeroline=True, zerolinecolor="#8A96A8", zerolinewidth=1.5),
             yaxis=dict(showgrid=False),
             margin=dict(l=10, r=80, t=10, b=30),
             showlegend=False
@@ -3585,7 +3579,7 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "H
 
         fig_heat = px.imshow(
             pivot,
-            color_continuous_scale=["#fee2e2", "#fef9c3", "#dcfce7"],
+            color_continuous_scale=["#FBE5E5", "#FDF3D8", "#E4F5EC"],
             zmin=0, zmax=100,
             aspect="auto",
             text_auto=".0f",
@@ -3647,10 +3641,10 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
         )
 
         tl_color_map = {
-            "Виконано": "#16a34a",
-            "В процесі": "#d97706",
-            "Без даних": "#94a3b8",
-            "Не виконано / ризик": "#dc2626"
+            "Виконано": "#118847",
+            "В процесі": "#FF7A45",
+            "Без даних": "#8A96A8",
+            "Не виконано / ризик": "#DC4A4A"
         }
 
         fig_tl2 = px.bar(
@@ -3672,7 +3666,7 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
             **CHART_LAYOUT,
             height=360,
             xaxis=dict(showgrid=False, tickangle=-20),
-            yaxis=dict(showgrid=True, gridcolor="#f1f5f9"),
+            yaxis=dict(showgrid=True, gridcolor="#F7F9FC"),
         )
         apply_safe_plotly_layout(fig_tl2, has_legend=True)
         st.plotly_chart(fig_tl2, use_container_width=True)
@@ -3741,9 +3735,9 @@ if not presentation_mode:
         if not fin_donut_data.empty:
             FIN_COLORS = {
                 "Державний бюджет": "#005BBB",
-                "МТД / кошти партнерів": "#0891b2",
-                "Небюджетні / інші": "#d97706",
-                "Без фінансування": "#94a3b8",
+                "МТД / кошти партнерів": "#00A8A8",
+                "Небюджетні / інші": "#FF7A45",
+                "Без фінансування": "#8A96A8",
             }
             fig_donut = px.pie(
                 fin_donut_data,
@@ -3762,7 +3756,7 @@ if not presentation_mode:
             fig_donut.update_layout(uniformtext_minsize=9, uniformtext_mode="hide")
             fig_donut.update_layout(
                 **CHART_LAYOUT,
-                title=dict(text="Структура джерел фінансування", font=dict(size=14, color="#0c1a3a"), x=0),
+                title=dict(text="Структура джерел фінансування", font=dict(size=14, color="#032A63"), x=0),
                 height=340,
                 showlegend=True,
             )
@@ -3795,7 +3789,7 @@ if not presentation_mode:
                     text=goal_budget["Бюджет_2026"].apply(lambda v: f"{v:.2f}"),
                     hover_data={"Заходів": True},
                     color="Бюджет_2026",
-                    color_continuous_scale=["#bfdbfe", "#005BBB"],
+                    color_continuous_scale=["#BFD3F2", "#005BBB"],
                     labels={"label": "Стратегічна ціль", "Бюджет_2026": "млрд грн"},
                 )
                 fig_budget_bar.update_traces(
@@ -3806,10 +3800,10 @@ if not presentation_mode:
                 fig_budget_bar.update_layout(
                     **CHART_LAYOUT,
                     title=dict(text="Бюджет ДБ 2026 за стратегічними цілями (млрд грн)*",
-                               font=dict(size=14, color="#0c1a3a"), x=0),
+                               font=dict(size=14, color="#032A63"), x=0),
                     height=300,
                     xaxis=dict(showgrid=False, tickangle=0),
-                    yaxis=dict(showgrid=True, gridcolor="#f1f5f9", title="млрд грн"),
+                    yaxis=dict(showgrid=True, gridcolor="#F7F9FC", title="млрд грн"),
                     coloraxis_showscale=False,
                     margin=dict(l=10, r=10, t=40, b=40)
                 )
@@ -3858,14 +3852,14 @@ if not presentation_mode:
                 fig_heatmap_fin = px.imshow(
                     pivot_tbl,
                     text_auto=True,
-                    color_continuous_scale=["#f0f9ff", "#0369a1"],
+                    color_continuous_scale=["#EAF1FF", "#032A63"],
                     aspect="auto",
                     labels=dict(x="Тип фінансування", y="Статус виконання", color="Заходів")
                 )
                 fig_heatmap_fin.update_layout(
                     **CHART_LAYOUT,
                     title=dict(text="Виконання × тип фінансування (кількість заходів)",
-                               font=dict(size=14, color="#0c1a3a"), x=0),
+                               font=dict(size=14, color="#032A63"), x=0),
                     height=max(220, len(pivot_tbl) * 44 + 80),
                     coloraxis_showscale=False,
                     xaxis=dict(side="bottom", tickfont=dict(size=11)),
@@ -4149,14 +4143,14 @@ def _render_dash_auto_summary():
         st.markdown(
             '<div class="card">'
             '<div class="card-title">🧪 Автоматичний висновок '
-            '<span style="font-size:12px;background:#fef3c7;border:1px solid '
-            '#fcd34d;color:#92400e;border-radius:8px;padding:2px 8px;'
+            '<span style="font-size:12px;background:#FDF3D8;border:1px solid '
+            '#F4B400;color:#8A6400;border-radius:8px;padding:2px 8px;'
             'vertical-align:middle;">тестовий режим</span></div>'
             f'<div class="card-subtitle">Порівняння: {_cq} кв. {_cy} проти '
             f'{_pq} кв. {_py} · за застосованими фільтрами</div>'
-            + "".join(f'<div style="font-size:13px;color:#0f172a;'
+            + "".join(f'<div style="font-size:13px;color:#132238;'
                       f'margin:4px 0;">{l}</div>' for l in _lines)
-            + '<div style="font-size:11.5px;color:#94a3b8;margin-top:6px;">'
+            + '<div style="font-size:11.5px;color:#8A96A8;margin-top:6px;">'
               'Текст сформовано автоматично і він не є офіційним висновком.'
               '</div></div>',
             unsafe_allow_html=True,

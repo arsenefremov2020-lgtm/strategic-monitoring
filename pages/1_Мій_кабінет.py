@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from html import escape
 import re
 from core.page_setup import page_setup, render_footer
+from core.timeutils import now_kyiv
+from core.period_locks import is_period_locked
 from core.strategic_data import load_strat_matrix as core_load_strat_matrix
 from core import monitoring_data
 from core.statuses import SUBMISSION_STATUS_OPTIONS
@@ -418,8 +420,7 @@ with _refresh_col2:
         monitoring_data.invalidate_monitoring_cache()
         st.rerun()
 with _refresh_col1:
-    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
-    _kyiv_now = _dt.now(_tz(_td(hours=3)))
+    _kyiv_now = now_kyiv()
     st.caption(
         f"🕓 Дані оновлено о {_kyiv_now.strftime('%H:%M:%S')} (Київ). "
         "Список оновлюється автоматично; кнопкою можна оновити миттєво."
@@ -580,12 +581,19 @@ m5.metric("🟢 Погоджено", approved)
 
 st.markdown('<div class="card"><div class="card-title">Перелік відомостей</div>', unsafe_allow_html=True)
 
-show_df = filtered.rename(columns={
+show_df = filtered.copy()
+show_df["_visual_status"] = show_df.apply(
+    lambda row: "Не настав час"
+    if is_period_locked(row.get("year"), row.get("quarter"))
+    else row.get("status", ""),
+    axis=1,
+)
+show_df = show_df.rename(columns={
     "id": "ID",
     "year": "Рік",
     "quarter": "Квартал",
     "strat_code": "Код заходу",
-    "status": "Статус виконання",
+    "_visual_status": "Статус виконання",
     "numeric_value": "Фактичне значення",
     "approval_status": "Статус погодження",
     "responsible_person": "Відповідальна особа",
@@ -657,7 +665,7 @@ st.markdown(f"""
 <div class="info-grid">
     <div class="info-card info-card-blue">
         <div class="info-label">Статус виконання</div>
-        <div class="info-value">{display_text(selected_row["status"])}</div>
+        <div class="info-value">{display_text("Не настав час" if is_period_locked(selected_row.get("year"), selected_row.get("quarter")) else selected_row["status"])}</div>
     </div>
     <div class="info-card info-card-green">
         <div class="info-label">Фактичне значення</div>

@@ -9,6 +9,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from core.period_locks import apply_locked_status, is_period_locked
+from core.timeutils import now_kyiv
 from core.page_setup import page_setup, render_footer
 from core.ui import render_auto_refresh_notice
 from core.strategic_data import load_strat_matrix as core_load_strat_matrix, measure_name_by_code
@@ -1767,6 +1769,7 @@ monitoring_df = load_monitoring_requests()
 monitoring_df = filter_requests_for_user(
     monitoring_df, current_user, ssp_columns=["department"], page_key="Оцінка МіО"
 )
+monitoring_df = apply_locked_status(monitoring_df, status_col="status")
 
 # ============================================================
 # ДЖЕРЕЛО ДАНИХ: ПІДТВЕРДЖЕНІ / ОПЕРАТИВНА ОЦІНКА (правка №6)
@@ -1817,6 +1820,10 @@ if mio_data_mode == operational.MODE_OPERATIONAL and not monitoring_df.empty:
 else:
     st.caption("✅ Розрахунок лише за заявками, що пройшли всі етапи схеми погодження.")
 
+# Найвищий пріоритет period_locks: оперативний режим не може
+# перезаписати «Не настав час» авто-зарахуванням.
+monitoring_df = apply_locked_status(monitoring_df, status_col="status")
+
 # 🔒 Ручні закриття — офіційні, в обох режимах: для періодів без запису
 # «Погоджено» додається синтетичний запис «Виконано».
 _mio_closeouts = load_manual_closeouts()
@@ -1838,7 +1845,7 @@ if _mio_closeouts:
             "risks": "", "submitted_at": "", "object_kind": "measure",
         }
         for (_c, _y, _q) in _mio_closeouts
-        if (_c, _y, _q) not in _mio_keys
+        if (_c, _y, _q) not in _mio_keys and not is_period_locked(_y, _q)
     ]
     if _mio_synth:
         monitoring_df = pd.concat([monitoring_df, pd.DataFrame(_mio_synth)], ignore_index=True)
@@ -1867,7 +1874,7 @@ st.markdown(f"""
         <div class="pill">📊 Оцінка стратегічних результатів</div>
         <div class="pill">🗄 Страт_матриця + Supabase</div>
         <div class="pill">✅ Погоджені результати</div>
-        <div class="pill">🕐 {datetime.now().strftime("%d.%m.%Y %H:%M")}</div>
+        <div class="pill">🕐 {now_kyiv().strftime("%d.%m.%Y %H:%M")}</div>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -4681,7 +4688,7 @@ def render_mio_export_block(mio_years: list[int]) -> None:
                         "стратегічного плану", level=1)
                     h.alignment = WD_ALIGN_PARAGRAPH.CENTER
                     meta = doc.add_paragraph(
-                        f"Сформовано автоматично {datetime.now().strftime('%d.%m.%Y %H:%M')} · "
+                        f"Сформовано автоматично {now_kyiv().strftime('%d.%m.%Y %H:%M')} · "
                         f"Роки: {', '.join(str(y) for y in mio_years)} · "
                         f"Джерело даних: {mio_data_mode}"
                     )
@@ -4776,7 +4783,7 @@ def render_mio_export_block(mio_years: list[int]) -> None:
 
         _files = st.session_state.get("mio_export_files_v19") or {}
         if _files:
-            _stamp = datetime.now().strftime("%Y-%m-%d")
+            _stamp = now_kyiv().strftime("%Y-%m-%d")
             dcol1, dcol2, dcol3 = st.columns(3)
             if _files.get("xlsx"):
                 with dcol1:

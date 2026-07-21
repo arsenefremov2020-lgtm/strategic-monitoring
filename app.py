@@ -1,21 +1,15 @@
-from textwrap import dedent
 import re
-import io
 from datetime import datetime
 from html import escape
 
 import pandas as pd
 import streamlit as st
 from core.db import get_supabase_client
-from core.errors import log_cosmetic_error
-from core.deputies import DEPUTY_MINISTER_BY_SSP
-from core.config import FILE_PATH, SHEET_NAME, ANNOUNCEMENT
-from core.excel_loader import read_excel_sheet
+from core.config import ANNOUNCEMENT
 from core.page_setup import page_setup, render_footer
 from core.text_utils import (
-    raw_value, clean_value, strip_leading_code, extract_ssp_index,
+    raw_value, clean_value, strip_leading_code,
 )
-from core.statuses import status_score as unified_status_score
 from core import statuses as core_statuses
 from core.period_locks import all_periods_locked, is_period_locked
 from core.timeutils import now_kyiv
@@ -70,7 +64,6 @@ header[data-testid="stHeader"] {
 .header-box,
 .flow-box,
 .summary-box,
-.filter-box,
 .info-card,
 .note-box,
 .search-result-box {
@@ -241,14 +234,6 @@ header[data-testid="stHeader"] {
     font-size: 14px;
 }
 
-.filter-box {
-    border-radius: 18px;
-    padding: 24px 26px 26px 26px;
-    margin: 18px 0 24px 0;
-    background: #F7F9FC;
-    border: 1px solid #DCE4F0;
-    box-shadow: 0 10px 24px rgba(15,23,42,0.07);
-}
 
 .filter-title {
     font-size: 22px;
@@ -338,13 +323,6 @@ div[data-testid="stExpander"] div[data-testid="stExpander"] > details > summary 
     margin-top: 0 !important;
 }
 
-.filter-field-label {
-    color: #132238;
-    font-size: 13px;
-    font-weight: 900;
-    line-height: 1.35;
-    margin: 0 0 4px 0;
-}
 
 /* На головній приховуємо лише технічний iframe автооновлення,
    щоб він не створював зайвий вертикальний проміжок під блакитним повідомленням. */
@@ -549,37 +527,6 @@ td.risk-cell {
     color: #61708A;
 }
 
-.submit-main-button {
-    display: flex;
-    width: 100%;
-    min-height: 68px;
-    align-items: center;
-    justify-content: center;
-
-    margin-top: 16px;
-    margin-bottom: 34px;
-
-    background: #118847;
-    color: #ffffff !important;
-
-    border-radius: 18px;
-    border: 1px solid rgba(255,255,255,0.28);
-
-    font-size: 18px;
-    font-weight: 950;
-    letter-spacing: 0.3px;
-    text-decoration: none !important;
-
-    box-shadow: 0 16px 32px rgba(22,163,74,0.34), inset 0 1px 0 rgba(255,255,255,0.22);
-}
-
-.submit-main-button:hover {
-    background: #0C713A !important;
-    color: #ffffff !important;
-    filter: brightness(1.05);
-    transform: translateY(-1px);
-    text-decoration: none !important;
-}
 
 @media (max-width: 1100px) {
     .summary-grid,
@@ -621,11 +568,6 @@ def split_ssp_values(value):
 
     return re.findall(r"\d+", text)
 
-
-def get_deputy_minister_by_main_ssp(value):
-    """Повертає заступника Міністра за індексом головного виконавця."""
-    index = extract_ssp_index(value)
-    return DEPUTY_MINISTER_BY_SSP.get(index, "")
 
 
 def value_contains_ssp(value, selected_indices):
@@ -685,9 +627,6 @@ def load_monitoring():
     return monitoring_data.load_monitoring_requests()
 
 
-def ensure_monitoring_columns(monitoring_df):
-    return monitoring_data.ensure_monitoring_columns(monitoring_df)
-
 
 from core.closeouts import load_manual_closeouts
 
@@ -721,9 +660,6 @@ def has_returned_monitoring(monitoring_df, code, selected_years, selected_quarte
 def has_not_counted_monitoring(monitoring_df, code, selected_years, selected_quarters):
     return get_measure_status(monitoring_df, code, selected_years, selected_quarters) == "Не враховано"
 
-
-def has_measure_risks(monitoring_df, code, selected_years, selected_quarters):
-    return has_not_counted_monitoring(monitoring_df, code, selected_years, selected_quarters)
 
 
 def measure_matches_status_mode(monitoring_df, code, selected_years, selected_quarters, mode):
@@ -774,20 +710,6 @@ def is_active_in_any_selected_year(row, selected_years):
 
     return False
 
-
-def get_indicator_type(row):
-    unit = raw_value(row.get("unit", "")).lower()
-
-    if "так/ні" in unit or ("так" in unit and "ні" in unit):
-        return "Так/ні"
-
-    if "%" in unit or "відсот" in unit:
-        return "Відсотковий"
-
-    if any(x in unit for x in ["грн", "дол", "євро", "eur", "usd"]):
-        return "Фінансовий"
-
-    return "Кількісний"
 
 
 def row_contains_selected_ssp(row, selected_ssp_indices):
@@ -1025,28 +947,11 @@ def get_quarter_columns(selected_years, selected_quarters):
     return columns
 
 
-def build_export_dataframe(measures, quarter_data, selected_years, selected_quarters):
-    quarter_columns = get_quarter_columns(selected_years, selected_quarters)
-    return core_exports.build_measures_export_df(measures, quarter_data, quarter_columns)
-
-
-def build_export_excel(measures, quarter_data, selected_years, selected_quarters):
-    export_df = build_export_dataframe(measures, quarter_data, selected_years, selected_quarters)
-    return core_exports.dataframe_to_excel_bytes(export_df, sheet_name="Заходи")
 
 
 # ------------------------------------------------------------
 # HTML table rendering
 # ------------------------------------------------------------
-
-def two_line_header(top, bottom):
-    top_text = escape(str(top))
-    bottom_text = escape(str(bottom))
-
-    if bottom_text:
-        return f"{top_text}<br><span style='font-size:11px;font-weight:700;color:#61708A;'>{bottom_text}</span>"
-
-    return top_text
 
 def clean_html(html: str) -> str:
     return "\n".join(
@@ -1054,48 +959,6 @@ def clean_html(html: str) -> str:
         for line in html.splitlines()
         if line.strip()
     )
-
-def render_table(headers, rows, col_classes, min_width=2200, scroll_class="table-scroll"):
-    if not rows:
-        st.info("Дані відсутні.")
-        return
-
-    html = f"""
-    <div class="{scroll_class}">
-    <table class="custom-table" style="min-width:{min_width}px;">
-    <thead>
-    <tr>
-    """
-
-    for idx, header in enumerate(headers):
-        col_class = col_classes[idx] if idx < len(col_classes) else "col-year"
-
-        if isinstance(header, tuple):
-            header_html = two_line_header(header[0], header[1])
-        else:
-            header_html = escape(str(header))
-
-        html += f"<th class='{col_class}'>{header_html}</th>"
-
-    html += "</tr></thead><tbody>"
-
-    for row in rows:
-        html += "<tr>"
-
-        for idx, cell in enumerate(row):
-            value = cell.get("value", "") if isinstance(cell, dict) else cell
-            status_class = cell.get("status_class", "") if isinstance(cell, dict) else ""
-            mode = cell.get("mode", "fixed") if isinstance(cell, dict) else "fixed"
-            col_class = col_classes[idx] if idx < len(col_classes) else "col-year"
-            classes = f"{col_class} {status_class}".strip()
-
-            html += f"<td class='{classes}'>{make_cell(value, mode)}</td>"
-
-        html += "</tr>"
-
-    html += "</tbody></table></div>"
-
-    st.markdown(clean_html(html), unsafe_allow_html=True)
 
 
 def latest_indicator_submission(code):
@@ -1225,69 +1088,6 @@ def render_indicator_table(rows):
     html += "</tbody></table></div>"
 
     st.markdown(clean_html(html), unsafe_allow_html=True)
-
-def build_measure_rows(measures, monitoring_df, quarter_data, selected_years, selected_quarters):
-    rows = []
-    quarter_columns = get_quarter_columns(selected_years, selected_quarters)
-
-    for _, measure in measures.iterrows():
-        code = raw_value(measure.get("code", ""))
-        status = get_measure_status(monitoring_df, code, selected_years, selected_quarters)
-
-        row = [
-            {"value": measure.get("code", ""), "mode": "nowrap"},
-            {"value": strip_leading_code(measure.get("name", ""), code), "mode": "fixed"},
-            {"value": measure.get("product_type", ""), "mode": "fixed"},
-            {"value": measure.get("indicator", ""), "mode": "fixed"},
-            {"value": measure.get("unit", ""), "mode": "fixed"},
-            {"value": measure.get("base_2021", ""), "mode": "nowrap"},
-            {"value": measure.get("fact_2024", ""), "mode": "nowrap"},
-            {"value": measure.get("fact_2025", ""), "mode": "nowrap"},
-            {"value": measure.get("target_2026", ""), "mode": "nowrap"},
-            {"value": measure.get("target_2027", ""), "mode": "nowrap"},
-            {"value": measure.get("target_2028", ""), "mode": "nowrap"},
-            {"value": measure.get("source_global", ""), "mode": "fixed"},
-            {"value": measure.get("source_national", ""), "mode": "fixed"},
-            {"value": measure.get("resp_main", ""), "mode": "nowrap"},
-            {"value": measure.get("resp_co_1", ""), "mode": "nowrap"},
-            {"value": measure.get("resp_co_2", ""), "mode": "nowrap"},
-            {"value": measure.get("deputy_minister_raw", ""), "mode": "nowrap"},
-            {"value": measure.get("budget_kpkvk", ""), "mode": "nowrap"},
-            {"value": measure.get("budget_2026_approved", ""), "mode": "nowrap"},
-            {"value": measure.get("budget_2027_forecast", ""), "mode": "nowrap"},
-            {"value": measure.get("budget_2028_forecast", ""), "mode": "nowrap"},
-            {"value": measure.get("other_source", ""), "mode": "fixed"},
-            {"value": measure.get("other_2026_plan", ""), "mode": "nowrap"},
-            {"value": measure.get("other_2027_forecast", ""), "mode": "nowrap"},
-            {"value": measure.get("other_2028_forecast", ""), "mode": "nowrap"}
-        ]
-
-        for year, quarter, _ in quarter_columns:
-            key = f"{year}_{quarter}"
-            item = quarter_data.get(code, {}).get(key, None)
-
-            if item is None:
-                row.append({
-                    "value": "",
-                    "status_class": "status-empty",
-                    "mode": "nowrap"
-                })
-            else:
-                row.append({
-                    "value": item.get("value", ""),
-                    "status_class": item.get("class", "status-empty"),
-                    "mode": "nowrap"
-                })
-
-        row.append({
-            "value": status,
-            "status_class": visual_status_class(status),
-            "mode": "nowrap"
-        })
-
-        rows.append(row)
-
-    return rows
 
 
 def render_measure_table(measures, monitoring_df, quarter_data, selected_years, selected_quarters, show_context_codes=False):
@@ -1578,21 +1378,6 @@ status_options = [
 goal_options = build_goal_options(goals)
 
 product_type_options = build_product_type_options(df)
-
-deputy_options = sorted([
-    "АРТЕМЕНКО Анна Ігорівна",
-    "БАШЛИК Денис Олександрович",
-    "БЕЗКАРАВАЙНИЙ Ігор Володимирович",
-    "ВИСОЦЬКИЙ Тарас Миколайович",
-    "КІНДРАТІВ Віталій Зіновійович",
-    "КРАСНОЛУЦЬКИЙ Олександр Васильович",
-    "МАРЧАК Дарія Миколаївна",
-    "ОВЧАРЕНКО Ірина Іванівна",
-    "ПЕРЕЛИГІН Єгор Євгенович",
-    "ПЕТРУК Віталій Вікторович",
-    "ПИВОВАРОВ Андрій Андрійович",
-    "ЦИБОРТ Олександр Сергійович"
-])
 
 
 # ------------------------------------------------------------

@@ -961,18 +961,25 @@ def clean_html(html: str) -> str:
     )
 
 
-def latest_indicator_submission(code):
-    """Останнє подане значення індикатора СЦ/завдання для app.py."""
+def latest_indicator_submission(code, indicator_name):
+    """Останнє подання конкретного індикатора за ключем код + назва."""
     if indicator_monitoring_df.empty:
         return ""
+    code_key, name_key = monitoring_data.indicator_identity_key(code, indicator_name)
     data = indicator_monitoring_df.copy()
-    data = data[data["strat_code"].astype(str).str.strip() == raw_value(code)]
+    data = data[data["strat_code"].astype(str).str.strip() == code_key]
+    if name_key and not data.empty:
+        data = data[
+            data["indicator_name"].apply(
+                lambda value: monitoring_data.indicator_identity_key(code_key, value)[1] == name_key
+            )
+        ]
     if data.empty:
         return ""
     data["_submitted_at"] = pd.to_datetime(data.get("submitted_at"), errors="coerce")
     data = data.sort_values(["_submitted_at", "id"], ascending=[False, False])
     row = data.iloc[0]
-    value = raw_value(row.get("numeric_value", ""))
+    value = raw_value(row.get("numeric_value", "")) or raw_value(row.get("value_text", ""))
     status = raw_value(row.get("approval_status", ""))
     as_of = raw_value(row.get("as_of_date", ""))
     parts = [value] if value else []
@@ -1023,7 +1030,9 @@ def build_indicator_rows(parent_row, child_rows, selected_ssp_indices=None, sear
         prepared_row = []
 
         row_for_display = dict(row)
-        row_for_display["_latest_monitoring"] = latest_indicator_submission(row.get("code", ""))
+        row_for_display["_latest_monitoring"] = latest_indicator_submission(
+            row.get("code", ""), row.get("indicator", "")
+        )
         for col in indicator_cols:
             prepared_row.append(format_indicator_value(row_for_display.get(col, ""), col))
 
@@ -1826,6 +1835,7 @@ st.markdown(
 
 if filtered_measures.empty:
     st.warning("За обраними параметрами відбору відомостей не знайдено.")
+    render_footer()
     st.stop()
 
 if len(filtered_goal_codes) == 1:

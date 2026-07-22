@@ -28,20 +28,14 @@ from core import statuses as core_statuses
 from core.period_locks import is_period_locked
 from core import approval_schemes as schemes
 from core import notify_events
-from core.validation import validate_fact_value, status_completion_warning, value_reaches_target
+from core.validation import (
+    is_x_value,
+    status_value_conflict,
+    validate_fact_value,
+    validate_fact_value_for_target,
+)
 from core.errors import show_incident, show_warning
 from core import periods as core_periods
-from core.drafts import (
-    clear_draft_recovery,
-    editor_generation,
-    forget_draft_state,
-    load_drafts_for_keys,
-    make_draft_key,
-    queue_draft,
-    render_draft_autosave_worker,
-    render_draft_recovery,
-    save_draft_now,
-)
 from core.submission_ui import render_submission_notice, set_submission_notice
 from core.transitions import TransitionRejected, submit_request
 
@@ -179,7 +173,7 @@ header[data-testid="stHeader"] {
 .header-box {
     border-radius: 16px;
     padding: 22px 26px;
-    margin-bottom: 18px;
+    margin-bottom: 8px;
     backdrop-filter: blur(8px);
 }
 
@@ -246,10 +240,14 @@ header[data-testid="stHeader"] {
     align-items: center;
     justify-content: center;
     text-align: center;
-    color: #61708A;
+    color: #132238;
     font-size: 13px;
-    font-weight: 800;
+    font-weight: 900;
     line-height: 1.25;
+}
+
+.flow-steps.flow-steps-5 {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .summary-box {
@@ -358,21 +356,10 @@ header[data-testid="stHeader"] {
     max-width: 1280px;
 }
 
-[data-testid="stMain"] div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
-[data-testid="stMain"] div[data-testid="stTextInput"] input,
-[data-testid="stMain"] div[data-testid="stTextArea"] textarea {
-    background-color: #EAF1FF !important;
-    border: 1px solid #BFD3F2 !important;
-    border-radius: 10px !important;
-    min-height: 43px !important;
-    box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.08) !important;
-}
-
-[data-testid="stMain"] div[data-testid="stSelectbox"] label,
-[data-testid="stMain"] div[data-testid="stTextInput"] label,
-[data-testid="stMain"] div[data-testid="stTextArea"] label {
-    font-weight: 750 !important;
+div[data-testid="stRadio"] > label p,
+div[data-testid="stRadio"] [role="radiogroup"] label p {
     color: #132238 !important;
+    font-weight: 900 !important;
 }
 
 /* Центрування всієї таблиці.
@@ -621,10 +608,24 @@ def row_matches_search(row, search_query):
 
 
 def has_target_for_year(row, year):
+    """A target marked «х» is still an active reporting row."""
     col = f"target_{year}"
     if col not in row:
         return True
-    return not is_empty_or_nd(row.get(col, ""))
+    value = row.get(col, "")
+    if is_x_value(value):
+        return True
+    return not is_empty_or_nd(value)
+
+
+def future_targets_for_row(row, year):
+    """Return later annual targets used to infer the input type for a current «х»."""
+    targets = []
+    for future_year in range(int(year) + 1, 2035):
+        col = f"target_{future_year}"
+        if col in row:
+            targets.append(row.get(col, ""))
+    return targets
 
 
 get_record_visual_status = core_statuses.get_record_visual_status
@@ -759,7 +760,6 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-render_submission_notice()
 _submit_warning = st.session_state.pop("monitoring_submit_warning", None)
 if _submit_warning:
     st.warning(_submit_warning)
@@ -771,44 +771,35 @@ contact_fields_disabled = should_prefill_contact_fields(current_user)
 # User info fields
 # ------------------------------------------------------------
 
-st.markdown(
-    """
-    <div class="user-box">
-        <div class="user-title">Контактна інформація відповідальної особи</div>
-    """,
-    unsafe_allow_html=True
-)
+with st.expander("Контактна інформація відповідальної особи", expanded=False):
+    u1, u2, u3 = st.columns([1.2, 0.85, 1.1])
 
-u1, u2, u3 = st.columns([1.2, 0.85, 1.1])
+    with u1:
+        responsible_person = st.text_input(
+            "ПІБ відповідальної особи",
+            value=prefilled_contacts.get("full_name", ""),
+            key="responsible_person_input",
+            placeholder="Введіть ПІБ",
+            disabled=contact_fields_disabled,
+        )
 
-with u1:
-    responsible_person = st.text_input(
-        "ПІБ відповідальної особи",
-        value=prefilled_contacts.get("full_name", ""),
-        key="responsible_person_input",
-        placeholder="Введіть ПІБ",
-        disabled=contact_fields_disabled,
-    )
+    with u2:
+        responsible_phone = st.text_input(
+            "Контактний номер телефону",
+            value=prefilled_contacts.get("phone", ""),
+            key="responsible_phone_input",
+            placeholder="+380...",
+            disabled=contact_fields_disabled,
+        )
 
-with u2:
-    responsible_phone = st.text_input(
-        "Контактний номер телефону",
-        value=prefilled_contacts.get("phone", ""),
-        key="responsible_phone_input",
-        placeholder="+380...",
-        disabled=contact_fields_disabled,
-    )
-
-with u3:
-    responsible_email = st.text_input(
-        "Електронна пошта відповідальної особи",
-        value=prefilled_contacts.get("email", ""),
-        key="responsible_email_input",
-        placeholder="name@me.gov.ua",
-        disabled=contact_fields_disabled,
-    )
-
-st.markdown("</div>", unsafe_allow_html=True)
+    with u3:
+        responsible_email = st.text_input(
+            "Електронна пошта відповідальної особи",
+            value=prefilled_contacts.get("email", ""),
+            key="responsible_email_input",
+            placeholder="name@me.gov.ua",
+            disabled=contact_fields_disabled,
+        )
 
 
 # ------------------------------------------------------------
@@ -823,7 +814,7 @@ def render_scheme_picker(ssp_index, key_prefix):
     (крім подання керівником ССП), а ланки нижче ролі подавача недоступні.
     """
     st.markdown(
-        '<div class="table-title" style="margin-top:14px;">Маршрут погодження</div>',
+        '<div class="table-title" style="margin-top:14px;">Схема погодження</div>',
         unsafe_allow_html=True,
     )
     submitter_role = str(current_user.get("role") or "")
@@ -842,7 +833,7 @@ def render_scheme_picker(ssp_index, key_prefix):
         available_schemes,
         index=default_index,
         key=f"{key_prefix}_approval_scheme_select",
-        help="Координатор є обов'язковою ланкою. Схема не може завершуватися координатором, крім випадку подання керівником ССП.",
+        label_visibility="collapsed",
     )
 
     roles = schemes.APPROVAL_SCHEMES.get(scheme_name, [])
@@ -881,74 +872,9 @@ def render_scheme_picker(ssp_index, key_prefix):
         persons[role] = chosen
 
     chain = schemes.build_chain(scheme_name, persons) if ready else []
-    if chain:
-        st.caption("Маршрут: " + schemes.chain_route_text(chain))
     return scheme_name, chain, ready
 
 
-
-def _draft_values(content):
-    if not isinstance(content, dict):
-        return {}
-    values = content.get("values")
-    return values if isinstance(values, dict) else content
-
-
-def _apply_restored_table_values(frame, restored_map, key_by_code, editable_fields):
-    if frame.empty or not restored_map:
-        return frame
-    restored_frame = frame.copy()
-    for index, row in restored_frame.iterrows():
-        draft_key = key_by_code.get(raw_value(row.get("Код", "")))
-        values = _draft_values(restored_map.get(draft_key, {}))
-        for field in editable_fields:
-            if field in values:
-                restored_frame.at[index, field] = values[field]
-    return restored_frame
-
-
-def _restore_scheme_picker_state(restored_map, ssp_index, key_prefix):
-    if not restored_map:
-        return
-    content = next((item for item in restored_map.values() if isinstance(item, dict)), {})
-    scheme_label = raw_value(content.get("scheme_label"))
-    available_schemes = schemes.scheme_options_for_submitter(str(current_user.get("role") or ""))
-    if scheme_label in available_schemes:
-        st.session_state[f"{key_prefix}_approval_scheme_select"] = scheme_label
-    chain = schemes.parse_chain(content.get("approval_chain"))
-    for position, stage in enumerate(chain, start=1):
-        role = raw_value(stage.get("role"))
-        candidates = schemes.stage_candidates(role, ssp_index)
-        if len(candidates) <= 1:
-            continue
-        email = raw_value(stage.get("email")).lower()
-        matched = next(
-            (candidate for candidate in candidates
-             if raw_value(candidate.get("email")).lower() == email),
-            None,
-        )
-        if matched:
-            st.session_state[f"{key_prefix}_stage_{position}_{role}"] = schemes.candidate_label(matched)
-
-
-def _draft_content(row, editable_fields, scheme_name, chain, **extra):
-    return {
-        "values": {field: row.get(field) for field in editable_fields},
-        "scheme_label": scheme_name,
-        "approval_chain": schemes.chain_to_json(chain) if chain else "",
-        **extra,
-    }
-
-
-def _has_draft_input(row, editable_fields):
-    for field in editable_fields:
-        value = row.get(field)
-        if isinstance(value, bool):
-            if value:
-                return True
-        elif raw_value(value):
-            return True
-    return False
 
 def notify_first_stage(chain, codes, year_str, quarter_str, kind="measure"):
     """Одне миттєве сповіщення першій ланці про подання (без спаму по кожному коду)."""
@@ -975,21 +901,21 @@ def notify_first_stage(chain, codes, year_str, quarter_str, kind="measure"):
 # ------------------------------------------------------------
 
 submission_mode = st.radio(
-    "Що подаєте",
-    ["📊 Заходи", "🎯 Індикатори СЦ та стратегічних завдань"],
+    "Що подаєте (оберіть потрібний для Вас варіант)",
+    ["Заходи", "Індикатори стратегічних цілей та завдань"],
     horizontal=True,
     key="submission_mode_toggle",
 )
 
-if submission_mode.startswith("🎯"):
+if submission_mode.startswith("Індикатори"):
     # ========================================================
-    # ПОДАННЯ ДАНИХ ДЛЯ ІНДИКАТОРІВ СЦ ТА ЗАВДАНЬ
+    # ПОДАННЯ ДАНИХ ДЛЯ ІНДИКАТОРІВ СТРАТЕГІЧНИХ ЦІЛЕЙ ТА ЗАВДАНЬ
     # ========================================================
     st.markdown(
         """
         <div class="flow-box">
-            <div class="flow-title">Подання значень індикаторів СЦ та стратегічних завдань</div>
-            <div class="flow-steps">
+            <div class="flow-title">Подання значень індикаторів стратегічних цілей та завдань</div>
+            <div class="flow-steps flow-steps-5">
                 <div class="flow-step">1. Вибір ССП і року</div>
                 <div class="flow-step">2. Дата «станом на»</div>
                 <div class="flow-step">3. Заповнення значень</div>
@@ -1002,9 +928,7 @@ if submission_mode.startswith("🎯"):
     )
     st.caption(
         "Значення індикаторів подаються «станом на дату»: щойно у ССП з'являється "
-        "нова інформація — подається оновлене значення. Для розрахунків оцінки "
-        "прогресу (режим «МіО цілі/завдання») використовуються найновіші погоджені "
-        "дані; вся історія подань зберігається."
+        "нова інформація — подається оновлене значення. Вся історія подань зберігається."
     )
 
     ic1, ic2, ic3, ic4 = st.columns([1.25, 0.7, 0.9, 1.4])
@@ -1012,8 +936,10 @@ if submission_mode.startswith("🎯"):
         if available_ssp_indices:
             ind_ssp_index = st.selectbox(
                 "Індекс самостійного структурного підрозділу",
-                available_ssp_indices, index=0,
-                key="ind_ssp_filter", disabled=ssp_select_disabled,
+                available_ssp_indices,
+                index=0,
+                key="ind_ssp_filter",
+                disabled=ssp_select_disabled,
             )
         else:
             ind_ssp_index = ""
@@ -1025,7 +951,8 @@ if submission_mode.startswith("🎯"):
     with ic4:
         ind_search = st.text_input(
             "Пошук (код СЦ/завдання, ключові слова)",
-            key="ind_search_filter", placeholder="Наприклад: 1.2",
+            key="ind_search_filter",
+            placeholder="Наприклад: 1.2",
         )
 
     full_matrix = load_full_strat_matrix()
@@ -1034,13 +961,16 @@ if submission_mode.startswith("🎯"):
     ].copy()
 
     indicator_rows = filter_actions_for_user(
-        indicator_rows, current_user, executor_columns=["resp_main", "resp_co_1"],
+        indicator_rows,
+        current_user,
+        executor_columns=["resp_main", "resp_co_1"],
     )
 
     if ind_ssp_index:
         _pat = re.compile(rf"(?<!\d){re.escape(str(ind_ssp_index))}(?!\d)")
         _mask = indicator_rows.apply(
-            lambda r: bool(_pat.search(str(r.get("resp_main", "")))) or bool(_pat.search(str(r.get("resp_co_1", "")))),
+            lambda r: bool(_pat.search(str(r.get("resp_main", ""))))
+            or bool(_pat.search(str(r.get("resp_co_1", "")))),
             axis=1,
         )
         indicator_rows = indicator_rows[_mask]
@@ -1058,7 +988,7 @@ if submission_mode.startswith("🎯"):
     if ind_target_col not in indicator_rows.columns:
         indicator_rows[ind_target_col] = ""
 
-    # Останні подання індикаторів (у процесі → блокуємо новий дубль у черзі)
+    # Останні подання індикаторів (у процесі → блокуємо новий дубль у черзі).
     waiting_statuses = set(schemes.ALL_WAITING_STATUSES)
     ind_submitted = {}
     if kind_column_exists and not monitoring_df.empty and "object_kind" in monitoring_df.columns:
@@ -1069,23 +999,29 @@ if submission_mode.startswith("🎯"):
         for _, mrow in _ind_df.sort_values("submitted_at").iterrows():
             ind_submitted[raw_value(mrow.get("strat_code"))] = mrow
 
-    value_col = f"Значення станом\nна {ind_as_of.strftime('%d.%m.%Y')}"
+    value_col = "Значення\nіндикатора"
 
     ind_table_rows = []
     for _, row in indicator_rows.iterrows():
         code = raw_value(row.get("code", ""))
         last = ind_submitted.get(code)
-        in_progress = last is not None and raw_value(last.get("approval_status")) in waiting_statuses
+        in_progress = (
+            last is not None
+            and raw_value(last.get("approval_status")) in waiting_statuses
+        )
         last_info = ""
         if last is not None:
+            last_value = (
+                raw_value(last.get("numeric_value"))
+                or raw_value(last.get("value_text"))
+            )
             last_info = (
-                f"{raw_value(last.get('numeric_value'))} "
+                f"{last_value} "
                 f"(станом на {raw_value(last.get('as_of_date')) or raw_value(last.get('submitted_at'))[:10]}, "
                 f"{raw_value(last.get('approval_status'))})"
             )
         ind_table_rows.append({
-            "Подати": False,   # виправлення: за замовчуванням не позначено —
-                                # людина сама обирає, які індикатори подає зараз.
+            "Подати": False,
             "Код": code,
             "СЦ / Завдання": strip_leading_code(row.get("name", ""), code),
             "Індикатор": raw_value(row.get("indicator", "")),
@@ -1094,24 +1030,23 @@ if submission_mode.startswith("🎯"):
             f"{ind_year}\n(цільовий орієнтир)": raw_value(row.get(ind_target_col, "")),
             "Останнє подане\nзначення": last_info,
             value_col: "",
-            "Статус\nвиконання": "",
             "Опис\nпрогресу": "",
             "Ризики / проблеми /\nвідхилення": "",
             "Посилання\nна НПА": "",
             "_locked": in_progress,
         })
 
-    ind_required_cols = [value_col, "Статус\nвиконання"]
+    ind_required_cols = [value_col, "Опис\nпрогресу"]
     st.markdown(
         f"""
         <div class="note-box" style="background:#F7F9FC;border:1px solid #DCE4F0;">
             <b>Легенда обов'язковості полів:</b>
             <span style="background:#FBE5E5;border:1px solid #DC4A4A;border-radius:8px;
                   padding:2px 10px;margin:0 6px;font-weight:800;color:#DC4A4A;">🔴 Обов'язкове</span>
-            «{value_col.replace(chr(10), ' ')}», «Статус виконання»
+            «Значення індикатора», «Опис прогресу»
             <span style="background:#FDF3D8;border:1px solid #F4B400;border-radius:8px;
                   padding:2px 10px;margin:0 6px;font-weight:800;color:#8A6400;">🟡 Необов'язкове</span>
-            «Опис прогресу», «Ризики», «Посилання на НПА»
+            «Ризики», «Посилання на НПА»
         </div>
         """,
         unsafe_allow_html=True,
@@ -1122,32 +1057,9 @@ if submission_mode.startswith("🎯"):
         st.info("За обраними параметрами індикаторів не знайдено.")
         st.stop()
 
-    quarter_roman = {1: "I", 2: "II", 3: "III", 4: "IV"}[(ind_as_of.month - 1) // 3 + 1]
-    _ind_draft_context = f"indicator::{ind_ssp_index}::{ind_year}::{quarter_roman}"
-    _ind_editable_fields = [
-        "Подати", value_col, "Статус\nвиконання", "Опис\nпрогресу",
-        "Ризики / проблеми /\nвідхилення", "Посилання\nна НПА",
+    quarter_roman = {1: "I", 2: "II", 3: "III", 4: "IV"}[
+        (ind_as_of.month - 1) // 3 + 1
     ]
-    _ind_draft_keys_by_code = {
-        raw_value(row.get("Код")): make_draft_key(
-            "indicator", row.get("Код"), ind_year, quarter_roman, mode="submit"
-        )
-        for _, row in ind_df_table.iterrows()
-    }
-    _ind_draft_rows = load_drafts_for_keys(
-        raw_value(current_user.get("email")), _ind_draft_keys_by_code.values()
-    )
-    _ind_restored = render_draft_recovery(
-        context_key=_ind_draft_context,
-        user_email=raw_value(current_user.get("email")),
-        draft_rows=_ind_draft_rows,
-    )
-    ind_df_table = _apply_restored_table_values(
-        ind_df_table, _ind_restored, _ind_draft_keys_by_code, _ind_editable_fields
-    )
-
-    # Пункт 6 нового ТЗ: картковий режим подання прибрано за рішенням
-    # Арсена — лишається виключно табличний спосіб подання (нижче).
 
     ind_locked_count = int(ind_df_table["_locked"].sum())
     if ind_locked_count:
@@ -1159,74 +1071,77 @@ if submission_mode.startswith("🎯"):
         )
 
     ind_display_cols = [c for c in ind_df_table.columns if not c.startswith("_")]
-    # Виправлення (спроба 5): CSS-форсування виявилось ненадійним —
-    # повертаємо зовнішній st.container() як єдиний надійний спосіб
-    # обрізати вміст (він не дає накладання). Щоб уникнути повторного
-    # "другого скролу", контейнер тепер ПОМІТНО вищий за саму таблицю
-    # (TABLE_CONTAINER_HEIGHT_PX), а не точно дорівнює їй.
-    _ind_row_h = 72
-    _ind_header_h = 110
     _ind_visible_height = TABLE_VISIBLE_HEIGHT_PX
 
     with st.container(height=TABLE_CONTAINER_HEIGHT_PX):
         ind_edited = st.data_editor(
             ind_df_table,
-            key=(f"indicator_editor_{ind_ssp_index}_{ind_year}_"
-                 f"{editor_generation(_ind_draft_context)}"),
-            use_container_width=True, hide_index=True,
+            key=(
+                f"indicator_editor_{normalize_key(ind_ssp_index)}_{ind_year}_"
+                f"{ind_as_of.isoformat()}"
+            ),
+            use_container_width=True,
+            hide_index=True,
             height=_ind_visible_height,
-            row_height=_ind_row_h, num_rows="fixed",
+            row_height=72,
+            num_rows="fixed",
             column_order=ind_display_cols,
             disabled=[
-                "Код", "СЦ / Завдання", "Індикатор", "Одиниці\nвиміру",
-                "2021\n(базовий)", f"{ind_year}\n(цільовий орієнтир)", "Останнє подане\nзначення",
+                "Код",
+                "СЦ / Завдання",
+                "Індикатор",
+                "Одиниці\nвиміру",
+                "2021\n(базовий)",
+                f"{ind_year}\n(цільовий орієнтир)",
+                "Останнє подане\nзначення",
             ],
             column_config={
                 "Подати": st.column_config.CheckboxColumn("Подати", width=80),
-                value_col: st.column_config.TextColumn(f"🔴 {value_col}", width=150,
-                    help="Обов'язкове поле. Фактичне значення індикатора станом на обрану дату"),
-                "Статус\nвиконання": st.column_config.SelectboxColumn(
-                    "🔴 Статус\nвиконання", options=execution_status_options, width=180,
-                    help="Обов'язкове поле"),
-                "Опис\nпрогресу": st.column_config.TextColumn("🟡 Опис\nпрогресу", width=280,
-                    help="Необов'язкове поле"),
+                value_col: st.column_config.TextColumn(
+                    f"🔴 {value_col}",
+                    width=150,
+                    help="Обов'язкове поле. Фактичне значення індикатора станом на обрану дату",
+                ),
+                "Опис\nпрогресу": st.column_config.TextColumn(
+                    "🔴 Опис\nпрогресу",
+                    width=280,
+                    help="Обов'язкове поле",
+                ),
                 "Ризики / проблеми /\nвідхилення": st.column_config.TextColumn(
-                    "🟡 Ризики / проблеми /\nвідхилення", width=280, help="Необов'язкове поле"),
+                    "🟡 Ризики / проблеми /\nвідхилення",
+                    width=280,
+                    help="Необов'язкове поле",
+                ),
                 "Посилання\nна НПА": st.column_config.TextColumn(
-                    "🟡 Посилання\nна НПА", width=220,
-                    help="Необов'язкове. Кілька посилань — через кому або крапку з комою"),
+                    "🟡 Посилання\nна НПА",
+                    width=220,
+                    help="Необов'язкове. Кілька посилань — через кому або крапку з комою",
+                ),
                 "_locked": st.column_config.CheckboxColumn("_locked", width=1),
             },
         )
 
+    # Успішне подання показується саме між таблицею і схемою погодження.
+    render_submission_notice(dismissible=False, consume=True)
 
-    _ind_scheme_prefix = f"ind_{editor_generation(_ind_draft_context)}"
-    _restore_scheme_picker_state(_ind_restored, ind_ssp_index, _ind_scheme_prefix)
+    _ind_scheme_prefix = (
+        f"ind_{normalize_key(ind_ssp_index)}_{ind_year}_{ind_as_of.isoformat()}"
+    )
     ind_scheme_name, ind_chain, ind_scheme_ready = render_scheme_picker(
-        ind_ssp_index, _ind_scheme_prefix
+        ind_ssp_index,
+        _ind_scheme_prefix,
     )
 
-    if not _ind_draft_rows or _ind_restored:
-        for _, _draft_row in ind_edited.iterrows():
-            if bool(_draft_row.get("_locked")):
-                continue
-            _draft_code = raw_value(_draft_row.get("Код"))
-            _draft_key = _ind_draft_keys_by_code.get(_draft_code)
-            if _draft_key and _has_draft_input(_draft_row, _ind_editable_fields):
-                queue_draft(
-                    raw_value(current_user.get("email")),
-                    _draft_key,
-                    _draft_content(
-                        _draft_row, _ind_editable_fields, ind_scheme_name, ind_chain,
-                        as_of_date=ind_as_of.isoformat(),
-                    ),
-                )
-    render_draft_autosave_worker()
-
-    if st.button("Подати значення індикаторів на розгляд", use_container_width=True, key="ind_submit"):
+    if st.button(
+        "Подати значення індикаторів на розгляд",
+        use_container_width=True,
+        key="ind_submit",
+    ):
         ind_errors = []
         if not ind_scheme_ready:
-            ind_errors.append("Схема погодження неповна: для однієї з ланок не знайдено користувача")
+            ind_errors.append(
+                "Схема погодження неповна: для однієї з ланок не знайдено користувача"
+            )
 
         ind_selected = ind_edited[
             (ind_edited["Подати"] == True) & (ind_edited["_locked"] == False)
@@ -1238,7 +1153,6 @@ if submission_mode.startswith("🎯"):
                 code = raw_value(r.get("Код"))
                 unit = raw_value(r.get("Одиниці\nвиміру", ""))
                 fact_value = raw_value(r.get(value_col, ""))
-                target_value = raw_value(r.get(f"{ind_year}\n(цільовий орієнтир)", ""))
                 for field in ind_required_cols:
                     if not raw_value(r.get(field, "")):
                         ind_errors.append(
@@ -1248,11 +1162,6 @@ if submission_mode.startswith("🎯"):
                 ok, msg = validate_fact_value(fact_value, unit)
                 if fact_value and not ok:
                     ind_errors.append(f"У індикаторі {code}: {msg}.")
-                status_msg = status_completion_warning(
-                    r.get("Статус\nвиконання", ""), fact_value, target_value, unit, code
-                )
-                if status_msg:
-                    ind_errors.append(status_msg)
 
         if ind_errors:
             for error in ind_errors:
@@ -1261,18 +1170,21 @@ if submission_mode.startswith("🎯"):
             submitted_at = datetime.now(timezone.utc).isoformat()
             successful_codes = []
             rejected_messages = []
-            first_stage_label = ind_chain[0].get("label", "Координатор") if ind_chain else "Координатор"
+            first_stage_label = (
+                ind_chain[0].get("label", "Координатор")
+                if ind_chain
+                else "Координатор"
+            )
 
             for _, row in ind_selected.iterrows():
                 code = raw_value(row.get("Код"))
-                draft_key = _ind_draft_keys_by_code.get(code, "")
                 item = {
                     "object_name": raw_value(row.get("СЦ / Завдання", "")),
                     "indicator_name": raw_value(row.get("Індикатор", "")),
                     "department": raw_value(ind_ssp_index),
                     "year": str(ind_year),
                     "quarter": quarter_roman,
-                    "status": raw_value(row.get("Статус\nвиконання", "")),
+                    "status": "",
                     "strat_code": code,
                     "responsible_person": raw_value(responsible_person),
                     "phone": raw_value(responsible_phone),
@@ -1300,60 +1212,35 @@ if submission_mode.startswith("🎯"):
                         action="Подання значення індикатора",
                         user=current_user,
                         created_by="Подавач / первинне подання індикатора",
-                        draft_email=raw_value(current_user.get("email")),
-                        draft_key=draft_key,
+                        draft_email="",
+                        draft_key="",
                     )
                     successful_codes.append(code)
-                    forget_draft_state([draft_key])
-                    first_stage_label = result.data.get("first_stage_label") or first_stage_label
+                    first_stage_label = (
+                        result.data.get("first_stage_label") or first_stage_label
+                    )
                 except TransitionRejected as exc:
-                    try:
-                        save_draft_now(
-                            raw_value(current_user.get("email")),
-                            draft_key,
-                            _draft_content(
-                                row, _ind_editable_fields, ind_scheme_name, ind_chain,
-                                as_of_date=ind_as_of.isoformat(),
-                            ),
-                        )
-                    except Exception as draft_exc:
-                        show_warning(
-                            "Введені дані залишилися у формі, але чернетку не вдалося зберегти.",
-                            draft_exc,
-                            "Збереження чернетки після відмови подання індикатора",
-                        )
                     rejected_messages.append(f"{code}: {exc.message}")
                 except Exception as exc:
-                    try:
-                        save_draft_now(
-                            raw_value(current_user.get("email")),
-                            draft_key,
-                            _draft_content(
-                                row, _ind_editable_fields, ind_scheme_name, ind_chain,
-                                as_of_date=ind_as_of.isoformat(),
-                            ),
-                        )
-                    except Exception as draft_exc:
-                        show_warning(
-                            "Введені дані залишилися у формі, але чернетку не вдалося зберегти.",
-                            draft_exc,
-                            "Збереження чернетки після помилки подання індикатора",
-                        )
                     show_incident(exc, context=f"Атомарне подання індикатора {code}")
 
             if successful_codes:
                 monitoring_data.invalidate_monitoring_cache()
                 notify_first_stage(
-                    ind_chain, successful_codes, str(ind_year),
-                    f"станом на {ind_as_of.strftime('%d.%m.%Y')}", kind="indicator",
+                    ind_chain,
+                    successful_codes,
+                    str(ind_year),
+                    f"станом на {ind_as_of.strftime('%d.%m.%Y')}",
+                    kind="indicator",
                 )
-                clear_draft_recovery(_ind_draft_context)
                 set_submission_notice(
-                    first_stage_label=first_stage_label, codes=successful_codes
+                    first_stage_label=first_stage_label,
+                    codes=successful_codes,
                 )
                 if rejected_messages:
                     st.session_state["monitoring_submit_warning"] = (
-                        "Частину індикаторів не подано: " + " | ".join(rejected_messages)
+                        "Частину індикаторів не подано: "
+                        + " | ".join(rejected_messages)
                     )
                 st.rerun()
             elif rejected_messages:
@@ -1393,10 +1280,9 @@ st.markdown(
     <div class="filter-box">
         <div class="filter-title">Гід користувача</div>
         <div class="filter-legend">
-            Оберіть індекс самостійного структурнго підрозділу та звітний період. 
-            Система автоматично відобразить лише ті заходи, за якими самостійний 
-            структурний підрозділ визначений головним виконавцем, і лише ті, 
-            період виконання яких уже настав для обраного року та кварталу.
+            Оберіть звітний період. Система автоматично відобразить лише ті заходи, 
+            за якими самостійний структурний підрозділ визначений головним виконавцем, 
+            і лише ті, період виконання яких уже настав для обраного року та кварталу.
         </div>
         <div class="info-grid">
             <div class="info-card">
@@ -1404,7 +1290,8 @@ st.markdown(
                 <div class="instruction-item">1. Позначте у першій колонці таблиці «Подати» заходи, за якими подається інформація</div>
                 <div class="instruction-item">2. Внесіть фактичні звітні відомості (показники, стан виконання, короткий опис прогресу та інформацію щодо ризиків)</div>
                 <div class="instruction-item">3. Натисніть «Подати на розгляд»</div>
-                <div class="instruction-item">4. Після розгляду відомостей, координатор направить інформацію на погодження (відповідальний виконавець, керівник ССП)</div>
+                <div class="instruction-item">4. Оберіть схему погодження відповідно до внутрішнього розподілу з випадного списку.</div>
+                <div class="instruction-item">5. Відстежуйте статус погодження — відомості проходять усі ланки обраної схеми до кінцевого погодження.</div>
             </div>
         </div>
     """,
@@ -1582,18 +1469,6 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-st.markdown(
-    """
-    <div class="info-card" style="margin-bottom:14px;">
-        <div class="info-card-title">Легенда обов'язковості полів</div>
-        <div class="legend-item">🟥 Обов'язкове поле для заповнення (квартальне значення, статус виконання, опис прогресу)</div>
-        <div class="legend-item">🟨 Опційне поле, не обов'язкове (ризики/проблеми/відхилення, посилання на НПА)</div>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
-
-
 # Пункт 6 нового ТЗ: картковий режим подання прибрано за рішенням
 # Арсена — лишається виключно табличний спосіб подання (нижче).
 
@@ -1606,6 +1481,11 @@ target_col = f"target_{selected_year}"
 
 if target_col not in filtered_measures.columns:
     filtered_measures[target_col] = ""
+
+future_targets_by_code = {
+    raw_value(row.get("code", "")): future_targets_for_row(row, selected_year)
+    for _, row in filtered_measures.iterrows()
+}
 
 # Динамічні назви колонок для років
 def year_col_label(year, role):
@@ -1652,11 +1532,24 @@ for _, row in filtered_measures.iterrows():
     code = raw_value(row.get("code", ""))
     deputy = get_deputy_for_ssp(extract_ssp_index(row.get("resp_main", "")))
 
-    # Чи є вже подана заявка?
+    # Чи є вже подана заявка? Автоуспадковане «так/Виконано» є лише
+    # підстановкою для відображення та розрахунків: воно НЕ блокує реальне
+    # подання наступного кварталу і перекривається ним.
     existing = submitted_map.get(code)
-    is_locked = existing is not None
-    is_approved = is_locked and raw_value(existing.get("approval_status", "")) == "Погоджено"
-    is_manually_closed = (code, str(selected_year), str(selected_quarter)) in manual_closeouts
+    is_auto_inherited = (
+        existing is not None
+        and bool(existing.get("_auto_inherited", False))
+    )
+    is_locked = existing is not None and not is_auto_inherited
+    is_approved = (
+        is_locked
+        and raw_value(existing.get("approval_status", "")) == "Погоджено"
+    )
+    is_manually_closed = (
+        code,
+        str(selected_year),
+        str(selected_quarter),
+    ) in manual_closeouts
 
     if is_manually_closed:
         is_locked = True
@@ -1677,14 +1570,16 @@ for _, row in filtered_measures.iterrows():
         _not_started_hidden += 1
         continue
 
-    if is_locked:
-        q_fact_val   = raw_value(existing.get("numeric_value", "")) if existing is not None else ""
-        status_val   = raw_value(existing.get("status", "")) if existing is not None else ""
-        progress_val = raw_value(existing.get("progress_text", "")) if existing is not None else ""
-        risks_val    = raw_value(existing.get("risks", "")) if existing is not None else ""
-        npa_link_val = raw_value(existing.get("npa_link", "")) if existing is not None else ""
+    if existing is not None:
+        q_fact_val = raw_value(existing.get("numeric_value", ""))
+        status_val = raw_value(existing.get("status", ""))
+        progress_val = raw_value(existing.get("progress_text", ""))
+        risks_val = raw_value(existing.get("risks", ""))
+        npa_link_val = raw_value(existing.get("npa_link", ""))
         if is_manually_closed:
             lock_label = "🔒 Закрито вручну"
+        elif is_auto_inherited:
+            lock_label = ""
         else:
             lock_label = "✅ Погоджено" if is_approved else "⏳ На розгляді"
     else:
@@ -1727,29 +1622,6 @@ for _, row in filtered_measures.iterrows():
     })
 
 table_df = pd.DataFrame(table_rows)
-
-_meas_draft_context = f"measure::{selected_ssp_index}::{selected_year}::{selected_quarter}"
-_meas_draft_fields = [
-    "Подати", quarter_label, "Статус\nвиконання", "Опис\nпрогресу",
-    "Ризики / проблеми /\nвідхилення", "Посилання\nна НПА",
-]
-_meas_draft_keys_by_code = {
-    raw_value(row.get("Код")): make_draft_key(
-        "measure", row.get("Код"), selected_year, selected_quarter, mode="submit"
-    )
-    for _, row in table_df.iterrows()
-}
-_meas_draft_rows = load_drafts_for_keys(
-    raw_value(current_user.get("email")), _meas_draft_keys_by_code.values()
-)
-_meas_restored = render_draft_recovery(
-    context_key=_meas_draft_context,
-    user_email=raw_value(current_user.get("email")),
-    draft_rows=_meas_draft_rows,
-)
-table_df = _apply_restored_table_values(
-    table_df, _meas_restored, _meas_draft_keys_by_code, _meas_draft_fields
-)
 
 if _not_started_hidden:
     st.caption(
@@ -1912,9 +1784,10 @@ else:
     with st.container(height=TABLE_CONTAINER_HEIGHT_PX):
         edited_df = st.data_editor(
             table_df,
-            key=(f"monitoring_editor_{selected_ssp_index}_{selected_year}_"
-                 f"{selected_quarter}_{search_query}_"
-                 f"{editor_generation(_meas_draft_context)}"),
+            key=(
+                f"monitoring_editor_{normalize_key(selected_ssp_index)}_{selected_year}_"
+                f"{selected_quarter}_{normalize_key(search_query)}"
+            ),
             use_container_width=True,
             hide_index=True,
             height=_visible_height,
@@ -1924,6 +1797,9 @@ else:
             column_order=display_cols,   # приховуємо _locked/_lock_label
             disabled=always_disabled,
         )
+
+# Успішне подання показується саме між таблицею і схемою погодження.
+render_submission_notice(dismissible=False, consume=True)
 
 
 # ------------------------------------------------------------
@@ -1982,12 +1858,23 @@ def validate_submission():
                 f"У заході {code} не заповнено поле «{field_label}». "
                 "Виправте це та спробуйте подати інформацію ще раз."
             )
+        future_targets = future_targets_by_code.get(code, [])
         if fact_value:
-            ok, msg = validate_fact_value(fact_value, unit)
+            ok, msg = validate_fact_value_for_target(
+                fact_value,
+                unit,
+                target_value,
+                future_targets,
+            )
             if not ok:
                 errors.append(f"У заході {code}: {msg}.")
-        status_msg = status_completion_warning(
-            row.get("Статус\nвиконання", ""), fact_value, target_value, unit, code
+        status_msg = status_value_conflict(
+            row.get("Статус\nвиконання", ""),
+            fact_value,
+            target_value,
+            unit,
+            code,
+            future_targets,
         )
         if status_msg:
             errors.append(status_msg)
@@ -1999,27 +1886,13 @@ def validate_submission():
 # Схема погодження для подання заходів
 # ------------------------------------------------------------
 
-_meas_scheme_prefix = f"meas_{editor_generation(_meas_draft_context)}"
-_restore_scheme_picker_state(_meas_restored, selected_ssp_index, _meas_scheme_prefix)
-measures_scheme_name, measures_chain, measures_scheme_ready = render_scheme_picker(
-    selected_ssp_index, _meas_scheme_prefix
+_meas_scheme_prefix = (
+    f"meas_{normalize_key(selected_ssp_index)}_{selected_year}_{selected_quarter}"
 )
-
-if not _meas_draft_rows or _meas_restored:
-    for _, _draft_row in edited_df.iterrows():
-        if bool(_draft_row.get("_locked")):
-            continue
-        _draft_code = raw_value(_draft_row.get("Код"))
-        _draft_key = _meas_draft_keys_by_code.get(_draft_code)
-        if _draft_key and _has_draft_input(_draft_row, _meas_draft_fields):
-            queue_draft(
-                raw_value(current_user.get("email")),
-                _draft_key,
-                _draft_content(
-                    _draft_row, _meas_draft_fields, measures_scheme_name, measures_chain
-                ),
-            )
-render_draft_autosave_worker()
+measures_scheme_name, measures_chain, measures_scheme_ready = render_scheme_picker(
+    selected_ssp_index,
+    _meas_scheme_prefix,
+)
 
 submit_clicked = st.button("Подати на розгляд", use_container_width=True)
 
@@ -2044,7 +1917,6 @@ if submit_clicked:
 
         for _, row in selected_rows.iterrows():
             code = raw_value(row.get("Код", ""))
-            draft_key = _meas_draft_keys_by_code.get(code, "")
             item = {
                 "object_name": raw_value(row.get("Захід", "")),
                 "department": raw_value(selected_ssp_index),
@@ -2077,43 +1949,14 @@ if submit_clicked:
                     action="Подання моніторингових відомостей",
                     user=current_user,
                     created_by="Подавач / первинне подання",
-                    draft_email=raw_value(current_user.get("email")),
-                    draft_key=draft_key,
+                    draft_email="",
+                    draft_key="",
                 )
                 successful_codes.append(code)
-                forget_draft_state([draft_key])
                 first_stage_label = result.data.get("first_stage_label") or first_stage_label
             except TransitionRejected as exc:
-                try:
-                    save_draft_now(
-                        raw_value(current_user.get("email")),
-                        draft_key,
-                        _draft_content(
-                            row, _meas_draft_fields, measures_scheme_name, measures_chain
-                        ),
-                    )
-                except Exception as draft_exc:
-                    show_warning(
-                        "Введені дані залишилися у формі, але чернетку не вдалося зберегти.",
-                        draft_exc,
-                        "Збереження чернетки після відмови первинного подання",
-                    )
                 rejected_messages.append(f"{code}: {exc.message}")
             except Exception as exc:
-                try:
-                    save_draft_now(
-                        raw_value(current_user.get("email")),
-                        draft_key,
-                        _draft_content(
-                            row, _meas_draft_fields, measures_scheme_name, measures_chain
-                        ),
-                    )
-                except Exception as draft_exc:
-                    show_warning(
-                        "Введені дані залишилися у формі, але чернетку не вдалося зберегти.",
-                        draft_exc,
-                        "Збереження чернетки після помилки первинного подання",
-                    )
                 show_incident(exc, context=f"Атомарне подання заходу {code}")
 
         if successful_codes:
@@ -2122,7 +1965,6 @@ if submit_clicked:
                 measures_chain, successful_codes, str(selected_year),
                 raw_value(selected_quarter),
             )
-            clear_draft_recovery(_meas_draft_context)
             set_submission_notice(
                 first_stage_label=first_stage_label, codes=successful_codes
             )

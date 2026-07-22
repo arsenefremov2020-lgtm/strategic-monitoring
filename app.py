@@ -961,13 +961,15 @@ def clean_html(html: str) -> str:
     )
 
 
-def latest_indicator_submission(code, indicator_name):
-    """Останнє подання конкретного індикатора за ключем код + назва."""
+def latest_indicator_submission(code, indicator_name, fact_year):
+    """Останнє подання конкретного індикатора за ключем код + назва у вибраному році."""
     if indicator_monitoring_df.empty:
         return ""
     code_key, name_key = monitoring_data.indicator_identity_key(code, indicator_name)
     data = indicator_monitoring_df.copy()
     data = data[data["strat_code"].astype(str).str.strip() == code_key]
+    if "year" in data.columns:
+        data = data[data["year"].astype(str).str.strip() == str(fact_year).strip()]
     if name_key and not data.empty:
         data = data[
             data["indicator_name"].apply(
@@ -979,18 +981,14 @@ def latest_indicator_submission(code, indicator_name):
     data["_submitted_at"] = pd.to_datetime(data.get("submitted_at"), errors="coerce")
     data = data.sort_values(["_submitted_at", "id"], ascending=[False, False])
     row = data.iloc[0]
-    value = raw_value(row.get("numeric_value", "")) or raw_value(row.get("value_text", ""))
-    status = raw_value(row.get("approval_status", ""))
-    as_of = raw_value(row.get("as_of_date", ""))
-    parts = [value] if value else []
-    if as_of:
-        parts.append(f"станом на {as_of[:10]}")
-    if status:
-        parts.append(status)
-    return " · ".join(parts)
+    value = raw_value(row.get("numeric_value", "")) or raw_value(row.get("value_text", "")) or "—"
+    return core_statuses.legend_badge(
+        core_statuses.get_record_visual_status(row),
+        display_value=value,
+    )
 
 
-def build_indicator_rows(parent_row, child_rows, selected_ssp_indices=None, search_query=""):
+def build_indicator_rows(parent_row, child_rows, selected_ssp_indices=None, search_query="", fact_year=None):
     selected_ssp_indices = selected_ssp_indices or []
 
     rows = []
@@ -1031,7 +1029,7 @@ def build_indicator_rows(parent_row, child_rows, selected_ssp_indices=None, sear
 
         row_for_display = dict(row)
         row_for_display["_latest_monitoring"] = latest_indicator_submission(
-            row.get("code", ""), row.get("indicator", "")
+            row.get("code", ""), row.get("indicator", ""), fact_year
         )
         for col in indicator_cols:
             prepared_row.append(format_indicator_value(row_for_display.get(col, ""), col))
@@ -1045,12 +1043,12 @@ def build_indicator_rows(parent_row, child_rows, selected_ssp_indices=None, sear
 
     return rows
 
-def render_indicator_table(rows):
+def render_indicator_table(rows, fact_year):
     if not rows:
         st.info("Індикаторів не знайдено.")
         return
 
-    html = """
+    html = f"""
     <div class="table-scroll">
     <table class="custom-table" style="min-width:2940px;">
     <thead>
@@ -1060,7 +1058,7 @@ def render_indicator_table(rows):
             <th class="col-year" rowspan="2">2021<br><span style='font-size:11px;color:#61708A;'>базовий рівень (факт)</span></th>
             <th class="col-year" rowspan="2">2024<br><span style='font-size:11px;color:#61708A;'>звіт</span></th>
             <th class="col-year" rowspan="2">2025<br><span style='font-size:11px;color:#61708A;'>факт</span></th>
-            <th class="col-long" rowspan="2">Останнє подане значення<span class="th-sub">моніторинг індикатора</span></th>
+            <th class="col-long" rowspan="2">{fact_year} Факт</th>
             <th class="col-long" rowspan="2">Проміжний цільовий орієнтир на кінець 2028 року<span class="th-sub">(для цілей і завдань)</span></th>
             <th class="col-long" rowspan="2">Цільовий орієнтир на кінець 2034 року для цілей і завдань<div class="th-note-scroll">відповідає цілі, визначеній в НЕС-2030, ЦСР-2030 для показників, де це зазначено. Ціль перенесена на 2034 рік через «втрату» 4-х років — 2022-2025 внаслідок повномасштабної війни. Інші індикативні значення мають встановлюватись такими, що є кількісно узгодженими з цілями НЕС і ЦСР</div></th>
             <th class="col-long" colspan="2">Джерело даних</th>
@@ -1084,7 +1082,7 @@ def render_indicator_table(rows):
         html += f"<td class='col-year'>{make_cell(row[2], 'nowrap')}</td>"
         html += f"<td class='col-year'>{make_cell(row[3], 'nowrap')}</td>"
         html += f"<td class='col-year'>{make_cell(row[4], 'nowrap')}</td>"
-        html += f"<td class='col-long'>{make_cell(row[5], 'fixed')}</td>"
+        html += f"<td class='col-long'>{row[5] or ''}</td>"
         html += f"<td class='col-long'>{make_cell(row[6], 'fixed')}</td>"
         html += f"<td class='col-long'>{make_cell(row[7], 'fixed')}</td>"
         html += f"<td class='col-long'>{make_cell(row[8], 'fixed')}</td>"
@@ -1716,6 +1714,7 @@ selected_years = [
 selected_quarters = [
     quarter for quarter in quarter_options if quarter in selected_quarters_raw
 ] or list(quarter_options)
+indicator_fact_year = max(selected_years) if selected_years else _current_year
 
 filtered_measures = apply_measure_filters(
     all_measures,
@@ -1870,7 +1869,8 @@ else:
             goal,
             goal_indicator_children,
             selected_ssp_indices,
-            search_query
+            search_query,
+            indicator_fact_year,
         )
 
         if goal_filtered_measures.empty and not goal_indicators:
@@ -1896,7 +1896,7 @@ else:
                     '<div class="section-title">Індикатори досягнення стратегічної цілі</div>',
                     unsafe_allow_html=True
                 )
-                render_indicator_table(goal_indicators)
+                render_indicator_table(goal_indicators, indicator_fact_year)
 
             for _, task in tasks.iterrows():
                 task_code = raw_value(task["code"])
@@ -1915,7 +1915,8 @@ else:
                     task,
                     task_indicator_children,
                     selected_ssp_indices,
-                    search_query
+                    search_query,
+                    indicator_fact_year,
                 )
 
                 if task_measures.empty and not task_indicators:
@@ -1935,7 +1936,7 @@ else:
                             '<div class="section-title">Індикатори досягнення завдання</div>',
                             unsafe_allow_html=True
                         )
-                        render_indicator_table(task_indicators)
+                        render_indicator_table(task_indicators, indicator_fact_year)
 
                     st.markdown(
                         '<div class="section-title">Заходи</div>',

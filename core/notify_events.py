@@ -5,7 +5,7 @@
 scripts/send_notifications.py, які запускає GitHub Actions).
 
 Викликаються прямо зі Streamlit-сторінок у момент дії:
-- заявку подано → лист першій ланці погодження;
+- заявку подано → пороговий зведений лист першій ланці (не частіше разу на 2 години);
 - ланка погодила → лист наступній ланці;
 - заявку повернуто → лист адресату повернення (подавачу/ланці);
 - заявку погоджено остаточно → лист подавачу;
@@ -19,14 +19,20 @@ scripts/send_notifications.py, які запускає GitHub Actions).
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+from html import escape
+
+from core import approval_schemes as schemes
 from core.emails import send_email, email_configured
 from core.errors import log_exception
+from core.timeutils import now_kyiv
 
 
 def _log(supabase, email: str, ntype: str, related_key: str,
-         subject: str, body: str, ok: bool, error: str | None) -> None:
+         subject: str, body: str, ok: bool, error: str | None,
+         sent_at: str | None = None) -> None:
     try:
-        supabase.table("notification_log").insert({
+        payload = {
             "recipient_email": email,
             "recipient_role": "",
             "notification_type": ntype,
@@ -35,13 +41,16 @@ def _log(supabase, email: str, ntype: str, related_key: str,
             "body_preview": body[:500],
             "status": "sent" if ok else "failed",
             "error": error,
-        }).execute()
+        }
+        if sent_at:
+            payload["sent_at"] = sent_at
+        supabase.table("notification_log").insert(payload).execute()
     except Exception as exc:
         log_exception("Запис результату миттєвого email у notification_log", exc)
 
 
 def _fire(to_email: str, subject: str, body_html: str,
-          ntype: str, related_key: str) -> None:
+          ntype: str, related_key: str, log_sent_at: str | None = None) -> None:
     """Надіслати лист і залогувати результат. Ніколи не кидає винятків."""
     to_email = str(to_email or "").strip().lower()
     if not to_email or "@" not in to_email:
@@ -55,18 +64,172 @@ def _fire(to_email: str, subject: str, body_html: str,
     if not email_configured():
         if supabase is not None:
             _log(supabase, to_email, ntype, related_key, subject, body_html,
-                 False, "SMTP не налаштований")
+                 False, "SMTP не налаштований", sent_at=log_sent_at)
         return
 
     ok, error = send_email(to_email, subject, body_html,
                            title="Сповіщення системи моніторингу")
     if supabase is not None:
-        _log(supabase, to_email, ntype, related_key, subject, body_html, ok, error)
+        _log(
+            supabase, to_email, ntype, related_key, subject, body_html, ok, error,
+            sent_at=log_sent_at,
+        )
 
 
 def _request_line(code: str, year: str, quarter: str, kind: str = "measure") -> str:
     what = "Захід" if kind != "indicator" else "Індикатор"
     return f"{what} <b>{code}</b> · {quarter} кв. {year}"
+
+
+INSTANT_NEW_REQUESTS_TYPE = "instant_new_requests"
+INSTANT_NEW_REQUESTS_COOLDOWN_HOURS = 2
+
+
+def _parse_timestamp(value) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _last_sent_instant_notification(supabase, email: str) -> tuple[bool, datetime | None]:
+    """Повертає (журнал доступний, останній успішний пороговий лист)."""
+    try:
+        response = (
+            supabase.table("notification_log")
+            .select("sent_at")
+            .eq("recipient_email", email)
+            .eq("notification_type", INSTANT_NEW_REQUESTS_TYPE)
+            .eq("related_key", email)
+            .eq("status", "sent")
+            .order("sent_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        rows = response.data or []
+        return True, (_parse_timestamp(rows[0].get("sent_at")) if rows else None)
+    except Exception as exc:
+        # Fail closed: якщо антиспам-журнал недоступний, не ризикуємо масовою розсилкою.
+        log_exception("Перевірка cooldown миттєвих сповіщень", exc)
+        return False, None
+
+
+def _new_requests_for_first_stage(supabase, email: str, since: datetime,
+                                  until: datetime) -> list[dict]:
+    """Нові ще не опрацьовані заявки, для яких цей email є першою ланкою."""
+    try:
+        response = (
+            supabase.table("monitoring_requests")
+            .select(
+                "id,strat_code,indicator_name,object_kind,department,year,quarter,"
+                "submitted_at,approval_chain,chain_stage,approval_status"
+            )
+            .gt("submitted_at", since.isoformat())
+            .lte("submitted_at", until.isoformat())
+            .order("submitted_at", desc=False)
+            .execute()
+        )
+    except Exception as exc:
+        log_exception("Читання нових заявок для порогового сповіщення", exc)
+        return []
+
+    matched: list[dict] = []
+    for row in response.data or []:
+        if schemes.parse_stage(row.get("chain_stage")) != 0:
+            continue
+        if not str(row.get("approval_status") or "").strip().startswith("Очікує"):
+            continue
+        chain = schemes.parse_chain(row.get("approval_chain"))
+        first_stage = chain[0] if chain else {}
+        first_email = str(first_stage.get("email") or "").strip().lower()
+        if first_email == email:
+            matched.append(row)
+    return matched
+
+
+def _instant_request_item(row: dict) -> str:
+    kind = str(row.get("object_kind") or "measure")
+    code = escape(str(row.get("strat_code") or "—"))
+    indicator_name = escape(str(row.get("indicator_name") or "").strip())
+    department = escape(str(row.get("department") or "ССП не вказано").strip())
+    year = escape(str(row.get("year") or "—"))
+    quarter = escape(str(row.get("quarter") or "—"))
+    object_text = (
+        f"Індикатор <b>{code}</b>" if kind == "indicator"
+        else f"Захід <b>{code}</b>"
+    )
+    if kind == "indicator" and indicator_name:
+        object_text += f" — {indicator_name}"
+    return f"<li>{object_text} · {department} · {quarter} кв. {year}</li>"
+
+
+def notify_new_requests_throttled(stage_email: str, stage_name: str,
+                                   stage_label: str) -> None:
+    """
+    Попередження першій ланці про НОВІ заявки, не частіше одного разу на 2 години.
+
+    Cooldown персональний для отримувача через notification_log. Лист охоплює
+    всі ще не опрацьовані заявки, що надійшли після watermark попереднього
+    успішного листа; якщо листів ще не було — за останні 2 години. Наступні
+    ланки погодження й адресні події використовують notify_stage_assigned(),
+    notify_returned() та notify_approved() без цього cooldown.
+    """
+    email = str(stage_email or "").strip().lower()
+    if not email or "@" not in email:
+        return
+
+    try:
+        from core.db import get_supabase_client
+        supabase = get_supabase_client()
+    except Exception as exc:
+        log_exception("Підготовка порогового сповіщення нових заявок", exc)
+        return
+
+    now = now_kyiv()
+    log_available, last_sent = _last_sent_instant_notification(supabase, email)
+    if not log_available:
+        return
+
+    if last_sent is not None:
+        last_sent_kyiv = last_sent.astimezone(now.tzinfo)
+        if now - last_sent_kyiv < timedelta(hours=INSTANT_NEW_REQUESTS_COOLDOWN_HOURS):
+            return
+        window_start = last_sent_kyiv
+    else:
+        window_start = now - timedelta(hours=INSTANT_NEW_REQUESTS_COOLDOWN_HOURS)
+
+    # Watermark фіксуємо ДО запиту/SMTP: усе, що надійде пізніше, буде > watermark
+    # і гарантовано залишиться для наступного 2-годинного вікна.
+    window_end = now
+    requests = _new_requests_for_first_stage(supabase, email, window_start, window_end)
+    if not requests:
+        return
+
+    items = "".join(_instant_request_item(row) for row in requests)
+    subject = f"Моніторинг СП: нові заявки на розгляд ({len(requests)})"
+    addressee = escape(str(stage_name or stage_label or "").strip())
+    greeting = f"<p>Вітаємо, <b>{addressee}</b>!</p>" if addressee else "<p>Вітаємо!</p>"
+    window_phrase = (
+        "За останні 2 години" if last_sent is None
+        else "Від часу попереднього миттєвого повідомлення"
+    )
+    body = (
+        greeting
+        + f"<p>{window_phrase} у вашу зону погодження надійшли нові заявки "
+          "на розгляд:</p>"
+        + f"<ul>{items}</ul>"
+        + "<p>Зверніть увагу — можливо, частину з них ви вже опрацювали; "
+          "це повідомлення має характер нагадування.</p>"
+        + "<p>Щоденний дайджест продовжує надходити окремо за встановленим "
+          "розкладом.</p>"
+    )
+    _fire(
+        email, subject, body, INSTANT_NEW_REQUESTS_TYPE, email,
+        log_sent_at=window_end.isoformat(),
+    )
 
 
 # ------------------------------------------------------------

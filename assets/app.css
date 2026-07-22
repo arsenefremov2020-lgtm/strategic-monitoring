@@ -385,6 +385,27 @@ table {
     margin: 0 0 4px 0;
 }
 
+/* Заголовки картки фільтрів — той самий шаблон, що на Головній. */
+.filter-title {
+    color: #132238;
+    font-size: 22px;
+    font-weight: 900;
+    margin: 0 0 18px 0;
+}
+
+.filter-subtitle {
+    color: #132238;
+    font-size: 15px;
+    font-weight: 950;
+    margin: 18px 0 10px 0;
+    padding-bottom: 4px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.35);
+}
+
+.main-filter-subtitle {
+    margin-top: 0 !important;
+}
+
 /* Selectbox / multiselect: видиму рамку малює React-Aria group. */
 :where(
     div[data-testid="stSelectbox"],
@@ -1049,3 +1070,138 @@ section[data-testid="stSidebar"] [data-auth-sidebar-profile="true"] a:hover {
 }
 
 
+
+
+/* ============================================================
+   Мої заявки — компактні секції та HTML-таблиця
+   Поля фільтрів НЕ стилізуються тут: вони використовують
+   «ЄДИНИЙ ШАБЛОН ФІЛЬТРІВ СИСТЕМИ» вище.
+   ============================================================ */
+
+.myreq-section-header {
+    background: #FFFFFF;
+    border: 1px solid #DCE4F0;
+    border-radius: 14px;
+    padding: 9px 14px;
+    margin: 12px 0 8px 0;
+    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04);
+}
+
+.myreq-section-title {
+    color: #132238;
+    font-size: 18px;
+    font-weight: 900;
+    line-height: 1.25;
+}
+
+.myreq-table-scroll {
+    height: 316px;
+    overflow: auto;
+    border: 1px solid #DCE4F0;
+    border-radius: 12px;
+    background: #FFFFFF;
+}
+
+.myreq-html-table {
+    width: 1900px;
+    min-width: 100%;
+    table-layout: fixed;
+    border-collapse: separate;
+    border-spacing: 0;
+    color: #132238;
+    font-size: 13px;
+}
+
+.myreq-html-table th,
+.myreq-html-table td {
+    padding: 10px 12px;
+    border-right: 1px solid #E8EDF5;
+    border-bottom: 1px solid #E8EDF5;
+    vertical-align: middle;
+    text-align: left;
+    min-width: 120px;
+    max-width: 260px;
+    overflow-wrap: anywhere;
+}
+
+.myreq-html-table td {
+    height: 48px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.myreq-html-table th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: #0C2D57;
+    color: #FFFFFF;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.myreq-html-table tbody tr:nth-child(even) td {
+    background: #F8FAFD;
+}
+
+.myreq-html-table tbody tr:nth-child(odd) td {
+    background: #FFFFFF;
+}
+
+.myreq-html-table tbody tr:hover td {
+    background: #F1F6FF;
+}
+
+.myreq-detail-field {
+    background: #FFFFFF;
+    border: 1px solid #DCE4F0;
+    border-radius: 10px;
+    padding: 8px 12px;
+    margin: 8px 0;
+    min-height: 38px;
+}
+
+.myreq-detail-label {
+    color: #61708A;
+    font-size: 12px;
+    font-weight: 800;
+    margin-bottom: 3px;
+}
+
+.myreq-detail-value {
+    color: #132238;
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.myreq-detail-value a {
+    color: #005BBB;
+    font-weight: 800;
+}
+
+.myreq-scheme-box {
+    background: #F3F7FD;
+    border: 1px solid #BFD3F2;
+    color: #132238;
+    border-radius: 12px;
+    padding: 10px 14px;
+    margin: 10px 0 6px 0;
+}
+
+.myreq-scheme-title {
+    color: #032A63;
+    font-size: 13px;
+    font-weight: 900;
+    margin-bottom: 5px;
+}
+
+.myreq-scheme-text {
+    color: #132238;
+    font-size: 14px;
+    line-height: 1.5;
+    font-weight: 600;
+}

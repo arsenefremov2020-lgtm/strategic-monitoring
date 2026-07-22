@@ -46,7 +46,7 @@ TABLE_VISIBLE_HEIGHT_PX = 280
 # ВИПРАВЛЕННЯ (спроба 5, скориговано за фідбеком): 60px, потім 80px —
 # попередні +100px не гарантували клікабельність останнього canvas-рядка;
 # додаємо повний додатковий буфер під редактором.
-TABLE_CONTAINER_HEIGHT_PX = TABLE_VISIBLE_HEIGHT_PX + 200
+TABLE_CONTAINER_HEIGHT_PX = TABLE_VISIBLE_HEIGHT_PX + 50
 
 
 def add_editor_bottom_spacer(dataframe: pd.DataFrame) -> pd.DataFrame:

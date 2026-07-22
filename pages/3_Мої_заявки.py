@@ -536,9 +536,6 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 render_submission_notice()
-_edit_notice = st.session_state.pop("my_requests_edit_notice", "")
-if _edit_notice:
-    st.success(_edit_notice)
 
 if df.empty:
     st.warning("Поки що немає поданих відомостей.")
@@ -1053,6 +1050,7 @@ if _can_early_modify:
                         "Відредаговані відомості збережено. Заявка залишилася "
                         "на поточній ланці схеми погодження."
                     )
+                    st.session_state["my_requests_edit_notice_ts"] = now_kyiv().isoformat()
                     monitoring_data.invalidate_monitoring_cache()
                     st.rerun()
                 except TransitionRejected as exc:
@@ -1103,6 +1101,44 @@ if _can_early_modify:
                 st.error(exc.message)
             except Exception as exc:
                 show_incident(exc, context="Атомарне відкликання заявки")
+
+
+# ── Тимчасове підтвердження успішного редагування ──
+_edit_notice = st.session_state.get("my_requests_edit_notice", "")
+_edit_notice_ts_raw = st.session_state.get("my_requests_edit_notice_ts", "")
+_edit_notice_active = False
+_edit_notice_remaining_ms = 0
+
+if _edit_notice and _edit_notice_ts_raw:
+    try:
+        _edit_notice_ts = (
+            _edit_notice_ts_raw
+            if isinstance(_edit_notice_ts_raw, datetime)
+            else datetime.fromisoformat(str(_edit_notice_ts_raw))
+        )
+        _edit_notice_age = max(0.0, (now_kyiv() - _edit_notice_ts).total_seconds())
+        if _edit_notice_age < 60:
+            _edit_notice_active = True
+            _edit_notice_remaining_ms = max(1000, int((60 - _edit_notice_age) * 1000) + 250)
+        else:
+            st.session_state.pop("my_requests_edit_notice", None)
+            st.session_state.pop("my_requests_edit_notice_ts", None)
+    except (TypeError, ValueError):
+        st.session_state.pop("my_requests_edit_notice", None)
+        st.session_state.pop("my_requests_edit_notice_ts", None)
+
+if _edit_notice_active:
+    st.success(_edit_notice)
+    import streamlit.components.v1 as components
+
+    components.html(
+        f"""
+        <script>
+        setTimeout(function() {{ window.parent.location.reload(); }}, {_edit_notice_remaining_ms});
+        </script>
+        """,
+        height=0,
+    )
 
 
 # ============================================================

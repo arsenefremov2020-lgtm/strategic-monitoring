@@ -49,6 +49,33 @@ TABLE_VISIBLE_HEIGHT_PX = 280
 TABLE_CONTAINER_HEIGHT_PX = TABLE_VISIBLE_HEIGHT_PX + 200
 
 
+def add_editor_bottom_spacer(dataframe: pd.DataFrame) -> pd.DataFrame:
+    """Додає один службовий порожній рядок унизу canvas-редактора.
+
+    Висоту st.container і st.data_editor не змінює: рядок лише дає скролу
+    можливість прокрутитися нижче останнього реального запису.
+    """
+    if dataframe is None or dataframe.empty:
+        return dataframe.copy() if dataframe is not None else pd.DataFrame()
+
+    result = dataframe.copy()
+    result["_is_spacer"] = False
+    spacer = {column: "" for column in result.columns}
+    if "Подати" in spacer:
+        spacer["Подати"] = None
+    if "_locked" in spacer:
+        spacer["_locked"] = True
+    spacer["_is_spacer"] = True
+    return pd.concat([result, pd.DataFrame([spacer])], ignore_index=True)
+
+
+def editor_real_rows(dataframe: pd.DataFrame) -> pd.DataFrame:
+    """Повертає тільки реальні рядки, гарантовано відкидаючи spacer."""
+    if dataframe is None or dataframe.empty or "_is_spacer" not in dataframe.columns:
+        return dataframe.copy() if dataframe is not None else pd.DataFrame()
+    return dataframe[dataframe["_is_spacer"] != True].copy()
+
+
 # ------------------------------------------------------------
 # Page config
 # ------------------------------------------------------------
@@ -1109,11 +1136,12 @@ if submission_mode == "indicators":
         )
 
     ind_display_cols = [c for c in ind_df_table.columns if not c.startswith("_")]
+    ind_editor_df = add_editor_bottom_spacer(ind_df_table)
     _ind_visible_height = TABLE_VISIBLE_HEIGHT_PX
 
     with st.container(height=TABLE_CONTAINER_HEIGHT_PX):
         ind_edited = st.data_editor(
-            ind_df_table,
+            ind_editor_df,
             key=(
                 f"indicator_editor_{normalize_key(ind_ssp_index)}_{ind_year}_"
                 f"{ind_as_of.isoformat()}"
@@ -1186,8 +1214,9 @@ if submission_mode == "indicators":
                 "Схема погодження неповна: для однієї з ланок не знайдено користувача"
             )
 
-        ind_selected = ind_edited[
-            (ind_edited["Подати"] == True) & (ind_edited["_locked"] == False)
+        ind_real_rows = editor_real_rows(ind_edited)
+        ind_selected = ind_real_rows[
+            (ind_real_rows["Подати"] == True) & (ind_real_rows["_locked"] == False)
         ].copy()
         if ind_selected.empty:
             ind_errors.append("Позначте хоча б один індикатор для подання")
@@ -1701,7 +1730,8 @@ free_mask    = ~locked_mask
 
 # Прихований ознаковий стовпець (_locked, _lock_label) не показуємо
 display_cols = [c for c in table_df.columns if not c.startswith("_")]
-# Але залишаємо _locked у даних для логіки submit — просто ховаємо через column_config
+editor_table_df = add_editor_bottom_spacer(table_df)
+# Але залишаємо _locked у даних для логіки submit — просто ховаємо через column_order
 
 st.markdown('<div class="table-title measure-table-title">Заходи для внесення відомостей</div>', unsafe_allow_html=True)
 
@@ -1827,7 +1857,7 @@ else:
 
     with st.container(height=TABLE_CONTAINER_HEIGHT_PX):
         edited_df = st.data_editor(
-            table_df,
+            editor_table_df,
             key=(
                 f"monitoring_editor_{normalize_key(selected_ssp_index)}_{selected_year}_"
                 f"{selected_quarter}_{normalize_key(search_query)}"
@@ -1852,24 +1882,25 @@ render_submission_notice(dismissible=False, consume=True)
 
 def validate_submission():
     errors = []
+    real_edited_df = editor_real_rows(edited_df)
 
     # Контактні дані підтягуються з таблиці доступів; ручну валідацію не застосовуємо.
 
     if chain_columns_exist and not measures_scheme_ready:
         errors.append("Схема погодження неповна: для однієї з ланок не знайдено користувача")
 
-    if edited_df.empty:
+    if real_edited_df.empty:
         errors.append("Позначте хоча б один захід для подання")
         return errors
 
     # Беремо тільки рядки де Подати=True І захід НЕ заблокований
-    selected_rows = edited_df[
-        (edited_df["Подати"] == True) & (edited_df["_locked"] == False)
+    selected_rows = real_edited_df[
+        (real_edited_df["Подати"] == True) & (real_edited_df["_locked"] == False)
     ].copy()
 
     if selected_rows.empty:
         # Перевіримо чи взагалі щось позначено
-        any_checked = edited_df[edited_df["Подати"] == True]
+        any_checked = real_edited_df[real_edited_df["Подати"] == True]
         if any_checked.empty:
             errors.append("Позначте хоча б один захід для подання")
         else:
@@ -1947,8 +1978,9 @@ if submit_clicked:
         for error in validation_errors:
             st.error(error)
     else:
-        selected_rows = edited_df[
-            (edited_df["Подати"] == True) & (edited_df["_locked"] == False)
+        real_edited_df = editor_real_rows(edited_df)
+        selected_rows = real_edited_df[
+            (real_edited_df["Подати"] == True) & (real_edited_df["_locked"] == False)
         ].copy()
         submitted_at = datetime.now(timezone.utc).isoformat()
 

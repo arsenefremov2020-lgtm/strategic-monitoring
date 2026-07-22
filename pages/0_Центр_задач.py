@@ -189,7 +189,7 @@ if role in (ROLE_SSP, ROLE_UNIT_HEAD, ROLE_SSP_DEPUTY, ROLE_SSP_HEAD):
     total_tasks += len(returned_rows)
     _task_section(
         "✍️", "Повернуті на доопрацювання", returned_rows,
-        "pages/5_Мої_заявки.py", "Мої заявки",
+        "pages/3_Мої_заявки.py", "Мої заявки",
         "Повернутих заявок немає.",
     )
 

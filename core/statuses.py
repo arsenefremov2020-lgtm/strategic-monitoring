@@ -182,6 +182,37 @@ def legend_badge(
     )
 
 
+def legend_badge_image_uri(
+    state: object,
+    *,
+    display_value: object | None = None,
+) -> str:
+    """SVG data-URI бейджа для ``st.data_editor`` / ``ImageColumn``.
+
+    Використовує ту саму ``LEGEND_COLORS`` і семантику, що й ``legend_badge``.
+    Це дозволяє показати овальну пігулку всередині canvas-таблиці Streamlit,
+    де HTML із ``legend_badge`` не рендериться.
+    """
+    from html import escape as _escape
+    from urllib.parse import quote as _quote
+
+    s = clean(state)
+    c = LEGEND_COLORS.get(s, LEGEND_COLORS["Не враховано"])
+    label = clean(display_value) if display_value is not None else s
+    label = label or "—"
+    width = max(52, min(240, 24 + len(label) * 8))
+    svg = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="28" '
+        f'viewBox="0 0 {width} 28">'
+        f'<rect x="1" y="1" width="{width - 2}" height="26" rx="13" '
+        f'fill="{c["bg"]}" stroke="{c["border"]}" stroke-width="1"/>'
+        f'<text x="{width / 2}" y="18" text-anchor="middle" '
+        f'font-family="Arial, sans-serif" font-size="11" font-weight="800" '
+        f'fill="{c["fg"]}">{_escape(label)}</text></svg>'
+    )
+    return "data:image/svg+xml;charset=UTF-8," + _quote(svg, safe="")
+
+
 # ── Єдина логіка візуального статусу моніторингового запису ──
 
 def business_days_between(start, end) -> int:

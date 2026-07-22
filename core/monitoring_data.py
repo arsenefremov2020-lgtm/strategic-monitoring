@@ -25,6 +25,7 @@ from core.data_types import normalise_monitoring_frame, quarter_to_db, quarter_t
 from core.db import fetch_all
 from core.errors import log_cosmetic_error, show_warning
 from core.period_locks import is_period_locked
+from core.text_utils import normalize_name
 
 # Повний перелік колонок таблиці monitoring_requests
 # (синхронізовано з фактичною схемою Supabase та міграціями 004–006).
@@ -241,6 +242,57 @@ def invalidate_monitoring_cache() -> None:
     except Exception as exc:
         log_cosmetic_error("Очищення кешу load_manual_closeouts", exc)
 
+
+
+def indicator_identity_key(strat_code: object, indicator_name: object) -> tuple[str, str]:
+    """Стабільний ключ індикатора цілі/завдання: код + нормалізована назва.
+
+    Код сам по собі не є унікальним: одна ціль або завдання може мати кілька
+    індикаторів з однаковим ``strat_code``. Для заходів ця функція не
+    використовується — їхня ідентифікація за кодом лишається без змін.
+    """
+    code = str(strat_code or "").strip()
+    return code, normalize_name(indicator_name)
+
+
+def latest_indicator_submissions(
+    monitoring_df: pd.DataFrame,
+    *,
+    year: object | None = None,
+) -> tuple[dict[tuple[str, str], pd.Series], dict[str, pd.Series]]:
+    """Останні подання індикаторів, розділені за точним ключем і legacy-кодом.
+
+    Перший словник має ключ ``(strat_code, normalized indicator_name)`` і є
+    основним джерелом. Другий містить лише старі записи без ``indicator_name``
+    та може використовуватися виключно як безпечний fallback, коли для коду в
+    матриці існує рівно один індикатор.
+    """
+    data = indicators_only(monitoring_df)
+    if data.empty:
+        return {}, {}
+    if year is not None:
+        data = data[data["year"].astype(str).str.strip() == str(year).strip()].copy()
+    if data.empty:
+        return {}, {}
+
+    data = data.copy()
+    data["_submitted_sort"] = pd.to_datetime(data.get("submitted_at"), errors="coerce", utc=True)
+    if "id" not in data.columns:
+        data["id"] = ""
+    data["_id_sort"] = pd.to_numeric(data["id"], errors="coerce").fillna(-1)
+    data = data.sort_values(["_submitted_sort", "_id_sort"], ascending=[True, True])
+
+    exact: dict[tuple[str, str], pd.Series] = {}
+    legacy: dict[str, pd.Series] = {}
+    for _, row in data.iterrows():
+        code, name_key = indicator_identity_key(row.get("strat_code"), row.get("indicator_name"))
+        if not code:
+            continue
+        if name_key:
+            exact[(code, name_key)] = row
+        else:
+            legacy[code] = row
+    return exact, legacy
 
 def measures_only(monitoring_df: pd.DataFrame) -> pd.DataFrame:
     """

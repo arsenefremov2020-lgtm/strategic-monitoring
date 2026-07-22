@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Iterable
 
 from core.errors import log_cosmetic_error
+from core.operational import target_met
 
 YES_VALUES = {"так", "yes", "true", "1", "+"}
 NO_VALUES = {"ні", "нi", "no", "false", "0", "-"}
 NA_VALUES = {"", "н.д.", "нд", "nan", "none", "-", "—"}
+X_VALUES = {"x", "х", "×"}
 
 
 def text(value: Any) -> str:
@@ -63,6 +65,23 @@ def parse_number(value: Any) -> float | None:
         return None
 
 
+def is_x_value(value: Any) -> bool:
+    """True для латинського/кириличного маркера орієнтира «х»."""
+    return text(value).lower().replace(" ", "") in X_VALUES
+
+
+def first_future_target(future_targets: Iterable[Any] | None) -> str:
+    """Перший наступний змістовний орієнтир, крім порожнього/«х»."""
+    for candidate in future_targets or []:
+        candidate_text = text(candidate)
+        if not candidate_text or candidate_text.lower().replace(" ", "") in NA_VALUES:
+            continue
+        if is_x_value(candidate_text):
+            continue
+        return candidate_text
+    return ""
+
+
 def validate_fact_value(value: Any, unit: Any) -> tuple[bool, str]:
     """Перевірка факту: так/ні для бінарних, число для числових одиниць."""
     s = text(value)
@@ -77,6 +96,54 @@ def validate_fact_value(value: Any, unit: Any) -> tuple[bool, str]:
         if parse_number(s) is None:
             return False, "для числового показника у факті можна вказати лише число"
     return True, ""
+
+
+def validate_fact_value_for_target(
+    value: Any,
+    unit: Any,
+    target: Any,
+    future_targets: Iterable[Any] | None = None,
+) -> tuple[bool, str]:
+    """Валідація факту з окремим правилом для річного орієнтира «х».
+
+    Для орієнтира «х» дозволено саме «х» або значення типу, який задає
+    перший наступний змістовний річний орієнтир цього заходу:
+    число для числового орієнтира; «так» для бінарного.
+    """
+    if not is_x_value(target):
+        return validate_fact_value(value, unit)
+
+    value_text = text(value)
+    if not value_text:
+        return False, "фактичне значення не заповнено"
+    if is_x_value(value_text):
+        return True, ""
+
+    next_target = first_future_target(future_targets)
+    next_target_low = next_target.lower().strip()
+
+    if not next_target:
+        return False, (
+            "для орієнтира «х» без наступного змістовного річного орієнтира "
+            "можна вказати лише «х»"
+        )
+
+    if parse_number(next_target) is not None:
+        if parse_number(value_text) is None:
+            return False, "для орієнтира «х» у цьому заході можна вказати «х» або числове значення"
+        return True, ""
+
+    if next_target_low in YES_VALUES or next_target_low in NO_VALUES:
+        if value_text.lower().strip() == "так":
+            return True, ""
+        return False, "для орієнтира «х» у показнику типу так/ні можна вказати лише «х» або «так»"
+
+    # Якщо тип наступного орієнтира не вдалося надійно визначити,
+    # не вигадуємо новий формат і блокуємо неоднозначне значення.
+    return False, (
+        "для орієнтира «х» не вдалося визначити допустимий формат "
+        "за наступними річними орієнтирами; вкажіть «х»"
+    )
 
 
 def value_reaches_target(value: Any, target: Any, unit: Any, direction: str = "up") -> bool | None:
@@ -108,4 +175,65 @@ def status_completion_warning(status: Any, value: Any, target: Any, unit: Any, c
     if reached is False:
         prefix = f"У заході/індикаторі {code} " if code else ""
         return prefix + "статус «Виконано» не відповідає фактичному значенню відносно планового орієнтира."
+    return ""
+
+
+def status_value_conflict(
+    status: Any,
+    value: Any,
+    target: Any,
+    unit: Any,
+    code: str = "",
+    future_targets: Iterable[Any] | None = None,
+) -> str:
+    """Жорстко блокує лише однозначні суперечності «Виконано/Не виконано».
+
+    Для поточного орієнтира «х» порівняння виконується з першим наступним
+    змістовним орієнтиром. Саме подане значення «х» не є однозначно
+    порівнюваним, тому не блокується цією перевіркою.
+    """
+    status_text = text(status)
+    if status_text not in {"Виконано", "Не виконано"}:
+        return ""
+    if is_x_value(value):
+        return ""
+
+    effective_target = first_future_target(future_targets) if is_x_value(target) else text(target)
+    if not effective_target or is_x_value(effective_target):
+        return ""
+
+    value_text = text(value)
+    value_low = value_text.lower().strip()
+    target_low = effective_target.lower().strip()
+
+    numeric_comparable = parse_number(value_text) is not None and parse_number(effective_target) is not None
+    yes_no_comparable = (
+        is_yes_no_unit(unit)
+        and value_low in (YES_VALUES | NO_VALUES)
+    ) or (
+        value_low in (YES_VALUES | NO_VALUES)
+        and target_low in (YES_VALUES | NO_VALUES)
+    )
+
+    if not numeric_comparable and not yes_no_comparable:
+        return ""
+
+    reached = target_met(value_text, effective_target)
+    code_label = f"У заході {code}: " if code else ""
+    target_note = (
+        f" (для орієнтира «х» використано наступний орієнтир «{effective_target}»)"
+        if is_x_value(target)
+        else ""
+    )
+
+    if status_text == "Виконано" and not reached:
+        return (
+            f"{code_label}обрано статус «Виконано», але подане значення «{value_text}» "
+            f"не досягає цільового орієнтира «{effective_target}»{target_note}."
+        )
+    if status_text == "Не виконано" and reached:
+        return (
+            f"{code_label}обрано статус «Не виконано», але подане значення «{value_text}» "
+            f"досягає або перевищує цільовий орієнтир «{effective_target}»{target_note}."
+        )
     return ""

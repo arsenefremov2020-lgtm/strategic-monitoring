@@ -17,7 +17,14 @@ def set_submission_notice(*, first_stage_label: str, codes: list[str], repeated:
     }
 
 
-def render_submission_notice() -> None:
+def render_submission_notice(*, dismissible: bool = True, consume: bool = False) -> None:
+    """Render the shared success notice.
+
+    ``dismissible=False`` removes the legacy «Продовжити роботу» button.
+    ``consume=True`` shows the notice once at its requested location and then
+    clears it from session state, which is used on the monitoring submission
+    page after the post-submit rerun.
+    """
     notice = st.session_state.get(NOTICE_KEY)
     if not isinstance(notice, dict):
         return
@@ -42,6 +49,11 @@ def render_submission_notice() -> None:
         """,
         unsafe_allow_html=True,
     )
-    if st.button("Продовжити роботу", key="dismiss_submission_notice", type="primary"):
+
+    if consume:
+        st.session_state.pop(NOTICE_KEY, None)
+        return
+
+    if dismissible and st.button("Продовжити роботу", key="dismiss_submission_notice", type="primary"):
         st.session_state.pop(NOTICE_KEY, None)
         st.rerun()

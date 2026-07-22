@@ -25,6 +25,7 @@ from core.transitions import (
 from core.submission_ui import render_submission_notice, set_submission_notice
 from core.access import filter_requests_for_user, get_prefilled_user_contacts
 from core.operational import build_target_map
+from core.validation import status_value_conflict, validate_fact_value_for_target
 from config.users import get_user_by_email
 
 current_user = page_setup("Мої заявки", page_name="Мої заявки")
@@ -439,6 +440,21 @@ def _fact_for_record(record) -> str:
     return clean(record.get("numeric_value")) or clean(record.get("value_text")) or "—"
 
 
+def _future_targets_for_record(record, mi_row) -> list:
+    """Повертає наступні річні орієнтири після року заявки до 2034 включно."""
+    if mi_row is None:
+        return []
+    try:
+        current_year = int(str(record.get("year") or "").strip())
+    except (TypeError, ValueError):
+        return []
+
+    return [
+        mi_row.get(f"target_{year}", "")
+        for year in range(current_year + 1, 2035)
+    ]
+
+
 def _strategic_object_name_by_code(code) -> str:
     """Повертає назву стратегічного об'єкта за кодом, віддаючи пріоритет рядку цілі/завдання/заходу."""
     code_value = clean(code).strip()
@@ -806,6 +822,8 @@ if not measure_info.empty:
         <span style="color:#61708A;">Одиниця виміру: {display_text(mi.get("unit"))}</span>
     </div>
     """, unsafe_allow_html=True)
+else:
+    mi = None
 
 st.markdown(f"""
 <div class="info-grid">
@@ -1278,9 +1296,28 @@ if approval == "Повернуто на доопрацювання":
         elif not valid_email(new_email):
             errors.append("Email має некоректний формат.")
 
-        normalize_value = str(new_value).strip().lower()
-        if new_status == "Виконано" and normalize_value in ["0", "ні", "нi", "no"]:
-            errors.append("Статус «Виконано» не узгоджується з фактичним значенням 0 / ні.")
+        unit = clean(mi.get("unit")) if mi is not None else ""
+        future_targets = _future_targets_for_record(selected_row, mi)
+        if has_value(new_value):
+            value_ok, value_error = validate_fact_value_for_target(
+                new_value,
+                unit,
+                selected_target,
+                future_targets,
+            )
+            if not value_ok:
+                errors.append(value_error)
+
+        conflict_error = status_value_conflict(
+            new_status,
+            new_value,
+            selected_target,
+            unit,
+            code,
+            future_targets,
+        )
+        if conflict_error:
+            errors.append(conflict_error)
 
         if errors:
             st.error("Повторне подання не виконано:")

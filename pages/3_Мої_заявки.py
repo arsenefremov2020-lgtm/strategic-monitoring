@@ -328,18 +328,16 @@ def status_badge_class(status):
     return "badge-gray"
 
 
-ACTIVE_APPROVAL_STATUSES = [
-    "Очікує погодження",
+ACTIVE_APPROVAL_STATUSES = list(dict.fromkeys([
+    *schemes.ALL_WAITING_STATUSES,
     "Повернуто на доопрацювання",
-    "Очікує: Керівник ССП",
-]
+]))
 
 APPROVAL_FILTER_OPTIONS = [
     "Активні до розгляду",
     "Усі",
-    "Очікує погодження",
+    *schemes.ALL_WAITING_STATUSES,
     "Повернуто на доопрацювання",
-    "Очікує: Керівник ССП",
     "Погоджено",
 ]
 
@@ -439,6 +437,36 @@ def _target_for_record(record) -> str:
 
 def _fact_for_record(record) -> str:
     return clean(record.get("numeric_value")) or clean(record.get("value_text")) or "—"
+
+
+def _strategic_object_name_by_code(code) -> str:
+    """Повертає назву стратегічного об'єкта за кодом, віддаючи пріоритет рядку цілі/завдання/заходу."""
+    code_value = clean(code).strip()
+    if not code_value or strat_df.empty or "code" not in strat_df.columns:
+        return ""
+
+    code_key = code_value.rstrip(".")
+    candidates = strat_df[
+        strat_df["code"].astype(str).str.strip().str.rstrip(".") == code_key
+    ].copy()
+    if candidates.empty:
+        return ""
+
+    if "object_type" in candidates.columns:
+        priority = {"goal": 0, "task": 1, "measure": 2}
+        candidates["_object_priority"] = (
+            candidates["object_type"].astype(str).map(priority).fillna(99)
+        )
+        candidates = candidates.sort_values("_object_priority")
+
+    for _, candidate in candidates.iterrows():
+        name = clean(candidate.get("name"))
+        if not name:
+            continue
+        if name.startswith(code_value):
+            name = name[len(code_value):].lstrip(" .—-–|:")
+        return name
+    return ""
 
 
 def _period_label(year, quarter) -> str:
@@ -554,11 +582,6 @@ years = ["Усі"] + sorted(df["year"].dropna().astype(str).unique().tolist())
 
 with st.form("my_requests_filters_form"):
     st.markdown('<div class="filter-title">Параметри відбору</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="filter-subtitle main-filter-subtitle">Основні параметри</div>',
-        unsafe_allow_html=True,
-    )
-
     f1, f2, f3 = st.columns([0.85, 1.2, 1.7])
     with f1:
         st.markdown('<div class="filter-field-label">Рік</div>', unsafe_allow_html=True)
@@ -652,17 +675,24 @@ if filtered.empty:
 # ============================================================
 
 total = len(filtered)
-approved = len(filtered[filtered["approval_status"] == "Погоджено"])
-waiting = len(filtered[filtered["approval_status"] == "Очікує погодження"])
-returned = len(filtered[filtered["approval_status"] == "Повернуто на доопрацювання"])
-sent_to_sign = len(filtered[filtered["approval_status"] == "Очікує: Керівник ССП"])
+_approval_series = filtered["approval_status"].fillna("").astype(str).str.strip()
+_waiting_statuses = set(schemes.ALL_WAITING_STATUSES)
+_returned_mask = _approval_series.eq("Повернуто на доопрацювання")
+_approved_mask = _approval_series.eq("Погоджено")
+_waiting_mask = _approval_series.isin(_waiting_statuses)
+# Невідомий або новий статус не губиться з математичного підсумку: доки він
+# не є «Повернуто» чи «Погоджено», відносимо його до укрупненої «На розгляді».
+_other_open_mask = ~(_returned_mask | _approved_mask | _waiting_mask)
 
-m1, m2, m3, m4, m5 = st.columns(5)
+approved = int(_approved_mask.sum())
+returned = int(_returned_mask.sum())
+on_review = int((_waiting_mask | _other_open_mask).sum())
+
+m1, m2, m3, m4 = st.columns(4)
 m1.metric("Усього відомостей", total)
-m2.metric("Очікує", waiting)
-m3.metric("Повернуто", returned)
-m4.metric("Очікує: Керівник ССП", sent_to_sign)
-m5.metric("Погоджено", approved)
+m2.metric("На розгляді", on_review)
+m3.metric("Повернуто на доопрацювання", returned)
+m4.metric("Погоджено", approved)
 
 
 # ============================================================
@@ -759,7 +789,9 @@ st.markdown(f"""
 
 _kind = clean(selected_row.get("object_kind"))
 _indicator_name = clean(selected_row.get("indicator_name"))
-measure_info = strat_df[strat_df["code"].astype(str).str.strip() == code].copy()
+measure_info = strat_df[
+    strat_df["code"].astype(str).str.strip().str.rstrip(".") == code.rstrip(".")
+].copy()
 if _kind == "indicator" and _indicator_name and "indicator" in measure_info.columns:
     _matched_indicator = measure_info[
         measure_info["indicator"].astype(str).str.strip().str.casefold()
@@ -772,7 +804,7 @@ if not measure_info.empty:
     mi = measure_info.iloc[0]
     st.markdown(f"""
     <div class="step-box">
-        <b>{display_text(code)} — {display_text(mi.get("name"))}</b><br>
+        <b>{display_text(code)} {display_text(_strategic_object_name_by_code(code), fallback="")}</b><br>
         <span style="color:#61708A;">Індикатор: {display_text(mi.get("indicator"))}</span><br>
         <span style="color:#61708A;">Одиниця виміру: {display_text(mi.get("unit"))}</span>
     </div>
@@ -1082,7 +1114,7 @@ st.markdown(
     'Історія зміни статусу</div></div>',
     unsafe_allow_html=True,
 )
-render_request_timeline(logs_df)
+render_request_timeline(logs_df, with_table_expander=False)
 
 
 # ============================================================

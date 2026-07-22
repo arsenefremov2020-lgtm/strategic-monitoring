@@ -897,22 +897,21 @@ def render_scheme_picker(ssp_index, key_prefix):
 
 
 def notify_first_stage(chain, codes, year_str, quarter_str, kind="measure"):
-    """Одне миттєве сповіщення першій ланці про подання (без спаму по кожному коду)."""
+    """Порогове сповіщення першій ланці: не частіше одного разу на 2 години."""
     if not chain:
         return
     stage = chain[0]
-    codes_text = ", ".join(codes[:5]) + ("…" if len(codes) > 5 else "")
     try:
-        notify_events.notify_stage_assigned(
-            stage.get("email", ""), stage.get("name", ""), stage.get("label", ""),
-            codes_text, year_str, quarter_str,
-            submitter=raw_value(responsible_person), kind=kind,
+        notify_events.notify_new_requests_throttled(
+            stage.get("email", ""),
+            stage.get("name", ""),
+            stage.get("label", ""),
         )
     except Exception as exc:
         show_warning(
-            "Заявку подано, але email першій ланці не надіслано.",
+            "Заявку подано, але порогове email-сповіщення першій ланці не опрацьовано.",
             exc,
-            "Сповіщення першої ланки після подання заявки",
+            "Порогове сповіщення першої ланки після подання заявки",
         )
 
 

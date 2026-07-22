@@ -4836,6 +4836,7 @@ if active_mode in MIO_MODES:
     else:
         render_mode_placeholder(active_mode)
     render_mio_export_block(mio_years)
+    render_footer()
     st.stop()
 
 

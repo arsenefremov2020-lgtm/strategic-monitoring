@@ -1006,6 +1006,7 @@ versions_df = prepare_versions(load_versions())
 
 if logs_df.empty and requests_df.empty:
     st.warning("Журнал дій і реєстр заявок поки що порожні.")
+    render_footer()
     st.stop()
 
 logs_df = prepare_logs(logs_df, requests_df)
@@ -1073,6 +1074,7 @@ with p3:
 
 if selected_start_date > selected_end_date:
     st.error("Початкова дата не може бути пізнішою за кінцеву дату.")
+    render_footer()
     st.stop()
 
 p4, p5, p6 = st.columns(3)

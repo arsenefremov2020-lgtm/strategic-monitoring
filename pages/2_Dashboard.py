@@ -2075,6 +2075,7 @@ active_raw = build_period_data(strat_df, requests_df, years_for_calc, quarters_f
 
 if active_raw.empty:
     st.warning("Для обраного періоду активних заходів не знайдено.")
+    render_footer()
     st.stop()
 
 # Пункт 1 нового ТЗ: ролі, звужені до власного ССП, за замовчуванням
@@ -2102,6 +2103,7 @@ active = apply_dashboard_filters(
 
 if active.empty:
     st.warning("За обраними параметрами відбору даних не знайдено.")
+    render_footer()
     st.stop()
 
 active_period_rows = active.copy()
@@ -2696,6 +2698,7 @@ if presentation_mode:
 
     </div>
 </body></html>""", height=600, scrolling=True)
+    render_footer()
     st.stop()
 
 

@@ -519,6 +519,7 @@ render_submission_notice()
 
 if df.empty:
     st.warning("Поки що немає поданих відомостей.")
+    render_footer()
     st.stop()
 
 required_cols = [
@@ -622,6 +623,7 @@ st.markdown('</div></div>', unsafe_allow_html=True)
 
 if filtered.empty:
     st.info("За обраними параметрами відбору відомостей не знайдено.")
+    render_footer()
     st.stop()
 
 # ============================================================

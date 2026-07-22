@@ -44,8 +44,9 @@ from core.transitions import TransitionRejected, submit_request
 TABLE_VISIBLE_HEIGHT_PX = 280
 
 # ВИПРАВЛЕННЯ (спроба 5, скориговано за фідбеком): 60px, потім 80px —
-# майже достатньо, піднято до 100px.
-TABLE_CONTAINER_HEIGHT_PX = TABLE_VISIBLE_HEIGHT_PX + 100
+# попередні +100px не гарантували клікабельність останнього canvas-рядка;
+# додаємо повний додатковий буфер під редактором.
+TABLE_CONTAINER_HEIGHT_PX = TABLE_VISIBLE_HEIGHT_PX + 200
 
 
 # ------------------------------------------------------------
@@ -103,7 +104,7 @@ header[data-testid="stHeader"] {
 
 .status-row {
     max-width: 1280px;
-    margin: 12px auto 22px auto;
+    margin: 12px auto 8px auto;
     display: grid;
     grid-template-columns: 1fr 1fr 1.45fr;
     gap: 12px;
@@ -168,6 +169,21 @@ header[data-testid="stHeader"] {
     .status-row {
         grid-template-columns: 1fr;
     }
+}
+
+/* Картка перемикача типу подання: візуально узгоджена з flow-box. */
+.st-key-submission_mode_card {
+    background: rgba(255,255,255,0.94);
+    border: 1px solid #DCE4F0;
+    border-radius: 16px;
+    box-shadow: 0 6px 18px rgba(15,23,42,0.045);
+    padding: 12px 16px 8px 16px;
+    margin: 10px 0 14px 0;
+}
+.st-key-submission_mode_card [data-testid="stRadio"] > label p,
+.st-key-submission_mode_card [data-testid="stRadio"] label p {
+    color: #132238 !important;
+    font-weight: 800 !important;
 }
 
 .header-box {
@@ -354,6 +370,10 @@ header[data-testid="stHeader"] {
     font-size: 20px;
     margin: 24px auto 12px auto;
     max-width: 1280px;
+}
+
+.measure-table-title {
+    margin-top: 8px !important;
 }
 
 div[data-testid="stRadio"] > label p,
@@ -900,14 +920,20 @@ def notify_first_stage(chain, codes, year_str, quarter_str, kind="measure"):
 # Перемикач: що подаємо — заходи чи індикатори СЦ/завдань
 # ------------------------------------------------------------
 
-submission_mode = st.radio(
-    "Що подаєте (оберіть потрібний для Вас варіант)",
-    ["Заходи", "Індикатори стратегічних цілей та завдань"],
-    horizontal=True,
-    key="submission_mode_toggle",
-)
+_submission_mode_labels = {
+    "measures": "📋 Заходи",
+    "indicators": "📊 Індикатори стратегічних цілей та завдань",
+}
+with st.container(border=True, key="submission_mode_card"):
+    submission_mode = st.radio(
+        "**Що подаєте (оберіть потрібний для Вас варіант)**",
+        list(_submission_mode_labels),
+        format_func=lambda value: _submission_mode_labels[value],
+        horizontal=True,
+        key="submission_mode_toggle",
+    )
 
-if submission_mode.startswith("Індикатори"):
+if submission_mode == "indicators":
     # ========================================================
     # ПОДАННЯ ДАНИХ ДЛЯ ІНДИКАТОРІВ СТРАТЕГІЧНИХ ЦІЛЕЙ ТА ЗАВДАНЬ
     # ========================================================
@@ -963,14 +989,13 @@ if submission_mode.startswith("Індикатори"):
     indicator_rows = filter_actions_for_user(
         indicator_rows,
         current_user,
-        executor_columns=["resp_main", "resp_co_1"],
+        executor_columns=["resp_main"],
     )
 
     if ind_ssp_index:
         _pat = re.compile(rf"(?<!\d){re.escape(str(ind_ssp_index))}(?!\d)")
         _mask = indicator_rows.apply(
-            lambda r: bool(_pat.search(str(r.get("resp_main", ""))))
-            or bool(_pat.search(str(r.get("resp_co_1", "")))),
+            lambda r: bool(_pat.search(str(r.get("resp_main", "")))),
             axis=1,
         )
         indicator_rows = indicator_rows[_mask]
@@ -988,47 +1013,60 @@ if submission_mode.startswith("Індикатори"):
     if ind_target_col not in indicator_rows.columns:
         indicator_rows[ind_target_col] = ""
 
-    # Останні подання індикаторів (у процесі → блокуємо новий дубль у черзі).
+    # Останні подання індикаторів: ключ = (код + назва індикатора).
+    # Один strat_code може належати кільком індикаторам, тому матчинг лише
+    # за кодом заборонений. Старі записи без indicator_name використовуємо
+    # тільки якщо в матриці за цим кодом існує рівно один індикатор.
     waiting_statuses = set(schemes.ALL_WAITING_STATUSES)
-    ind_submitted = {}
-    if kind_column_exists and not monitoring_df.empty and "object_kind" in monitoring_df.columns:
-        _ind_df = monitoring_df[
-            (monitoring_df["object_kind"].astype(str) == "indicator")
-            & (monitoring_df["year"].astype(str).str.strip() == str(ind_year))
-        ]
-        for _, mrow in _ind_df.sort_values("submitted_at").iterrows():
-            ind_submitted[raw_value(mrow.get("strat_code"))] = mrow
+    ind_submitted, ind_submitted_legacy = monitoring_data.latest_indicator_submissions(
+        monitoring_df,
+        year=ind_year,
+    )
+
+    _indicator_names_by_code = {}
+    for _, _row in indicator_rows.iterrows():
+        _code = raw_value(_row.get("code", ""))
+        _name_key = monitoring_data.indicator_identity_key(
+            _code, _row.get("indicator", "")
+        )[1]
+        if _code and _name_key:
+            _indicator_names_by_code.setdefault(_code, set()).add(_name_key)
 
     value_col = "Значення\nіндикатора"
+    fact_col = f"{ind_year} Факт"
 
     ind_table_rows = []
     for _, row in indicator_rows.iterrows():
         code = raw_value(row.get("code", ""))
-        last = ind_submitted.get(code)
+        indicator_name = raw_value(row.get("indicator", ""))
+        identity_key = monitoring_data.indicator_identity_key(code, indicator_name)
+        last = ind_submitted.get(identity_key)
+        if last is None and len(_indicator_names_by_code.get(code, set())) == 1:
+            last = ind_submitted_legacy.get(code)
         in_progress = (
             last is not None
             and raw_value(last.get("approval_status")) in waiting_statuses
         )
-        last_info = ""
+        last_badge = ""
         if last is not None:
             last_value = (
                 raw_value(last.get("numeric_value"))
                 or raw_value(last.get("value_text"))
             )
-            last_info = (
-                f"{last_value} "
-                f"(станом на {raw_value(last.get('as_of_date')) or raw_value(last.get('submitted_at'))[:10]}, "
-                f"{raw_value(last.get('approval_status'))})"
-            )
+            if last_value:
+                last_badge = core_statuses.legend_badge_image_uri(
+                    core_statuses.get_record_visual_status(last),
+                    display_value=last_value,
+                )
         ind_table_rows.append({
             "Подати": False,
             "Код": code,
             "СЦ / Завдання": strip_leading_code(row.get("name", ""), code),
-            "Індикатор": raw_value(row.get("indicator", "")),
+            "Індикатор": indicator_name,
             "Одиниці\nвиміру": raw_value(row.get("unit", "")),
             "2021\n(базовий)": raw_value(row.get("base_2021", "")),
             f"{ind_year}\n(цільовий орієнтир)": raw_value(row.get(ind_target_col, "")),
-            "Останнє подане\nзначення": last_info,
+            fact_col: last_badge,
             value_col: "",
             "Опис\nпрогресу": "",
             "Ризики / проблеми /\nвідхилення": "",
@@ -1055,6 +1093,7 @@ if submission_mode.startswith("Індикатори"):
     ind_df_table = pd.DataFrame(ind_table_rows)
     if ind_df_table.empty:
         st.info("За обраними параметрами індикаторів не знайдено.")
+        render_footer()
         st.stop()
 
     quarter_roman = {1: "I", 2: "II", 3: "III", 4: "IV"}[
@@ -1093,10 +1132,15 @@ if submission_mode.startswith("Індикатори"):
                 "Одиниці\nвиміру",
                 "2021\n(базовий)",
                 f"{ind_year}\n(цільовий орієнтир)",
-                "Останнє подане\nзначення",
+                fact_col,
             ],
             column_config={
                 "Подати": st.column_config.CheckboxColumn("Подати", width=80),
+                fact_col: st.column_config.ImageColumn(
+                    fact_col,
+                    help="Останнє подане значення цього індикатора за обраний рік",
+                    width=130,
+                ),
                 value_col: st.column_config.TextColumn(
                     f"🔴 {value_col}",
                     width=150,
@@ -1246,6 +1290,7 @@ if submission_mode.startswith("Індикатори"):
             elif rejected_messages:
                 st.error("Подання відхилено: " + " | ".join(rejected_messages))
 
+    render_footer()
     st.stop()
 
 
@@ -1659,7 +1704,7 @@ free_mask    = ~locked_mask
 display_cols = [c for c in table_df.columns if not c.startswith("_")]
 # Але залишаємо _locked у даних для логіки submit — просто ховаємо через column_config
 
-st.markdown('<div class="table-title">Заходи для внесення відомостей</div>', unsafe_allow_html=True)
+st.markdown('<div class="table-title measure-table-title">Заходи для внесення відомостей</div>', unsafe_allow_html=True)
 
 if table_df.empty:
     st.info("За обраними параметрами заходів не знайдено.")

@@ -1309,6 +1309,7 @@ measures_all = base_measures(strat_df)
 
 if measures_all.empty:
     st.warning("У стратегічній матриці не знайдено заходів для аналізу.")
+    render_footer()
     st.stop()
 
 
@@ -1484,6 +1485,7 @@ active = apply_dimension_filters(
 
 if active.empty:
     st.warning("За обраними параметрами активних заходів не знайдено.")
+    render_footer()
     st.stop()
 
 period_requests = requests_df.copy()

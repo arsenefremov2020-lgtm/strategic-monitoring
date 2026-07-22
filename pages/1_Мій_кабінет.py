@@ -447,6 +447,7 @@ df = filter_requests_for_user(
 
 if df.empty:
     st.warning("Для цього користувача немає доступних відомостей за закріпленим ССП.")
+    render_footer()
     st.stop()
 
 st.markdown('<div class="ua-line"></div>', unsafe_allow_html=True)
@@ -502,6 +503,7 @@ with c1:
         available_departments = [d for d in departments if any(str(index) in str(d) for index in allowed_indexes)] or available_departments
     if not available_departments:
         st.warning("Для цього користувача немає доступних ССП.")
+        render_footer()
         st.stop()
     current_dep = st.session_state["cabinet_filters_applied_v19"].get("department") or available_departments[0]
     dep_index = available_departments.index(current_dep) if current_dep in available_departments else 0
@@ -556,6 +558,7 @@ st.markdown('</div></div>', unsafe_allow_html=True)
 
 if filtered.empty:
     st.info("За обраними параметрами відбору відомостей не знайдено.")
+    render_footer()
     st.stop()
 
 # ============================================================
@@ -916,6 +919,7 @@ if is_my_turn:
             _final_chain_for_notify = _chain
 
         if _sign_blocked:
+            render_footer()
             st.stop()
 
         _approval_comment = clean(leader_comment) or f"Погоджено ланкою «{_stage_label}»"

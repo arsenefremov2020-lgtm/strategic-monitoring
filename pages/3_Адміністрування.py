@@ -2355,6 +2355,7 @@ if is_super_admin_user(current_user):
 
 if filtered.empty:
     st.info("За обраними фільтрами заявок не знайдено.")
+    render_footer()
     st.stop()
 
 # ──────────────────────────────────────────────

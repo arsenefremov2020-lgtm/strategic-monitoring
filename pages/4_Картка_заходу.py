@@ -1174,6 +1174,7 @@ if _target_code:
     )
     if _exists_anywhere and not _exists_in_scope:
         st.error("У вас немає доступу до картки цього заходу.")
+        render_footer()
         st.stop()
     if not _exists_anywhere:
         st.warning("Захід із посилання не знайдено. Відкрито доступний перелік заходів.")
@@ -1181,6 +1182,7 @@ if _target_code:
 
 if measures.empty:
     st.warning("Заходів у стратегічній матриці не знайдено.")
+    render_footer()
     st.stop()
 
 measures["goal_code"] = measures["code"].apply(get_goal_code)
@@ -1256,6 +1258,7 @@ if clean(keyword):
 if filtered_measures_by_task.empty:
     render_html("</div></div>")
     st.warning("За обраними фільтрами заходів не знайдено.")
+    render_footer()
     st.stop()
 
 measure_options = [

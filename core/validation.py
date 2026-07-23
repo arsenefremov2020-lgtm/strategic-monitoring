@@ -108,7 +108,7 @@ def validate_fact_value_for_target(
 
     Для орієнтира «х» дозволено саме «х» або значення типу, який задає
     перший наступний змістовний річний орієнтир цього заходу:
-    число для числового орієнтира; «так» для бінарного.
+    число для числового орієнтира; «так»/«ні» для бінарного.
     """
     if not is_x_value(target):
         return validate_fact_value(value, unit)
@@ -134,9 +134,9 @@ def validate_fact_value_for_target(
         return True, ""
 
     if next_target_low in YES_VALUES or next_target_low in NO_VALUES:
-        if value_text.lower().strip() == "так":
+        if value_text.lower().strip() in (YES_VALUES | NO_VALUES):
             return True, ""
-        return False, "для орієнтира «х» у показнику типу так/ні можна вказати лише «х» або «так»"
+        return False, "для орієнтира «х» у показнику типу так/ні можна вказати лише «х», «так» або «ні»"
 
     # Якщо тип наступного орієнтира не вдалося надійно визначити,
     # не вигадуємо новий формат і блокуємо неоднозначне значення.

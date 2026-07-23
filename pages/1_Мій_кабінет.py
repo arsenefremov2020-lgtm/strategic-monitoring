@@ -16,6 +16,7 @@ from core.period_locks import is_period_locked
 from core.strategic_data import load_strat_matrix as core_load_strat_matrix
 from core import monitoring_data
 from core.statuses import SUBMISSION_STATUS_OPTIONS
+from core.validation import status_value_conflict, validate_fact_value_for_target
 from core.versioning import coordinator_stage_index
 from core.transitions import (
     TransitionRejected,
@@ -663,6 +664,24 @@ if not measure_info.empty:
         <span style="color:#61708A;">Терміни: {display_text(mi["start_date_plan"])} — {display_text(mi["end_date_plan"])}</span>
     </div>
     """, unsafe_allow_html=True)
+else:
+    mi = None
+
+try:
+    _cab_record_year = int(str(selected_row.get("year") or "").strip())
+except (TypeError, ValueError):
+    _cab_record_year = None
+
+_cab_selected_target = (
+    clean(mi.get(f"target_{_cab_record_year}", ""))
+    if mi is not None and _cab_record_year is not None
+    else ""
+)
+_cab_future_targets = (
+    [mi.get(f"target_{year}", "") for year in range(_cab_record_year + 1, 2035)]
+    if mi is not None and _cab_record_year is not None
+    else []
+)
 
 st.markdown(f"""
 <div class="info-grid">
@@ -1132,8 +1151,35 @@ if is_my_turn:
             )
 
             if cab_edit_submit:
+                cab_edit_errors = []
                 if not has_value(cab_new_value) or not has_value(cab_new_progress):
-                    st.error("Заповніть фактичне значення та опис прогресу.")
+                    cab_edit_errors.append("Заповніть фактичне значення та опис прогресу.")
+
+                cab_unit = clean(mi.get("unit")) if mi is not None else ""
+                if has_value(cab_new_value):
+                    cab_value_ok, cab_value_error = validate_fact_value_for_target(
+                        cab_new_value,
+                        cab_unit,
+                        _cab_selected_target,
+                        _cab_future_targets,
+                    )
+                    if not cab_value_ok:
+                        cab_edit_errors.append(cab_value_error)
+
+                cab_conflict_error = status_value_conflict(
+                    cab_new_status,
+                    cab_new_value,
+                    _cab_selected_target,
+                    cab_unit,
+                    code,
+                    _cab_future_targets,
+                )
+                if cab_conflict_error:
+                    cab_edit_errors.append(cab_conflict_error)
+
+                if cab_edit_errors:
+                    for cab_error in cab_edit_errors:
+                        st.error(cab_error)
                 else:
                     _cab_update = prepare_monitoring_payload({
                         "status": cab_new_status,

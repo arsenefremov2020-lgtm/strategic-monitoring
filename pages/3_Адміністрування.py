@@ -35,6 +35,7 @@ from core.closeouts import load_manual_closeouts
 from core.stage5 import failed_notifications_last_30_days, latest_system_update
 from core.archive import create_archive_snapshot, format_kyiv as format_archive_kyiv
 from core.statuses import SUBMISSION_STATUS_OPTIONS
+from core.validation import status_value_conflict, validate_fact_value_for_target
 from config.roles import ROLE_SUPER_ADMIN
 from core.access import filter_actions_for_user
 from core.superadmin_routing import resolve_manual_closeout_route, can_superadmin_decide_closeout, senior_superadmin_for
@@ -2226,6 +2227,43 @@ if is_super_admin_user(current_user):
             _locked_df["id"].astype(int).eq(int(_locked_request_id))
         ].iloc[0]
 
+        _locked_code = clean(_locked_row.get("strat_code"))
+        _locked_measure_info = strat_df[
+            strat_df["code"].astype(str).str.strip().str.rstrip(".")
+            == _locked_code.rstrip(".")
+        ].copy()
+        _locked_indicator_name = clean(_locked_row.get("indicator_name"))
+        if (
+            clean(_locked_row.get("object_kind")) == "indicator"
+            and _locked_indicator_name
+            and "indicator" in _locked_measure_info.columns
+        ):
+            _locked_indicator_match = _locked_measure_info[
+                _locked_measure_info["indicator"].astype(str).str.strip().str.casefold()
+                == _locked_indicator_name.casefold()
+            ]
+            if not _locked_indicator_match.empty:
+                _locked_measure_info = _locked_indicator_match
+
+        _locked_mi = _locked_measure_info.iloc[0] if not _locked_measure_info.empty else None
+        try:
+            _locked_year = int(str(_locked_row.get("year") or "").strip())
+        except (TypeError, ValueError):
+            _locked_year = None
+        _locked_target = (
+            clean(_locked_mi.get(f"target_{_locked_year}", ""))
+            if _locked_mi is not None and _locked_year is not None
+            else ""
+        )
+        _locked_future_targets = (
+            [
+                _locked_mi.get(f"target_{year}", "")
+                for year in range(_locked_year + 1, 2035)
+            ]
+            if _locked_mi is not None and _locked_year is not None
+            else []
+        )
+
         st.markdown(
             f"""
             <div class="review-box">
@@ -2295,8 +2333,35 @@ if is_super_admin_user(current_user):
                 )
 
             if sa_locked_submit:
+                sa_locked_errors = []
                 if not clean(sa_locked_reason):
-                    st.error("Обґрунтування коригування є обов'язковим.")
+                    sa_locked_errors.append("Обґрунтування коригування є обов'язковим.")
+
+                sa_locked_unit = clean(_locked_mi.get("unit")) if _locked_mi is not None else ""
+                if clean(sa_locked_value):
+                    sa_locked_value_ok, sa_locked_value_error = validate_fact_value_for_target(
+                        sa_locked_value,
+                        sa_locked_unit,
+                        _locked_target,
+                        _locked_future_targets,
+                    )
+                    if not sa_locked_value_ok:
+                        sa_locked_errors.append(sa_locked_value_error)
+
+                sa_locked_conflict_error = status_value_conflict(
+                    sa_locked_status,
+                    sa_locked_value,
+                    _locked_target,
+                    sa_locked_unit,
+                    _locked_code,
+                    _locked_future_targets,
+                )
+                if sa_locked_conflict_error:
+                    sa_locked_errors.append(sa_locked_conflict_error)
+
+                if sa_locked_errors:
+                    for sa_locked_error in sa_locked_errors:
+                        st.error(sa_locked_error)
                 else:
                     try:
                         _locked_updates = prepare_monitoring_payload({

@@ -1032,6 +1032,29 @@ if _can_early_modify:
             if not has_value(de_new_progress):
                 de_errors.append("Заповніть опис прогресу.")
 
+            de_unit = clean(mi.get("unit")) if mi is not None else ""
+            de_future_targets = _future_targets_for_record(selected_row, mi)
+            if has_value(de_new_value):
+                de_value_ok, de_value_error = validate_fact_value_for_target(
+                    de_new_value,
+                    de_unit,
+                    selected_target,
+                    de_future_targets,
+                )
+                if not de_value_ok:
+                    de_errors.append(de_value_error)
+
+            de_conflict_error = status_value_conflict(
+                de_new_status,
+                de_new_value,
+                selected_target,
+                de_unit,
+                code,
+                de_future_targets,
+            )
+            if de_conflict_error:
+                de_errors.append(de_conflict_error)
+
             if de_errors:
                 for error in de_errors:
                     st.error(error)

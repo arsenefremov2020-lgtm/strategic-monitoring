@@ -22,7 +22,6 @@ from core.transitions import (
     resubmit_request,
     withdraw_request as atomic_withdraw_request,
 )
-from core.submission_ui import render_submission_notice, set_submission_notice
 from core.access import filter_requests_for_user, get_prefilled_user_contacts
 from core.operational import build_target_map
 from core.validation import status_value_conflict, validate_fact_value_for_target
@@ -64,7 +63,7 @@ header[data-testid="stHeader"] {
     margin-bottom: 8px;
 }
 
-.header-box, .card {
+.header-box {
     background: rgba(255,255,255,0.94);
     border: 1px solid #DCE4F0;
     border-radius: 16px;
@@ -80,27 +79,13 @@ header[data-testid="stHeader"] {
     margin-bottom: 8px;
 }
 
-.header-subtitle, .card-subtitle {
+.header-subtitle {
     font-size: 15px;
     color: #61708A;
     line-height: 1.55;
 }
 
-.card-title {
-    font-size: 21px;
-    font-weight: 900;
-    color: #132238;
-    margin-bottom: 8px;
-}
 
-.filter-panel {
-    background: #F7F9FC;
-    border: 1px solid #DCE4F0;
-    border-radius: 18px;
-    padding: 18px 20px 10px 20px;
-    margin-top: 12px;
-    box-shadow: 0 10px 24px rgba(15,23,42,0.07);
-}
 
 
 .badge-wrap {
@@ -180,15 +165,7 @@ header[data-testid="stHeader"] {
     border-color: #F4B400;
 }
 
-.info-card-red {
-    background: #FBE5E5;
-    border-color: #DC4A4A;
-}
 
-.info-card-gray {
-    background: #F7F9FC;
-    border-color: #DCE4F0;
-}
 
 .info-label {
     color: #61708A;
@@ -215,26 +192,8 @@ header[data-testid="stHeader"] {
     margin: 10px 0;
 }
 
-.version-box {
-    background: #F7F9FC;
-    border: 1px solid #DCE4F0;
-    border-radius: 14px;
-    padding: 14px 16px;
-    margin: 10px 0;
-}
 
-.version-title {
-    color: #132238;
-    font-weight: 900;
-    font-size: 15px;
-    margin-bottom: 6px;
-}
 
-.version-text {
-    color: #61708A;
-    font-size: 13px;
-    line-height: 1.45;
-}
 
 .comment-box {
     background: #FDF3D8;
@@ -269,14 +228,6 @@ div[data-testid="stMetric"] {
 }
 
 
-.footer {
-    text-align: center;
-    color: #8A96A8;
-    font-size: clamp(10px, 0.9vw, 12px);
-    margin-top: 40px;
-    padding: 18px 0 10px;
-    border-top: 1px solid #DCE4F0;
-}
 
 @media (max-width: 1100px) {
     .info-grid { grid-template-columns: 1fr; }
@@ -550,8 +501,6 @@ st.markdown("""
     </div>
 </div>
 """, unsafe_allow_html=True)
-
-render_submission_notice()
 
 if df.empty:
     st.warning("Поки що немає поданих відомостей.")
@@ -1397,14 +1346,15 @@ if approval == "Повернуто на доопрацювання":
                         "Email після повторного подання заявки",
                     )
 
-                set_submission_notice(
-                    first_stage_label=(
-                        result.data.get("first_stage_label")
-                        or (_resubmit_chain[0].get("label") if _resubmit_chain else "Перша ланка")
-                    ),
-                    codes=[clean(selected_row.get("strat_code"))],
-                    repeated=True,
+                _resubmit_stage_label = (
+                    result.data.get("first_stage_label")
+                    or (_resubmit_chain[0].get("label") if _resubmit_chain else "Перша ланка")
                 )
+                st.session_state["my_requests_edit_notice"] = (
+                    "Відомості успішно повторно подано на погодження. "
+                    f"Зараз заявку розглядає ланка «{clean(_resubmit_stage_label)}»."
+                )
+                st.session_state["my_requests_edit_notice_ts"] = now_kyiv().isoformat()
                 monitoring_data.invalidate_monitoring_cache()
                 st.rerun()
             except TransitionRejected as exc:

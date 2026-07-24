@@ -32,7 +32,7 @@ from core.access import (
 from core import approval_schemes as schemes
 from core import notify_events
 from core.closeouts import load_manual_closeouts
-from core.stage5 import failed_notifications_last_30_days, latest_system_update
+from core.stage5 import failed_notifications_last_30_days
 from core.archive import create_archive_snapshot, format_kyiv as format_archive_kyiv
 from core.statuses import SUBMISSION_STATUS_OPTIONS
 from core.validation import status_value_conflict, validate_fact_value_for_target
@@ -107,23 +107,6 @@ header[data-testid="stHeader"] {
     font-size: 14px;
     color: #61708A;
     line-height: 1.5;
-}
-
-.status-pill-wrap {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 7px;
-    margin-top: 11px;
-}
-
-.status-pill {
-    background: #F7F9FC;
-    border: 1px solid #DCE4F0;
-    border-radius: 999px;
-    padding: 5px 11px;
-    font-size: 12px;
-    color: #61708A;
-    font-weight: 600;
 }
 
 /* ─── CARDS ─── */
@@ -1277,8 +1260,6 @@ def build_attention_summary(df):
 # PAGE
 # ══════════════════════════════════════════════
 
-_stage5_latest_at, _stage5_latest_label = latest_system_update()
-
 st.markdown('<div class="ua-line"></div>', unsafe_allow_html=True)
 st.markdown(
     '<div class="ministry-label">🇺🇦 Міністерство економіки, довкілля та сільського господарства України</div>',
@@ -1286,38 +1267,30 @@ st.markdown(
 )
 
 st.markdown(
-    f"""
+    """
     <div class="header-box">
         <div class="header-title">Адміністрування</div>
         <div class="header-subtitle">
             Кабінет адміністратора використовується для розгляду, перевірки та погодження
             поданих відомостей та відстеження історії змін.
         </div>
-        <div class="status-pill-wrap">
-            <div class="status-pill">● Режим: адміністрування</div>
-            <div class="status-pill">● Дані: Supabase</div>
-            <div class="status-pill">● Журнал змін: активний</div>
-            <div class="status-pill">● Резолюція: автоматична</div>
-            <div class="status-pill">● Дані востаннє оновлено: {_stage5_latest_label}</div>
-        </div>
     </div>
     """,
     unsafe_allow_html=True
 )
-
-st.caption(f"Дані востаннє оновлено: {_stage5_latest_label}")
 
 st.markdown(
     """
     <div class="flow-box">
         <div class="flow-title">Маршрут адміністратора</div>
         <div class="flow-steps">
-            <div class="flow-step">1. Перегляд системних параметрів</div>
-            <div class="flow-step">2. Вибір параметрів</div>
-            <div class="flow-step">3. Перевірка</div>
-            <div class="flow-step">4. Вибір рішення</div>
-            <div class="flow-step">5. Підтвердження</div>
-            <div class="flow-step">6. Погодження</div>
+            <div class="flow-step">1. Оберіть режим адміністрування</div>
+            <div class="flow-step">2. Перегляд системних параметрів</div>
+            <div class="flow-step">3. Вибір параметрів</div>
+            <div class="flow-step">4. Перевірка</div>
+            <div class="flow-step">5. Вибір рішення</div>
+            <div class="flow-step">6. Підтвердження</div>
+            <div class="flow-step">7. Погодження</div>
         </div>
     </div>
     """,
@@ -1360,20 +1333,11 @@ df = filter_requests_for_user(
 # ──────────────────────────────────────────────
 
 admin_work_mode = st.radio(
-    "Режим адміністрування",
+    "**Режим адміністрування**",
     ["Основний режим координатора", "Ручне закриття заходів"],
     horizontal=True,
     key="admin_work_mode",
 )
-
-# І2: єдиний реєстр недоставлених листів за останні 30 днів.
-with st.expander("Розсилка: недоставлені листи", expanded=False):
-    _failed_mail = failed_notifications_last_30_days()
-    if _failed_mail.empty:
-        st.success("Усі листи за останні 30 днів доставлено.")
-    else:
-        st.warning(f"Недоставлених листів за останні 30 днів: {len(_failed_mail)}")
-        st.dataframe(_failed_mail, use_container_width=True, hide_index=True)
 
 # З1–З5: ручне створення незмінного архівного знімка доступне лише супер-адміну.
 if is_super_admin_user(current_user):
@@ -1890,13 +1854,6 @@ attention = build_attention_summary(df)
 # СИСТЕМНИЙ АНАЛІЗ
 # ──────────────────────────────────────────────
 
-st.markdown(
-    '<div class="card">'
-    '<div class="card-title">Системний аналіз</div>'
-    '<div class="card-subtitle">Автоматичний контроль усіх поданих відомостей</div>',
-    unsafe_allow_html=True
-)
-
 def _att(title, value, note, css):
     return (
         f'<div class="attention-card {css}">'
@@ -1974,13 +1931,9 @@ with st.expander("Перегляд записів"):
     with t3: sort_and_show(attention["long_waiting"])
     with t4: sort_and_show(attention["returned"])
 
-st.markdown('</div>', unsafe_allow_html=True)
-
 # ──────────────────────────────────────────────
 # ІНФОГРАФІКА
 # ──────────────────────────────────────────────
-
-st.markdown('<div class="card"><div class="card-title">Інфографіка</div>', unsafe_allow_html=True)
 
 # ТЗ-правка (09.07.2026, п.3): категорії інфографіки взаємовиключні —
 # кожна заявка облікована рівно один раз.
@@ -2020,8 +1973,6 @@ if not chart_df.empty:
     st.plotly_chart(fig, use_container_width=True)
 else:
     st.info("Даних для відображення немає.")
-
-st.markdown('</div>', unsafe_allow_html=True)
 
 # ──────────────────────────────────────────────
 # ПАРАМЕТРИ ВІДБОРУ
@@ -3485,11 +3436,6 @@ if st.session_state.get("adm_last_decision_notice"):
 
 
 
-st.markdown(
-    '<div class="card"><div class="card-title">Історія змін заявки</div>',
-    unsafe_allow_html=True
-)
-
 logs_df = load_logs(selected_id)
 
 if logs_df.empty:
@@ -3520,9 +3466,9 @@ else:
             for t in _log_ts:
                 _snap = _vers[_vers["_ts"] <= t] if pd.notna(t) else _vers.iloc[0:0]
                 _row = _snap.iloc[-1] if not _snap.empty else None
-                _facts.append(clean((_row or {}).get("numeric_value", "")) if _row is not None
+                _facts.append(clean(_row.get("numeric_value", "")) if _row is not None
                               else clean(selected_row.get("numeric_value", "")))
-                _progress.append(clean((_row or {}).get("progress_text", "")) if _row is not None
+                _progress.append(clean(_row.get("progress_text", "")) if _row is not None
                                  else clean(selected_row.get("progress_text", "")))
         else:
             _facts = [clean(selected_row.get("numeric_value", ""))] * len(show_logs)
@@ -3534,7 +3480,14 @@ else:
             extra_columns=["Фактичне значення", "Опис прогресу"],
         )
 
-st.markdown('</div>', unsafe_allow_html=True)
+# І2: єдиний реєстр недоставлених листів за останні 30 днів.
+with st.expander("Розсилка: недоставлені листи", expanded=False):
+    _failed_mail = failed_notifications_last_30_days()
+    if _failed_mail.empty:
+        st.success("Усі листи за останні 30 днів доставлено.")
+    else:
+        st.warning(f"Недоставлених листів за останні 30 днів: {len(_failed_mail)}")
+        st.dataframe(_failed_mail, use_container_width=True, hide_index=True)
 
 # ТЗ-правка (09.07.2026, п.3): перегляд статусу ВСІХ заявок за фільтрами —
 # видно, на якому етапі схеми зараз кожна заявка (закрита чи ще ні).

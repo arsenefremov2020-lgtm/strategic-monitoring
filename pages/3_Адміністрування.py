@@ -380,6 +380,178 @@ header[data-testid="stHeader"] {
     margin-bottom: 7px;
 }
 
+/* ─── COMPACT REQUEST DETAILS ─── */
+.admin-object-name {
+    color: #132238;
+    font-size: 18px;
+    font-weight: 900;
+    line-height: 1.45;
+    margin: 8px 0 12px 0;
+}
+
+.admin-reference-grid,
+.admin-submission-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 9px;
+}
+
+.admin-reference-row,
+.admin-data-field {
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
+    border-radius: 10px;
+    padding: 10px 12px;
+    min-width: 0;
+}
+
+.admin-reference-row.wide,
+.admin-data-field.wide {
+    grid-column: 1 / -1;
+}
+
+.admin-reference-label,
+.admin-data-label {
+    color: #132238;
+    font-size: 11px;
+    font-weight: 900;
+    line-height: 1.35;
+    margin-bottom: 5px;
+    text-transform: uppercase;
+    letter-spacing: 0.035em;
+}
+
+.admin-reference-value,
+.admin-data-value {
+    color: #132238;
+    font-size: 14px;
+    font-weight: 750;
+    line-height: 1.55;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+}
+
+.admin-data-value a {
+    color: #005BBB;
+    font-weight: 800;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.admin-route-caption {
+    color: #132238;
+    font-size: 12px;
+    font-weight: 800;
+    margin-bottom: 7px;
+}
+
+.admin-route-row {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    gap: 7px;
+    overflow-x: auto;
+    padding: 2px 0 5px 0;
+    scrollbar-width: thin;
+}
+
+.admin-route-node {
+    flex: 0 0 auto;
+    min-width: 150px;
+    max-width: 250px;
+    background: #EAF1FF;
+    border: 1px solid #BFD3F2;
+    border-radius: 10px;
+    padding: 8px 10px;
+    color: #132238;
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1.4;
+}
+
+.admin-route-node.current {
+    background: #FFF4ED;
+    border: 2px solid #FF7A45;
+    box-shadow: 0 0 0 2px rgba(255,122,69,0.10);
+}
+
+.admin-route-role {
+    display: block;
+    color: #132238;
+    font-size: 11px;
+    font-weight: 900;
+    margin-bottom: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.admin-route-arrow {
+    flex: 0 0 auto;
+    align-self: center;
+    color: #61708A;
+    font-size: 18px;
+    font-weight: 900;
+}
+
+.admin-contact-row {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 9px;
+}
+
+.admin-contact-item {
+    background: #FFFFFF;
+    border: 1px solid #DCE4F0;
+    border-radius: 9px;
+    padding: 8px 10px;
+    color: #132238;
+    font-weight: 800;
+    overflow-wrap: anywhere;
+}
+
+.admin-contact-item strong {
+    display: block;
+    color: #132238;
+    font-size: 10px;
+    font-weight: 900;
+    margin-bottom: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.035em;
+}
+
+.decision-card {
+    padding: 13px 17px;
+}
+
+.decision-guidance {
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
+    border-left: 4px solid #4D8DFF;
+    border-radius: 10px;
+    padding: 10px 13px;
+    margin: 7px 0 10px 0;
+    color: #132238;
+    font-size: 13px;
+    font-weight: 650;
+    line-height: 1.55;
+}
+
+.decision-guidance p {
+    margin: 0 0 7px 0;
+}
+
+.decision-guidance p:last-child {
+    margin-bottom: 0;
+}
+
+@media (max-width: 900px) {
+    .admin-reference-grid,
+    .admin-submission-grid,
+    .admin-contact-row {
+        grid-template-columns: 1fr;
+    }
+}
+
 /* ─── RESOLUTION ─── */
 .resolution-box {
     background: #F7F9FC;
@@ -775,6 +947,22 @@ def _period_label(year, quarter) -> str:
     qnum = {"I": "1", "II": "2", "III": "3", "IV": "4"}.get(roman, clean(quarter))
     qnum = str(qnum).upper().removeprefix("Q")
     return f"{clean(year)} Q{qnum}" if clean(year) else f"Q{qnum}"
+
+
+def _planned_quarter_label(value) -> str:
+    """Перетворює планову дату на формат «N квартал YYYY року»."""
+    raw = clean(value).strip()
+    if not raw:
+        return "—"
+    try:
+        day_first = bool(re.match(r"^\d{1,2}[./]\d{1,2}[./]\d{4}", raw))
+        parsed = pd.to_datetime(raw, errors="coerce", dayfirst=day_first)
+    except Exception:
+        return "—"
+    if pd.isna(parsed):
+        return "—"
+    quarter = ((int(parsed.month) - 1) // 3) + 1
+    return f"{quarter} квартал {int(parsed.year)} року"
 
 
 def _year_number(value) -> int | None:
@@ -2782,206 +2970,36 @@ selected_row = _selectable[_selectable["id"].astype(int) == selected_id].iloc[0]
 approval_status = clean(selected_row["approval_status"])
 selected_code   = clean(selected_row["strat_code"])
 
-# Планове значення — обчислюємо тут, щоб передати в резолюцію
-target_year_val = ""
-year_val = clean(selected_row.get("year", ""))
-if year_val and year_val.isdigit():
-    m_info_for_plan = strat_df[strat_df["code"].astype(str).str.strip() == selected_code]
-    col_name = f"target_{year_val}"
-    if not m_info_for_plan.empty and col_name in m_info_for_plan.columns:
-        v = clean(m_info_for_plan.iloc[0].get(col_name, ""))
-        if v:
-            target_year_val = v
+# Довідка зі стратегічної матриці та річний орієнтир заявки.
+year_val = clean(selected_row.get("year", "")).strip()
+_code_key = selected_code.strip().rstrip(".")
+_strat_record = _strat_row_lookup.get(_code_key, {})
+target_year_val = clean(_strat_record.get(f"target_{year_val}", "")) if year_val else ""
 
-checks, recommendation, rec_badge, quality_score, total_fields, completeness_pct = quality_assessment(selected_row)
-auto_resolution = generate_resolution(selected_row, recommendation, target_year_val)
+_object_type = clean(_strat_record.get("object_type")).strip().lower()
+_object_number_label = {
+    "measure": "Захід №",
+    "task": "Завдання №",
+    "goal": "Стратегічна ціль №",
+}.get(_object_type, "Об’єкт №")
+_object_name = clean(_strat_record.get("name")) or "—"
+_product_type = clean(_strat_record.get("product_type")) or "—"
+_indicator = clean(_strat_record.get("indicator")) or "—"
+_unit = clean(_strat_record.get("unit")) or "—"
+_resp_main = clean(_strat_record.get("resp_main")) or "—"
+_resp_co_1 = clean(_strat_record.get("resp_co_1")) or "—"
+_resp_co_2 = clean(_strat_record.get("resp_co_2")) or "—"
+_start_quarter = _planned_quarter_label(_strat_record.get("start_date_plan"))
+_end_quarter = _planned_quarter_label(_strat_record.get("end_date_plan"))
+_term_label = "—" if _start_quarter == "—" and _end_quarter == "—" else f"{_start_quarter} — {_end_quarter}"
 
-# ──────────────────────────────────────────────
-# КАРТКА ЗАЯВКИ  (без "Код заходу" — він у заголовку)
-# ──────────────────────────────────────────────
-
-st.markdown('<div class="card"><div class="card-title">Картка заявки</div>', unsafe_allow_html=True)
-
-if approval_status == "Погоджено":
-    status_badge = "badge-green"
-elif approval_status == "Повернуто на доопрацювання":
-    status_badge = "badge-red"
-elif approval_status == "Очікує: Керівник ССП":
-    status_badge = "badge"
-else:
-    status_badge = "badge-yellow"
-
-st.markdown(
-    f"""
-    <div class="badge-wrap">
-        <div class="badge {status_badge}">Статус: {approval_status}</div>
-        <div class="badge">Захід № {selected_code}</div>
-        <div class="badge">ID {clean(selected_row['id'])}</div>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
-
-k1, k2, k3, k4, k5 = st.columns(5)
-
-with k1:
-    admin_kpi_card("Індекс самостійного структурного підрозділу", clean(selected_row.get("department", "")))
-with k2:
-    admin_kpi_card("Рік / Квартал", f"{clean(selected_row.get('year', ''))} / {clean(selected_row.get('quarter', ''))}")
-with k3:
-    admin_kpi_card("Статус", clean(selected_row.get("status", "")))
-
-with k4:
-    display_plan = target_year_val if target_year_val else "—"
-    admin_kpi_card(f"Планове значення ({year_val})", display_plan)
-with k5:
-    admin_kpi_card("Фактичне квартальне значення", clean(selected_row.get("numeric_value", "")))
-
-st.markdown('</div>', unsafe_allow_html=True)
-
-# ──────────────────────────────────────────────
-# СИСТЕМНА ОЦІНКА ЯКОСТІ — grid 5+4, висновок окремо
-# ──────────────────────────────────────────────
-
-# ТЗ-правка (09.07.2026, п.3): блоки «Системна оцінка якості заявки» та
-# «Автоматична службова резолюція» прибрано — за обов'язкових полів вони
-# не несуть смислового навантаження.
-
-st.markdown(
-    '<div class="card"><div class="card-title">Інформація про захід зі стратегічного плану</div>',
-    unsafe_allow_html=True
-)
-
-measure_info = strat_df[strat_df["code"].astype(str).str.strip() == selected_code].copy()
-
-if measure_info.empty:
-    st.warning("Захід не знайдено у стратегічній матриці.")
-else:
-    si = measure_info.iloc[0]
-    st.markdown(
-        f"""
-        <div class="review-box">
-            <div class="review-title">{clean(si.get("code",""))} — {clean(si.get("name",""))}</div>
-            <div><b>Тип продукту:</b> {clean(si.get("product_type",""))}</div>
-            <div><b>Індикатор:</b> {clean(si.get("indicator",""))}</div>
-            <div><b>Одиниця виміру:</b> {clean(si.get("unit",""))}</div>
-            <div><b>Відповідальний ССП:</b> {clean(si.get("resp_main",""))} &nbsp;|&nbsp;
-                 Спів. 1: {clean(si.get("resp_co_1",""))} &nbsp;|&nbsp;
-                 Спів. 2: {clean(si.get("resp_co_2",""))}</div>
-            <div><b>Термін:</b> {clean(si.get("start_date_plan",""))} — {clean(si.get("end_date_plan",""))}</div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    with st.expander("Детальна таблиця заходу"):
-        measure_display = measure_info.rename(columns={
-            "type_marker":     "Тип маркера",
-            "code":            "Код заходу",
-            "name":            "Назва заходу",
-            "product_type":    "Тип продукту",
-            "indicator":       "Індикатор",
-            "unit":            "Одиниця виміру",
-            "base_2021":       "Базове 2021",
-            "fact_2024":       "Звіт 2024",
-            "expected_2025":   "Очікуване 2025",
-            "target_2026":     "План 2026",
-            "target_2027":     "План 2027",
-            "target_2028":     "План 2028",
-            "resp_main":       "ССП Головний",
-            "resp_co_1":       "ССП Спів. 1",
-            "resp_co_2":       "ССП Спів. 2",
-            "start_date_plan": "Початок (СП)",
-            "end_date_plan":   "Кінець (СП)",
-        })
-        detail_cols = [
-            "Тип маркера","Код заходу","Назва заходу","Тип продукту",
-            "Індикатор","Одиниця виміру",
-            "Базове 2021","Звіт 2024","Очікуване 2025",
-            "План 2026","План 2027","План 2028",
-            "ССП Головний","ССП Спів. 1","ССП Спів. 2",
-            "Початок (СП)","Кінець (СП)",
-        ]
-        available = [c for c in detail_cols if c in measure_display.columns]
-        st.dataframe(measure_display[available], use_container_width=True, hide_index=True)
-
-st.markdown('</div>', unsafe_allow_html=True)
-
-# ──────────────────────────────────────────────
-# ДАНІ ВІДПОВІДАЛЬНОЇ ОСОБИ
-# ──────────────────────────────────────────────
-
-st.markdown(
-    '<div class="card"><div class="card-title">Дані відповідальної особи</div>',
-    unsafe_allow_html=True
-)
-
-person_name  = clean(selected_row["responsible_person"])
-person_phone = clean(selected_row["phone"])
-person_email = clean(selected_row["email"])
-
-st.markdown(
-    f"""
-    <div class="person-box">
-        <div class="person-field">
-            <span class="person-field-label">ПІБ</span>
-            <span class="person-field-value">{person_name or "—"}</span>
-        </div>
-        <div class="person-field">
-            <span class="person-field-label">Телефон</span>
-            <span class="person-field-value">{person_phone or "—"}</span>
-        </div>
-        <div class="person-field">
-            <span class="person-field-label">Email</span>
-            <span class="person-field-value">{person_email or "—"}</span>
-        </div>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
-
-st.markdown('</div>', unsafe_allow_html=True)
-
-# ──────────────────────────────────────────────
-# ОПИС ПРОГРЕСУ ТА РИЗИКИ
-# ──────────────────────────────────────────────
-
-st.markdown(
-    '<div class="card"><div class="card-title">Опис прогресу та ризики</div>',
-    unsafe_allow_html=True
-)
-
-pr1, pr2 = st.columns(2)
-progress_val = clean(selected_row["progress_text"])
-risks_val    = clean(selected_row["risks"])
-
-with pr1:
-    st.markdown(
-        f'<div class="progress-risk-box">'
-        f'<div class="progress-risk-label">Опис прогресу виконання</div>'
-        f'<div class="progress-risk-value">{progress_val or "—"}</div>'
-        f'</div>',
-        unsafe_allow_html=True
-    )
-
-with pr2:
-    r_color = "#DC4A4A" if risks_val else "#61708A"
-    r_text_color = "#DC4A4A" if risks_val else "#8A96A8"
-    st.markdown(
-        f'<div class="progress-risk-box" style="border-left: 3px solid {r_color};">'
-        f'<div class="progress-risk-label">Ризики / проблеми / відхилення</div>'
-        f'<div class="progress-risk-value" style="color:{r_text_color};">'
-        f'{risks_val or "Не зазначено"}'
-        f'</div></div>',
-        unsafe_allow_html=True
-    )
-
-st.markdown('</div>', unsafe_allow_html=True)
-
-# ──────────────────────────────────────────────
-# ПОСИЛАННЯ НА НПА (клікабельні) + СХЕМА ПОГОДЖЕННЯ
-# ──────────────────────────────────────────────
-
+# Дані самої заявки та маршрут погодження.
+person_name = clean(selected_row.get("responsible_person")) or "—"
+person_phone = clean(selected_row.get("phone")) or "—"
+person_email = clean(selected_row.get("email")) or "—"
+_fact_value = _fact_for_request(selected_row)
+_progress_value = clean(selected_row.get("progress_text")) or "—"
+_risks_value = clean(selected_row.get("risks")) or "Не зазначено"
 _npa_raw = clean(selected_row.get("npa_link", "")) if "npa_link" in selected_row.index else ""
 _req_chain = schemes.parse_chain(selected_row.get("approval_chain")) if "approval_chain" in selected_row.index else []
 _req_stage = schemes.parse_stage(selected_row.get("chain_stage")) if "chain_stage" in selected_row.index else 0
@@ -2990,32 +3008,134 @@ _req_kind = clean(selected_row.get("object_kind", "")) if "object_kind" in selec
 _req_dept_nums = re.findall(r"\d+", clean(selected_row.get("department", "")))
 _req_dept_idx = _req_dept_nums[0] if _req_dept_nums else ""
 
-if _npa_raw or _req_chain:
-    st.markdown('<div class="card"><div class="card-title">НПА та маршрут погодження</div>', unsafe_allow_html=True)
-    if _npa_raw:
-        _links_html = "".join(
-            f'<div>🔗 <a href="{_esc(u.strip())}" target="_blank">{_esc(u.strip())}</a></div>'
-            for u in re.split(r"[\n;,]+", _npa_raw) if u.strip()
-        )
-        st.markdown(
-            f'<div class="progress-risk-box"><div class="progress-risk-label">Посилання на НПА / підтвердні документи</div>'
-            f'<div class="progress-risk-value">{_links_html}</div></div>',
-            unsafe_allow_html=True,
-        )
-    if _req_chain:
-        st.markdown(
-            f'<div class="progress-risk-box"><div class="progress-risk-label">'
-            f'Маршрут погодження{(" · " + _esc(_req_scheme_label)) if _req_scheme_label else ""}</div>'
-            f'<div class="progress-risk-value">{_esc(schemes.chain_route_text(_req_chain))}<br>'
-            f'<b>{_esc(schemes.chain_progress_text(_req_chain, _req_stage, approval_status))}</b></div></div>',
-            unsafe_allow_html=True,
-        )
-        st.caption(
-            "ℹ️ Маршрут будується покроково: наступну ланку (якщо вона потрібна) "
-            "призначає сама поточна ланка під час розгляду — заднім числом "
-            "перепризначити чи змінити вже пройдені кроки маршруту не можна."
-        )
-    st.markdown('</div>', unsafe_allow_html=True)
+if _npa_raw:
+    _npa_links_html = "".join(
+        f'<div>🔗 <a href="{_esc(link.strip())}" target="_blank" rel="noopener noreferrer">'
+        f'{_esc(link.strip())}</a></div>'
+        for link in re.split(r"[\n;,]+", _npa_raw)
+        if link.strip()
+    ) or "—"
+else:
+    _npa_links_html = "—"
+
+_route_nodes = [
+    '<div class="admin-route-node">'
+    '<span class="admin-route-role">Подавач</span>'
+    f'{_esc(person_name if person_name != "—" else person_email)}'
+    '</div>'
+]
+_current_route_stage = schemes.current_stage(_req_chain, _req_stage) if _req_chain else None
+for _stage_index, _stage in enumerate(_req_chain):
+    _stage_label = clean(_stage.get("label")) or schemes.STAGE_LABELS.get(clean(_stage.get("role")), "Ланка")
+    _stage_person = clean(_stage.get("name")) or clean(_stage.get("email")) or "—"
+    _current_class = " current" if _current_route_stage is not None and _stage_index == _req_stage else ""
+    _route_nodes.append(
+        f'<div class="admin-route-node{_current_class}">'
+        f'<span class="admin-route-role">{_esc(_stage_label)}</span>'
+        f'{_esc(_stage_person)}</div>'
+    )
+_route_html = '<span class="admin-route-arrow">→</span>'.join(_route_nodes)
+_route_caption = _esc(_req_scheme_label) if _req_scheme_label else "Маршрут погодження"
+
+# ──────────────────────────────────────────────
+# КАРТКА ЗАЯВКИ — довідкова інформація про об’єкт стратегічного плану
+# ──────────────────────────────────────────────
+
+st.markdown(
+    f"""
+    <div class="card">
+        <div class="card-title">Картка заявки</div>
+        <div class="badge-wrap">
+            <div class="badge">{_esc(_object_number_label)} {_esc(selected_code)}</div>
+            <div class="badge">ID {_esc(clean(selected_row.get('id')))}</div>
+        </div>
+        <div class="admin-object-name">{_esc(_object_name)}</div>
+        <div class="admin-reference-grid">
+            <div class="admin-reference-row">
+                <div class="admin-reference-label">Тип продукту</div>
+                <div class="admin-reference-value">{_esc(_product_type)}</div>
+            </div>
+            <div class="admin-reference-row">
+                <div class="admin-reference-label">Індикатор</div>
+                <div class="admin-reference-value">{_esc(_indicator)}</div>
+            </div>
+            <div class="admin-reference-row">
+                <div class="admin-reference-label">Одиниця виміру</div>
+                <div class="admin-reference-value">{_esc(_unit)}</div>
+            </div>
+            <div class="admin-reference-row wide">
+                <div class="admin-reference-label">Відповідальний ССП</div>
+                <div class="admin-reference-value">
+                    {_esc(_resp_main)} &nbsp;·&nbsp; Спів. 1: {_esc(_resp_co_1)}
+                    &nbsp;·&nbsp; Спів. 2: {_esc(_resp_co_2)}
+                </div>
+            </div>
+            <div class="admin-reference-row wide">
+                <div class="admin-reference-label">Термін</div>
+                <div class="admin-reference-value">{_esc(_term_label)}</div>
+            </div>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+# ──────────────────────────────────────────────
+# ПОДАНІ ВІДОМОСТІ — усе, що фактично подав структурний підрозділ
+# ──────────────────────────────────────────────
+
+_target_heading = f"Цільовий орієнтир на {year_val} рік" if year_val else "Цільовий орієнтир"
+st.markdown(
+    f"""
+    <div class="card">
+        <div class="card-title">Подані відомості</div>
+        <div class="admin-submission-grid">
+            <div class="admin-data-field">
+                <div class="admin-data-label">Звітний період</div>
+                <div class="admin-data-value">{_esc(_period_label(selected_row.get('year'), selected_row.get('quarter')))}</div>
+            </div>
+            <div class="admin-data-field">
+                <div class="admin-data-label">{_esc(_target_heading)}</div>
+                <div class="admin-data-value">{_esc(target_year_val or '—')}</div>
+            </div>
+            <div class="admin-data-field">
+                <div class="admin-data-label">Фактичне значення</div>
+                <div class="admin-data-value">{_esc(_fact_value)}</div>
+            </div>
+            <div class="admin-data-field">
+                <div class="admin-data-label">Статус виконання</div>
+                <div class="admin-data-value">{_esc(clean(selected_row.get('status')) or '—')}</div>
+            </div>
+            <div class="admin-data-field wide">
+                <div class="admin-data-label">Опис прогресу виконання</div>
+                <div class="admin-data-value">{_html_cell(_progress_value)}</div>
+            </div>
+            <div class="admin-data-field wide">
+                <div class="admin-data-label">Ризики / проблеми / відхилення</div>
+                <div class="admin-data-value">{_html_cell(_risks_value)}</div>
+            </div>
+            <div class="admin-data-field wide">
+                <div class="admin-data-label">Посилання на НПА</div>
+                <div class="admin-data-value">{_npa_links_html}</div>
+            </div>
+            <div class="admin-data-field wide">
+                <div class="admin-data-label">Схема погодження</div>
+                <div class="admin-route-caption">{_route_caption}</div>
+                <div class="admin-route-row">{_route_html}</div>
+            </div>
+            <div class="admin-data-field wide">
+                <div class="admin-data-label">Дані відповідальної особи</div>
+                <div class="admin-contact-row">
+                    <div class="admin-contact-item"><strong>ПІБ</strong>{_esc(person_name)}</div>
+                    <div class="admin-contact-item"><strong>Телефон</strong>{_esc(person_phone)}</div>
+                    <div class="admin-contact-item"><strong>Email</strong>{_esc(person_email)}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 # ──────────────────────────────────────────────
 # КОНФЛІКТ: заявка по заходу, який уже ЗАКРИТО ВРУЧНУ
@@ -3143,7 +3263,7 @@ if _is_super_turn and not schemes.is_final_locked(selected_row):
     _sa_options = ["Погодити остаточно"]
     if _sa_senior and clean(_sa_senior.get("email")).lower() not in ("", _my_email_norm):
         _sa_options.append(f"Передати вищому супер-адміну — {_sa_senior['name']}")
-    _sa_options += ["Повернути на доопрацювання", "Залишити в очікуванні"]
+    _sa_options.append("Повернути на доопрацювання")
     _sa_decision = st.radio(
         "Оберіть рішення", _sa_options, horizontal=True,
         key=f"sa_decision_{selected_id}",
@@ -3190,9 +3310,6 @@ if _is_super_turn and not schemes.is_final_locked(selected_row):
                 _sa_extra["chain_stage"] = int(_sa_picked["new_stage"])
                 _sa_action = f"Повернення супер-адміном: {_sa_picked['label']}"
                 _sa_notify = ("returned", _sa_picked)
-        else:
-            _sa_new_status = approval_status
-            _sa_action = "Заявку залишено в очікуванні (супер-адмін)"
         if not _sa_blocked:
             try:
                 _sa_comment_value = clean(_sa_comment) or clean(selected_row.get("admin_comment", ""))
@@ -3263,19 +3380,9 @@ if _is_super_turn and not schemes.is_final_locked(selected_row):
     st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown(
-    '<div class="card">'
-    '<div class="card-title">Рішення адміністратора</div>'
-    '<div class="card-subtitle">Оберіть рішення та підтвердьте його однією кнопкою.</div>',
-    unsafe_allow_html=True
-)
-
-st.markdown(
-    f"""
-    <div class="badge-wrap">
-        <div class="badge {status_badge}">Поточний статус: {approval_status}</div>
-    </div>
-    """,
-    unsafe_allow_html=True
+    '<div class="card decision-card">'
+    '<div class="card-title">Рішення адміністратора</div>',
+    unsafe_allow_html=True,
 )
 
 default_comment = clean(selected_row["admin_comment"])
@@ -3291,8 +3398,8 @@ if _req_chain and not _is_admin_turn and not _is_super_turn:
 elif schemes.is_final_locked(selected_row):
     st.info(
         "🔒 Заявку остаточно закрито — останню ланку схеми погодження "
-        "пройдено (статус «Погоджено»). Рішення координатора (погодити / "
-        "повернути на доопрацювання / залишити в очікуванні) для цієї заявки "
+        "пройдено (статус «Погоджено»). Рішення координатора (погодити або "
+        "повернути на доопрацювання) для цієї заявки "
         "більше не застосовуються.\n\n"
         "Якщо з'явилася нова, актуальніша інформація по заходу — "
         "скоригувати вже подані дані (не маршрут погодження) може "
@@ -3330,9 +3437,20 @@ else:
                          "status": "Повернуто на доопрацювання", "new_stage": 0}]
     _adm_target_labels = [t["label"] for t in _adm_targets]
 
+    st.markdown(
+        """
+        <div class="decision-guidance">
+            <p>Після звірки поданих відомостей, якщо зауважень немає і ви готові погодити заявку, перегляньте схему погодження. За потреби наступну ланку можна змінити або додати, але не на ланку, нижчу за вже пройдені. Якщо схема коректна, змінювати її не потрібно.</p>
+            <p>Коментар адміністратора є обов’язковим для будь-якого рішення. Його побачить наступна ланка погодження, а текст буде зафіксовано в журналі дій.</p>
+            <p>Якщо потрібна додаткова перевірка, у полі «Що далі після координатора» оберіть варіант із додаванням супер-адміна після себе. Якщо інформація потребує виправлення, оберіть «Повернути на доопрацювання», зазначте адресата повернення та чітко опишіть у коментарі, що саме потрібно виправити.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
     decision = st.radio(
         "Оберіть рішення",
-        [_approve_option, "Повернути на доопрацювання", "Залишити в очікуванні"],
+        [_approve_option, "Повернути на доопрацювання"],
         horizontal=True,
         key=f"decision_radio_{selected_id}"
     )
@@ -3483,11 +3601,13 @@ else:
                     f"для ССП {_req_dept_idx}. Оберіть іншу ланку або зверніться до супер-адміна."
                 )
 
-    return_target_label = st.selectbox(
-        "Кому повернути (якщо обрано повернення)",
-        _adm_target_labels,
-        key=f"adm_return_target_{selected_id}",
-    )
+    return_target_label = None
+    if decision == "Повернути на доопрацювання":
+        return_target_label = st.selectbox(
+            "Кому повернути",
+            _adm_target_labels,
+            key=f"adm_return_target_{selected_id}",
+        )
 
     decision_labels = {
         _approve_option:
@@ -3497,8 +3617,6 @@ else:
               "🖊 Заявка перейде до керівника ССП на підтвердження")),
         "Повернути на доопрацювання":
             "↩ Повернено на доопрацювання — адресат отримає сповіщення",
-        "Залишити в очікуванні":
-            "⏳ Залишено в очікуванні — без змін статусу",
     }
 
     st.markdown(
@@ -3530,6 +3648,10 @@ else:
         _notify_action = None   # ("stage", stage_dict) | ("approved",) | ("returned", target)
         _excluded_after_transition = []
         _decision_blocked = False
+
+        if not clean(admin_comment).strip():
+            st.error("Коментар адміністратора є обов’язковим для будь-якого рішення.")
+            _decision_blocked = True
 
         if decision == _approve_option:
             if _req_chain and _next_after_admin and _chain_override is not None:
@@ -3611,11 +3733,6 @@ else:
             if _req_chain:
                 _extra_update["chain_stage"] = int(_picked["new_stage"])
             _notify_action = ("returned", _picked)
-        else:
-            new_status   = approval_status
-            action_text  = "Заявку залишено в очікуванні"
-            success_text = "⏳ Заявку залишено в очікуванні."
-
         if not _decision_blocked:
             try:
                 _target_stage = int(_extra_update.get("chain_stage", _req_stage))
@@ -3734,7 +3851,7 @@ else:
 st.markdown('</div>', unsafe_allow_html=True)
 
 if st.session_state.get("adm_last_decision_notice"):
-    st.warning(st.session_state["adm_last_decision_notice"], icon="⚠️")
+    st.success(st.session_state["adm_last_decision_notice"])
     if st.button("Зрозуміло, приховати це повідомлення", key="adm_dismiss_decision_notice"):
         st.session_state.pop("adm_last_decision_notice", None)
         st.rerun()

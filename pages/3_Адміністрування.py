@@ -33,6 +33,7 @@ from core import approval_schemes as schemes
 from core import notify_events
 from core.closeouts import load_manual_closeouts
 from core.stage5 import failed_notifications_last_30_days
+from core.stage4 import format_kyiv_datetime, quarter_to_roman
 from core.archive import create_archive_snapshot, format_kyiv as format_archive_kyiv
 from core.statuses import SUBMISSION_STATUS_OPTIONS
 from core.validation import status_value_conflict, validate_fact_value_for_target
@@ -761,6 +762,337 @@ def load_versions(request_id):
         return pd.DataFrame()
 
 
+
+def _html_cell(value) -> str:
+    """Безпечне HTML-представлення значення комірки."""
+    value_text = clean(value).strip()
+    return _esc(value_text).replace("\n", "<br>") if value_text else "—"
+
+
+def _period_label(year, quarter) -> str:
+    """Формат звітного періоду, спільний зі сторінкою «Мої заявки»."""
+    roman = quarter_to_roman(quarter)
+    qnum = {"I": "1", "II": "2", "III": "3", "IV": "4"}.get(roman, clean(quarter))
+    qnum = str(qnum).upper().removeprefix("Q")
+    return f"{clean(year)} Q{qnum}" if clean(year) else f"Q{qnum}"
+
+
+def _year_number(value) -> int | None:
+    try:
+        return int(float(str(value).strip()))
+    except (TypeError, ValueError):
+        return None
+
+
+def _sort_by_ssp(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame is None or frame.empty:
+        return frame.copy() if isinstance(frame, pd.DataFrame) else pd.DataFrame()
+    result = frame.copy()
+    result["_ssp_sort"] = pd.to_numeric(
+        result["department"].astype(str).str.extract(r"(\d+)")[0],
+        errors="coerce",
+    )
+    return result.sort_values("_ssp_sort", na_position="last").drop(
+        columns=["_ssp_sort"], errors="ignore"
+    )
+
+
+def _render_html_table(headers: list[str], rows: list[list], empty_message: str = "Записів немає."):
+    """Єдиний HTML-рендер таблиць через глобальні класи assets/app.css."""
+    if not rows:
+        st.info(empty_message)
+        return
+    header_html = "".join(f"<th>{_esc(str(header))}</th>" for header in headers)
+    body_html = "".join(
+        "<tr>" + "".join(f"<td>{_html_cell(value)}</td>" for value in row) + "</tr>"
+        for row in rows
+    )
+    st.markdown(
+        '<div class="myreq-table-scroll"><table class="myreq-html-table">'
+        f"<thead><tr>{header_html}</tr></thead><tbody>{body_html}</tbody>"
+        "</table></div>",
+        unsafe_allow_html=True,
+    )
+
+
+@st.cache_data(show_spinner=False)
+def load_initial_submitters(request_ids: tuple[int, ...]) -> dict[int, dict]:
+    """Один масовий запит найперших версій для всіх потрібних заявок."""
+    ids = sorted({int(request_id) for request_id in request_ids if request_id is not None})
+    if not ids:
+        return {}
+    try:
+        rows = fetch_all(
+            "monitoring_request_versions",
+            "request_id,version_number,created_at,responsible_person,phone",
+            filters=[("in_", "request_id", ids)],
+            order=[("request_id", False), ("version_number", False), ("created_at", False)],
+        )
+    except Exception as exc:
+        log_cosmetic_error("Масове завантаження перших версій заявок", exc)
+        return {}
+    versions = pd.DataFrame(rows)
+    if versions.empty or "request_id" not in versions.columns:
+        return {}
+    versions["_request_id"] = pd.to_numeric(versions["request_id"], errors="coerce")
+    versions["_version_number"] = pd.to_numeric(
+        versions.get("version_number"), errors="coerce"
+    )
+    versions["_created_at"] = pd.to_datetime(
+        versions.get("created_at"), errors="coerce", utc=True
+    )
+    versions = versions.dropna(subset=["_request_id"]).sort_values(
+        ["_request_id", "_version_number", "_created_at"],
+        ascending=[True, True, True],
+        na_position="last",
+    )
+    first_rows = versions.groupby("_request_id", sort=False).head(1)
+    return {
+        int(row["_request_id"]): {
+            "responsible_person": clean(row.get("responsible_person")),
+            "phone": clean(row.get("phone")),
+        }
+        for _, row in first_rows.iterrows()
+    }
+
+
+def _build_strat_row_lookup(frame: pd.DataFrame) -> dict[str, dict]:
+    if frame is None or frame.empty or "code" not in frame.columns:
+        return {}
+    work = frame.copy()
+    work["_code_key"] = work["code"].astype(str).str.strip().str.rstrip(".")
+    priority = {"measure": 0, "task": 1, "goal": 2}
+    if "object_type" in work.columns:
+        work["_object_priority"] = work["object_type"].astype(str).map(priority).fillna(9)
+    else:
+        work["_object_priority"] = 9
+    work = work.sort_values(["_code_key", "_object_priority"])
+    result = {}
+    for _, row in work.iterrows():
+        key = clean(row.get("_code_key"))
+        if key and key not in result:
+            result[key] = row.to_dict()
+    return result
+
+
+def _matrix_values_for_request(record) -> tuple[str, str]:
+    code_key = clean(record.get("strat_code")).strip().rstrip(".")
+    matrix_row = _strat_row_lookup.get(code_key, {})
+    name = clean(matrix_row.get("name")) or "—"
+    year = _year_number(record.get("year"))
+    target = clean(matrix_row.get(f"target_{year}")) if year is not None else ""
+    return name, target or "—"
+
+
+def _fact_for_request(record) -> str:
+    return clean(record.get("numeric_value")) or clean(record.get("value_text")) or "—"
+
+
+def _initial_submitter_for_request(record) -> tuple[str, str]:
+    try:
+        request_id = int(float(str(record.get("id"))))
+    except (TypeError, ValueError):
+        request_id = -1
+    initial = _initial_submitter_lookup.get(request_id, {})
+    person = clean(initial.get("responsible_person")) or clean(record.get("responsible_person")) or "—"
+    phone = clean(initial.get("phone")) or clean(record.get("phone")) or "—"
+    return person, phone
+
+
+_REQUEST_TABLE_HEADERS = [
+    "ID заявки", "ССП", "Код заходу", "Назва заходу", "Звітний період",
+    "Початок виконання", "Кінець виконання", "Цільовий орієнтир",
+    "Фактичне значення", "Опис прогресу", "Ризики / проблеми / відхилення",
+    "Посилання на НПА", "Особа, яка подала заявку", "Номер телефону", "Дата подання",
+]
+
+
+def _request_table_values(record, coordinator: str | None = None) -> list:
+    name, target = _matrix_values_for_request(record)
+    person, phone = _initial_submitter_for_request(record)
+    values = [
+        record.get("id"), record.get("department"), record.get("strat_code"), name,
+        _period_label(record.get("year"), record.get("quarter")),
+        record.get("start_date"), record.get("end_date"), target,
+        _fact_for_request(record), record.get("progress_text"), record.get("risks"),
+        record.get("npa_link"), person, phone,
+        format_kyiv_datetime(record.get("submitted_at")),
+    ]
+    if coordinator is not None:
+        values.insert(12, coordinator)
+    return values
+
+
+def _review_days(value) -> int | None:
+    waiting = days_waiting(value)
+    return max(0, waiting) if waiting is not None else None
+
+
+def _route_matches_current_superadmin(route: dict, user: dict) -> bool:
+    current_email = clean((user or {}).get("email")).lower()
+    current_name = (
+        clean((user or {}).get("full_name"))
+        or clean((user or {}).get("name"))
+    ).casefold()
+    for prefix in ("assigned_superadmin", "senior_superadmin"):
+        route_email = clean(route.get(f"{prefix}_email")).lower()
+        route_name = clean(route.get(f"{prefix}_name")).casefold()
+        if route_email and current_email and route_email == current_email:
+            return True
+        if route_name and current_name and route_name in current_name:
+            return True
+    return False
+
+
+def _assigned_admin_requests(frame: pd.DataFrame) -> list[tuple[pd.Series, str]]:
+    matched = []
+    if frame is None or frame.empty:
+        return matched
+    for _, row in frame.iterrows():
+        if clean(row.get("approval_status")) not in set(schemes.ALL_WAITING_STATUSES):
+            continue
+        chain = schemes.parse_chain(row.get("approval_chain"))
+        stage = schemes.current_stage(chain, schemes.parse_stage(row.get("chain_stage")))
+        if not stage or clean(stage.get("role")) != schemes.ROLE_ADMIN:
+            continue
+        coordinator = clean(stage.get("name")) or clean(stage.get("email")) or "—"
+        route = resolve_manual_closeout_route({
+            "email": clean(stage.get("email")),
+            "full_name": clean(stage.get("name")),
+        })
+        if _route_matches_current_superadmin(route, current_user):
+            matched.append((row, coordinator))
+    return matched
+
+
+def _render_superadmin_bottom_tools():
+    """Розсилка й архів доступні супер-адміну на всіх шляхах рендеру."""
+    if not is_super_admin_user(current_user):
+        return
+
+    with st.expander("Розсилка: недоставлені листи", expanded=False):
+        _failed_mail = failed_notifications_last_30_days()
+        if _failed_mail.empty:
+            st.success("Усі листи за останні 30 днів доставлено.")
+        else:
+            st.warning(f"Недоставлених листів за останні 30 днів: {len(_failed_mail)}")
+            _mail_headers = [str(column) for column in _failed_mail.columns]
+            _mail_rows = [
+                [row.get(column) for column in _failed_mail.columns]
+                for _, row in _failed_mail.iterrows()
+            ]
+            _render_html_table(_mail_headers, _mail_rows)
+
+    with st.expander("Архівний знімок · ТЕСТОВИЙ РЕЖИМ", expanded=False):
+        st.caption(
+            "Знімок містить повну накопичену структуру, заявки, усі версії, "
+            "розрахункові складові МіО та повний журнал дій. Після створення "
+            "змінити або видалити його неможливо."
+        )
+
+        try:
+            _archive_rows = fetch_all(
+                "archive_snapshots",
+                (
+                    "id,archived_at,archived_by,snapshot_type,reason,replacement_reason,"
+                    "replaces_snapshot_id,coverage_label,request_count,measure_count,log_count"
+                ),
+                order=("archived_at", True),
+            )
+        except Exception as _archive_list_exc:
+            show_warning(
+                "Перелік архівних знімків тимчасово недоступний.",
+                _archive_list_exc,
+                "Читання archive_snapshots в адмініструванні",
+            )
+            _archive_rows = []
+
+        _archive_option_ids = [None] + [
+            int(row["id"]) for row in _archive_rows if row.get("id") is not None
+        ]
+        _archive_labels = {None: "Не замінює попередній знімок"}
+        for _archive_row in _archive_rows:
+            try:
+                _archive_id = int(_archive_row.get("id"))
+            except (TypeError, ValueError):
+                continue
+            _archive_labels[_archive_id] = (
+                f"Знімок №{_archive_id} від {format_archive_kyiv(_archive_row.get('archived_at'))}"
+                f" · {_archive_row.get('coverage_label') or 'усі доступні періоди'}"
+            )
+
+        _archive_reason = st.text_area(
+            "Причина створення",
+            key="stage6_archive_reason",
+            placeholder="Наприклад: перед зимовою актуалізацією заходів",
+        )
+        _archive_replaces = st.selectbox(
+            "Знімок, який замінюється (за потреби)",
+            options=_archive_option_ids,
+            format_func=lambda value: _archive_labels.get(value, str(value)),
+            key="stage6_archive_replaces",
+        )
+        _archive_replacement_reason = ""
+        if _archive_replaces is not None:
+            _archive_replacement_reason = st.text_area(
+                "Причина заміни",
+                key="stage6_archive_replacement_reason",
+                placeholder="Опишіть помилку або уточнення, через яке потрібен новий знімок.",
+            )
+
+        _archive_confirm_data = st.checkbox(
+            "Я підтверджую, що перевірив(ла) живі дані перед архівацією.",
+            key="stage6_archive_confirm_data",
+        )
+        _archive_confirm_lock = st.checkbox(
+            "Я розумію, що після створення цей знімок неможливо змінити або видалити.",
+            key="stage6_archive_confirm_lock",
+        )
+
+        if st.button(
+            "Створити архівний знімок зараз",
+            type="primary",
+            use_container_width=True,
+            key="stage6_create_archive_snapshot",
+        ):
+            _archive_errors = []
+            if not _archive_reason.strip():
+                _archive_errors.append("Заповніть поле «Причина створення».")
+            if _archive_replaces is not None and not _archive_replacement_reason.strip():
+                _archive_errors.append("Для знімка-заміни заповніть поле «Причина заміни».")
+            if not _archive_confirm_data or not _archive_confirm_lock:
+                _archive_errors.append("Потрібні обидва підтвердження перед створенням знімка.")
+
+            if _archive_errors:
+                for _archive_error in _archive_errors:
+                    st.error(_archive_error)
+            else:
+                try:
+                    with st.spinner("Створюємо повний незмінний архівний знімок…"):
+                        _archive_result = create_archive_snapshot(
+                            supabase,
+                            actor=current_user,
+                            reason=_archive_reason.strip(),
+                            snapshot_type="manual",
+                            replaces_snapshot_id=_archive_replaces,
+                            replacement_reason=_archive_replacement_reason.strip(),
+                        )
+                    if _archive_result.get("success"):
+                        st.success(
+                            f"Архівний знімок №{_archive_result.get('snapshot_id')} створено. "
+                            "Він доступний на сторінці «Архів»."
+                        )
+                    else:
+                        st.error(
+                            _archive_result.get("message")
+                            or "Не вдалося створити архівний знімок."
+                        )
+                except Exception as _archive_create_exc:
+                    show_incident(
+                        _archive_create_exc,
+                        context="Створення повного архівного знімка",
+                    )
+
 def render_requests_status_viewer(requests_frame):
     """ТЗ-правка (09.07.2026, п.3): «Перегляд статусу заявок».
 
@@ -1312,8 +1644,8 @@ _no_requests_at_all = df.empty
 required_cols = [
     "id", "department", "year", "quarter", "approval_status", "status",
     "strat_code", "responsible_person", "phone", "email",
-    "numeric_value", "progress_text", "risks", "npa_link",
-    "file_names", "file_urls", "admin_comment", "approval_chain",
+    "numeric_value", "value_text", "progress_text", "risks", "npa_link",
+    "file_names", "file_urls", "admin_comment", "approval_chain", "chain_stage",
     "object_kind", "final_locked", "start_date", "end_date", "submitted_at"
 ]
 for col in required_cols:
@@ -1325,6 +1657,14 @@ df = filter_requests_for_user(
     current_user,
     ssp_columns=["department"]
 )
+
+_strat_row_lookup = _build_strat_row_lookup(strat_df)
+_request_id_series = pd.to_numeric(
+    df.get("id", pd.Series(dtype=object)),
+    errors="coerce",
+).dropna()
+_request_ids = tuple(sorted(set(_request_id_series.astype(int).tolist())))
+_initial_submitter_lookup = load_initial_submitters(_request_ids)
 
 # ТЗ-правка (09.07.2026, п.3): панель «Сповіщення погодження» прибрано з адмінки.
 
@@ -1339,115 +1679,29 @@ admin_work_mode = st.radio(
     key="admin_work_mode",
 )
 
-# З1–З5: ручне створення незмінного архівного знімка доступне лише супер-адміну.
 if is_super_admin_user(current_user):
-    with st.expander("Архівний знімок · ТЕСТОВИЙ РЕЖИМ", expanded=False):
-        st.caption(
-            "Знімок містить повну накопичену структуру, заявки, усі версії, "
-            "розрахункові складові МіО та повний журнал дій. Після створення "
-            "змінити або видалити його неможливо."
-        )
-
-        try:
-            _archive_rows = fetch_all(
-                "archive_snapshots",
-                (
-                    "id,archived_at,archived_by,snapshot_type,reason,replacement_reason,"
-                    "replaces_snapshot_id,coverage_label,request_count,measure_count,log_count"
-                ),
-                order=("archived_at", True),
+    with st.expander("Заявки закріплених адміністраторів", expanded=False):
+        _assigned_rows = _assigned_admin_requests(df)
+        if not _assigned_rows:
+            st.info("Заявок на поточній ланці закріплених адміністраторів немає.")
+        else:
+            _assigned_frame = pd.DataFrame(
+                [row.to_dict() for row, _ in _assigned_rows]
             )
-        except Exception as _archive_list_exc:
-            show_warning(
-                "Перелік архівних знімків тимчасово недоступний.",
-                _archive_list_exc,
-                "Читання archive_snapshots в адмініструванні",
-            )
-            _archive_rows = []
-
-        _archive_option_ids = [None] + [int(row["id"]) for row in _archive_rows if row.get("id") is not None]
-        _archive_labels = {None: "Не замінює попередній знімок"}
-        for _archive_row in _archive_rows:
-            try:
-                _archive_id = int(_archive_row.get("id"))
-            except (TypeError, ValueError):
-                continue
-            _archive_labels[_archive_id] = (
-                f"Знімок №{_archive_id} від {format_archive_kyiv(_archive_row.get('archived_at'))}"
-                f" · {_archive_row.get('coverage_label') or 'усі доступні періоди'}"
-            )
-
-        _archive_reason = st.text_area(
-            "Причина створення",
-            key="stage6_archive_reason",
-            placeholder="Наприклад: перед зимовою актуалізацією заходів",
-        )
-        _archive_replaces = st.selectbox(
-            "Знімок, який замінюється (за потреби)",
-            options=_archive_option_ids,
-            format_func=lambda value: _archive_labels.get(value, str(value)),
-            key="stage6_archive_replaces",
-        )
-        _archive_replacement_reason = ""
-        if _archive_replaces is not None:
-            _archive_replacement_reason = st.text_area(
-                "Причина заміни",
-                key="stage6_archive_replacement_reason",
-                placeholder="Опишіть помилку або уточнення, через яке потрібен новий знімок.",
-            )
-
-        _archive_confirm_data = st.checkbox(
-            "Я підтверджую, що перевірив(ла) живі дані перед архівацією.",
-            key="stage6_archive_confirm_data",
-        )
-        _archive_confirm_lock = st.checkbox(
-            "Я розумію, що після створення цей знімок неможливо змінити або видалити.",
-            key="stage6_archive_confirm_lock",
-        )
-
-        if st.button(
-            "Створити архівний знімок зараз",
-            type="primary",
-            use_container_width=True,
-            key="stage6_create_archive_snapshot",
-        ):
-            _archive_errors = []
-            if not _archive_reason.strip():
-                _archive_errors.append("Заповніть поле «Причина створення».")
-            if _archive_replaces is not None and not _archive_replacement_reason.strip():
-                _archive_errors.append("Для знімка-заміни заповніть поле «Причина заміни».")
-            if not _archive_confirm_data or not _archive_confirm_lock:
-                _archive_errors.append("Потрібні обидва підтвердження перед створенням знімка.")
-
-            if _archive_errors:
-                for _archive_error in _archive_errors:
-                    st.error(_archive_error)
-            else:
-                try:
-                    with st.spinner("Створюємо повний незмінний архівний знімок…"):
-                        _archive_result = create_archive_snapshot(
-                            supabase,
-                            actor=current_user,
-                            reason=_archive_reason.strip(),
-                            snapshot_type="manual",
-                            replaces_snapshot_id=_archive_replaces,
-                            replacement_reason=_archive_replacement_reason.strip(),
-                        )
-                    if _archive_result.get("success"):
-                        st.success(
-                            f"Архівний знімок №{_archive_result.get('snapshot_id')} створено. "
-                            "Він доступний на сторінці «Архів»."
-                        )
-                    else:
-                        st.error(
-                            _archive_result.get("message")
-                            or "Не вдалося створити архівний знімок."
-                        )
-                except Exception as _archive_create_exc:
-                    show_incident(
-                        _archive_create_exc,
-                        context="Створення повного архівного знімка",
-                    )
+            _coordinator_by_id = {
+                clean(row.get("id")): coordinator for row, coordinator in _assigned_rows
+            }
+            _assigned_frame = _sort_by_ssp(_assigned_frame)
+            _assigned_table_rows = [
+                _request_table_values(
+                    row,
+                    coordinator=_coordinator_by_id.get(clean(row.get("id")), "—"),
+                )
+                for _, row in _assigned_frame.iterrows()
+            ]
+            _assigned_headers = _REQUEST_TABLE_HEADERS.copy()
+            _assigned_headers.insert(12, "Координатор")
+            _render_html_table(_assigned_headers, _assigned_table_rows)
 
 if admin_work_mode == "Ручне закриття заходів":
     # ──────────────────────────────────────────────
@@ -1836,6 +2090,7 @@ if admin_work_mode == "Ручне закриття заходів":
 
 
 
+    _render_superadmin_bottom_tools()
     render_footer()
     st.stop()
 
@@ -1844,6 +2099,7 @@ if _no_requests_at_all or df.empty:
         "Поки що немає заявок, доступних за вашими закріпленими ССП. "
         "Режим «Ручне закриття заходів» доступний через перемикач вище."
     )
+    _render_superadmin_bottom_tools()
     render_footer()
     st.stop()
 
@@ -1879,45 +2135,18 @@ st.markdown(
 )
 
 # Expander — таблиці з вкладками
-RENAME_MAP = {
-    "id":                 "ID",
-    "department":         "ССП",
-    "status":             "Статус заходу",
-    "strat_code":         "Код заходу",
-    "year":               "Рік",
-    "quarter":            "Квартал",
-    "approval_status":    "Статус погодження",
-    "responsible_person": "Відповідальна особа",
-    "submitted_at":       "Дата подання",
-    "start_date":         "Початок виконання",
-    "end_date":           "Кінець виконання",
-    "numeric_value":      "Факт. значення",
-    "progress_text":      "Опис прогресу",
-    "risks":              "Ризики",
-    "admin_comment":      "Коментар адміністратора",
-}
-
-PRIORITY_COLS_KEYS = [
-    "id", "department", "status", "strat_code",
-    "start_date", "end_date", "year", "quarter",
-]
 
 def sort_and_show(frame):
+    frame = _sort_by_ssp(frame)
     if frame.empty:
         st.info("Записів немає.")
         return
-    frame = frame.copy()
-    frame["_s"] = pd.to_numeric(
-        frame["department"].astype(str).str.extract(r"(\d+)")[0], errors="coerce"
-    )
-    frame = frame.sort_values("_s").drop(columns=["_s"])
-    all_cols = list(frame.columns)
-    priority = [c for c in PRIORITY_COLS_KEYS if c in all_cols]
-    rest = [c for c in all_cols if c not in priority]
-    frame = frame[priority + rest].rename(
-        columns={k: v for k, v in RENAME_MAP.items() if k in frame.columns}
-    )
-    st.dataframe(frame, use_container_width=True, hide_index=True)
+    table_rows = [
+        _request_table_values(row)
+        for _, row in frame.iterrows()
+    ]
+    _render_html_table(_REQUEST_TABLE_HEADERS, table_rows)
+
 
 with st.expander("Перегляд записів"):
     t1, t2, t3, t4 = st.tabs([
@@ -1926,10 +2155,14 @@ with st.expander("Перегляд записів"):
         "На розгляді понад 5 днів",
         "На доопрацюванні",
     ])
-    with t1: sort_and_show(attention["approved"])
-    with t2: sort_and_show(attention["waiting"])
-    with t3: sort_and_show(attention["long_waiting"])
-    with t4: sort_and_show(attention["returned"])
+    with t1:
+        sort_and_show(attention["approved"])
+    with t2:
+        sort_and_show(attention["waiting"])
+    with t3:
+        sort_and_show(attention["long_waiting"])
+    with t4:
+        sort_and_show(attention["returned"])
 
 # ──────────────────────────────────────────────
 # ІНФОГРАФІКА
@@ -1978,11 +2211,9 @@ else:
 # ПАРАМЕТРИ ВІДБОРУ
 # ──────────────────────────────────────────────
 
-st.markdown('<div class="card"><div class="card-title">Параметри відбору</div>', unsafe_allow_html=True)
-
 all_ssp_raw = sorted(
     {idx for _, row in df.iterrows() for idx in split_ssp_values(row.get("department", ""))},
-    key=lambda x: int(x) if str(x).isdigit() else 9999
+    key=lambda x: int(x) if str(x).isdigit() else 9999,
 )
 
 if user_has_all_ssp_access(current_user):
@@ -1990,64 +2221,134 @@ if user_has_all_ssp_access(current_user):
 else:
     allowed_ssp_indexes = get_user_allowed_ssp_indexes(current_user)
     available_ssp_raw = [
-        index
-        for index in all_ssp_raw
-        if index in allowed_ssp_indexes
+        index for index in all_ssp_raw if index in allowed_ssp_indexes
     ]
 
-f1, f2, f3, f4 = st.columns(4)
-with f1:
-    selected_ssp = st.selectbox(
-        "Самостійний структурний підрозділ",
-        ["Усі"] + available_ssp_raw
-    )
-with f2:
-    years = sorted(df["year"].dropna().astype(str).unique().tolist())
-    selected_year = st.selectbox("Рік", ["Усі"] + years)
-with f3:
-    quarters = sorted(df["quarter"].dropna().astype(str).unique().tolist())
-    selected_quarter = st.selectbox("Квартал", ["Усі"] + quarters)
-with f4:
-    selected_approval_status = st.selectbox(
-        "Статус погодження",
-        ["Активні до розгляду", "Усі", "Очікує погодження",
-         "Очікує: Керівник управління", "Очікує: Заступник керівника ССП",
-         "Повернуто на доопрацювання", "Очікує: Керівник ССП", "Погоджено"],
-        index=0
-    )
+years = sorted(df["year"].dropna().astype(str).unique().tolist())
+quarters = sorted(df["quarter"].dropna().astype(str).unique().tolist())
+approval_options = [
+    "Активні до розгляду", "Усі", "Очікує погодження",
+    "Очікує: Керівник управління", "Очікує: Заступник керівника ССП",
+    "Повернуто на доопрацювання", "Очікує: Керівник ССП", "Погоджено",
+]
+quick_filter_options = [
+    "Усі заявки", "Тільки очікують", "Повернуті", "Із ризиками",
+    "Останні подані", "На розгляді понад 5 днів",
+]
 
-q1, q2 = st.columns([1, 2])
-with q1:
-    quick_filter = st.selectbox(
-        "Швидкий фільтр",
-        ["Усі заявки", "Тільки очікують", "Повернуті",
-         "Із ризиками", "Останні подані", "На розгляді понад 5 днів"]
-    )
-with q2:
-    search_query = st.text_input("Пошук за ID, назвою заходу, ПІБ або ССП")
-
-# ТЗ Заг.1: фільтри спрацьовують ТІЛЬКИ після кнопки «Застосувати обрані
-# параметри»; кнопка «Скинути параметри» повертає стандартний відбір.
+# ТЗ Заг.1: фільтри спрацьовують ТІЛЬКИ після кнопки застосування.
 _adm_flt_defaults = {
     "ssp": "Усі", "year": "Усі", "quarter": "Усі",
     "approval": "Активні до розгляду", "quick": "Усі заявки", "search": "",
 }
 if "admin_filters_applied_v19" not in st.session_state:
     st.session_state["admin_filters_applied_v19"] = _adm_flt_defaults.copy()
-_bt1, _bt2 = st.columns([2, 1])
-with _bt1:
-    if st.button("Застосувати обрані параметри", type="primary",
-                 use_container_width=True, key="admin_filters_apply_v19"):
-        st.session_state["admin_filters_applied_v19"] = {
-            "ssp": selected_ssp, "year": selected_year,
-            "quarter": selected_quarter, "approval": selected_approval_status,
-            "quick": quick_filter, "search": search_query,
-        }
-with _bt2:
-    if st.button("Скинути параметри", use_container_width=True,
-                 key="admin_filters_reset_v19"):
-        st.session_state["admin_filters_applied_v19"] = _adm_flt_defaults.copy()
-        st.rerun()
+
+_adm_pending_keys = {
+    "ssp": "admin_filter_ssp_pending_v19",
+    "year": "admin_filter_year_pending_v19",
+    "quarter": "admin_filter_quarter_pending_v19",
+    "approval": "admin_filter_approval_pending_v19",
+    "quick": "admin_filter_quick_pending_v19",
+    "search": "admin_filter_search_pending_v19",
+}
+for _filter_name, _filter_key in _adm_pending_keys.items():
+    st.session_state.setdefault(
+        _filter_key,
+        st.session_state["admin_filters_applied_v19"].get(
+            _filter_name, _adm_flt_defaults[_filter_name]
+        ),
+    )
+
+_valid_options = {
+    "ssp": ["Усі"] + available_ssp_raw,
+    "year": ["Усі"] + years,
+    "quarter": ["Усі"] + quarters,
+    "approval": approval_options,
+    "quick": quick_filter_options,
+}
+for _filter_name, _options in _valid_options.items():
+    _filter_key = _adm_pending_keys[_filter_name]
+    if st.session_state.get(_filter_key) not in _options:
+        st.session_state[_filter_key] = _adm_flt_defaults[_filter_name]
+
+
+def _apply_admin_filters_v19():
+    st.session_state["admin_filters_applied_v19"] = {
+        name: st.session_state.get(key, _adm_flt_defaults[name])
+        for name, key in _adm_pending_keys.items()
+    }
+
+
+def _reset_admin_filters_v19():
+    st.session_state["admin_filters_applied_v19"] = _adm_flt_defaults.copy()
+    for name, key in _adm_pending_keys.items():
+        st.session_state[key] = _adm_flt_defaults[name]
+
+
+with st.form("admin_filters_form_v19"):
+    st.markdown('<div class="filter-title">Параметри відбору</div>', unsafe_allow_html=True)
+    f1, f2, f3, f4 = st.columns(4)
+    with f1:
+        st.markdown('<div class="filter-field-label">ССП</div>', unsafe_allow_html=True)
+        st.selectbox(
+            "Самостійний структурний підрозділ",
+            ["Усі"] + available_ssp_raw,
+            key=_adm_pending_keys["ssp"],
+            label_visibility="collapsed",
+        )
+    with f2:
+        st.markdown('<div class="filter-field-label">Рік</div>', unsafe_allow_html=True)
+        st.selectbox(
+            "Рік", ["Усі"] + years,
+            key=_adm_pending_keys["year"], label_visibility="collapsed",
+        )
+    with f3:
+        st.markdown('<div class="filter-field-label">Квартал</div>', unsafe_allow_html=True)
+        st.selectbox(
+            "Квартал", ["Усі"] + quarters,
+            key=_adm_pending_keys["quarter"], label_visibility="collapsed",
+        )
+    with f4:
+        st.markdown('<div class="filter-field-label">Статус погодження</div>', unsafe_allow_html=True)
+        st.selectbox(
+            "Статус погодження", approval_options,
+            key=_adm_pending_keys["approval"], label_visibility="collapsed",
+        )
+
+    q1, q2 = st.columns([1, 2])
+    with q1:
+        st.markdown('<div class="filter-field-label">Швидкий фільтр</div>', unsafe_allow_html=True)
+        st.selectbox(
+            "Швидкий фільтр", quick_filter_options,
+            key=_adm_pending_keys["quick"], label_visibility="collapsed",
+        )
+    with q2:
+        st.markdown(
+            '<div class="filter-field-label">Пошук за ID, назвою заходу, ПІБ або ССП</div>',
+            unsafe_allow_html=True,
+        )
+        st.text_input(
+            "Пошук за ID, назвою заходу, ПІБ або ССП",
+            key=_adm_pending_keys["search"],
+            label_visibility="collapsed",
+        )
+
+    _bt1, _bt2 = st.columns([2, 1])
+    with _bt1:
+        st.form_submit_button(
+            "Застосувати обрані параметри",
+            type="primary",
+            use_container_width=True,
+            on_click=_apply_admin_filters_v19,
+        )
+    with _bt2:
+        st.form_submit_button(
+            "Скинути параметри",
+            use_container_width=True,
+            on_click=_reset_admin_filters_v19,
+        )
+
 _adm_flt = st.session_state["admin_filters_applied_v19"]
 selected_ssp = _adm_flt["ssp"]
 selected_year = _adm_flt["year"]
@@ -2104,7 +2405,6 @@ if search_query.strip():
     ]
 
 st.caption(f"Знайдено заявок: {len(filtered)}")
-st.markdown('</div>', unsafe_allow_html=True)
 
 # ──────────────────────────────────────────────
 # СУПЕР-АДМІН: КОРИГУВАННЯ ОСТАТОЧНО ЗАКРИТИХ ЗАЯВОК
@@ -2371,6 +2671,7 @@ if is_super_admin_user(current_user):
 
 if filtered.empty:
     st.info("За обраними фільтрами заявок не знайдено.")
+    _render_superadmin_bottom_tools()
     render_footer()
     st.stop()
 
@@ -2406,73 +2707,77 @@ def _request_is_actionable_by_me(row) -> bool:
     return False
 
 queue_df = filtered[filtered.apply(_request_is_actionable_by_me, axis=1)].copy()
+queue_df["_review_days"] = queue_df["submitted_at"].apply(_review_days)
+queue_df = _sort_by_ssp(queue_df)
 
 if not queue_df.empty:
     st.markdown(
-        '<div class="card">'
-        '<div class="card-title">Черга на розгляд</div>'
-        '<div class="card-subtitle">Заявки, що потребують рішення адміністратора.</div>',
-        unsafe_allow_html=True
+        '<div class="myreq-section-header"><div class="myreq-section-title">'
+        '📋 Черга на розгляд</div></div>',
+        unsafe_allow_html=True,
     )
-
-    queue_df["_s"] = pd.to_numeric(
-        queue_df["department"].astype(str).str.extract(r"(\d+)")[0], errors="coerce"
-    )
-    queue_df = queue_df.sort_values("_s").drop(columns=["_s"])
-
-    queue_show = queue_df.rename(columns={
-        "id":                 "ID",
-        "department":         "Самостійний структурний підрозділ",
-        "strat_code":         "Код заходу",
-        "year":               "Рік",
-        "quarter":            "Квартал",
-        "status":             "Статус заходу",
-        "approval_status":    "Статус погодження",
-        "responsible_person": "Відповідальна особа",
-        "submitted_at":       "Дата подання"
-    })
-
-    display_cols = [c for c in [
-        "ID", "Самостійний структурний підрозділ", "Код заходу",
-        "Рік", "Квартал", "Статус заходу", "Статус погодження",
-        "Відповідальна особа", "Дата подання"
-    ] if c in queue_show.columns]
-
-    st.dataframe(queue_show[display_cols], use_container_width=True, hide_index=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+    _queue_headers = [
+        "ID", "На розгляді (днів)", "ССП", "Код заходу", "Звітний період",
+        "Особа, яка подала інформацію", "Дата подання",
+    ]
+    _queue_rows = []
+    for _, row in queue_df.iterrows():
+        person, _ = _initial_submitter_for_request(row)
+        _queue_rows.append([
+            row.get("id"),
+            row.get("_review_days") if pd.notna(row.get("_review_days")) else "—",
+            row.get("department"),
+            row.get("strat_code"),
+            _period_label(row.get("year"), row.get("quarter")),
+            person,
+            format_kyiv_datetime(row.get("submitted_at")),
+        ])
+    _render_html_table(_queue_headers, _queue_rows)
 
 # ──────────────────────────────────────────────
 # ВИБІР ЗАЯВКИ
 # ──────────────────────────────────────────────
 
-st.markdown('<div class="card"><div class="card-title">Вибір заявки</div>', unsafe_allow_html=True)
-
-# ТЗ-правка (09.07.2026, п.3): вибір — лише з черги, що очікує САМЕ вас.
+# Вибір має реагувати одразу, тому це стилізований контейнер, а не st.form.
 _selectable = queue_df if not queue_df.empty else filtered.iloc[0:0]
 
 if _selectable.empty:
-    st.info(
-        "Наразі немає заявок, що очікують саме вашого рішення. Стан усіх "
-        "інших заявок можна переглянути у блоці «Перегляд статусу заявок» "
-        "нижче."
-    )
-    st.markdown('</div>', unsafe_allow_html=True)
+    with st.container(border=True):
+        st.markdown('<div class="filter-title">Вибір заявки</div>', unsafe_allow_html=True)
+        st.info(
+            "Наразі немає заявок, що очікують саме вашого рішення. Стан усіх "
+            "інших заявок можна переглянути у блоці «Перегляд статусу заявок» нижче."
+        )
     render_requests_status_viewer(filtered)
+    _render_superadmin_bottom_tools()
     render_footer()
     st.stop()
 
-selected_options = [
-    f"ID {row['id']} | ССП {row['department']} | {row['strat_code']} | "
-    f"{row['year']} {row['quarter']} квартал | {row['approval_status']} | "
-    f"{clean(row['submitted_at'])}"
-    for _, row in _selectable.iterrows()
-]
+selected_options = []
+for _, row in _selectable.iterrows():
+    person, _ = _initial_submitter_for_request(row)
+    review_days = row.get("_review_days")
+    review_days_text = str(int(review_days)) if pd.notna(review_days) else "—"
+    selected_options.append(
+        f"ID {row['id']} | {review_days_text} дн. | ССП {clean(row.get('department'))} | "
+        f"{clean(row.get('strat_code'))} | {_period_label(row.get('year'), row.get('quarter'))} | "
+        f"{person} | {format_kyiv_datetime(row.get('submitted_at'))}"
+    )
 
-selected_request = st.selectbox("Оберіть заявку для перегляду та погодження", selected_options)
-selected_id  = int(selected_request.split("|")[0].replace("ID", "").strip())
+with st.container(border=True):
+    st.markdown('<div class="filter-title">Вибір заявки</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="filter-field-label">Оберіть заявку для перегляду та погодження</div>',
+        unsafe_allow_html=True,
+    )
+    selected_request = st.selectbox(
+        "Оберіть заявку для перегляду та погодження",
+        selected_options,
+        label_visibility="collapsed",
+    )
+
+selected_id = int(selected_request.split("|", 1)[0].replace("ID", "").strip())
 selected_row = _selectable[_selectable["id"].astype(int) == selected_id].iloc[0]
-
-st.markdown('</div>', unsafe_allow_html=True)
 
 approval_status = clean(selected_row["approval_status"])
 selected_code   = clean(selected_row["strat_code"])
@@ -3480,14 +3785,7 @@ else:
             extra_columns=["Фактичне значення", "Опис прогресу"],
         )
 
-# І2: єдиний реєстр недоставлених листів за останні 30 днів.
-with st.expander("Розсилка: недоставлені листи", expanded=False):
-    _failed_mail = failed_notifications_last_30_days()
-    if _failed_mail.empty:
-        st.success("Усі листи за останні 30 днів доставлено.")
-    else:
-        st.warning(f"Недоставлених листів за останні 30 днів: {len(_failed_mail)}")
-        st.dataframe(_failed_mail, use_container_width=True, hide_index=True)
+_render_superadmin_bottom_tools()
 
 # ТЗ-правка (09.07.2026, п.3): перегляд статусу ВСІХ заявок за фільтрами —
 # видно, на якому етапі схеми зараз кожна заявка (закрита чи ще ні).

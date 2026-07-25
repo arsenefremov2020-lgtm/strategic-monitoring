@@ -1,3 +1,4 @@
+import json
 import re
 import streamlit as st
 import pandas as pd
@@ -36,10 +37,16 @@ from core.stage5 import failed_notifications_last_30_days
 from core.stage4 import format_kyiv_datetime, quarter_to_roman
 from core.archive import create_archive_snapshot, format_kyiv as format_archive_kyiv
 from core.statuses import SUBMISSION_STATUS_OPTIONS
-from core.validation import status_value_conflict, validate_fact_value_for_target
+from core.validation import (
+    YES_VALUES,
+    is_yes_no_unit,
+    status_value_conflict,
+    validate_fact_value_for_target,
+)
 from config.roles import ROLE_SUPER_ADMIN
 from core.access import filter_actions_for_user
 from core.superadmin_routing import resolve_manual_closeout_route, can_superadmin_decide_closeout, senior_superadmin_for
+from core.versioning import save_request_version
 from core.transitions import (
     TransitionRejected,
     approve_request_step,
@@ -941,6 +948,51 @@ def load_closeout_requests():
     return normalise_closeout_frame(pd.DataFrame(rows))
 
 
+def _quarter_number(value) -> int | None:
+    try:
+        return quarter_to_db(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _quarter_label_ua(value) -> str:
+    number = _quarter_number(value)
+    roman = {1: "I", 2: "II", 3: "III", 4: "IV"}.get(number)
+    return f"{roman} квартал" if roman else "квартал не визначено"
+
+
+def _closeout_fact_value(record) -> str:
+    return clean(record.get("fact_value_text")) or clean(record.get("fact_numeric_value"))
+
+
+def _matrix_row_for_code(code) -> dict:
+    lookup = globals().get("_strat_row_lookup", {}) or {}
+    return lookup.get(clean(code).strip().rstrip("."), {}) or {}
+
+
+def _closeout_carries_forward(record, matrix_row: dict | None = None) -> bool:
+    """Чи підтверджене ручне закриття переносить «так» до кінця року."""
+    if clean(record.get("approval_status")) != "Підтверджено":
+        return False
+    source_quarter = _quarter_number(record.get("period_quarter"))
+    if source_quarter is None or source_quarter >= 4:
+        return False
+    matrix = matrix_row or _matrix_row_for_code(record.get("strat_code"))
+    if not is_yes_no_unit(matrix.get("unit")):
+        return False
+    return clean(_closeout_fact_value(record)).casefold() in YES_VALUES
+
+
+def _carry_quarters_text(quarters: list[int], year) -> str:
+    labels = [{1: "I", 2: "II", 3: "III", 4: "IV"}[q] for q in quarters]
+    if not labels:
+        return ""
+    if len(labels) == 1:
+        return f"Значення «так» перенесено також на {labels[0]} квартал {clean(year)} року."
+    joined = ", ".join(labels[:-1]) + f" та {labels[-1]}"
+    return f"Значення «так» перенесено також на {joined} квартали {clean(year)} року."
+
+
 def _related_closeout_logs(record) -> pd.DataFrame:
     """Журнал ручного закриття того самого заходу й звітного періоду."""
     if record is None:
@@ -969,13 +1021,12 @@ def _related_closeout_logs(record) -> pd.DataFrame:
             closeout_quarter = quarter_to_db(raw_quarter)
         except ValueError:
             closeout_quarter = None
-        # Річне закриття охоплює всі квартали. Для попереднього кварталу
-        # додаємо журнал лише після підтвердження, бо саме тоді офіційні дані
-        # матеріалізуються до кінця року.
+        # Точний квартал завжди належить до цієї історії. Попередній квартал
+        # охоплює поточний лише для підтвердженого бінарного значення «так».
         if closeout_quarter is not None:
             if closeout_quarter > quarter:
                 continue
-            if closeout_quarter < quarter and clean(closeout.get("approval_status")) != "Підтверджено":
+            if closeout_quarter < quarter and not _closeout_carries_forward(closeout):
                 continue
         try:
             matching_ids.append(str(int(float(closeout.get("id")))))
@@ -1188,40 +1239,332 @@ def _fact_for_request(record) -> str:
     return clean(record.get("numeric_value")) or clean(record.get("value_text")) or "—"
 
 
-def _active_closeout_for_period(frame: pd.DataFrame, code, year, quarter):
-    """Повертає активний запит на той самий захід і конкретний період."""
+def _active_closeout_for_period(frame: pd.DataFrame, code, year, quarter, unit=""):
+    """Точний дублікат або підтверджене перенесення бінарного «так»."""
     if frame is None or frame.empty:
         return None
     code_key = clean(code).strip().rstrip(".")
     selected_year = _year_number(year)
-    try:
-        selected_quarter = quarter_to_db(quarter)
-    except ValueError:
-        selected_quarter = None
+    selected_quarter = _quarter_number(quarter)
     if not code_key or selected_year is None or selected_quarter is None:
         return None
 
-    candidates = []
+    exact_matches = []
+    carry_matches = []
+    matrix_row = {"unit": unit}
     for _, row in frame.iterrows():
-        if clean(row.get("approval_status")) not in {"Очікує підтвердження", "Підтверджено"}:
+        status = clean(row.get("approval_status"))
+        if status not in {"Очікує підтвердження", "Підтверджено"}:
             continue
         if clean(row.get("strat_code")).strip().rstrip(".") != code_key:
             continue
         if _year_number(row.get("period_year")) != selected_year:
             continue
-        raw_quarter = clean(row.get("period_quarter"))
-        try:
-            row_quarter = quarter_to_db(raw_quarter)
-        except ValueError:
-            row_quarter = None
-        # Підтверджене/активне закриття попереднього кварталу охоплює
-        # наступні квартали року, тому повторний запит для них також блокуємо.
-        if row_quarter is not None and row_quarter > selected_quarter:
+        row_quarter = _quarter_number(row.get("period_quarter"))
+        if row_quarter is None:
             continue
-        candidates.append(row)
-    if not candidates:
-        return None
-    return sorted(candidates, key=lambda row: clean(row.get("requested_at")))[0]
+        if row_quarter == selected_quarter:
+            exact_matches.append(row)
+        elif row_quarter < selected_quarter and _closeout_carries_forward(row, matrix_row):
+            carry_matches.append(row)
+
+    if exact_matches:
+        row = sorted(exact_matches, key=lambda item: clean(item.get("requested_at")))[0]
+        return {"kind": "exact", "row": row, "source_quarter": selected_quarter}
+    if carry_matches:
+        # Найближчий попередній квартал найточніше пояснює блокування.
+        row = sorted(
+            carry_matches,
+            key=lambda item: (
+                -(_quarter_number(item.get("period_quarter")) or 0),
+                clean(item.get("requested_at")),
+            ),
+        )[0]
+        return {
+            "kind": "carry",
+            "row": row,
+            "source_quarter": _quarter_number(row.get("period_quarter")),
+        }
+    return None
+
+
+def _closeout_duplicate_message(match, year, quarter) -> str:
+    row = match["row"]
+    when = format_kyiv_datetime(row.get("requested_at")) or "раніше"
+    status = clean(row.get("approval_status")) or "статус не визначено"
+    if match.get("kind") == "carry":
+        source = _quarter_label_ua(match.get("source_quarter"))
+        return (
+            f"Захід уже підтверджено зі значенням «так» за {source} {clean(year)} року. "
+            f"Тому {_quarter_label_ua(quarter)} та наступні квартали цього року "
+            "вважаються закритими автоматичним перенесенням результату."
+        )
+    return (
+        f"Запит за {_period_label(year, quarter)} уже подано {when}; "
+        f"його статус — «{status}». Повторне надсилання за цей самий період вимкнено."
+    )
+
+
+def _transition_request_ids(result, closeout_id: int) -> list[int]:
+    raw = getattr(result, "data", {}).get("request_ids") if result is not None else None
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            raw = []
+    ids = []
+    for value in raw or []:
+        try:
+            ids.append(int(value))
+        except (TypeError, ValueError):
+            continue
+    if ids:
+        return sorted(set(ids))
+    try:
+        response = (
+            supabase.table("closeout_requests")
+            .select("materialized_request_ids")
+            .eq("id", int(closeout_id))
+            .limit(1)
+            .execute()
+        )
+        stored = (response.data or [{}])[0].get("materialized_request_ids") or []
+        if isinstance(stored, str):
+            stored = json.loads(stored)
+        return sorted({int(value) for value in stored or []})
+    except Exception as exc:
+        log_cosmetic_error("Читання матеріалізованих заявок ручного закриття", exc)
+        return []
+
+
+def _sync_closeout_request_ids(closeout_id: int, request_ids: list[int]) -> None:
+    request_ids = sorted({int(value) for value in request_ids})
+    supabase.table("closeout_requests").update({
+        "materialized_request_ids": request_ids,
+    }).eq("id", int(closeout_id)).execute()
+    try:
+        logs = fetch_all(
+            "monitoring_logs",
+            "id,payload_json",
+            filters=[
+                ("eq", "related_table", "closeout_requests"),
+                ("eq", "related_key", str(int(closeout_id))),
+            ],
+        )
+        for log in logs:
+            payload = log.get("payload_json") or "{}"
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    payload = {}
+            if not isinstance(payload, dict):
+                payload = {}
+            payload["request_ids"] = request_ids
+            supabase.table("monitoring_logs").update({
+                "payload_json": json.dumps(payload, ensure_ascii=False),
+            }).eq("id", int(log["id"])).execute()
+    except Exception as exc:
+        log_cosmetic_error("Синхронізація ID у журналі ручного закриття", exc)
+
+
+def _carry_origin_comment(source_quarter: int, year, reason) -> str:
+    return (
+        f"Закрито вручну. Перенесення результату «так» з "
+        f"{_quarter_label_ua(source_quarter)} {clean(year)} року. "
+        f"Підстава: {clean(reason) or 'не зазначена'}"
+    )
+
+
+def _mark_request_as_carry(request_id: int, source_quarter: int, year, reason) -> None:
+    comment = _carry_origin_comment(source_quarter, year, reason)
+    action = (
+        f"Ручне закриття: перенесення результату з "
+        f"{_quarter_label_ua(source_quarter)} {clean(year)} року"
+    )
+    supabase.table("monitoring_requests").update({
+        "admin_comment": comment,
+    }).eq("id", int(request_id)).execute()
+    supabase.table("monitoring_request_versions").update({
+        "admin_comment": comment,
+        "created_by": action,
+    }).eq("request_id", int(request_id)).execute()
+    supabase.table("monitoring_logs").update({
+        "action": action,
+        "admin_comment": comment,
+    }).eq("request_id", int(request_id)).execute()
+
+
+def _insert_carried_request(
+    base_row: dict,
+    *,
+    quarter: int,
+    source_quarter: int,
+    closeout_id: int,
+    reason: str,
+) -> int:
+    copy_fields = [
+        "year", "department", "responsible_person", "phone", "email",
+        "strat_code", "status", "numeric_value", "value_text", "progress_text",
+        "risks", "submitted_at", "approval_status", "npa_link", "approval_chain",
+        "chain_stage", "scheme_label", "object_kind", "object_name", "indicator_name",
+        "start_date", "end_date", "as_of_date", "file_names", "file_urls",
+        "final_locked", "final_locked_at",
+    ]
+    payload = {field: base_row.get(field) for field in copy_fields if field in base_row}
+    payload.update({
+        "quarter": int(quarter),
+        "approval_status": "Погоджено",
+        "final_locked": True,
+        "scheme_label": "Ручне закриття",
+        "admin_comment": _carry_origin_comment(source_quarter, base_row.get("year"), reason),
+    })
+    response = supabase.table("monitoring_requests").insert(payload).execute()
+    inserted = (response.data or [{}])[0]
+    request_id = int(inserted["id"])
+
+    version_source = dict(inserted)
+    if clean(version_source.get("value_text")) and not clean(version_source.get("numeric_value")):
+        version_source["numeric_value"] = version_source.get("value_text")
+    save_request_version(
+        request_id,
+        version_source,
+        created_by=(
+            f"Ручне закриття / перенесення результату з "
+            f"{_quarter_label_ua(source_quarter)}"
+        ),
+    )
+
+    department = clean(inserted.get("department"))
+    department_numbers = re.findall(r"\d+", department)
+    actor_email = clean(current_user.get("email")).lower()
+    actor_name = clean(current_user.get("full_name")) or clean(current_user.get("name")) or actor_email
+    action = (
+        f"Ручне закриття: перенесення результату з "
+        f"{_quarter_label_ua(source_quarter)} {clean(inserted.get('year'))} року"
+    )
+    supabase.table("monitoring_logs").insert({
+        "request_id": request_id,
+        "action": action,
+        "old_status": "",
+        "new_status": "Погоджено",
+        "admin_comment": payload["admin_comment"],
+        "changed_by": _actor_identity("Супер-адміністратор"),
+        "actor_email": actor_email,
+        "actor_name": actor_name,
+        "actor_role": clean(current_user.get("role")) or "super_admin",
+        "ssp_index": department_numbers[0] if department_numbers else "",
+        "strat_code": clean(inserted.get("strat_code")),
+        "related_table": "monitoring_requests",
+        "related_key": str(request_id),
+        "payload_json": json.dumps({
+            "closeout_id": int(closeout_id),
+            "carry_forward": True,
+            "source_quarter": int(source_quarter),
+            "target_quarter": int(quarter),
+        }, ensure_ascii=False),
+    }).execute()
+    return request_id
+
+
+def _reconcile_confirmed_closeout(
+    closeout_id: int,
+    closeout_record,
+    matrix_row,
+    transition_result=None,
+) -> list[int]:
+    """Нормалізує серверну матеріалізацію до точного правила перенесення."""
+    source_quarter = _quarter_number(closeout_record.get("period_quarter"))
+    year = _year_number(closeout_record.get("period_year"))
+    if source_quarter is None or year is None:
+        return []
+
+    linked_ids = _transition_request_ids(transition_result, int(closeout_id))
+    linked_rows = []
+    if linked_ids:
+        linked_rows = fetch_all(
+            "monitoring_requests",
+            "*",
+            filters=[("in_", "id", linked_ids)],
+            order=("quarter", False),
+        )
+
+    should_carry = _closeout_carries_forward(closeout_record, dict(matrix_row or {}))
+    rows_by_quarter = {
+        _quarter_number(row.get("quarter")): row
+        for row in linked_rows
+        if _quarter_number(row.get("quarter")) is not None
+    }
+
+    if not should_carry:
+        keep_ids = [
+            int(row["id"])
+            for row in linked_rows
+            if _quarter_number(row.get("quarter")) == source_quarter
+        ]
+        unwanted_ids = sorted(set(linked_ids) - set(keep_ids))
+        if unwanted_ids:
+            # monitoring_logs і monitoring_request_versions мають ON DELETE CASCADE.
+            supabase.table("monitoring_requests").delete().in_("id", unwanted_ids).execute()
+        _sync_closeout_request_ids(int(closeout_id), keep_ids)
+        return []
+
+    base_row = rows_by_quarter.get(source_quarter)
+    if base_row is None:
+        existing_base = fetch_all(
+            "monitoring_requests",
+            "*",
+            filters=[
+                ("eq", "strat_code", clean(closeout_record.get("strat_code"))),
+                ("eq", "year", int(year)),
+                ("eq", "quarter", int(source_quarter)),
+                ("neq", "approval_status", "Відкликано"),
+            ],
+            order=("id", True),
+        )
+        base_row = existing_base[0] if existing_base else None
+    if base_row is None:
+        raise RuntimeError("Не знайдено офіційний запис основного кварталу ручного закриття.")
+
+    all_ids = list(linked_ids)
+    carried_quarters = []
+    reason = clean(closeout_record.get("reason"))
+    code = clean(closeout_record.get("strat_code"))
+    for target_quarter in range(source_quarter + 1, 5):
+        carried_quarters.append(target_quarter)
+        existing_row = rows_by_quarter.get(target_quarter)
+        if existing_row is None:
+            other_rows = fetch_all(
+                "monitoring_requests",
+                "*",
+                filters=[
+                    ("eq", "strat_code", code),
+                    ("eq", "year", int(year)),
+                    ("eq", "quarter", int(target_quarter)),
+                    ("neq", "approval_status", "Відкликано"),
+                ],
+                order=("id", True),
+            )
+            if other_rows:
+                raise RuntimeError(
+                    f"За {_period_label(year, target_quarter)} уже існує офіційна заявка №"
+                    f"{other_rows[0].get('id')}; автоматичне перенесення не може її замінити."
+                )
+            request_id = _insert_carried_request(
+                base_row,
+                quarter=target_quarter,
+                source_quarter=source_quarter,
+                closeout_id=int(closeout_id),
+                reason=reason,
+            )
+            all_ids.append(request_id)
+            existing_row = {"id": request_id, "quarter": target_quarter}
+        _mark_request_as_carry(
+            int(existing_row["id"]), source_quarter, year, reason,
+        )
+
+    _sync_closeout_request_ids(int(closeout_id), all_ids)
+    return carried_quarters
 
 
 def _request_nature_html(record, chain: list[dict], stage_index: int) -> str:
@@ -2547,14 +2890,11 @@ if admin_work_mode == "Ручне закриття заходів":
             with co_quarter_col:
                 co_quarter = st.selectbox("Квартал", ["I", "II", "III", "IV"], key="closeout_quarter")
 
-            _co_duplicate = _active_closeout_for_period(closeout_df, co_code, co_year, co_quarter)
+            _co_duplicate = _active_closeout_for_period(
+                closeout_df, co_code, co_year, co_quarter, _co_unit,
+            )
             if _co_duplicate is not None:
-                _duplicate_when = format_kyiv_datetime(_co_duplicate.get("requested_at"))
-                _duplicate_status = clean(_co_duplicate.get("approval_status"))
-                st.warning(
-                    f"Активний запит уже охоплює {_period_label(co_year, co_quarter)}: його подано "
-                    f"{_duplicate_when or 'раніше'}, статус — «{_duplicate_status}». Повторне надсилання вимкнено."
-                )
+                st.warning(_closeout_duplicate_message(_co_duplicate, co_year, co_quarter))
 
             _co_target = clean(_co_measure_row.get(f"target_{co_year}"))
             _co_future_targets = [
@@ -2622,11 +2962,11 @@ if admin_work_mode == "Ручне закриття заходів":
                 load_closeout_requests.clear()
                 latest_closeouts = load_closeout_requests()
                 runtime_duplicate = _active_closeout_for_period(
-                    latest_closeouts, co_code, co_year, co_quarter,
+                    latest_closeouts, co_code, co_year, co_quarter, _co_unit,
                 )
                 if runtime_duplicate is not None:
                     form_errors.append(
-                        "Активний запит на цей захід і період уже існує. Оновіть сторінку та перевірте його статус."
+                        _closeout_duplicate_message(runtime_duplicate, co_year, co_quarter)
                     )
 
                 if form_errors:
@@ -2640,9 +2980,6 @@ if admin_work_mode == "Ручне закриття заходів":
                             "strat_code": co_code,
                             "period_year": str(co_year),
                             "period_quarter": co_quarter,
-                            # transition_create_closeout / transition_decide_closeout
-                            # матеріалізують дані від вибраного кварталу до кінця року;
-                            # для бінарного факту «так» це є правилом перенесення.
                             "scope": "Квартал",
                             "npa_links": clean(co_npa).strip(),
                             "admin_id": current_user.get("full_name", "") or current_user.get("id", ""),
@@ -2665,23 +3002,27 @@ if admin_work_mode == "Ручне закриття заходів":
                             } if is_super else {}),
                             **route,
                         }
+                        prepared_payload = prepare_closeout_payload(payload)
                         result = create_closeout(
-                            payload=prepare_closeout_payload(payload),
+                            payload=prepared_payload,
                             user=current_user,
                         )
+                        carried_quarters = []
+                        if is_super:
+                            closeout_id = int(result.data.get("closeout_id"))
+                            carried_quarters = _reconcile_confirmed_closeout(
+                                closeout_id,
+                                prepared_payload,
+                                _co_measure_row,
+                                transition_result=result,
+                            )
                         notice = (
                             "Захід закрито вручну; офіційні дані записано в моніторинг."
                             if is_super else
                             "Запит на ручне закриття надіслано на підтвердження відповідальному супер-адміну."
                         )
-                        if (
-                            clean(_co_unit).lower().replace(" ", "") in {"так/ні", "так/нi", "так-ні", "так-нi", "такні", "такнi"}
-                            and clean(co_fact_value).lower().strip() in {"так", "yes", "true", "1", "+"}
-                        ):
-                            notice += (
-                                f" Значення «так» для {co_quarter} кварталу буде враховано також "
-                                "в наступних кварталах цього самого року."
-                            )
+                        if carried_quarters:
+                            notice += " " + _carry_quarters_text(carried_quarters, co_year)
                         st.session_state["closeout_submit_notice"] = notice
                         load_closeout_requests.clear()
                         load_manual_closeouts.clear()
@@ -2715,7 +3056,6 @@ if admin_work_mode == "Ручне закриття заходів":
                             <div><b>Підстава:</b> {clean(co_row.get("reason",""))}</div>
                             <div><b>Статус виконання:</b> {clean(co_row.get("fact_status",""))}</div>
                             <div><b>Фактичне значення:</b> {clean(co_row.get("fact_numeric_value","")) or clean(co_row.get("fact_value_text",""))}</div>
-                            <div><b>Пояснення фактичних даних:</b> {clean(co_row.get("fact_progress_text",""))}</div>
                             <div><b>Ризики / додаткові пояснення:</b> {clean(co_row.get("evidence_note",""))}</div>
                             <div><b>Подано:</b> {clean(co_row.get("admin_email",""))} о {clean(co_row.get("requested_at",""))}</div>
                             <div><b>Маршрутизація:</b> {clean(co_row.get("routing_note", ""))}</div>
@@ -2760,7 +3100,7 @@ if admin_work_mode == "Ручне закриття заходів":
                                         "Визначення керівника ССП для ручного закриття",
                                     )
 
-                            decide_closeout(
+                            decision_result = decide_closeout(
                                 closeout_id=int(co_row.get("id")),
                                 expected_status="Очікує підтвердження",
                                 new_status=new_co_status,
@@ -2768,6 +3108,17 @@ if admin_work_mode == "Ручне закриття заходів":
                                 head_email=clean((_head_user or {}).get("email", "")),
                                 user=current_user,
                             )
+                            carried_quarters = []
+                            if new_co_status == "Підтверджено":
+                                _matrix_row = _m.iloc[0] if not _m.empty else {}
+                                confirmed_record = co_row.to_dict()
+                                confirmed_record["approval_status"] = "Підтверджено"
+                                carried_quarters = _reconcile_confirmed_closeout(
+                                    int(co_row.get("id")),
+                                    confirmed_record,
+                                    _matrix_row,
+                                    transition_result=decision_result,
+                                )
 
                             if new_co_status == "Підтверджено" and _head_user:
                                 try:
@@ -2789,7 +3140,12 @@ if admin_work_mode == "Ручне закриття заходів":
 
                             load_closeout_requests.clear()
                             load_manual_closeouts.clear()
-                            st.success(f"Запит на закриття заходу {new_co_status.lower()}.")
+                            decision_notice = f"Запит на закриття заходу {new_co_status.lower()}."
+                            if carried_quarters:
+                                decision_notice += " " + _carry_quarters_text(
+                                    carried_quarters, co_row.get("period_year"),
+                                )
+                            st.session_state["closeout_submit_notice"] = decision_notice
                             monitoring_data.invalidate_monitoring_cache()
                             st.rerun()
                         except TransitionRejected as exc:

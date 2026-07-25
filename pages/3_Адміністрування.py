@@ -140,6 +140,18 @@ header[data-testid="stHeader"] {
     margin-bottom: 10px;
 }
 
+.admin-control-label {
+    color: #132238;
+    font-size: 14px;
+    font-weight: 900;
+    line-height: 1.35;
+    margin: 4px 0 6px 0;
+}
+
+.admin-section-spacer {
+    height: 16px;
+}
+
 /* ─── FLOW BOX ─── */
 .flow-box {
     background: #F7F9FC;
@@ -1664,98 +1676,92 @@ def _render_request_detail_cards(record) -> dict:
     route_caption = _esc(req_scheme_label) if req_scheme_label else "Маршрут погодження"
     nature_html = _request_nature_html(record, req_chain, req_stage)
 
-    st.markdown(
-        f"""
-        <div class="card">
-            <div class="card-title">Картка заявки</div>
-            {nature_html}
-            <div class="badge-wrap">
-                <div class="badge">{_esc(object_number_label)} {_esc(selected_code)}</div>
-                <div class="badge">ID {_esc(clean(record.get('id')))}</div>
-            </div>
-            <div class="admin-object-name">{_esc(object_name)}</div>
-            <div class="admin-reference-grid">
-                <div class="admin-reference-row">
-                    <div class="admin-reference-label">Тип продукту</div>
-                    <div class="admin-reference-value">{_esc(product_type)}</div>
-                </div>
-                <div class="admin-reference-row">
-                    <div class="admin-reference-label">Індикатор</div>
-                    <div class="admin-reference-value">{_esc(indicator)}</div>
-                </div>
-                <div class="admin-reference-row">
-                    <div class="admin-reference-label">Одиниця виміру</div>
-                    <div class="admin-reference-value">{_esc(unit)}</div>
-                </div>
-                <div class="admin-reference-row wide">
-                    <div class="admin-reference-label">Відповідальний ССП</div>
-                    <div class="admin-reference-value">
-                        {_esc(resp_main)} &nbsp;·&nbsp; Спів. 1: {_esc(resp_co_1)}
-                        &nbsp;·&nbsp; Спів. 2: {_esc(resp_co_2)}
-                    </div>
-                </div>
-                <div class="admin-reference-row wide">
-                    <div class="admin-reference-label">Термін</div>
-                    <div class="admin-reference-value">{_esc(term_label)}</div>
-                </div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    reference_card_html = (
+        '<div class="card">'
+        '<div class="card-title">Картка заявки</div>'
+        f'{nature_html}'
+        '<div class="badge-wrap">'
+        f'<div class="badge">{_esc(object_number_label)} {_esc(selected_code)}</div>'
+        f'<div class="badge">ID {_esc(clean(record.get("id")))}</div>'
+        '</div>'
+        f'<div class="admin-object-name">{_esc(object_name)}</div>'
+        '<div class="admin-reference-grid">'
+        '<div class="admin-reference-row">'
+        '<div class="admin-reference-label">Тип продукту</div>'
+        f'<div class="admin-reference-value">{_esc(product_type)}</div>'
+        '</div>'
+        '<div class="admin-reference-row">'
+        '<div class="admin-reference-label">Індикатор</div>'
+        f'<div class="admin-reference-value">{_esc(indicator)}</div>'
+        '</div>'
+        '<div class="admin-reference-row">'
+        '<div class="admin-reference-label">Одиниця виміру</div>'
+        f'<div class="admin-reference-value">{_esc(unit)}</div>'
+        '</div>'
+        '<div class="admin-reference-row wide">'
+        '<div class="admin-reference-label">Відповідальний ССП</div>'
+        f'<div class="admin-reference-value">{_esc(resp_main)} &nbsp;·&nbsp; '
+        f'Спів. 1: {_esc(resp_co_1)} &nbsp;·&nbsp; Спів. 2: {_esc(resp_co_2)}</div>'
+        '</div>'
+        '<div class="admin-reference-row wide">'
+        '<div class="admin-reference-label">Термін</div>'
+        f'<div class="admin-reference-value">{_esc(term_label)}</div>'
+        '</div>'
+        '</div>'
+        '</div>'
     )
+    st.html(reference_card_html)
 
     target_heading = f"Цільовий орієнтир на {year_val} рік" if year_val else "Цільовий орієнтир"
-    st.markdown(
-        f"""
-        <div class="card">
-            <div class="card-title">Подані відомості</div>
-            <div class="admin-submission-grid">
-                <div class="admin-data-field">
-                    <div class="admin-data-label">Звітний період</div>
-                    <div class="admin-data-value">{_esc(_period_label(record.get('year'), record.get('quarter')))}</div>
-                </div>
-                <div class="admin-data-field">
-                    <div class="admin-data-label">{_esc(target_heading)}</div>
-                    <div class="admin-data-value">{_esc(target_year_val or '—')}</div>
-                </div>
-                <div class="admin-data-field">
-                    <div class="admin-data-label">Фактичне значення</div>
-                    <div class="admin-data-value">{_esc(fact_value)}</div>
-                </div>
-                <div class="admin-data-field">
-                    <div class="admin-data-label">Статус виконання</div>
-                    <div class="admin-data-value">{_esc(clean(record.get('status')) or '—')}</div>
-                </div>
-                <div class="admin-data-field wide">
-                    <div class="admin-data-label">Опис прогресу виконання</div>
-                    <div class="admin-data-value">{_html_cell(progress_value)}</div>
-                </div>
-                <div class="admin-data-field wide">
-                    <div class="admin-data-label">Ризики / проблеми / відхилення</div>
-                    <div class="admin-data-value">{_html_cell(risks_value)}</div>
-                </div>
-                <div class="admin-data-field wide">
-                    <div class="admin-data-label">Посилання на НПА</div>
-                    <div class="admin-data-value">{npa_links_html}</div>
-                </div>
-                <div class="admin-data-field wide">
-                    <div class="admin-data-label">Схема погодження</div>
-                    <div class="admin-route-caption">{route_caption}</div>
-                    <div class="admin-route-row">{route_html}</div>
-                </div>
-                <div class="admin-data-field wide">
-                    <div class="admin-data-label">Дані відповідальної особи</div>
-                    <div class="admin-contact-row">
-                        <div class="admin-contact-item"><strong>ПІБ</strong>{_esc(person_name)}</div>
-                        <div class="admin-contact-item"><strong>Телефон</strong>{_esc(person_phone)}</div>
-                        <div class="admin-contact-item"><strong>Email</strong>{_esc(person_email)}</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    submission_card_html = (
+        '<div class="card">'
+        '<div class="card-title">Подані відомості</div>'
+        '<div class="admin-submission-grid">'
+        '<div class="admin-data-field">'
+        '<div class="admin-data-label">Звітний період</div>'
+        f'<div class="admin-data-value">{_esc(_period_label(record.get("year"), record.get("quarter")))}</div>'
+        '</div>'
+        '<div class="admin-data-field">'
+        f'<div class="admin-data-label">{_esc(target_heading)}</div>'
+        f'<div class="admin-data-value">{_esc(target_year_val or "—")}</div>'
+        '</div>'
+        '<div class="admin-data-field">'
+        '<div class="admin-data-label">Фактичне значення</div>'
+        f'<div class="admin-data-value">{_esc(fact_value)}</div>'
+        '</div>'
+        '<div class="admin-data-field">'
+        '<div class="admin-data-label">Статус виконання</div>'
+        f'<div class="admin-data-value">{_esc(clean(record.get("status")) or "—")}</div>'
+        '</div>'
+        '<div class="admin-data-field wide">'
+        '<div class="admin-data-label">Опис прогресу виконання</div>'
+        f'<div class="admin-data-value">{_html_cell(progress_value)}</div>'
+        '</div>'
+        '<div class="admin-data-field wide">'
+        '<div class="admin-data-label">Ризики / проблеми / відхилення</div>'
+        f'<div class="admin-data-value">{_html_cell(risks_value)}</div>'
+        '</div>'
+        '<div class="admin-data-field wide">'
+        '<div class="admin-data-label">Посилання на НПА</div>'
+        f'<div class="admin-data-value">{npa_links_html}</div>'
+        '</div>'
+        '<div class="admin-data-field wide">'
+        '<div class="admin-data-label">Схема погодження</div>'
+        f'<div class="admin-route-caption">{route_caption}</div>'
+        f'<div class="admin-route-row">{route_html}</div>'
+        '</div>'
+        '<div class="admin-data-field wide">'
+        '<div class="admin-data-label">Дані відповідальної особи</div>'
+        '<div class="admin-contact-row">'
+        f'<div class="admin-contact-item"><strong>ПІБ</strong>{_esc(person_name)}</div>'
+        f'<div class="admin-contact-item"><strong>Телефон</strong>{_esc(person_phone)}</div>'
+        f'<div class="admin-contact-item"><strong>Email</strong>{_esc(person_email)}</div>'
+        '</div>'
+        '</div>'
+        '</div>'
+        '</div>'
     )
+    st.html(submission_card_html)
 
     return {
         "approval_status": approval_status,
@@ -2763,11 +2769,16 @@ if is_super_admin_user(current_user):
 if st.session_state.get("admin_work_mode") not in _admin_work_modes:
     st.session_state["admin_work_mode"] = _admin_work_modes[0]
 
+st.markdown(
+    '<div class="admin-control-label">Режим адміністрування</div>',
+    unsafe_allow_html=True,
+)
 admin_work_mode = st.radio(
-    "**Режим адміністрування**",
+    "Режим адміністрування",
     _admin_work_modes,
     horizontal=True,
     key="admin_work_mode",
+    label_visibility="collapsed",
 )
 
 if is_super_admin_user(current_user):
@@ -3533,7 +3544,6 @@ with st.form("admin_filters_form_v19"):
     with _bt1:
         st.form_submit_button(
             "Застосувати обрані параметри",
-            type="primary",
             use_container_width=True,
             on_click=_apply_admin_filters_v19,
         )
@@ -3665,6 +3675,10 @@ if not queue_df.empty:
             format_kyiv_datetime(row.get("submitted_at")),
         ])
     _render_html_table(_queue_headers, _queue_rows)
+    st.markdown(
+        '<div class="admin-section-spacer" aria-hidden="true"></div>',
+        unsafe_allow_html=True,
+    )
 
 # ──────────────────────────────────────────────
 # ВИБІР ЗАЯВКИ
@@ -4037,11 +4051,16 @@ else:
         unsafe_allow_html=True,
     )
 
+    st.markdown(
+        '<div class="admin-control-label">Оберіть рішення</div>',
+        unsafe_allow_html=True,
+    )
     decision = st.radio(
         "Оберіть рішення",
         [_approve_option, "Повернути на доопрацювання"],
         horizontal=True,
-        key=f"decision_radio_{selected_id}"
+        key=f"decision_radio_{selected_id}",
+        label_visibility="collapsed",
     )
 
     # Динамічний вибір наступної ланки (поза формою — бо в st.form()

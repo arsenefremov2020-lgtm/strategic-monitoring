@@ -45,7 +45,7 @@ from core.validation import (
 )
 from config.roles import ROLE_SUPER_ADMIN
 from core.access import filter_actions_for_user
-from core.superadmin_routing import resolve_manual_closeout_route, can_superadmin_decide_closeout, senior_superadmin_for
+from core.superadmin_routing import resolve_manual_closeout_route, senior_superadmin_for
 from core.versioning import save_request_version
 from core.transitions import (
     TransitionRejected,
@@ -59,6 +59,7 @@ from html import escape as _esc
 
 current_user = page_setup("Адміністрування", page_name="Адміністрування")
 supabase = get_supabase_client()
+_is_superadmin_current = is_super_admin_user(current_user)
 st.markdown("""
 <style>
 header[data-testid="stHeader"] {
@@ -430,8 +431,16 @@ header[data-testid="stHeader"] {
 
 .admin-reference-grid {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     gap: 9px;
+}
+
+.admin-reference-row {
+    grid-column: span 3;
+}
+
+.admin-reference-row.third {
+    grid-column: span 2;
 }
 
 .admin-submission-panel {
@@ -612,15 +621,34 @@ header[data-testid="stHeader"] {
 }
 
 @media (max-width: 900px) {
-    .admin-reference-grid,
+    .admin-reference-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .admin-reference-row,
+    .admin-reference-row.third {
+        grid-column: span 1;
+    }
+
+    .admin-reference-row.wide {
+        grid-column: 1 / -1;
+    }
+
     .admin-contact-row {
         grid-template-columns: 1fr;
     }
 }
 
 @media (max-width: 700px) {
+    .admin-reference-grid,
     .admin-submission-grid {
         grid-template-columns: 1fr;
+    }
+
+    .admin-reference-row,
+    .admin-reference-row.third,
+    .admin-reference-row.wide {
+        grid-column: 1 / -1;
     }
 }
 
@@ -1612,23 +1640,184 @@ def _reconcile_confirmed_closeout(
     return carried_quarters
 
 
-def _request_nature_html(record, chain: list[dict], stage_index: int) -> str:
+def _stage_matches_current_superadmin(stage: dict | None, user: dict | None) -> bool:
+    """Чи адресована конкретна ланка поточному супер-адміну."""
+    if not stage or clean(stage.get("role")) != ROLE_SUPER_ADMIN:
+        return False
+    user_email = clean((user or {}).get("email")).lower()
+    user_name = (
+        clean((user or {}).get("full_name"))
+        or clean((user or {}).get("name"))
+    ).casefold()
+    stage_email = clean(stage.get("email")).lower()
+    stage_name = clean(stage.get("name")).casefold()
+    if stage_email:
+        return bool(user_email and stage_email == user_email)
+    if stage_name and user_name:
+        return stage_name in user_name or user_name in stage_name
+    return False
+
+
+def _request_mentions_current_superadmin(record) -> bool:
+    """Поточна або майбутня ланка маршруту належить цьому супер-адміну."""
+    chain = schemes.parse_chain(record.get("approval_chain"))
+    if not chain:
+        return False
+    stage_index = max(0, schemes.parse_stage(record.get("chain_stage")))
+    return any(
+        _stage_matches_current_superadmin(stage, current_user)
+        for stage in chain[stage_index:]
+    )
+
+
+def _closeout_route_chain(record) -> list[dict]:
+    """Маршрут pending-запиту ручного закриття для локального перегляду."""
+    stages = []
+    for prefix in ("assigned_superadmin", "senior_superadmin"):
+        email = clean(record.get(f"{prefix}_email"))
+        name = clean(record.get(f"{prefix}_name"))
+        if not email and not name:
+            continue
+        candidate = {
+            "role": ROLE_SUPER_ADMIN,
+            "label": "Супер-адмін",
+            "email": email,
+            "name": name,
+        }
+        if not any(
+            clean(item.get("email")).lower() == email.lower()
+            and clean(item.get("name")).casefold() == name.casefold()
+            for item in stages
+        ):
+            stages.append(candidate)
+    return stages
+
+
+def _pending_closeouts_for_current_superadmin(closeouts: pd.DataFrame) -> pd.DataFrame:
+    """Перетворює власні pending closeout-запити на локальні рядки черги."""
+    if closeouts is None or closeouts.empty:
+        return pd.DataFrame()
+    rows = []
+    for _, closeout in closeouts.iterrows():
+        if clean(closeout.get("approval_status")) != "Очікує підтвердження":
+            continue
+        closeout_data = closeout.to_dict()
+        resolved_route = resolve_manual_closeout_route({
+            "email": clean(closeout.get("admin_email")),
+            "full_name": clean(closeout.get("admin_id")),
+        })
+        route = {
+            key: clean(closeout_data.get(key)) or clean(resolved_route.get(key))
+            for key in (
+                "assigned_superadmin_email", "assigned_superadmin_name",
+                "senior_superadmin_email", "senior_superadmin_name", "routing_note",
+            )
+        }
+        if not _route_matches_current_superadmin(route, current_user):
+            continue
+        try:
+            closeout_id = int(float(closeout.get("id")))
+        except (TypeError, ValueError):
+            continue
+        chain = _closeout_route_chain(route)
+        record = {
+            "id": -closeout_id,
+            "_source_id": closeout_id,
+            "_record_source": "closeout",
+            "_display_id": f"РЗ-{closeout_id}",
+            "department": clean(closeout.get("department")),
+            "year": clean(closeout.get("period_year")),
+            "quarter": clean(closeout.get("period_quarter")),
+            "approval_status": schemes.STAGE_WAITING_STATUS[ROLE_SUPER_ADMIN],
+            "status": clean(closeout.get("fact_status")),
+            "strat_code": clean(closeout.get("strat_code")),
+            "responsible_person": (
+                clean(closeout.get("admin_id"))
+                or clean(closeout.get("admin_email"))
+            ),
+            "phone": "",
+            "email": clean(closeout.get("admin_email")),
+            "numeric_value": clean(closeout.get("fact_numeric_value")),
+            "value_text": clean(closeout.get("fact_value_text")),
+            "progress_text": (
+                clean(closeout.get("fact_progress_text"))
+                or clean(closeout.get("reason"))
+            ),
+            "risks": clean(closeout.get("evidence_note")),
+            "npa_link": clean(closeout.get("npa_links")),
+            "file_names": "",
+            "file_urls": "",
+            "admin_comment": clean(closeout.get("reason")),
+            "approval_chain": schemes.chain_to_json(chain),
+            "chain_stage": 0,
+            "scheme_label": "Ручне закриття → Супер-адмін",
+            "object_kind": "measure",
+            "object_name": clean(closeout.get("object_name")),
+            "indicator_name": clean(closeout.get("indicator_name")),
+            "final_locked": False,
+            "start_date": "",
+            "end_date": "",
+            "submitted_at": closeout.get("requested_at"),
+            "requested_at": closeout.get("requested_at"),
+            "reason": clean(closeout.get("reason")),
+            "evidence_note": clean(closeout.get("evidence_note")),
+            "fact_status": clean(closeout.get("fact_status")),
+            "fact_numeric_value": clean(closeout.get("fact_numeric_value")),
+            "fact_value_text": clean(closeout.get("fact_value_text")),
+            "fact_progress_text": clean(closeout.get("fact_progress_text")),
+            "period_year": clean(closeout.get("period_year")),
+            "period_quarter": clean(closeout.get("period_quarter")),
+            "assigned_superadmin_email": route["assigned_superadmin_email"],
+            "assigned_superadmin_name": route["assigned_superadmin_name"],
+            "senior_superadmin_email": route["senior_superadmin_email"],
+            "senior_superadmin_name": route["senior_superadmin_name"],
+            "routing_note": route["routing_note"],
+        }
+        rows.append(record)
+    return pd.DataFrame(rows)
+
+
+def _record_display_id(record) -> str:
+    return clean(record.get("_display_id")) or clean(record.get("id")) or "—"
+
+
+def _record_selection_key(record) -> str:
+    source = clean(record.get("_record_source")) or "monitoring"
+    raw_id = clean(record.get("_source_id")) or clean(record.get("id"))
+    return f"{source}:{raw_id}"
+
+
+def _request_nature_html(
+    record, chain: list[dict], stage_index: int, *, correction_mode: bool = False,
+) -> str:
     """Позначка природи заявки лише для супер-адміна."""
-    if not is_super_admin_user(current_user):
+    if not _is_superadmin_current:
         return ""
+    if correction_mode:
+        return (
+            '<div class="admin-request-nature manual"><b>Пряме коригування закритої заявки.</b> '
+            'Заявку вже повністю опрацьовано й остаточно закрито; супер-адмін '
+            'безпосередньо уточнює її підтверджені дані після отримання нової інформації.</div>'
+        )
+    if clean(record.get("_record_source")) == "closeout":
+        return (
+            '<div class="admin-request-nature manual"><b>Запит на ручне закриття.</b> '
+            'Адміністратор просить підтвердити офіційне закриття заходу без звичайної '
+            'заявки ССП. Потрібно підтвердити або відхилити цей запит.</div>'
+        )
     scheme_label = clean(record.get("scheme_label")).casefold()
     admin_comment = clean(record.get("admin_comment")).casefold()
     if "ручне закриття" in scheme_label or "закрито вручну" in admin_comment:
         return (
             '<div class="admin-request-nature manual"><b>Ручне закриття.</b> '
-            'Ці відомості створені після підтвердження запиту адміністратора. '
-            'Перевірте підставу, фактичне значення та зафіксований результат.</div>'
+            'Ці підтверджені відомості сформовано внаслідок остаточного ручного '
+            'закриття заходу.</div>'
         )
     current_stage = schemes.current_stage(chain, stage_index) if chain else None
     previous_roles = {clean(stage.get("role")) for stage in (chain or [])[:stage_index]}
     if (
         current_stage
-        and clean(current_stage.get("role")) == ROLE_SUPER_ADMIN
+        and _stage_matches_current_superadmin(current_stage, current_user)
         and schemes.ROLE_ADMIN in previous_roles
     ):
         return (
@@ -1639,7 +1828,9 @@ def _request_nature_html(record, chain: list[dict], stage_index: int) -> str:
     return ""
 
 
-def _render_request_detail_cards(record) -> dict:
+def _render_request_detail_cards(
+    record, *, show_approval_route: bool = True, correction_mode: bool = False,
+) -> dict:
     """Спільний вигляд картки й поданих даних у звичайному та correction-режимі."""
     selected_code = clean(record.get("strat_code"))
     approval_status = clean(record.get("approval_status"))
@@ -1654,13 +1845,12 @@ def _render_request_detail_cards(record) -> dict:
         "task": "Завдання №",
         "goal": "Стратегічна ціль №",
     }.get(object_type, "Об’єкт №")
-    object_name = clean(strat_record.get("name")) or "—"
+    object_name = clean(strat_record.get("name")) or clean(record.get("object_name")) or "—"
     product_type = clean(strat_record.get("product_type")) or "—"
-    indicator = clean(strat_record.get("indicator")) or "—"
+    indicator = clean(strat_record.get("indicator")) or clean(record.get("indicator_name")) or "—"
     unit = clean(strat_record.get("unit")) or "—"
     resp_main = clean(strat_record.get("resp_main")) or "—"
     resp_co_1 = clean(strat_record.get("resp_co_1")) or "—"
-    resp_co_2 = clean(strat_record.get("resp_co_2")) or "—"
     start_quarter = _planned_quarter_label(strat_record.get("start_date_plan"))
     end_quarter = _planned_quarter_label(strat_record.get("end_date_plan"))
     term_label = "—" if start_quarter == "—" and end_quarter == "—" else f"{start_quarter} — {end_quarter}"
@@ -1707,7 +1897,9 @@ def _render_request_detail_cards(record) -> dict:
         )
     route_html = '<span class="admin-route-arrow">→</span>'.join(route_nodes)
     route_caption = _esc(req_scheme_label) if req_scheme_label else "Маршрут погодження"
-    nature_html = _request_nature_html(record, req_chain, req_stage)
+    nature_html = _request_nature_html(
+        record, req_chain, req_stage, correction_mode=correction_mode,
+    )
 
     reference_card_html = (
         '<div class="card">'
@@ -1715,7 +1907,7 @@ def _render_request_detail_cards(record) -> dict:
         f'{nature_html}'
         '<div class="badge-wrap">'
         f'<div class="badge">{_esc(object_number_label)} {_esc(selected_code)}</div>'
-        f'<div class="badge">ID {_esc(clean(record.get("id")))}</div>'
+        f'<div class="badge">ID {_esc(_record_display_id(record))}</div>'
         '</div>'
         f'<div class="admin-object-name">{_esc(object_name)}</div>'
         '<div class="admin-reference-grid">'
@@ -1727,14 +1919,17 @@ def _render_request_detail_cards(record) -> dict:
         '<div class="admin-reference-label">Індикатор</div>'
         f'<div class="admin-reference-value">{_esc(indicator)}</div>'
         '</div>'
-        '<div class="admin-reference-row">'
+        '<div class="admin-reference-row third">'
         '<div class="admin-reference-label">Одиниця виміру</div>'
         f'<div class="admin-reference-value">{_esc(unit)}</div>'
         '</div>'
-        '<div class="admin-reference-row wide">'
-        '<div class="admin-reference-label">Відповідальний ССП</div>'
-        f'<div class="admin-reference-value">{_esc(resp_main)} &nbsp;·&nbsp; '
-        f'Спів. 1: {_esc(resp_co_1)} &nbsp;·&nbsp; Спів. 2: {_esc(resp_co_2)}</div>'
+        '<div class="admin-reference-row third">'
+        '<div class="admin-reference-label">Головний виконавець</div>'
+        f'<div class="admin-reference-value">{_esc(resp_main)}</div>'
+        '</div>'
+        '<div class="admin-reference-row third">'
+        '<div class="admin-reference-label">Співвиконавець</div>'
+        f'<div class="admin-reference-value">{_esc(resp_co_1)}</div>'
         '</div>'
         '<div class="admin-reference-row wide">'
         '<div class="admin-reference-label">Термін</div>'
@@ -1746,6 +1941,14 @@ def _render_request_detail_cards(record) -> dict:
     st.html(reference_card_html)
 
     target_heading = f"Цільовий орієнтир на {year_val} рік" if year_val else "Цільовий орієнтир"
+    route_field_html = (
+        '<div class="admin-data-field wide admin-special-field">'
+        '<div class="admin-data-label">Схема погодження</div>'
+        f'<div class="admin-route-caption">{route_caption}</div>'
+        f'<div class="admin-route-row">{route_html}</div>'
+        '</div>'
+        if show_approval_route else ""
+    )
     submission_card_html = (
         '<div class="admin-submission-panel">'
         '<div class="card-title">Подані відомості</div>'
@@ -1778,11 +1981,7 @@ def _render_request_detail_cards(record) -> dict:
         '<div class="admin-data-label">Посилання на НПА</div>'
         f'<div class="admin-data-value">{npa_links_html}</div>'
         '</div>'
-        '<div class="admin-data-field wide admin-special-field">'
-        '<div class="admin-data-label">Схема погодження</div>'
-        f'<div class="admin-route-caption">{route_caption}</div>'
-        f'<div class="admin-route-row">{route_html}</div>'
-        '</div>'
+        f'{route_field_html}'
         '<div class="admin-data-field wide admin-special-field">'
         '<div class="admin-data-label">Дані відповідальної особи</div>'
         '<div class="admin-contact-row">'
@@ -1836,7 +2035,7 @@ def _request_table_values(record, coordinator: str | None = None) -> list:
     name, target = _matrix_values_for_request(record)
     person, phone = _initial_submitter_for_request(record)
     values = [
-        record.get("id"), record.get("department"), record.get("strat_code"), name,
+        _record_display_id(record), record.get("department"), record.get("strat_code"), name,
         _period_label(record.get("year"), record.get("quarter")),
         record.get("start_date"), record.get("end_date"), target,
         _fact_for_request(record), record.get("progress_text"), record.get("risks"),
@@ -1890,8 +2089,154 @@ def _assigned_admin_requests(frame: pd.DataFrame) -> list[tuple[pd.Series, str]]
     return matched
 
 
+
+def _load_closeout_case_logs(closeout_id: int) -> pd.DataFrame:
+    try:
+        rows = fetch_all(
+            "monitoring_logs",
+            "*",
+            filters=[
+                ("eq", "related_table", "closeout_requests"),
+                ("eq", "related_key", str(int(closeout_id))),
+            ],
+            order=("changed_at", True),
+        )
+        return pd.DataFrame(rows)
+    except Exception as exc:
+        log_cosmetic_error("Завантаження журналу запиту ручного закриття", exc)
+        return pd.DataFrame()
+
+
+def _render_closeout_superadmin_case(record) -> None:
+    """Рішення супер-адміна для pending-запиту ручного закриття у спільній черзі."""
+    closeout_id = int(float(clean(record.get("_source_id")) or abs(float(record.get("id")))))
+    st.markdown(
+        '<div class="card decision-card">'
+        '<div class="card-title">Рішення супер-адміна щодо ручного закриття</div>'
+        '<div class="decision-guidance">'
+        '<p>Підтвердження створить офіційні відомості моніторингу за зазначений період.</p>'
+        '<p>Відхилення залишить захід без ручного закриття; коментар буде збережено в журналі.</p>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    decision_comment = st.text_input(
+        "Коментар рішення (опційно)",
+        key=f"main_closeout_comment_{closeout_id}",
+    )
+    approve_col, reject_col = st.columns(2)
+    with approve_col:
+        approve_clicked = st.button(
+            "Підтвердити",
+            key=f"main_closeout_approve_{closeout_id}",
+            use_container_width=True,
+        )
+    with reject_col:
+        reject_clicked = st.button(
+            "Відхилити",
+            key=f"main_closeout_reject_{closeout_id}",
+            use_container_width=True,
+        )
+
+    if approve_clicked or reject_clicked:
+        new_status = "Підтверджено" if approve_clicked else "Відхилено"
+        try:
+            code = clean(record.get("strat_code"))
+            matrix_row = _matrix_row_for_code(code)
+            head_user = None
+            if new_status == "Підтверджено":
+                try:
+                    department = (
+                        clean(matrix_row.get("resp_main"))
+                        or clean(matrix_row.get("department"))
+                    )
+                    indexes = re.findall(r"\d+", department)
+                    department_index = indexes[0] if indexes else ""
+                    from config.users import get_users_by_role
+                    heads = [
+                        user for user in get_users_by_role("ssp_head").values()
+                        if str(user.get("ssp_index")) == department_index
+                    ]
+                    head_user = heads[0] if heads else None
+                except Exception as lookup_exc:
+                    show_warning(
+                        "Рішення буде збережено, але не вдалося визначити керівника ССП для листа.",
+                        lookup_exc,
+                        "Визначення керівника ССП для ручного закриття",
+                    )
+
+            decision_result = decide_closeout(
+                closeout_id=closeout_id,
+                expected_status="Очікує підтвердження",
+                new_status=new_status,
+                decision_comment=clean(decision_comment),
+                head_email=clean((head_user or {}).get("email", "")),
+                user=current_user,
+            )
+            carried_quarters = []
+            if new_status == "Підтверджено":
+                confirmed_record = record.to_dict() if hasattr(record, "to_dict") else dict(record)
+                confirmed_record["id"] = closeout_id
+                confirmed_record["approval_status"] = "Підтверджено"
+                confirmed_record["period_year"] = record.get("year")
+                confirmed_record["period_quarter"] = record.get("quarter")
+                carried_quarters = _reconcile_confirmed_closeout(
+                    closeout_id,
+                    confirmed_record,
+                    matrix_row,
+                    transition_result=decision_result,
+                )
+
+            if new_status == "Підтверджено" and head_user:
+                try:
+                    notify_events.notify_closeout_to_head(
+                        head_user.get("email", ""),
+                        head_user.get("full_name", ""),
+                        code,
+                        clean(record.get("year")),
+                        clean(record.get("quarter")),
+                        clean(record.get("reason")),
+                        clean(decision_comment),
+                    )
+                except Exception as notify_exc:
+                    show_warning(
+                        "Закриття підтверджено, але керівнику ССП не відправлено миттєвий лист.",
+                        notify_exc,
+                        "Email керівнику ССП після ручного закриття",
+                    )
+
+            notice = f"Запит на ручне закриття {new_status.lower()}."
+            if carried_quarters:
+                notice += " " + _carry_quarters_text(carried_quarters, record.get("year"))
+            st.session_state["superadmin_closeout_decision_notice"] = notice
+            load_closeout_requests.clear()
+            load_manual_closeouts.clear()
+            monitoring_data.invalidate_monitoring_cache()
+            st.rerun()
+        except TransitionRejected as exc:
+            st.error(exc.message)
+        except Exception as exc:
+            show_incident(exc, context="Атомарне рішення щодо ручного закриття")
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    logs = _load_closeout_case_logs(closeout_id)
+    if not logs.empty:
+        render_request_timeline(
+            logs,
+            title="Історія запиту ручного закриття",
+            with_table_expander=False,
+        )
+        history_table = prepare_human_log_table(logs)
+        with st.expander("Повна історія запиту (табличний вигляд)"):
+            _render_html_table(
+                list(history_table.columns),
+                [list(row) for row in history_table.itertuples(index=False, name=None)],
+                empty_message="Історії цього запиту поки що немає.",
+            )
+
+
 def _render_superadmin_bottom_tools():
-    """Розсилка й архів доступні супер-адміну на всіх шляхах рендеру."""
+    """Розсилка й архів у нижній частині основного режиму супер-адміна."""
     if not is_super_admin_user(current_user):
         return
 
@@ -2471,17 +2816,16 @@ st.markdown(
 df = load_requests()
 strat_df = load_strat_matrix()
 
-# ТЗ-правка (09.07.2026, п.3): відсутність заявок НЕ вимикає сторінку —
-# режим «Ручне закриття заходів» працює із заходами стратегічної матриці
-# і має бути доступним навіть за порожнього реєстру заявок.
-_no_requests_at_all = df.empty
+# Відсутність заявок не вимикає сторінку: адміністратор може перейти
+# до ручного закриття, а супер-адмін — до коригування закритих заявок.
 
 required_cols = [
     "id", "department", "year", "quarter", "approval_status", "status",
     "strat_code", "responsible_person", "phone", "email",
     "numeric_value", "value_text", "progress_text", "risks", "npa_link",
     "file_names", "file_urls", "admin_comment", "approval_chain", "chain_stage",
-    "object_kind", "final_locked", "start_date", "end_date", "submitted_at"
+    "scheme_label", "object_kind", "object_name", "indicator_name",
+    "final_locked", "start_date", "end_date", "submitted_at"
 ]
 for col in required_cols:
     if col not in df.columns:
@@ -2493,16 +2837,56 @@ df = filter_requests_for_user(
     ssp_columns=["department"]
 )
 
+# filter_requests_for_user навмисно лишається спільною й незмінною.
+# Повний доступний набір зберігаємо для correction-режиму та службового
+# блоку закріплених адміністраторів; основний режим супер-адміна звужуємо локально.
+_all_access_df = df.copy()
+for _internal_column, _internal_default in (
+    ("_record_source", "monitoring"),
+    ("_source_id", ""),
+    ("_display_id", ""),
+):
+    if _internal_column not in _all_access_df.columns:
+        _all_access_df[_internal_column] = _internal_default
+_all_access_df["_record_source"] = "monitoring"
+_all_access_df["_source_id"] = _all_access_df.get("id", "")
+_all_access_df["_display_id"] = _all_access_df.get("id", "")
+
+if _is_superadmin_current:
+    if _all_access_df.empty:
+        _normal_superadmin_df = _all_access_df.copy()
+    else:
+        _normal_superadmin_df = _all_access_df[
+            _all_access_df.apply(_request_mentions_current_superadmin, axis=1)
+        ].copy()
+    _pending_closeout_df = _pending_closeouts_for_current_superadmin(
+        load_closeout_requests()
+    )
+    _superadmin_frames = [
+        frame for frame in (_normal_superadmin_df, _pending_closeout_df)
+        if frame is not None and not frame.empty
+    ]
+    df = (
+        pd.concat(_superadmin_frames, ignore_index=True, sort=False)
+        if _superadmin_frames else _all_access_df.iloc[0:0].copy()
+    )
+else:
+    df = _all_access_df.copy()
+
 _strat_row_lookup = _build_strat_row_lookup(strat_df)
+_lookup_source_df = _all_access_df if _is_superadmin_current else df
 _request_id_series = pd.to_numeric(
-    df.get("id", pd.Series(dtype=object)),
+    _lookup_source_df.get("id", pd.Series(dtype=object)),
     errors="coerce",
 ).dropna()
-_request_ids = tuple(sorted(set(_request_id_series.astype(int).tolist())))
+_request_ids = tuple(sorted({
+    request_id for request_id in _request_id_series.astype(int).tolist()
+    if request_id > 0
+}))
 _initial_submitter_lookup = load_initial_submitters(_request_ids)
 
 
-def _render_locked_correction_mode():
+def _render_locked_correction_mode(source_df: pd.DataFrame):
     """Окремий третій режим, доступний лише супер-адміну."""
     st.markdown(
         '<div class="card"><div class="card-title">🛠 Коригування остаточно закритої заявки</div>'
@@ -2511,22 +2895,18 @@ def _render_locked_correction_mode():
         unsafe_allow_html=True,
     )
 
-    correction_notice = st.session_state.pop("sa_locked_correction_notice", None)
-    if correction_notice:
-        st.success(correction_notice)
-
     def _is_true_flag(value) -> bool:
         if isinstance(value, bool):
             return value
         return clean(value).lower() in {"true", "1", "yes", "так"}
 
-    if "final_locked" in df.columns:
-        locked_df = df[
-            df["final_locked"].map(_is_true_flag)
-            & df["approval_status"].astype(str).str.strip().eq("Погоджено")
+    if "final_locked" in source_df.columns:
+        locked_df = source_df[
+            source_df["final_locked"].map(_is_true_flag)
+            & source_df["approval_status"].astype(str).str.strip().eq("Погоджено")
         ].copy()
     else:
-        locked_df = df.iloc[0:0].copy()
+        locked_df = source_df.iloc[0:0].copy()
 
     with st.container(border=True):
         st.markdown('<div class="filter-title">Вибір закритої заявки</div>', unsafe_allow_html=True)
@@ -2577,7 +2957,11 @@ def _render_locked_correction_mode():
         return
 
     locked_row = locked_df[locked_df["id"].astype(int).eq(int(locked_request_id))].iloc[0]
-    detail = _render_request_detail_cards(locked_row)
+    detail = _render_request_detail_cards(
+        locked_row,
+        show_approval_route=False,
+        correction_mode=True,
+    )
     locked_code = detail["selected_code"]
     locked_strat = detail["strat_record"]
     locked_year = _year_number(locked_row.get("year"))
@@ -2699,6 +3083,16 @@ def _render_locked_correction_mode():
                 except Exception as exc:
                     show_incident(exc, context="Атомарне коригування закритої заявки")
 
+    correction_notice = st.session_state.get("sa_locked_correction_notice")
+    if correction_notice:
+        st.success(correction_notice)
+        if st.button(
+            "Зрозуміло, приховати це повідомлення",
+            key=f"dismiss_sa_locked_correction_notice_{int(locked_request_id)}",
+        ):
+            st.session_state.pop("sa_locked_correction_notice", None)
+            st.rerun()
+
 
 # ТЗ-правка (09.07.2026, п.3): панель «Сповіщення погодження» прибрано з адмінки.
 
@@ -2706,9 +3100,16 @@ def _render_locked_correction_mode():
 # РЕЖИМ РОБОТИ АДМІНІСТРУВАННЯ
 # ──────────────────────────────────────────────
 
-_admin_work_modes = ["Основний режим координатора", "Ручне закриття заходів"]
-if is_super_admin_user(current_user):
-    _admin_work_modes.append("Коригування закритих заявок")
+if _is_superadmin_current:
+    _admin_work_modes = [
+        "Основний режим координатора",
+        "Коригування закритих заявок",
+    ]
+else:
+    _admin_work_modes = [
+        "Основний режим координатора",
+        "Ручне закриття заходів",
+    ]
 if st.session_state.get("admin_work_mode") not in _admin_work_modes:
     st.session_state["admin_work_mode"] = _admin_work_modes[0]
 
@@ -2724,9 +3125,24 @@ admin_work_mode = st.radio(
     label_visibility="collapsed",
 )
 
-if is_super_admin_user(current_user):
-    with st.expander("Заявки закріплених адміністраторів", expanded=False):
-        _assigned_rows = _assigned_admin_requests(df)
+if (
+    admin_work_mode == "Основний режим координатора"
+    and st.session_state.get("superadmin_closeout_decision_notice")
+):
+    st.success(st.session_state["superadmin_closeout_decision_notice"])
+    if st.button(
+        "Зрозуміло, приховати це повідомлення",
+        key="dismiss_superadmin_closeout_decision_notice",
+    ):
+        st.session_state.pop("superadmin_closeout_decision_notice", None)
+        st.rerun()
+
+if _is_superadmin_current and admin_work_mode == "Основний режим координатора":
+    with st.expander(
+        "Заявки закріплених адміністраторів (ті, що на розгляді)",
+        expanded=False,
+    ):
+        _assigned_rows = _assigned_admin_requests(_all_access_df)
         if not _assigned_rows:
             st.info("Заявок на поточній ланці закріплених адміністраторів немає.")
         else:
@@ -2737,20 +3153,22 @@ if is_super_admin_user(current_user):
                 clean(row.get("id")): coordinator for row, coordinator in _assigned_rows
             }
             _assigned_frame = _sort_by_ssp(_assigned_frame)
-            _assigned_table_rows = [
-                _request_table_values(
+            _assigned_table_rows = []
+            for _, row in _assigned_frame.iterrows():
+                row_values = _request_table_values(
                     row,
                     coordinator=_coordinator_by_id.get(clean(row.get("id")), "—"),
                 )
-                for _, row in _assigned_frame.iterrows()
-            ]
+                review_days = _review_days(row.get("submitted_at"))
+                row_values.insert(1, review_days if review_days is not None else "—")
+                _assigned_table_rows.append(row_values)
             _assigned_headers = _REQUEST_TABLE_HEADERS.copy()
             _assigned_headers.insert(12, "Координатор")
+            _assigned_headers.insert(1, "На розгляді (днів)")
             _render_html_table(_assigned_headers, _assigned_table_rows)
 
 if admin_work_mode == "Коригування закритих заявок":
-    _render_locked_correction_mode()
-    _render_superadmin_bottom_tools()
+    _render_locked_correction_mode(_all_access_df)
     render_footer()
     st.stop()
 
@@ -2789,7 +3207,7 @@ if admin_work_mode == "Ручне закриття заходів":
 
     closeout_df = load_closeout_requests()
 
-    if is_admin_user(current_user) or is_super_admin_user(current_user):
+    if is_admin_user(current_user):
         st.caption(
             "Подати запит на ручне закриття заходу за конкретний квартал. "
             "Після підтвердження супер-адміном дані стають офіційними відомостями моніторингу."
@@ -3243,319 +3661,329 @@ if admin_work_mode == "Ручне закриття заходів":
     render_footer()
     st.stop()
 
-if _no_requests_at_all or df.empty:
-    st.warning(
-        "Поки що немає заявок, доступних за вашими закріпленими ССП. "
-        "Режим «Ручне закриття заходів» доступний через перемикач вище."
-    )
+if df.empty:
+    if _is_superadmin_current:
+        st.warning("Наразі немає заявок, що стосуються вашої ланки або очікують вашого рішення.")
+    else:
+        st.warning(
+            "Поки що немає заявок, доступних за вашими закріпленими ССП. "
+            "Режим «Ручне закриття заходів» доступний через перемикач вище."
+        )
     _render_superadmin_bottom_tools()
     render_footer()
     st.stop()
 
 
-attention = build_attention_summary(df)
-
-# ──────────────────────────────────────────────
-# СИСТЕМНИЙ АНАЛІЗ
-# ──────────────────────────────────────────────
-
-def _att(title, value, note, css):
-    return (
-        f'<div class="attention-card {css}">'
-        f'<div class="attention-title">{title}</div>'
-        f'<div class="attention-value">{value}</div>'
-        f'<div class="attention-note">{note}</div>'
-        f'</div>'
-    )
-
-_lw  = len(attention["long_waiting"])
-_wt  = len(attention["waiting"])
-_ret = len(attention["returned"])
-_appr= len(attention["approved"])
-
-st.markdown(
-    '<div class="attention-grid">'
-    + _att("Погоджено",                _appr, "Пройшли всю схему погодження",          "att-green")
-    + _att("На розгляді",              _wt,   "У процесі погодження (до 5 днів)",      "att-yellow" if _wt   else "att-green")
-    + _att("На розгляді понад 5 днів", _lw,   "За легендою вважаються «Не враховано»", "att-red"    if _lw   else "att-green")
-    + _att("На доопрацюванні",         _ret,  "Повернуті для виправлення",             "att-blue"   if _ret  else "att-green")
-    + '</div>',
-    unsafe_allow_html=True
-)
-
-# Expander — таблиці з вкладками
-
-def sort_and_show(frame):
-    frame = _sort_by_ssp(frame)
-    if frame.empty:
-        st.info("Записів немає.")
-        return
-    table_rows = [
-        _request_table_values(row)
-        for _, row in frame.iterrows()
-    ]
-    _render_html_table(_REQUEST_TABLE_HEADERS, table_rows)
-
-
-with st.expander("Перегляд записів"):
-    t1, t2, t3, t4 = st.tabs([
-        "Погоджено",
-        "На розгляді",
-        "На розгляді понад 5 днів",
-        "На доопрацюванні",
-    ])
-    with t1:
-        sort_and_show(attention["approved"])
-    with t2:
-        sort_and_show(attention["waiting"])
-    with t3:
-        sort_and_show(attention["long_waiting"])
-    with t4:
-        sort_and_show(attention["returned"])
-
-# ──────────────────────────────────────────────
-# ІНФОГРАФІКА
-# ──────────────────────────────────────────────
-
-# ТЗ-правка (09.07.2026, п.3): категорії інфографіки взаємовиключні —
-# кожна заявка облікована рівно один раз.
-status_counts = {
-    "Погоджено":                len(attention["approved"]),
-    "На розгляді":              len(attention["waiting"]),
-    "На розгляді понад 5 днів": len(attention["long_waiting"]),
-    "На доопрацюванні":         len(attention["returned"]),
-}
-
-chart_df = pd.DataFrame({
-    "Статус":    list(status_counts.keys()),
-    "Кількість": list(status_counts.values())
-})
-chart_df = chart_df[chart_df["Кількість"] > 0]
-
-if not chart_df.empty:
-    color_map = {
-        "На розгляді понад 5 днів": "#DC4A4A",
-        "На розгляді":              "#FF7A45",
-        "Не враховано":             "#FF7A45",
-        "На доопрацюванні":         "#4D8DFF",
-        "Погоджено":                "#1E9E57",
-    }
-    fig = px.pie(
-        chart_df, names="Статус", values="Кількість", hole=0.48,
-        title="Розподіл заявок за статусом виконання",
-        color="Статус", color_discrete_map=color_map
-    )
-    fig.update_layout(
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        font_color="#61708A",
-        title_font_color="#132238",
-        legend=dict(font=dict(color="#61708A"), bgcolor="rgba(0,0,0,0)")
-    )
-    st.plotly_chart(fig, use_container_width=True)
+if _is_superadmin_current:
+    # Для супер-адміна діє вже локально звужений набір без оглядових фільтрів.
+    filtered = df.copy()
 else:
-    st.info("Даних для відображення немає.")
+    attention = build_attention_summary(df)
 
-# ──────────────────────────────────────────────
-# ПАРАМЕТРИ ВІДБОРУ
-# ──────────────────────────────────────────────
+    # ──────────────────────────────────────────────
+    # СИСТЕМНИЙ АНАЛІЗ
+    # ──────────────────────────────────────────────
 
-all_ssp_raw = sorted(
-    {idx for _, row in df.iterrows() for idx in split_ssp_values(row.get("department", ""))},
-    key=lambda x: int(x) if str(x).isdigit() else 9999,
-)
+    def _att(title, value, note, css):
+        return (
+            f'<div class="attention-card {css}">'
+            f'<div class="attention-title">{title}</div>'
+            f'<div class="attention-value">{value}</div>'
+            f'<div class="attention-note">{note}</div>'
+            f'</div>'
+        )
 
-if user_has_all_ssp_access(current_user):
-    available_ssp_raw = all_ssp_raw
-else:
-    allowed_ssp_indexes = get_user_allowed_ssp_indexes(current_user)
-    available_ssp_raw = [
-        index for index in all_ssp_raw if index in allowed_ssp_indexes
-    ]
+    _lw  = len(attention["long_waiting"])
+    _wt  = len(attention["waiting"])
+    _ret = len(attention["returned"])
+    _appr= len(attention["approved"])
 
-years = sorted(df["year"].dropna().astype(str).unique().tolist())
-quarters = sorted(df["quarter"].dropna().astype(str).unique().tolist())
-approval_options = [
-    "Активні до розгляду", "Усі", "Очікує погодження",
-    "Очікує: Керівник управління", "Очікує: Заступник керівника ССП",
-    "Повернуто на доопрацювання", "Очікує: Керівник ССП", "Погоджено",
-]
-quick_filter_options = [
-    "Усі заявки", "Тільки очікують", "Повернуті", "Із ризиками",
-    "Останні подані", "На розгляді понад 5 днів",
-]
-
-# ТЗ Заг.1: фільтри спрацьовують ТІЛЬКИ після кнопки застосування.
-_adm_flt_defaults = {
-    "ssp": "Усі", "year": "Усі", "quarter": "Усі",
-    "approval": "Активні до розгляду", "quick": "Усі заявки", "search": "",
-}
-if "admin_filters_applied_v19" not in st.session_state:
-    st.session_state["admin_filters_applied_v19"] = _adm_flt_defaults.copy()
-
-_adm_pending_keys = {
-    "ssp": "admin_filter_ssp_pending_v19",
-    "year": "admin_filter_year_pending_v19",
-    "quarter": "admin_filter_quarter_pending_v19",
-    "approval": "admin_filter_approval_pending_v19",
-    "quick": "admin_filter_quick_pending_v19",
-    "search": "admin_filter_search_pending_v19",
-}
-for _filter_name, _filter_key in _adm_pending_keys.items():
-    st.session_state.setdefault(
-        _filter_key,
-        st.session_state["admin_filters_applied_v19"].get(
-            _filter_name, _adm_flt_defaults[_filter_name]
-        ),
+    st.markdown(
+        '<div class="attention-grid">'
+        + _att("Погоджено",                _appr, "Пройшли всю схему погодження",          "att-green")
+        + _att("На розгляді",              _wt,   "У процесі погодження (до 5 днів)",      "att-yellow" if _wt   else "att-green")
+        + _att("На розгляді понад 5 днів", _lw,   "За легендою вважаються «Не враховано»", "att-red"    if _lw   else "att-green")
+        + _att("На доопрацюванні",         _ret,  "Повернуті для виправлення",             "att-blue"   if _ret  else "att-green")
+        + '</div>',
+        unsafe_allow_html=True
     )
 
-_valid_options = {
-    "ssp": ["Усі"] + available_ssp_raw,
-    "year": ["Усі"] + years,
-    "quarter": ["Усі"] + quarters,
-    "approval": approval_options,
-    "quick": quick_filter_options,
-}
-for _filter_name, _options in _valid_options.items():
-    _filter_key = _adm_pending_keys[_filter_name]
-    if st.session_state.get(_filter_key) not in _options:
-        st.session_state[_filter_key] = _adm_flt_defaults[_filter_name]
+    # Expander — таблиці з вкладками
+
+    def sort_and_show(frame):
+        frame = _sort_by_ssp(frame)
+        if frame.empty:
+            st.info("Записів немає.")
+            return
+        table_rows = [
+            _request_table_values(row)
+            for _, row in frame.iterrows()
+        ]
+        _render_html_table(_REQUEST_TABLE_HEADERS, table_rows)
 
 
-def _apply_admin_filters_v19():
-    st.session_state["admin_filters_applied_v19"] = {
-        name: st.session_state.get(key, _adm_flt_defaults[name])
-        for name, key in _adm_pending_keys.items()
+    with st.expander("Перегляд записів"):
+        t1, t2, t3, t4 = st.tabs([
+            "Погоджено",
+            "На розгляді",
+            "На розгляді понад 5 днів",
+            "На доопрацюванні",
+        ])
+        with t1:
+            sort_and_show(attention["approved"])
+        with t2:
+            sort_and_show(attention["waiting"])
+        with t3:
+            sort_and_show(attention["long_waiting"])
+        with t4:
+            sort_and_show(attention["returned"])
+
+    # ──────────────────────────────────────────────
+    # ІНФОГРАФІКА
+    # ──────────────────────────────────────────────
+
+    # ТЗ-правка (09.07.2026, п.3): категорії інфографіки взаємовиключні —
+    # кожна заявка облікована рівно один раз.
+    status_counts = {
+        "Погоджено":                len(attention["approved"]),
+        "На розгляді":              len(attention["waiting"]),
+        "На розгляді понад 5 днів": len(attention["long_waiting"]),
+        "На доопрацюванні":         len(attention["returned"]),
     }
 
+    chart_df = pd.DataFrame({
+        "Статус":    list(status_counts.keys()),
+        "Кількість": list(status_counts.values())
+    })
+    chart_df = chart_df[chart_df["Кількість"] > 0]
 
-def _reset_admin_filters_v19():
-    st.session_state["admin_filters_applied_v19"] = _adm_flt_defaults.copy()
-    for name, key in _adm_pending_keys.items():
-        st.session_state[key] = _adm_flt_defaults[name]
-
-
-with st.form("admin_filters_form_v19"):
-    st.markdown('<div class="filter-title">Параметри відбору</div>', unsafe_allow_html=True)
-    f1, f2, f3, f4 = st.columns(4)
-    with f1:
-        st.markdown('<div class="filter-field-label">ССП</div>', unsafe_allow_html=True)
-        st.selectbox(
-            "Самостійний структурний підрозділ",
-            ["Усі"] + available_ssp_raw,
-            key=_adm_pending_keys["ssp"],
-            label_visibility="collapsed",
+    if not chart_df.empty:
+        color_map = {
+            "На розгляді понад 5 днів": "#DC4A4A",
+            "На розгляді":              "#FF7A45",
+            "Не враховано":             "#FF7A45",
+            "На доопрацюванні":         "#4D8DFF",
+            "Погоджено":                "#1E9E57",
+        }
+        fig = px.pie(
+            chart_df, names="Статус", values="Кількість", hole=0.48,
+            title="Розподіл заявок за статусом виконання",
+            color="Статус", color_discrete_map=color_map
         )
-    with f2:
-        st.markdown('<div class="filter-field-label">Рік</div>', unsafe_allow_html=True)
-        st.selectbox(
-            "Рік", ["Усі"] + years,
-            key=_adm_pending_keys["year"], label_visibility="collapsed",
+        fig.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            font_color="#61708A",
+            title_font_color="#132238",
+            legend=dict(font=dict(color="#61708A"), bgcolor="rgba(0,0,0,0)")
         )
-    with f3:
-        st.markdown('<div class="filter-field-label">Квартал</div>', unsafe_allow_html=True)
-        st.selectbox(
-            "Квартал", ["Усі"] + quarters,
-            key=_adm_pending_keys["quarter"], label_visibility="collapsed",
-        )
-    with f4:
-        st.markdown('<div class="filter-field-label">Статус погодження</div>', unsafe_allow_html=True)
-        st.selectbox(
-            "Статус погодження", approval_options,
-            key=_adm_pending_keys["approval"], label_visibility="collapsed",
-        )
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Даних для відображення немає.")
 
-    q1, q2 = st.columns([1, 2])
-    with q1:
-        st.markdown('<div class="filter-field-label">Швидкий фільтр</div>', unsafe_allow_html=True)
-        st.selectbox(
-            "Швидкий фільтр", quick_filter_options,
-            key=_adm_pending_keys["quick"], label_visibility="collapsed",
-        )
-    with q2:
-        st.markdown(
-            '<div class="filter-field-label">Пошук за ID, назвою заходу, ПІБ або ССП</div>',
-            unsafe_allow_html=True,
-        )
-        st.text_input(
-            "Пошук за ID, назвою заходу, ПІБ або ССП",
-            key=_adm_pending_keys["search"],
-            label_visibility="collapsed",
-        )
+    # ──────────────────────────────────────────────
+    # ПАРАМЕТРИ ВІДБОРУ
+    # ──────────────────────────────────────────────
 
-    _bt1, _bt2 = st.columns([2, 1])
-    with _bt1:
-        st.form_submit_button(
-            "Застосувати обрані параметри",
-            use_container_width=True,
-            on_click=_apply_admin_filters_v19,
-        )
-    with _bt2:
-        st.form_submit_button(
-            "Скинути параметри",
-            use_container_width=True,
-            on_click=_reset_admin_filters_v19,
-        )
+    all_ssp_raw = sorted(
+        {idx for _, row in df.iterrows() for idx in split_ssp_values(row.get("department", ""))},
+        key=lambda x: int(x) if str(x).isdigit() else 9999,
+    )
 
-_adm_flt = st.session_state["admin_filters_applied_v19"]
-selected_ssp = _adm_flt["ssp"]
-selected_year = _adm_flt["year"]
-selected_quarter = _adm_flt["quarter"]
-selected_approval_status = _adm_flt["approval"]
-quick_filter = _adm_flt["quick"]
-search_query = _adm_flt["search"]
-st.caption(
-    f"Застосовано: ССП — {selected_ssp} · Рік — {selected_year} · "
-    f"Квартал — {selected_quarter} · Статус — {selected_approval_status} · "
-    f"Швидкий фільтр — {quick_filter}"
-    + (f" · Пошук — «{search_query}»" if search_query else "")
-)
+    if user_has_all_ssp_access(current_user):
+        available_ssp_raw = all_ssp_raw
+    else:
+        allowed_ssp_indexes = get_user_allowed_ssp_indexes(current_user)
+        available_ssp_raw = [
+            index for index in all_ssp_raw if index in allowed_ssp_indexes
+        ]
 
-# ── фільтрація ──
-filtered = df.copy()
-
-if selected_ssp != "Усі":
-    filtered = filtered[filtered["department"].astype(str).str.contains(selected_ssp, na=False)]
-if selected_year != "Усі":
-    filtered = filtered[filtered["year"].astype(str) == str(selected_year)]
-if selected_quarter != "Усі":
-    filtered = filtered[filtered["quarter"].astype(str) == str(selected_quarter)]
-
-if selected_approval_status == "Активні до розгляду":
-    filtered = filtered[filtered["approval_status"].astype(str).isin(
-        ["Очікує погодження", "Очікує: Керівник управління",
-         "Очікує: Заступник керівника ССП",
-         "Повернуто на доопрацювання", "Очікує: Керівник ССП"]
-    )]
-elif selected_approval_status != "Усі":
-    filtered = filtered[filtered["approval_status"].astype(str) == str(selected_approval_status)]
-
-if quick_filter == "Тільки очікують":
-    # Усі заявки, що чекають рішення БУДЬ-ЯКОЇ ланки схеми
-    filtered = filtered[filtered["approval_status"].isin(schemes.ALL_WAITING_STATUSES)]
-elif quick_filter == "Повернуті":
-    filtered = filtered[filtered["approval_status"] == "Повернуто на доопрацювання"]
-elif quick_filter == "Із ризиками":
-    filtered = filtered[filtered["risks"].fillna("").astype(str).str.strip() != ""]
-elif quick_filter == "Останні подані":
-    filtered = filtered.sort_values("submitted_at", ascending=False).head(10)
-elif quick_filter == "На розгляді понад 5 днів":
-    filtered = attention["long_waiting"].copy()
-
-if search_query.strip():
-    sq = search_query.strip().lower()
-    filtered = filtered[
-        filtered["id"].astype(str).str.lower().str.contains(sq, na=False)
-        | filtered["strat_code"].astype(str).str.lower().str.contains(sq, na=False)
-        | filtered["responsible_person"].astype(str).str.lower().str.contains(sq, na=False)
-        | filtered["department"].astype(str).str.lower().str.contains(sq, na=False)
-        | filtered["progress_text"].astype(str).str.lower().str.contains(sq, na=False)
+    years = sorted(df["year"].dropna().astype(str).unique().tolist())
+    quarters = sorted(df["quarter"].dropna().astype(str).unique().tolist())
+    approval_options = [
+        "Активні до розгляду", "Усі", "Очікує погодження",
+        "Очікує: Керівник управління", "Очікує: Заступник керівника ССП",
+        "Повернуто на доопрацювання", "Очікує: Керівник ССП", "Погоджено",
+    ]
+    quick_filter_options = [
+        "Усі заявки", "Тільки очікують", "Повернуті", "Із ризиками",
+        "Останні подані", "На розгляді понад 5 днів",
     ]
 
-st.caption(f"Знайдено заявок: {len(filtered)}")
+    # ТЗ Заг.1: фільтри спрацьовують ТІЛЬКИ після кнопки застосування.
+    _adm_flt_defaults = {
+        "ssp": "Усі", "year": "Усі", "quarter": "Усі",
+        "approval": "Активні до розгляду", "quick": "Усі заявки", "search": "",
+    }
+    if "admin_filters_applied_v19" not in st.session_state:
+        st.session_state["admin_filters_applied_v19"] = _adm_flt_defaults.copy()
+
+    _adm_pending_keys = {
+        "ssp": "admin_filter_ssp_pending_v19",
+        "year": "admin_filter_year_pending_v19",
+        "quarter": "admin_filter_quarter_pending_v19",
+        "approval": "admin_filter_approval_pending_v19",
+        "quick": "admin_filter_quick_pending_v19",
+        "search": "admin_filter_search_pending_v19",
+    }
+    for _filter_name, _filter_key in _adm_pending_keys.items():
+        st.session_state.setdefault(
+            _filter_key,
+            st.session_state["admin_filters_applied_v19"].get(
+                _filter_name, _adm_flt_defaults[_filter_name]
+            ),
+        )
+
+    _valid_options = {
+        "ssp": ["Усі"] + available_ssp_raw,
+        "year": ["Усі"] + years,
+        "quarter": ["Усі"] + quarters,
+        "approval": approval_options,
+        "quick": quick_filter_options,
+    }
+    for _filter_name, _options in _valid_options.items():
+        _filter_key = _adm_pending_keys[_filter_name]
+        if st.session_state.get(_filter_key) not in _options:
+            st.session_state[_filter_key] = _adm_flt_defaults[_filter_name]
+
+
+    def _apply_admin_filters_v19():
+        st.session_state["admin_filters_applied_v19"] = {
+            name: st.session_state.get(key, _adm_flt_defaults[name])
+            for name, key in _adm_pending_keys.items()
+        }
+
+
+    def _reset_admin_filters_v19():
+        st.session_state["admin_filters_applied_v19"] = _adm_flt_defaults.copy()
+        for name, key in _adm_pending_keys.items():
+            st.session_state[key] = _adm_flt_defaults[name]
+
+
+    with st.form("admin_filters_form_v19"):
+        st.markdown('<div class="filter-title">Параметри відбору</div>', unsafe_allow_html=True)
+        f1, f2, f3, f4 = st.columns(4)
+        with f1:
+            st.markdown('<div class="filter-field-label">ССП</div>', unsafe_allow_html=True)
+            st.selectbox(
+                "Самостійний структурний підрозділ",
+                ["Усі"] + available_ssp_raw,
+                key=_adm_pending_keys["ssp"],
+                label_visibility="collapsed",
+            )
+        with f2:
+            st.markdown('<div class="filter-field-label">Рік</div>', unsafe_allow_html=True)
+            st.selectbox(
+                "Рік", ["Усі"] + years,
+                key=_adm_pending_keys["year"], label_visibility="collapsed",
+            )
+        with f3:
+            st.markdown('<div class="filter-field-label">Квартал</div>', unsafe_allow_html=True)
+            st.selectbox(
+                "Квартал", ["Усі"] + quarters,
+                key=_adm_pending_keys["quarter"], label_visibility="collapsed",
+            )
+        with f4:
+            st.markdown('<div class="filter-field-label">Статус погодження</div>', unsafe_allow_html=True)
+            st.selectbox(
+                "Статус погодження", approval_options,
+                key=_adm_pending_keys["approval"], label_visibility="collapsed",
+            )
+
+        q1, q2 = st.columns([1, 2])
+        with q1:
+            st.markdown('<div class="filter-field-label">Швидкий фільтр</div>', unsafe_allow_html=True)
+            st.selectbox(
+                "Швидкий фільтр", quick_filter_options,
+                key=_adm_pending_keys["quick"], label_visibility="collapsed",
+            )
+        with q2:
+            st.markdown(
+                '<div class="filter-field-label">Пошук за ID, назвою заходу, ПІБ або ССП</div>',
+                unsafe_allow_html=True,
+            )
+            st.text_input(
+                "Пошук за ID, назвою заходу, ПІБ або ССП",
+                key=_adm_pending_keys["search"],
+                label_visibility="collapsed",
+            )
+
+        _bt1, _bt2 = st.columns([2, 1])
+        with _bt1:
+            st.form_submit_button(
+                "Застосувати обрані параметри",
+                use_container_width=True,
+                on_click=_apply_admin_filters_v19,
+            )
+        with _bt2:
+            st.form_submit_button(
+                "Скинути параметри",
+                use_container_width=True,
+                on_click=_reset_admin_filters_v19,
+            )
+
+    _adm_flt = st.session_state["admin_filters_applied_v19"]
+    selected_ssp = _adm_flt["ssp"]
+    selected_year = _adm_flt["year"]
+    selected_quarter = _adm_flt["quarter"]
+    selected_approval_status = _adm_flt["approval"]
+    quick_filter = _adm_flt["quick"]
+    search_query = _adm_flt["search"]
+    st.caption(
+        f"Застосовано: ССП — {selected_ssp} · Рік — {selected_year} · "
+        f"Квартал — {selected_quarter} · Статус — {selected_approval_status} · "
+        f"Швидкий фільтр — {quick_filter}"
+        + (f" · Пошук — «{search_query}»" if search_query else "")
+    )
+
+    # ── фільтрація ──
+    filtered = df.copy()
+
+    if selected_ssp != "Усі":
+        filtered = filtered[filtered["department"].astype(str).str.contains(selected_ssp, na=False)]
+    if selected_year != "Усі":
+        filtered = filtered[filtered["year"].astype(str) == str(selected_year)]
+    if selected_quarter != "Усі":
+        filtered = filtered[filtered["quarter"].astype(str) == str(selected_quarter)]
+
+    if selected_approval_status == "Активні до розгляду":
+        filtered = filtered[filtered["approval_status"].astype(str).isin(
+            ["Очікує погодження", "Очікує: Керівник управління",
+             "Очікує: Заступник керівника ССП",
+             "Повернуто на доопрацювання", "Очікує: Керівник ССП"]
+        )]
+    elif selected_approval_status != "Усі":
+        filtered = filtered[filtered["approval_status"].astype(str) == str(selected_approval_status)]
+
+    if quick_filter == "Тільки очікують":
+        # Усі заявки, що чекають рішення БУДЬ-ЯКОЇ ланки схеми
+        filtered = filtered[filtered["approval_status"].isin(schemes.ALL_WAITING_STATUSES)]
+    elif quick_filter == "Повернуті":
+        filtered = filtered[filtered["approval_status"] == "Повернуто на доопрацювання"]
+    elif quick_filter == "Із ризиками":
+        filtered = filtered[filtered["risks"].fillna("").astype(str).str.strip() != ""]
+    elif quick_filter == "Останні подані":
+        filtered = filtered.sort_values("submitted_at", ascending=False).head(10)
+    elif quick_filter == "На розгляді понад 5 днів":
+        filtered = attention["long_waiting"].copy()
+
+    if search_query.strip():
+        sq = search_query.strip().lower()
+        filtered = filtered[
+            filtered["id"].astype(str).str.lower().str.contains(sq, na=False)
+            | filtered["strat_code"].astype(str).str.lower().str.contains(sq, na=False)
+            | filtered["responsible_person"].astype(str).str.lower().str.contains(sq, na=False)
+            | filtered["department"].astype(str).str.lower().str.contains(sq, na=False)
+            | filtered["progress_text"].astype(str).str.lower().str.contains(sq, na=False)
+        ]
+
+    st.caption(f"Знайдено заявок: {len(filtered)}")
 
 if filtered.empty:
-    st.info("За обраними фільтрами заявок не знайдено.")
+    if _is_superadmin_current:
+        st.info("Наразі немає заявок, що стосуються вашої ланки або очікують вашого рішення.")
+    else:
+        st.info("За обраними фільтрами заявок не знайдено.")
     _render_superadmin_bottom_tools()
     render_footer()
     st.stop()
@@ -3567,7 +3995,6 @@ if filtered.empty:
 # ТЗ-правка (09.07.2026, п.3): у черзі та в полі вибору — ЛИШЕ заявки,
 # що очікують рішення САМЕ поточного користувача (його ланка в схемі).
 # Заявки, що зараз на інших ланках, у черзі поточного користувача не показуються.
-_me_email = clean(current_user.get("email")).lower()
 _me_role = clean(current_user.get("role"))
 
 def _request_is_actionable_by_me(row) -> bool:
@@ -3582,12 +4009,10 @@ def _request_is_actionable_by_me(row) -> bool:
     cur = schemes.current_stage(ch, stg)
     if cur is None:
         return False
-    cur_role = clean(cur.get("role"))
-    cur_email = clean(cur.get("email")).lower()
     if _me_role == "super_admin":
-        return cur_role == ROLE_SUPER_ADMIN and cur_email in ("", _me_email)
+        return _stage_matches_current_superadmin(cur, current_user)
     if _me_role == "admin":
-        return cur_role == schemes.ROLE_ADMIN
+        return clean(cur.get("role")) == schemes.ROLE_ADMIN
     return False
 
 queue_df = filtered[filtered.apply(_request_is_actionable_by_me, axis=1)].copy()
@@ -3608,7 +4033,7 @@ if not queue_df.empty:
     for _, row in queue_df.iterrows():
         person, _ = _initial_submitter_for_request(row)
         _queue_rows.append([
-            row.get("id"),
+            _record_display_id(row),
             row.get("_review_days") if pd.notna(row.get("_review_days")) else "—",
             row.get("department"),
             row.get("strat_code"),
@@ -3637,16 +4062,20 @@ if _selectable.empty:
     render_footer()
     st.stop()
 
-selected_options = []
-for _, row in _selectable.iterrows():
+selected_option_labels = {}
+selected_row_indexes = {}
+for row_index, row in _selectable.iterrows():
     person, _ = _initial_submitter_for_request(row)
     review_days = row.get("_review_days")
     review_days_text = str(int(review_days)) if pd.notna(review_days) else "—"
-    selected_options.append(
-        f"ID {row['id']} | {review_days_text} дн. | ССП {clean(row.get('department'))} | "
-        f"{clean(row.get('strat_code'))} | {_period_label(row.get('year'), row.get('quarter'))} | "
-        f"{person} | {format_kyiv_datetime(row.get('submitted_at'))}"
+    selection_key = _record_selection_key(row)
+    selected_option_labels[selection_key] = (
+        f"ID {_record_display_id(row)} | {review_days_text} дн. | "
+        f"ССП {clean(row.get('department'))} | {clean(row.get('strat_code'))} | "
+        f"{_period_label(row.get('year'), row.get('quarter'))} | {person} | "
+        f"{format_kyiv_datetime(row.get('submitted_at'))}"
     )
+    selected_row_indexes[selection_key] = row_index
 
 with st.container(border=True):
     st.markdown('<div class="filter-title">Вибір заявки</div>', unsafe_allow_html=True)
@@ -3654,16 +4083,26 @@ with st.container(border=True):
         '<div class="filter-field-label">Оберіть заявку для перегляду та погодження</div>',
         unsafe_allow_html=True,
     )
-    selected_request = st.selectbox(
+    selected_request_key = st.selectbox(
         "Оберіть заявку для перегляду та погодження",
-        selected_options,
+        options=list(selected_option_labels),
+        format_func=lambda key: selected_option_labels[key],
         label_visibility="collapsed",
     )
 
-selected_id = int(selected_request.split("|", 1)[0].replace("ID", "").strip())
-selected_row = _selectable[_selectable["id"].astype(int) == selected_id].iloc[0]
+selected_row = _selectable.loc[selected_row_indexes[selected_request_key]]
+selected_source = clean(selected_row.get("_record_source")) or "monitoring"
+selected_id = int(float(
+    clean(selected_row.get("_source_id")) or clean(selected_row.get("id"))
+))
 
 _detail_context = _render_request_detail_cards(selected_row)
+
+if selected_source == "closeout":
+    _render_closeout_superadmin_case(selected_row)
+    _render_superadmin_bottom_tools()
+    render_footer()
+    st.stop()
 approval_status = _detail_context["approval_status"]
 selected_code = _detail_context["selected_code"]
 year_val = _detail_context["year_val"]
@@ -3786,9 +4225,8 @@ _my_email_norm = clean(current_user.get("email")).lower()
 _is_super_turn = bool(
     _req_chain
     and _current_waiting_stage is not None
-    and clean(_current_waiting_stage.get("role")) == ROLE_SUPER_ADMIN
     and clean(current_user.get("role")) == "super_admin"
-    and clean(_current_waiting_stage.get("email")).lower() in ("", _my_email_norm)
+    and _stage_matches_current_superadmin(_current_waiting_stage, current_user)
 )
 
 if _is_super_turn and not schemes.is_final_locked(selected_row):

@@ -13,7 +13,7 @@ from core.data_types import (
 )
 from core.db import fetch_all, get_supabase_client
 from core.errors import log_cosmetic_error, show_incident, show_warning
-from core.ui import load_css, render_human_log_table, render_request_timeline
+from core.ui import load_css, prepare_human_log_table, render_request_timeline
 from core.notifications import render_notifications_panel
 from core.config import FILE_PATH, SHEET_NAME
 from core.excel_loader import read_excel_sheet
@@ -428,17 +428,30 @@ header[data-testid="stHeader"] {
     border: 1px solid #FF7A45;
 }
 
-.admin-reference-grid,
-.admin-submission-grid {
+.admin-reference-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 9px;
 }
 
+.admin-submission-panel {
+    background: transparent;
+    border: 1px solid #DCE4F0;
+    border-radius: 14px;
+    padding: 18px 22px;
+    margin: 12px 0;
+}
+
+.admin-submission-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 9px;
+}
+
 .admin-reference-row,
 .admin-data-field {
-    background: #F7F9FC;
-    border: 1px solid #DCE4F0;
+    background: #EAF1FF;
+    border: 1px solid #BFD3F2;
     border-radius: 10px;
     padding: 10px 12px;
     min-width: 0;
@@ -447,6 +460,11 @@ header[data-testid="stHeader"] {
 .admin-reference-row.wide,
 .admin-data-field.wide {
     grid-column: 1 / -1;
+}
+
+.admin-data-field.admin-special-field {
+    background: #F7F9FC;
+    border-color: #DCE4F0;
 }
 
 .admin-reference-label,
@@ -464,10 +482,14 @@ header[data-testid="stHeader"] {
 .admin-data-value {
     color: #132238;
     font-size: 14px;
-    font-weight: 750;
+    font-weight: 850;
     line-height: 1.55;
     overflow-wrap: anywhere;
     white-space: pre-wrap;
+}
+
+.admin-special-field .admin-data-value {
+    font-weight: 750;
 }
 
 .admin-data-value a {
@@ -583,10 +605,21 @@ header[data-testid="stHeader"] {
     margin-bottom: 0;
 }
 
+@media (max-width: 1200px) {
+    .admin-submission-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
 @media (max-width: 900px) {
     .admin-reference-grid,
-    .admin-submission-grid,
     .admin-contact-row {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 700px) {
+    .admin-submission-grid {
         grid-template-columns: 1fr;
     }
 }
@@ -1714,12 +1747,16 @@ def _render_request_detail_cards(record) -> dict:
 
     target_heading = f"Цільовий орієнтир на {year_val} рік" if year_val else "Цільовий орієнтир"
     submission_card_html = (
-        '<div class="card">'
+        '<div class="admin-submission-panel">'
         '<div class="card-title">Подані відомості</div>'
         '<div class="admin-submission-grid">'
         '<div class="admin-data-field">'
         '<div class="admin-data-label">Звітний період</div>'
         f'<div class="admin-data-value">{_esc(_period_label(record.get("year"), record.get("quarter")))}</div>'
+        '</div>'
+        '<div class="admin-data-field">'
+        '<div class="admin-data-label">Статус виконання</div>'
+        f'<div class="admin-data-value">{_esc(clean(record.get("status")) or "—")}</div>'
         '</div>'
         '<div class="admin-data-field">'
         f'<div class="admin-data-label">{_esc(target_heading)}</div>'
@@ -1728,10 +1765,6 @@ def _render_request_detail_cards(record) -> dict:
         '<div class="admin-data-field">'
         '<div class="admin-data-label">Фактичне значення</div>'
         f'<div class="admin-data-value">{_esc(fact_value)}</div>'
-        '</div>'
-        '<div class="admin-data-field">'
-        '<div class="admin-data-label">Статус виконання</div>'
-        f'<div class="admin-data-value">{_esc(clean(record.get("status")) or "—")}</div>'
         '</div>'
         '<div class="admin-data-field wide">'
         '<div class="admin-data-label">Опис прогресу виконання</div>'
@@ -1745,12 +1778,12 @@ def _render_request_detail_cards(record) -> dict:
         '<div class="admin-data-label">Посилання на НПА</div>'
         f'<div class="admin-data-value">{npa_links_html}</div>'
         '</div>'
-        '<div class="admin-data-field wide">'
+        '<div class="admin-data-field wide admin-special-field">'
         '<div class="admin-data-label">Схема погодження</div>'
         f'<div class="admin-route-caption">{route_caption}</div>'
         f'<div class="admin-route-row">{route_html}</div>'
         '</div>'
-        '<div class="admin-data-field wide">'
+        '<div class="admin-data-field wide admin-special-field">'
         '<div class="admin-data-label">Дані відповідальної особи</div>'
         '<div class="admin-contact-row">'
         f'<div class="admin-contact-item"><strong>ПІБ</strong>{_esc(person_name)}</div>'
@@ -1984,96 +2017,6 @@ def _render_superadmin_bottom_tools():
                         _archive_create_exc,
                         context="Створення повного архівного знімка",
                     )
-
-def render_requests_status_viewer(requests_frame):
-    """ТЗ-правка (09.07.2026, п.3): «Перегляд статусу заявок».
-
-    Випадний список усіх заявок за застосованими фільтрами (спершу — ті,
-    що ще НЕ закриті) з чітким відображенням: статус, поточна ланка схеми,
-    скільки днів на цьому кроці. Лише перегляд — без дій.
-    """
-    st.markdown(
-        '<div class="card"><div class="card-title">Перегляд статусу заявок</div>'
-        '<div class="card-subtitle">Стан будь-якої заявки за застосованими '
-        'фільтрами: на якому етапі схеми погодження вона зараз перебуває. '
-        'Лише перегляд — рішення ухвалюються у «Виборі заявки» вище, коли '
-        'настає ваша ланка.</div>',
-        unsafe_allow_html=True,
-    )
-    if requests_frame is None or requests_frame.empty:
-        st.info("За застосованими фільтрами заявок немає.")
-        st.markdown('</div>', unsafe_allow_html=True)
-        return
-
-    _mode = st.radio(
-        "Які заявки показати",
-        ["Ще не закриті (у процесі)", "Закриті (погоджені)", "Усі"],
-        horizontal=True,
-        key="status_viewer_mode_v19",
-    )
-    _frame = requests_frame.copy()
-    _appr = _frame["approval_status"].astype(str).str.strip()
-    if _mode.startswith("Ще не закриті"):
-        _frame = _frame[_appr != "Погоджено"]
-    elif _mode.startswith("Закриті"):
-        _frame = _frame[_appr == "Погоджено"]
-    if _frame.empty:
-        st.info("У цій категорії заявок немає.")
-        st.markdown('</div>', unsafe_allow_html=True)
-        return
-
-    _opts = [
-        f"ID {r['id']} | ССП {r['department']} | {r['strat_code']} | "
-        f"{r['year']} {r['quarter']} кв. | {clean(r['approval_status'])}"
-        for _, r in _frame.iterrows()
-    ]
-    _pick = st.selectbox(
-        "Оберіть заявку для перегляду статусу", _opts,
-        key="status_viewer_pick_v19",
-    )
-    _pid = int(_pick.split("|")[0].replace("ID", "").strip())
-    _prow = _frame[_frame["id"].astype(int) == _pid].iloc[0]
-
-    _p_appr = clean(_prow.get("approval_status"))
-    _p_chain = schemes.parse_chain(_prow.get("approval_chain"))
-    _p_stage = schemes.parse_stage(_prow.get("chain_stage"))
-    _ts = pd.to_datetime(clean(_prow.get("submitted_at")), errors="coerce", utc=True)
-    _days = ""
-    if pd.notna(_ts):
-        _days = f" · подано {max(0, (now_kyiv() - _ts.to_pydatetime()).days)} дн. тому"
-
-    if _p_appr == "Погоджено":
-        _where = "✅ Погодження завершено — заявка закрита"
-        _color = ("#E4F5EC", "#1E9E57", "#0C713A")
-    elif _p_appr == "Повернуто на доопрацювання":
-        _where = "↩️ У подавача — повернута на доопрацювання"
-        _color = ("#FDF3D8", "#FF7A45", "#FF7A45")
-    elif _p_chain:
-        _st_cur = schemes.current_stage(_p_chain, _p_stage)
-        _who = clean((_st_cur or {}).get("name", "")) or clean((_st_cur or {}).get("email", ""))
-        _where = (f"⏳ Зараз на ланці: {clean((_st_cur or {}).get('label',''))}"
-                  + (f" — {_who}" if _who else ""))
-        _color = ("#EAF1FF", "#BFD3F2", "#032A63")
-    else:
-        _where = "⏳ На розгляді координатора"
-        _color = ("#EAF1FF", "#BFD3F2", "#032A63")
-
-    st.markdown(
-        f'<div style="background:{_color[0]};border:1px solid {_color[1]};'
-        f'border-radius:10px;padding:10px 14px;font-size:13px;font-weight:800;'
-        f'color:{_color[2]};">{_where}{_days}</div>',
-        unsafe_allow_html=True,
-    )
-    if _p_chain:
-        _route_bits = []
-        for _i, _stg in enumerate(_p_chain):
-            _done = _i < _p_stage or _p_appr == "Погоджено"
-            _cur = (_i == _p_stage and _p_appr != "Погоджено")
-            _ic = "✅" if _done else ("🔵" if _cur else "⚪")
-            _route_bits.append(f"{_ic} {clean(_stg.get('label',''))}")
-        st.caption("Маршрут: " + "  →  ".join(_route_bits))
-    st.markdown('</div>', unsafe_allow_html=True)
-
 
 def _actor_identity(role_label):
     """Повний підпис дії для журналу: роль + ПІБ + email поточного користувача."""
@@ -3623,8 +3566,7 @@ if filtered.empty:
 
 # ТЗ-правка (09.07.2026, п.3): у черзі та в полі вибору — ЛИШЕ заявки,
 # що очікують рішення САМЕ поточного користувача (його ланка в схемі).
-# Заявки, що зараз на інших ланках, тут не показуються; їхній стан можна
-# переглянути у блоці «Перегляд статусу заявок» нижче.
+# Заявки, що зараз на інших ланках, у черзі поточного користувача не показуються.
 _me_email = clean(current_user.get("email")).lower()
 _me_role = clean(current_user.get("role"))
 
@@ -3690,11 +3632,7 @@ _selectable = queue_df if not queue_df.empty else filtered.iloc[0:0]
 if _selectable.empty:
     with st.container(border=True):
         st.markdown('<div class="filter-title">Вибір заявки</div>', unsafe_allow_html=True)
-        st.info(
-            "Наразі немає заявок, що очікують саме вашого рішення. Стан усіх "
-            "інших заявок можна переглянути у блоці «Перегляд статусу заявок» нижче."
-        )
-    render_requests_status_viewer(filtered)
+        st.info("Наразі немає заявок, що очікують саме вашого рішення.")
     _render_superadmin_bottom_tools()
     render_footer()
     st.stop()
@@ -4471,56 +4409,64 @@ logs_df = load_logs(selected_id, selected_row)
 if logs_df.empty:
     st.info("Історії змін для цієї заявки поки що немає.")
 else:
-    with st.expander("Повна історія змін заявки"):
-        # ЄДИНИЙ компонент таймлайну для всієї системи (core/ui.py, ТЗ 16.13)
-        render_request_timeline(logs_df, with_table_expander=False)
-        show_logs = logs_df.copy()
-        # ТЗ-правка (09.07.2026, п.3): історію розширено фактичним значенням
-        # та описом прогресу — з версій заявки на момент кожної події, а за
-        # їх відсутності — з поточних даних заявки.
-        try:
-            _vers = load_versions(selected_id)
-        except Exception as exc:
-            show_warning(
-                "Історію версій завантажено не повністю.",
-                exc,
-                "Завантаження версій у повній історії заявки",
+    # Хронологічний таймлайн завжди видно без додаткового розкривання.
+    render_request_timeline(
+        logs_df,
+        title="Історія змін заявки",
+        with_table_expander=False,
+    )
+
+    show_logs = logs_df.copy()
+    # Історію розширено фактичним значенням та описом прогресу з версій
+    # заявки на момент кожної події, а за їх відсутності — поточними даними.
+    try:
+        _vers = load_versions(selected_id)
+    except Exception as exc:
+        show_warning(
+            "Історію версій завантажено не повністю.",
+            exc,
+            "Завантаження версій у повній історії заявки",
+        )
+        _vers = pd.DataFrame()
+    _log_ts = pd.to_datetime(show_logs.get("changed_at"), errors="coerce", utc=True)
+    _facts, _progress = [], []
+    if _vers is not None and not _vers.empty and "created_at" in _vers.columns:
+        _vers = _vers.copy()
+        _vers["_ts"] = pd.to_datetime(_vers["created_at"], errors="coerce", utc=True)
+        _vers = _vers.sort_values("_ts")
+        for t in _log_ts:
+            _snap = _vers[_vers["_ts"] <= t] if pd.notna(t) else _vers.iloc[0:0]
+            _row = _snap.iloc[-1] if not _snap.empty else None
+            _facts.append(
+                clean(_row.get("numeric_value", ""))
+                if _row is not None
+                else clean(selected_row.get("numeric_value", ""))
             )
-            _vers = pd.DataFrame()
-        _log_ts = pd.to_datetime(show_logs.get("changed_at"), errors="coerce", utc=True)
-        _facts, _progress = [], []
-        if _vers is not None and not _vers.empty and "created_at" in _vers.columns:
-            _vers = _vers.copy()
-            _vers["_ts"] = pd.to_datetime(_vers["created_at"], errors="coerce", utc=True)
-            _vers = _vers.sort_values("_ts")
-            for t in _log_ts:
-                _snap = _vers[_vers["_ts"] <= t] if pd.notna(t) else _vers.iloc[0:0]
-                _row = _snap.iloc[-1] if not _snap.empty else None
-                _facts.append(clean(_row.get("numeric_value", "")) if _row is not None
-                              else clean(selected_row.get("numeric_value", "")))
-                _progress.append(clean(_row.get("progress_text", "")) if _row is not None
-                                 else clean(selected_row.get("progress_text", "")))
-        else:
-            _facts = [clean(selected_row.get("numeric_value", ""))] * len(show_logs)
-            _progress = [clean(selected_row.get("progress_text", ""))] * len(show_logs)
-        show_logs["Фактичне значення"] = _facts
-        show_logs["Опис прогресу"] = _progress
-        render_human_log_table(
-            show_logs,
-            extra_columns=["Фактичне значення", "Опис прогресу"],
+            _progress.append(
+                clean(_row.get("progress_text", ""))
+                if _row is not None
+                else clean(selected_row.get("progress_text", ""))
+            )
+    else:
+        _facts = [clean(selected_row.get("numeric_value", ""))] * len(show_logs)
+        _progress = [clean(selected_row.get("progress_text", ""))] * len(show_logs)
+    show_logs["Фактичне значення"] = _facts
+    show_logs["Опис прогресу"] = _progress
+
+    history_table = prepare_human_log_table(
+        show_logs,
+        extra_columns=["Фактичне значення", "Опис прогресу"],
+    )
+    with st.expander("Повна історія змін заявки (табличний вигляд)"):
+        _render_html_table(
+            list(history_table.columns),
+            [list(row) for row in history_table.itertuples(index=False, name=None)],
+            empty_message="Історії змін для цієї заявки поки що немає.",
         )
 
 _render_superadmin_bottom_tools()
 
-# ТЗ-правка (09.07.2026, п.3): перегляд статусу ВСІХ заявок за фільтрами —
-# видно, на якому етапі схеми зараз кожна заявка (закрита чи ще ні).
-render_requests_status_viewer(filtered)
-
-
 # ТЗ Адм.3: функцію «Архівування» повністю прибрано з адміністрування —
 # без заглушок і службових карток.
-
-with st.expander("Технічна таблиця заявок"):
-    st.dataframe(filtered, use_container_width=True, hide_index=True)
 
 render_footer()

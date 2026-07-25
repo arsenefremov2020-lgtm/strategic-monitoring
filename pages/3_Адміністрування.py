@@ -7,7 +7,7 @@ from core.data_types import (
     normalise_monitoring_frame,
     prepare_closeout_payload,
     prepare_monitoring_payload,
-    split_fact_value,
+    quarter_to_db,
     year_to_db,
 )
 from core.db import fetch_all, get_supabase_client
@@ -387,6 +387,26 @@ header[data-testid="stHeader"] {
     font-weight: 900;
     line-height: 1.45;
     margin: 8px 0 12px 0;
+}
+
+.admin-request-nature {
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin: 7px 0 11px 0;
+    color: #132238;
+    font-size: 13px;
+    font-weight: 750;
+    line-height: 1.5;
+}
+
+.admin-request-nature.manual {
+    background: #F3EEFF;
+    border: 1px solid #9B7BEA;
+}
+
+.admin-request-nature.super-review {
+    background: #FFF4ED;
+    border: 1px solid #FF7A45;
 }
 
 .admin-reference-grid,
@@ -910,14 +930,106 @@ def load_requests():
     return df
 
 
-def load_logs(request_id):
+@st.cache_data(ttl=5, show_spinner=False)
+def load_closeout_requests():
+    """Єдиний кешований реєстр запитів ручного закриття для сторінки."""
+    rows = fetch_all(
+        "closeout_requests",
+        "*",
+        order=("requested_at", True),
+    )
+    return normalise_closeout_frame(pd.DataFrame(rows))
+
+
+def _related_closeout_logs(record) -> pd.DataFrame:
+    """Журнал ручного закриття того самого заходу й звітного періоду."""
+    if record is None:
+        return pd.DataFrame()
+    code = clean(record.get("strat_code")).strip().rstrip(".")
+    year = _year_number(record.get("year"))
+    try:
+        quarter = quarter_to_db(record.get("quarter"))
+    except ValueError:
+        quarter = None
+    if not code or year is None or quarter is None:
+        return pd.DataFrame()
+
+    closeouts = load_closeout_requests()
+    if closeouts.empty:
+        return pd.DataFrame()
+
+    matching_ids = []
+    for _, closeout in closeouts.iterrows():
+        if clean(closeout.get("strat_code")).strip().rstrip(".") != code:
+            continue
+        if _year_number(closeout.get("period_year")) != year:
+            continue
+        raw_quarter = clean(closeout.get("period_quarter"))
+        try:
+            closeout_quarter = quarter_to_db(raw_quarter)
+        except ValueError:
+            closeout_quarter = None
+        # Річне закриття охоплює всі квартали. Для попереднього кварталу
+        # додаємо журнал лише після підтвердження, бо саме тоді офіційні дані
+        # матеріалізуються до кінця року.
+        if closeout_quarter is not None:
+            if closeout_quarter > quarter:
+                continue
+            if closeout_quarter < quarter and clean(closeout.get("approval_status")) != "Підтверджено":
+                continue
+        try:
+            matching_ids.append(str(int(float(closeout.get("id")))))
+        except (TypeError, ValueError):
+            continue
+
+    if not matching_ids:
+        return pd.DataFrame()
+    try:
+        rows = fetch_all(
+            "monitoring_logs",
+            "*",
+            filters=[
+                ("eq", "related_table", "closeout_requests"),
+                ("in_", "related_key", sorted(set(matching_ids))),
+            ],
+            order=("changed_at", False),
+        )
+    except Exception as exc:
+        log_cosmetic_error("Завантаження пов'язаного журналу ручного закриття", exc)
+        return pd.DataFrame()
+
+    related = pd.DataFrame(rows)
+    if related.empty:
+        return related
+    related = related.copy()
+    related["request_id"] = record.get("id")
+    related["action"] = related.get("action", pd.Series(index=related.index, dtype=object)).map(
+        lambda value: (
+            clean(value)
+            if "ручн" in clean(value).lower()
+            else f"Ручне закриття · {clean(value) or 'зміна статусу'}"
+        )
+    )
+    return related
+
+
+def load_logs(request_id, record=None):
     rows = fetch_all(
         "monitoring_logs",
         "*",
         filters=[("eq", "request_id", int(request_id))],
         order=("changed_at", True),
     )
-    return pd.DataFrame(rows)
+    request_logs = pd.DataFrame(rows)
+    related_logs = _related_closeout_logs(record)
+    frames = [frame for frame in (request_logs, related_logs) if frame is not None and not frame.empty]
+    if not frames:
+        return pd.DataFrame()
+    merged = pd.concat(frames, ignore_index=True, sort=False)
+    if "id" in merged.columns:
+        merged = merged.drop_duplicates(subset=["id"], keep="first")
+    merged["_history_ts"] = pd.to_datetime(merged.get("changed_at"), errors="coerce", utc=True)
+    return merged.sort_values("_history_ts").drop(columns=["_history_ts"], errors="ignore")
 
 
 def load_versions(request_id):
@@ -1074,6 +1186,249 @@ def _matrix_values_for_request(record) -> tuple[str, str]:
 
 def _fact_for_request(record) -> str:
     return clean(record.get("numeric_value")) or clean(record.get("value_text")) or "—"
+
+
+def _active_closeout_for_period(frame: pd.DataFrame, code, year, quarter):
+    """Повертає активний запит на той самий захід і конкретний період."""
+    if frame is None or frame.empty:
+        return None
+    code_key = clean(code).strip().rstrip(".")
+    selected_year = _year_number(year)
+    try:
+        selected_quarter = quarter_to_db(quarter)
+    except ValueError:
+        selected_quarter = None
+    if not code_key or selected_year is None or selected_quarter is None:
+        return None
+
+    candidates = []
+    for _, row in frame.iterrows():
+        if clean(row.get("approval_status")) not in {"Очікує підтвердження", "Підтверджено"}:
+            continue
+        if clean(row.get("strat_code")).strip().rstrip(".") != code_key:
+            continue
+        if _year_number(row.get("period_year")) != selected_year:
+            continue
+        raw_quarter = clean(row.get("period_quarter"))
+        try:
+            row_quarter = quarter_to_db(raw_quarter)
+        except ValueError:
+            row_quarter = None
+        # Підтверджене/активне закриття попереднього кварталу охоплює
+        # наступні квартали року, тому повторний запит для них також блокуємо.
+        if row_quarter is not None and row_quarter > selected_quarter:
+            continue
+        candidates.append(row)
+    if not candidates:
+        return None
+    return sorted(candidates, key=lambda row: clean(row.get("requested_at")))[0]
+
+
+def _request_nature_html(record, chain: list[dict], stage_index: int) -> str:
+    """Позначка природи заявки лише для супер-адміна."""
+    if not is_super_admin_user(current_user):
+        return ""
+    scheme_label = clean(record.get("scheme_label")).casefold()
+    admin_comment = clean(record.get("admin_comment")).casefold()
+    if "ручне закриття" in scheme_label or "закрито вручну" in admin_comment:
+        return (
+            '<div class="admin-request-nature manual"><b>Ручне закриття.</b> '
+            'Ці відомості створені після підтвердження запиту адміністратора. '
+            'Перевірте підставу, фактичне значення та зафіксований результат.</div>'
+        )
+    current_stage = schemes.current_stage(chain, stage_index) if chain else None
+    previous_roles = {clean(stage.get("role")) for stage in (chain or [])[:stage_index]}
+    if (
+        current_stage
+        and clean(current_stage.get("role")) == ROLE_SUPER_ADMIN
+        and schemes.ROLE_ADMIN in previous_roles
+    ):
+        return (
+            '<div class="admin-request-nature super-review"><b>Додаткова перевірка супер-адміна.</b> '
+            'Координатор скерував заявку вам через сумніви. Потрібно погодити її, '
+            'передати вищому супер-адміну або повернути на доопрацювання.</div>'
+        )
+    return ""
+
+
+def _render_request_detail_cards(record) -> dict:
+    """Спільний вигляд картки й поданих даних у звичайному та correction-режимі."""
+    selected_code = clean(record.get("strat_code"))
+    approval_status = clean(record.get("approval_status"))
+    year_val = clean(record.get("year")).strip()
+    code_key = selected_code.strip().rstrip(".")
+    strat_record = _strat_row_lookup.get(code_key, {})
+    target_year_val = clean(strat_record.get(f"target_{year_val}", "")) if year_val else ""
+
+    object_type = clean(strat_record.get("object_type")).strip().lower()
+    object_number_label = {
+        "measure": "Захід №",
+        "task": "Завдання №",
+        "goal": "Стратегічна ціль №",
+    }.get(object_type, "Об’єкт №")
+    object_name = clean(strat_record.get("name")) or "—"
+    product_type = clean(strat_record.get("product_type")) or "—"
+    indicator = clean(strat_record.get("indicator")) or "—"
+    unit = clean(strat_record.get("unit")) or "—"
+    resp_main = clean(strat_record.get("resp_main")) or "—"
+    resp_co_1 = clean(strat_record.get("resp_co_1")) or "—"
+    resp_co_2 = clean(strat_record.get("resp_co_2")) or "—"
+    start_quarter = _planned_quarter_label(strat_record.get("start_date_plan"))
+    end_quarter = _planned_quarter_label(strat_record.get("end_date_plan"))
+    term_label = "—" if start_quarter == "—" and end_quarter == "—" else f"{start_quarter} — {end_quarter}"
+
+    person_name = clean(record.get("responsible_person")) or "—"
+    person_phone = clean(record.get("phone")) or "—"
+    person_email = clean(record.get("email")) or "—"
+    fact_value = _fact_for_request(record)
+    progress_value = clean(record.get("progress_text")) or "—"
+    risks_value = clean(record.get("risks")) or "Не зазначено"
+    npa_raw = clean(record.get("npa_link"))
+    req_chain = schemes.parse_chain(record.get("approval_chain"))
+    req_stage = schemes.parse_stage(record.get("chain_stage"))
+    req_scheme_label = clean(record.get("scheme_label"))
+    req_kind = clean(record.get("object_kind")) or "measure"
+    req_dept_nums = re.findall(r"\d+", clean(record.get("department")))
+    req_dept_idx = req_dept_nums[0] if req_dept_nums else ""
+
+    if npa_raw:
+        npa_links_html = "".join(
+            f'<div>🔗 <a href="{_esc(link.strip())}" target="_blank" rel="noopener noreferrer">'
+            f'{_esc(link.strip())}</a></div>'
+            for link in re.split(r"[\n;,]+", npa_raw)
+            if link.strip()
+        ) or "—"
+    else:
+        npa_links_html = "—"
+
+    route_nodes = [
+        '<div class="admin-route-node">'
+        '<span class="admin-route-role">Подавач</span>'
+        f'{_esc(person_name if person_name != "—" else person_email)}'
+        '</div>'
+    ]
+    current_route_stage = schemes.current_stage(req_chain, req_stage) if req_chain else None
+    for stage_index, stage in enumerate(req_chain):
+        stage_label = clean(stage.get("label")) or schemes.STAGE_LABELS.get(clean(stage.get("role")), "Ланка")
+        stage_person = clean(stage.get("name")) or clean(stage.get("email")) or "—"
+        current_class = " current" if current_route_stage is not None and stage_index == req_stage else ""
+        route_nodes.append(
+            f'<div class="admin-route-node{current_class}">'
+            f'<span class="admin-route-role">{_esc(stage_label)}</span>'
+            f'{_esc(stage_person)}</div>'
+        )
+    route_html = '<span class="admin-route-arrow">→</span>'.join(route_nodes)
+    route_caption = _esc(req_scheme_label) if req_scheme_label else "Маршрут погодження"
+    nature_html = _request_nature_html(record, req_chain, req_stage)
+
+    st.markdown(
+        f"""
+        <div class="card">
+            <div class="card-title">Картка заявки</div>
+            {nature_html}
+            <div class="badge-wrap">
+                <div class="badge">{_esc(object_number_label)} {_esc(selected_code)}</div>
+                <div class="badge">ID {_esc(clean(record.get('id')))}</div>
+            </div>
+            <div class="admin-object-name">{_esc(object_name)}</div>
+            <div class="admin-reference-grid">
+                <div class="admin-reference-row">
+                    <div class="admin-reference-label">Тип продукту</div>
+                    <div class="admin-reference-value">{_esc(product_type)}</div>
+                </div>
+                <div class="admin-reference-row">
+                    <div class="admin-reference-label">Індикатор</div>
+                    <div class="admin-reference-value">{_esc(indicator)}</div>
+                </div>
+                <div class="admin-reference-row">
+                    <div class="admin-reference-label">Одиниця виміру</div>
+                    <div class="admin-reference-value">{_esc(unit)}</div>
+                </div>
+                <div class="admin-reference-row wide">
+                    <div class="admin-reference-label">Відповідальний ССП</div>
+                    <div class="admin-reference-value">
+                        {_esc(resp_main)} &nbsp;·&nbsp; Спів. 1: {_esc(resp_co_1)}
+                        &nbsp;·&nbsp; Спів. 2: {_esc(resp_co_2)}
+                    </div>
+                </div>
+                <div class="admin-reference-row wide">
+                    <div class="admin-reference-label">Термін</div>
+                    <div class="admin-reference-value">{_esc(term_label)}</div>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    target_heading = f"Цільовий орієнтир на {year_val} рік" if year_val else "Цільовий орієнтир"
+    st.markdown(
+        f"""
+        <div class="card">
+            <div class="card-title">Подані відомості</div>
+            <div class="admin-submission-grid">
+                <div class="admin-data-field">
+                    <div class="admin-data-label">Звітний період</div>
+                    <div class="admin-data-value">{_esc(_period_label(record.get('year'), record.get('quarter')))}</div>
+                </div>
+                <div class="admin-data-field">
+                    <div class="admin-data-label">{_esc(target_heading)}</div>
+                    <div class="admin-data-value">{_esc(target_year_val or '—')}</div>
+                </div>
+                <div class="admin-data-field">
+                    <div class="admin-data-label">Фактичне значення</div>
+                    <div class="admin-data-value">{_esc(fact_value)}</div>
+                </div>
+                <div class="admin-data-field">
+                    <div class="admin-data-label">Статус виконання</div>
+                    <div class="admin-data-value">{_esc(clean(record.get('status')) or '—')}</div>
+                </div>
+                <div class="admin-data-field wide">
+                    <div class="admin-data-label">Опис прогресу виконання</div>
+                    <div class="admin-data-value">{_html_cell(progress_value)}</div>
+                </div>
+                <div class="admin-data-field wide">
+                    <div class="admin-data-label">Ризики / проблеми / відхилення</div>
+                    <div class="admin-data-value">{_html_cell(risks_value)}</div>
+                </div>
+                <div class="admin-data-field wide">
+                    <div class="admin-data-label">Посилання на НПА</div>
+                    <div class="admin-data-value">{npa_links_html}</div>
+                </div>
+                <div class="admin-data-field wide">
+                    <div class="admin-data-label">Схема погодження</div>
+                    <div class="admin-route-caption">{route_caption}</div>
+                    <div class="admin-route-row">{route_html}</div>
+                </div>
+                <div class="admin-data-field wide">
+                    <div class="admin-data-label">Дані відповідальної особи</div>
+                    <div class="admin-contact-row">
+                        <div class="admin-contact-item"><strong>ПІБ</strong>{_esc(person_name)}</div>
+                        <div class="admin-contact-item"><strong>Телефон</strong>{_esc(person_phone)}</div>
+                        <div class="admin-contact-item"><strong>Email</strong>{_esc(person_email)}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    return {
+        "approval_status": approval_status,
+        "selected_code": selected_code,
+        "year_val": year_val,
+        "target_year_val": target_year_val,
+        "strat_record": strat_record,
+        "unit": unit,
+        "person_name": person_name,
+        "person_phone": person_phone,
+        "person_email": person_email,
+        "req_chain": req_chain,
+        "req_stage": req_stage,
+        "req_kind": req_kind,
+        "req_dept_idx": req_dept_idx,
+    }
 
 
 def _initial_submitter_for_request(record) -> tuple[str, str]:
@@ -1854,15 +2209,220 @@ _request_id_series = pd.to_numeric(
 _request_ids = tuple(sorted(set(_request_id_series.astype(int).tolist())))
 _initial_submitter_lookup = load_initial_submitters(_request_ids)
 
+
+def _render_locked_correction_mode():
+    """Окремий третій режим, доступний лише супер-адміну."""
+    st.markdown(
+        '<div class="card"><div class="card-title">🛠 Коригування остаточно закритої заявки</div>'
+        '<div class="card-subtitle">Коригуються лише звітні дані. Статус погодження, '
+        'маршрут і ознака final_locked не змінюються; кожна зміна фіксується у версіях і журналі.</div></div>',
+        unsafe_allow_html=True,
+    )
+
+    correction_notice = st.session_state.pop("sa_locked_correction_notice", None)
+    if correction_notice:
+        st.success(correction_notice)
+
+    def _is_true_flag(value) -> bool:
+        if isinstance(value, bool):
+            return value
+        return clean(value).lower() in {"true", "1", "yes", "так"}
+
+    if "final_locked" in df.columns:
+        locked_df = df[
+            df["final_locked"].map(_is_true_flag)
+            & df["approval_status"].astype(str).str.strip().eq("Погоджено")
+        ].copy()
+    else:
+        locked_df = df.iloc[0:0].copy()
+
+    with st.container(border=True):
+        st.markdown('<div class="filter-title">Вибір закритої заявки</div>', unsafe_allow_html=True)
+        search_col, select_col = st.columns([1, 1.6])
+        with search_col:
+            st.markdown('<div class="filter-field-label">Пошук серед остаточно закритих заявок</div>', unsafe_allow_html=True)
+            locked_search = st.text_input(
+                "Пошук серед остаточно закритих заявок",
+                key="sa_locked_requests_search",
+                placeholder="ID, код заходу, ССП або відповідальна особа",
+                label_visibility="collapsed",
+            )
+
+        if locked_search.strip() and not locked_df.empty:
+            locked_sq = locked_search.strip().lower()
+            locked_df = locked_df[
+                locked_df["id"].astype(str).str.lower().str.contains(locked_sq, na=False)
+                | locked_df["strat_code"].astype(str).str.lower().str.contains(locked_sq, na=False)
+                | locked_df["department"].astype(str).str.lower().str.contains(locked_sq, na=False)
+                | locked_df["responsible_person"].astype(str).str.lower().str.contains(locked_sq, na=False)
+            ]
+        if "submitted_at" in locked_df.columns and not locked_df.empty:
+            locked_df = locked_df.sort_values("submitted_at", ascending=False)
+
+        locked_labels = {
+            int(row["id"]): (
+                f"ID {int(row['id'])} | {clean(row.get('strat_code'))} | "
+                f"{_period_label(row.get('year'), row.get('quarter'))} | "
+                f"ССП {clean(row.get('department'))} | {clean(row.get('responsible_person'))}"
+            )
+            for _, row in locked_df.iterrows()
+        }
+        with select_col:
+            st.markdown('<div class="filter-field-label">Оберіть остаточно закриту заявку</div>', unsafe_allow_html=True)
+            if locked_labels:
+                locked_request_id = st.selectbox(
+                    "Оберіть остаточно закриту заявку",
+                    options=list(locked_labels),
+                    format_func=lambda request_id: locked_labels[request_id],
+                    key="sa_locked_request_id",
+                    label_visibility="collapsed",
+                )
+            else:
+                locked_request_id = None
+                st.info("Остаточно погоджених і заблокованих заявок за цим пошуком немає.")
+
+    if locked_request_id is None:
+        return
+
+    locked_row = locked_df[locked_df["id"].astype(int).eq(int(locked_request_id))].iloc[0]
+    detail = _render_request_detail_cards(locked_row)
+    locked_code = detail["selected_code"]
+    locked_strat = detail["strat_record"]
+    locked_year = _year_number(locked_row.get("year"))
+    locked_target = clean(locked_strat.get(f"target_{locked_year}", "")) if locked_year else ""
+    locked_future_targets = (
+        [locked_strat.get(f"target_{year}", "") for year in range(locked_year + 1, 2035)]
+        if locked_year else []
+    )
+
+    locked_status_options = [
+        "Виконано", "Частково виконано", "Не виконано", "Не настав час", "Втратило актуальність",
+    ]
+    locked_current_status = clean(locked_row.get("status"))
+    locked_status_index = (
+        locked_status_options.index(locked_current_status)
+        if locked_current_status in locked_status_options else 0
+    )
+
+    with st.expander("✏️ Відкрити форму коригування", expanded=False):
+        with st.form(f"sa_locked_correction_form_{int(locked_request_id)}"):
+            sa_locked_status = st.selectbox(
+                "Статус виконання", locked_status_options, index=locked_status_index,
+            )
+            sa_locked_value = st.text_input(
+                "Фактичне значення",
+                value=_fact_for_request(locked_row).replace("—", ""),
+                help="Можна ввести число або текстове значення, наприклад «так» чи «ні».",
+            )
+            sa_locked_progress = st.text_area(
+                "Опис прогресу", value=clean(locked_row.get("progress_text")), height=120,
+            )
+            sa_locked_risks = st.text_area(
+                "Ризики / проблеми / відхилення", value=clean(locked_row.get("risks")), height=100,
+            )
+            sa_locked_npa = st.text_input(
+                "Посилання на НПА", value=clean(locked_row.get("npa_link")),
+            )
+            sa_locked_reason = st.text_area(
+                "Обґрунтування коригування",
+                height=110,
+                placeholder=(
+                    "Наприклад: надійшов уточнений звіт від ССП; попередні дані "
+                    "містили технічну помилку."
+                ),
+            )
+            sa_locked_submit = st.form_submit_button(
+                "Підтвердити коригування закритої заявки",
+                type="primary",
+                use_container_width=True,
+            )
+
+        if sa_locked_submit:
+            errors = []
+            if not clean(sa_locked_reason).strip():
+                errors.append("Обґрунтування коригування є обов'язковим.")
+            locked_unit = clean(locked_strat.get("unit"))
+            if clean(sa_locked_value):
+                value_ok, value_error = validate_fact_value_for_target(
+                    sa_locked_value, locked_unit, locked_target, locked_future_targets,
+                )
+                if not value_ok:
+                    errors.append(value_error)
+            conflict_error = status_value_conflict(
+                sa_locked_status, sa_locked_value, locked_target, locked_unit,
+                locked_code, locked_future_targets,
+            )
+            if conflict_error:
+                errors.append(conflict_error)
+
+            if errors:
+                for error in errors:
+                    st.error(error)
+            else:
+                try:
+                    locked_updates = prepare_monitoring_payload({
+                        "status": sa_locked_status,
+                        "numeric_value": sa_locked_value,
+                        "progress_text": sa_locked_progress,
+                        "risks": sa_locked_risks,
+                        "npa_link": sa_locked_npa,
+                    })
+                    correct_locked_request(
+                        request_id=int(locked_request_id),
+                        updates=locked_updates,
+                        reason=clean(sa_locked_reason).strip(),
+                        user=current_user,
+                    )
+                    try:
+                        locked_chain = schemes.parse_chain(locked_row.get("approval_chain"))
+                        if locked_chain:
+                            locked_last_stage = locked_chain[-1]
+                            notify_events.notify_superadmin_correction(
+                                locked_last_stage.get("email", ""),
+                                locked_last_stage.get("name", ""),
+                                clean(locked_row.get("strat_code")),
+                                clean(locked_row.get("year")),
+                                clean(locked_row.get("quarter")),
+                                reason=clean(sa_locked_reason).strip(),
+                                editor_name=(
+                                    clean(current_user.get("full_name"))
+                                    or clean(current_user.get("name"))
+                                    or "Супер-адміністратор"
+                                ),
+                                kind=clean(locked_row.get("object_kind")) or "measure",
+                            )
+                    except Exception as notify_exc:
+                        show_warning(
+                            "Коригування збережено, але останній ланці не відправлено миттєвий лист.",
+                            notify_exc,
+                            "Email після коригування закритої заявки",
+                        )
+                    st.session_state["sa_locked_correction_notice"] = (
+                        f"Заявку ID {int(locked_request_id)} скориговано. Вона залишається остаточно закритою."
+                    )
+                    monitoring_data.invalidate_monitoring_cache()
+                    st.rerun()
+                except TransitionRejected as exc:
+                    st.error(exc.message)
+                except Exception as exc:
+                    show_incident(exc, context="Атомарне коригування закритої заявки")
+
+
 # ТЗ-правка (09.07.2026, п.3): панель «Сповіщення погодження» прибрано з адмінки.
 
 # ──────────────────────────────────────────────
 # РЕЖИМ РОБОТИ АДМІНІСТРУВАННЯ
 # ──────────────────────────────────────────────
 
+_admin_work_modes = ["Основний режим координатора", "Ручне закриття заходів"]
+if is_super_admin_user(current_user):
+    _admin_work_modes.append("Коригування закритих заявок")
+if st.session_state.get("admin_work_mode") not in _admin_work_modes:
+    st.session_state["admin_work_mode"] = _admin_work_modes[0]
+
 admin_work_mode = st.radio(
     "**Режим адміністрування**",
-    ["Основний режим координатора", "Ручне закриття заходів"],
+    _admin_work_modes,
     horizontal=True,
     key="admin_work_mode",
 )
@@ -1891,19 +2451,16 @@ if is_super_admin_user(current_user):
             _assigned_headers.insert(12, "Координатор")
             _render_html_table(_assigned_headers, _assigned_table_rows)
 
+if admin_work_mode == "Коригування закритих заявок":
+    _render_locked_correction_mode()
+    _render_superadmin_bottom_tools()
+    render_footer()
+    st.stop()
+
 if admin_work_mode == "Ручне закриття заходів":
     # ──────────────────────────────────────────────
     # ЗАКРИТТЯ ЗАХОДУ ВРУЧНУ (admin → super_admin)
     # ──────────────────────────────────────────────
-
-
-    def load_closeout_requests():
-        rows = fetch_all(
-            "closeout_requests",
-            "*",
-            order=("requested_at", True),
-        )
-        return normalise_closeout_frame(pd.DataFrame(rows))
 
 
     _closeout_scope_df = filter_actions_for_user(
@@ -1911,136 +2468,229 @@ if admin_work_mode == "Ручне закриття заходів":
         current_user,
         executor_columns=["resp_main", "resp_co_1", "Головний\nвиконавець", "Співвиконавець"],
     )
-    measure_codes = _closeout_scope_df[_closeout_scope_df["code"].astype(str).str.count(r"\.") >= 3]["code"].astype(str).tolist() \
-        if "code" in _closeout_scope_df.columns else []
+    _measure_rows = (
+        _closeout_scope_df[
+            _closeout_scope_df["code"].astype(str).str.count(r"\.") >= 3
+        ].copy()
+        if "code" in _closeout_scope_df.columns else pd.DataFrame()
+    )
+    _measure_options = []
+    _measure_label_by_code = {}
+    if not _measure_rows.empty:
+        for _, _measure_row in _measure_rows.iterrows():
+            _measure_code = clean(_measure_row.get("code")).strip()
+            if not _measure_code or _measure_code in _measure_label_by_code:
+                continue
+            _measure_name = clean(_measure_row.get("name")) or "Назву не зазначено"
+            _measure_label_by_code[_measure_code] = f"{_measure_code} | {_measure_name}"
+            _measure_options.append(_measure_label_by_code[_measure_code])
 
     st.markdown(
         '<div class="card"><div class="card-title">Закриття заходу вручну</div>',
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )
 
+    closeout_df = load_closeout_requests()
+
     if is_admin_user(current_user) or is_super_admin_user(current_user):
-        with st.form("closeout_request_form"):
-            st.caption(
-                "Подати запит на ручне закриття заходу за період. "
-                "Після підтвердження супер-адміном ручне закриття вважається офіційними даними "
-                "та рахується як виконання, але до реакції керівника ССП відображається фіолетовим."
+        st.caption(
+            "Подати запит на ручне закриття заходу за конкретний квартал. "
+            "Після підтвердження супер-адміном дані стають офіційними відомостями моніторингу."
+        )
+        if not _measure_options:
+            st.info("Для вашої зони відповідальності заходів для ручного закриття не знайдено.")
+            co_submit = False
+        else:
+            co_measure_label = st.selectbox(
+                "Захід",
+                _measure_options,
+                key="closeout_measure_label",
             )
-            co_code = st.selectbox("Код заходу", measure_codes)
-            _co_measure = _closeout_scope_df[
-                _closeout_scope_df["code"].astype(str).str.strip() == str(co_code).strip()
+            co_code = co_measure_label.split("|", 1)[0].strip()
+            _co_measure = _measure_rows[
+                _measure_rows["code"].astype(str).str.strip() == co_code
             ]
             _co_measure_row = _co_measure.iloc[0] if not _co_measure.empty else pd.Series(dtype=object)
-            _co_unit = clean(_co_measure_row.get("unit", ""))
-            _co_indicator = clean(_co_measure_row.get("indicator", ""))
-            _co_object_name = clean(_co_measure_row.get("name", ""))
-            _co_department = clean(
-                _co_measure_row.get("resp_main", "")
-                or _co_measure_row.get("department", "")
+            _co_unit = clean(_co_measure_row.get("unit"))
+            _co_indicator = clean(_co_measure_row.get("indicator"))
+            _co_object_name = clean(_co_measure_row.get("name"))
+            _co_product_type = clean(_co_measure_row.get("product_type")) or "—"
+            _co_department = (
+                clean(_co_measure_row.get("resp_main"))
+                or clean(_co_measure_row.get("department"))
             )
-            _co_targets = " ".join(
-                clean(_co_measure_row.get(column, ""))
-                for column in ("target_2026", "target_2027", "target_2028")
-            ).lower()
-            _co_boolean_fact = (
-                any(token in _co_unit.lower() for token in ("так/ні", "так / ні", "наявн", "булев"))
-                or _co_targets.strip() in {"так", "ні", "так ні", "ні так"}
+            _co_start = clean(_co_measure_row.get("start_date_plan")) or "—"
+            _co_end = clean(_co_measure_row.get("end_date_plan")) or "—"
+            _co_target_items = [
+                f"{year}: {clean(_co_measure_row.get(f'target_{year}'))}"
+                for year in (2026, 2027, 2028)
+                if clean(_co_measure_row.get(f"target_{year}"))
+            ]
+            _co_targets_label = " · ".join(_co_target_items) or "—"
+            st.markdown(
+                f"""
+                <div class="review-box">
+                    <div class="review-title">{_esc(co_code)} — {_esc(_co_object_name or '—')}</div>
+                    <div><b>Індикатор виконання:</b> {_esc(_co_indicator or '—')}</div>
+                    <div><b>Тип продукту:</b> {_esc(_co_product_type)}</div>
+                    <div><b>Головний виконавець (ССП):</b> {_esc(_co_department or '—')}</div>
+                    <div><b>Початкова дата:</b> {_esc(_co_start)} &nbsp;·&nbsp; <b>Кінцева дата:</b> {_esc(_co_end)}</div>
+                    <div><b>Цільові орієнтири:</b> {_esc(_co_targets_label)}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
 
-            co_scope_col, co_year_col, co_quarter_col = st.columns(3)
-            with co_scope_col:
-                co_scope = st.selectbox("Масштаб закриття", ["Квартал", "Рік"])
+            co_year_col, co_quarter_col = st.columns(2)
             with co_year_col:
-                co_year = st.selectbox("Рік", list(range(2026, 2035)))
+                co_year = st.selectbox("Рік", list(range(2026, 2035)), key="closeout_year")
             with co_quarter_col:
-                co_quarter = st.selectbox("Квартал (якщо масштаб — квартал)", ["I", "II", "III", "IV"])
+                co_quarter = st.selectbox("Квартал", ["I", "II", "III", "IV"], key="closeout_quarter")
 
-            co_fact_status = st.selectbox(
-                "Статус виконання",
-                list(SUBMISSION_STATUS_OPTIONS),
-            )
-            if _co_boolean_fact:
-                co_fact_value = st.selectbox("Фактичне значення", ["так", "ні"])
-            else:
-                co_fact_value = st.text_input(
-                    "Фактичне значення (число)",
-                    help=f"Одиниця виміру: {_co_unit or 'не зазначена'}",
+            _co_duplicate = _active_closeout_for_period(closeout_df, co_code, co_year, co_quarter)
+            if _co_duplicate is not None:
+                _duplicate_when = format_kyiv_datetime(_co_duplicate.get("requested_at"))
+                _duplicate_status = clean(_co_duplicate.get("approval_status"))
+                st.warning(
+                    f"Активний запит уже охоплює {_period_label(co_year, co_quarter)}: його подано "
+                    f"{_duplicate_when or 'раніше'}, статус — «{_duplicate_status}». Повторне надсилання вимкнено."
                 )
-            co_fact_progress = st.text_area(
-                "Пояснення фактичних даних",
-                help="Обов'язково: що саме досягнуто і на підставі яких відомостей.",
-            )
-            co_reason = st.text_area(
-                "Підстава для ручного закриття",
-                help="Внутрішня інформація, комунікація або інший звітний документ.",
-            )
-            co_npa = st.text_area(
-                "Посилання на НПА / джерела (по одному в рядку, опційно)",
-                placeholder="https://zakon.rada.gov.ua/...\nhttps://docs.google.com/...",
-            )
-            co_evidence = st.text_area("Ризики / додаткові пояснення (опційно)")
-            co_submit = st.form_submit_button(
-                "Закрити вручну" if is_super_admin_user(current_user)
-                else "Надіслати на підтвердження супер-адміну"
-            )
 
-        if co_submit:
-            _fact_number, _fact_text = split_fact_value(co_fact_value)
-            _form_errors = []
-            if not co_reason.strip():
-                _form_errors.append("Заповніть підставу для ручного закриття.")
-            if not co_fact_progress.strip():
-                _form_errors.append("Заповніть пояснення фактичних даних.")
-            if not clean(co_fact_value):
-                _form_errors.append("Зазначте фактичне значення.")
-            elif not _co_boolean_fact and _fact_number is None:
-                _form_errors.append("Фактичне значення цього заходу має бути числом.")
+            _co_target = clean(_co_measure_row.get(f"target_{co_year}"))
+            _co_future_targets = [
+                _co_measure_row.get(f"target_{year}", "")
+                for year in range(int(co_year) + 1, 2035)
+            ]
 
-            if _form_errors:
-                for _message in _form_errors:
-                    st.error(_message)
-            else:
-                try:
-                    _route = resolve_manual_closeout_route(current_user)
-                    _is_super = is_super_admin_user(current_user)
-                    _payload = {
-                        "strat_code": co_code,
-                        "period_year": str(co_year),
-                        "period_quarter": "Рік" if co_scope == "Рік" else co_quarter,
-                        "scope": co_scope,
-                        "npa_links": co_npa.strip(),
-                        "admin_id": current_user.get("full_name", "") or current_user.get("id", ""),
-                        "admin_email": current_user.get("email", ""),
-                        "reason": co_reason.strip(),
-                        "evidence_note": co_evidence.strip(),
-                        "fact_status": co_fact_status,
-                        "fact_value": co_fact_value,
-                        "fact_progress_text": co_fact_progress.strip(),
-                        "department": _co_department,
-                        "object_name": _co_object_name,
-                        "indicator_name": _co_indicator,
-                        "approval_status": "Підтверджено" if _is_super else "Очікує підтвердження",
-                        **({
-                            "superadmin_id": current_user.get("id", ""),
-                            "decided_at": datetime.now(timezone.utc).isoformat(),
-                            "head_status": "Очікує реакції",
-                        } if _is_super else {}),
-                        **_route,
-                    }
-                    _payload = prepare_closeout_payload(_payload)
-                    create_closeout(payload=_payload, user=current_user)
-                    st.success(
-                        "Захід закрито вручну; фактичні дані записано в моніторинг."
-                        if _is_super else
-                        "Запит на закриття заходу надіслано на підтвердження відповідальному супер-адміну."
-                    )
-                    load_manual_closeouts.clear()
-                    monitoring_data.invalidate_monitoring_cache()
+            with st.form("closeout_request_form"):
+                co_fact_status = st.selectbox(
+                    "Статус виконання",
+                    list(SUBMISSION_STATUS_OPTIONS),
+                )
+                co_fact_value = st.text_input(
+                    "Фактичне значення",
+                    help=(
+                        f"Одиниця виміру: {_co_unit or 'не зазначена'}. Значення перевіряється "
+                        "за тими самими правилами, що й звичайне подання відомостей."
+                    ),
+                )
+                co_reason = st.text_area(
+                    "Підстава для ручного закриття",
+                    help="Обов'язкове поле. Внутрішня інформація, комунікація або інший звітний документ.",
+                )
+                co_npa = st.text_area(
+                    "Посилання на НПА / джерела (по одному в рядку, опційно)",
+                    placeholder="https://zakon.rada.gov.ua/...\nhttps://docs.google.com/...",
+                )
+                co_evidence = st.text_area("Ризики / додаткові пояснення (опційно)")
+                co_submit = st.form_submit_button(
+                    "Закрити вручну" if is_super_admin_user(current_user)
+                    else "Надіслати на підтвердження супер-адміну",
+                    disabled=_co_duplicate is not None,
+                )
+
+            if st.session_state.get("closeout_submit_notice"):
+                st.success(st.session_state["closeout_submit_notice"])
+                if st.button(
+                    "Зрозуміло, приховати це повідомлення",
+                    key="dismiss_closeout_submit_notice",
+                ):
+                    st.session_state.pop("closeout_submit_notice", None)
                     st.rerun()
-                except TransitionRejected as exc:
-                    st.error(exc.message)
-                except Exception as exc:
-                    show_incident(exc, context="Атомарне подання запиту на ручне закриття заходу")
+
+            if co_submit:
+                form_errors = []
+                if not clean(co_reason).strip():
+                    form_errors.append("Підстава для ручного закриття є обов'язковою.")
+                if not clean(co_fact_value).strip():
+                    form_errors.append("Зазначте фактичне значення.")
+                else:
+                    value_ok, value_error = validate_fact_value_for_target(
+                        co_fact_value, _co_unit, _co_target, _co_future_targets,
+                    )
+                    if not value_ok:
+                        form_errors.append(value_error)
+                conflict_error = status_value_conflict(
+                    co_fact_status, co_fact_value, _co_target, _co_unit,
+                    co_code, _co_future_targets,
+                )
+                if conflict_error:
+                    form_errors.append(conflict_error)
+
+                # Повторна перевірка безпосередньо перед RPC; база лишається
+                # остаточним захистом від одночасної роботи двох користувачів.
+                load_closeout_requests.clear()
+                latest_closeouts = load_closeout_requests()
+                runtime_duplicate = _active_closeout_for_period(
+                    latest_closeouts, co_code, co_year, co_quarter,
+                )
+                if runtime_duplicate is not None:
+                    form_errors.append(
+                        "Активний запит на цей захід і період уже існує. Оновіть сторінку та перевірте його статус."
+                    )
+
+                if form_errors:
+                    for message in dict.fromkeys(form_errors):
+                        st.error(message)
+                else:
+                    try:
+                        route = resolve_manual_closeout_route(current_user)
+                        is_super = is_super_admin_user(current_user)
+                        payload = {
+                            "strat_code": co_code,
+                            "period_year": str(co_year),
+                            "period_quarter": co_quarter,
+                            # transition_create_closeout / transition_decide_closeout
+                            # матеріалізують дані від вибраного кварталу до кінця року;
+                            # для бінарного факту «так» це є правилом перенесення.
+                            "scope": "Квартал",
+                            "npa_links": clean(co_npa).strip(),
+                            "admin_id": current_user.get("full_name", "") or current_user.get("id", ""),
+                            "admin_email": current_user.get("email", ""),
+                            "reason": clean(co_reason).strip(),
+                            "evidence_note": clean(co_evidence).strip(),
+                            "fact_status": co_fact_status,
+                            "fact_value": co_fact_value,
+                            # База вимагає fact_progress_text; єдине обов'язкове
+                            # пояснення користувача передається сюди без дублювання поля.
+                            "fact_progress_text": clean(co_reason).strip(),
+                            "department": _co_department,
+                            "object_name": _co_object_name,
+                            "indicator_name": _co_indicator,
+                            "approval_status": "Підтверджено" if is_super else "Очікує підтвердження",
+                            **({
+                                "superadmin_id": current_user.get("id", ""),
+                                "decided_at": datetime.now(timezone.utc).isoformat(),
+                                "head_status": "Очікує реакції",
+                            } if is_super else {}),
+                            **route,
+                        }
+                        result = create_closeout(
+                            payload=prepare_closeout_payload(payload),
+                            user=current_user,
+                        )
+                        notice = (
+                            "Захід закрито вручну; офіційні дані записано в моніторинг."
+                            if is_super else
+                            "Запит на ручне закриття надіслано на підтвердження відповідальному супер-адміну."
+                        )
+                        if (
+                            clean(_co_unit).lower().replace(" ", "") in {"так/ні", "так/нi", "так-ні", "так-нi", "такні", "такнi"}
+                            and clean(co_fact_value).lower().strip() in {"так", "yes", "true", "1", "+"}
+                        ):
+                            notice += (
+                                f" Значення «так» для {co_quarter} кварталу буде враховано також "
+                                "в наступних кварталах цього самого року."
+                            )
+                        st.session_state["closeout_submit_notice"] = notice
+                        load_closeout_requests.clear()
+                        load_manual_closeouts.clear()
+                        monitoring_data.invalidate_monitoring_cache()
+                        st.rerun()
+                    except TransitionRejected as exc:
+                        st.error(exc.message)
+                    except Exception as exc:
+                        show_incident(exc, context="Атомарне подання запиту на ручне закриття заходу")
     else:
         st.info("Подання запиту на закриття заходу доступне лише адміністратору або супер-адміну.")
 
@@ -2059,6 +2709,7 @@ if admin_work_mode == "Ручне закриття заходів":
                     st.markdown(
                         f"""
                         <div class="review-box">
+                            <div class="admin-request-nature manual"><b>Запит на ручне закриття.</b> Адміністратор просить підтвердити офіційне закриття заходу без звичайної заявки ССП.</div>
                             <div class="review-title">Захід {clean(co_row.get("strat_code",""))}
                                 — {clean(co_row.get("period_quarter",""))} кв. {clean(co_row.get("period_year",""))}</div>
                             <div><b>Підстава:</b> {clean(co_row.get("reason",""))}</div>
@@ -2136,6 +2787,7 @@ if admin_work_mode == "Ручне закриття заходів":
                                         "Email керівнику ССП після ручного закриття",
                                     )
 
+                            load_closeout_requests.clear()
                             load_manual_closeouts.clear()
                             st.success(f"Запит на закриття заходу {new_co_status.lower()}.")
                             monitoring_data.invalidate_monitoring_cache()
@@ -2214,6 +2866,7 @@ if admin_work_mode == "Ручне закриття заходів":
                                     user=current_user,
                                     created_by="Супер-адмін / вирішення розбіжності",
                                 )
+                            load_closeout_requests.clear()
                             load_manual_closeouts.clear()
                             st.success("Закриття лишено чинним; заявку (якщо була) повернуто подавачу.")
                             monitoring_data.invalidate_monitoring_cache()
@@ -2233,6 +2886,7 @@ if admin_work_mode == "Ручне закриття заходів":
                                 write_log(int(float(_dr)),
                                           "Розбіжність вирішено: ручне закриття скасовано",
                                           "", "", _res_comment)
+                            load_closeout_requests.clear()
                             load_manual_closeouts.clear()
                             st.success("Закриття скасовано. Подана заявка проходить звичайну схему погодження.")
                             monitoring_data.invalidate_monitoring_cache()
@@ -2259,16 +2913,13 @@ if admin_work_mode == "Ручне закриття заходів":
                         }).eq("id", _rev_id).execute()
                         write_log(_rev_id, "Ручне закриття відкликано супер-адміном",
                                   "Підтверджено", "Скасовано", _rev_comment)
+                        load_closeout_requests.clear()
                         load_manual_closeouts.clear()
                         st.success("Закриття відкликано.")
                         monitoring_data.invalidate_monitoring_cache()
                         st.rerun()
                     except Exception as exc:
                         show_incident(exc, context="Відкликання підтвердженого ручного закриття")
-
-    if not closeout_df.empty:
-        with st.expander("Усі запити на закриття заходів"):
-            st.dataframe(closeout_df, use_container_width=True, hide_index=True)
 
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -2594,269 +3245,6 @@ if search_query.strip():
 
 st.caption(f"Знайдено заявок: {len(filtered)}")
 
-# ──────────────────────────────────────────────
-# СУПЕР-АДМІН: КОРИГУВАННЯ ОСТАТОЧНО ЗАКРИТИХ ЗАЯВОК
-# ──────────────────────────────────────────────
-# Цей блок навмисно не залежить від фільтра «Активні до розгляду» та від
-# черги погодження. Остаточно закриті заявки вже не можуть потрапити до
-# черги, тому для них потрібен окремий реєстр і окремий вибір.
-if is_super_admin_user(current_user):
-    st.markdown(
-        '<div class="card"><div class="card-title">🛠 Коригування остаточно закритої заявки</div>'
-        '<div class="card-subtitle">Доступно лише супер-адміну. Коригуються тільки звітні дані; '
-        'статус погодження, маршрут і ознака final_locked не змінюються. Кожне коригування '
-        'потребує обґрунтування та створює версії до і після зміни.</div>',
-        unsafe_allow_html=True,
-    )
-
-    _correction_notice = st.session_state.pop("sa_locked_correction_notice", None)
-    if _correction_notice:
-        st.success(_correction_notice)
-
-    def _is_true_flag(value) -> bool:
-        if isinstance(value, bool):
-            return value
-        return clean(value).lower() in {"true", "1", "yes", "так"}
-
-    if "final_locked" in df.columns:
-        _locked_df = df[
-            df["final_locked"].map(_is_true_flag)
-            & df["approval_status"].astype(str).str.strip().eq("Погоджено")
-        ].copy()
-    else:
-        _locked_df = df.iloc[0:0].copy()
-
-    _locked_search = st.text_input(
-        "Пошук серед остаточно закритих заявок",
-        key="sa_locked_requests_search",
-        placeholder="ID, код заходу, ССП або відповідальна особа",
-    )
-    if _locked_search.strip() and not _locked_df.empty:
-        _locked_sq = _locked_search.strip().lower()
-        _locked_df = _locked_df[
-            _locked_df["id"].astype(str).str.lower().str.contains(_locked_sq, na=False)
-            | _locked_df["strat_code"].astype(str).str.lower().str.contains(_locked_sq, na=False)
-            | _locked_df["department"].astype(str).str.lower().str.contains(_locked_sq, na=False)
-            | _locked_df["responsible_person"].astype(str).str.lower().str.contains(_locked_sq, na=False)
-        ]
-
-    st.caption(f"Остаточно закритих заявок для коригування: {len(_locked_df)}")
-
-    if _locked_df.empty:
-        st.info("Остаточно погоджених і заблокованих заявок за цим пошуком немає.")
-    else:
-        if "submitted_at" in _locked_df.columns:
-            _locked_df = _locked_df.sort_values("submitted_at", ascending=False)
-
-        _locked_labels = {
-            int(row["id"]): (
-                f"ID {int(row['id'])} | {clean(row.get('strat_code'))} | "
-                f"{clean(row.get('year'))} {clean(row.get('quarter'))} квартал | "
-                f"ССП {clean(row.get('department'))} | {clean(row.get('responsible_person'))}"
-            )
-            for _, row in _locked_df.iterrows()
-        }
-        _locked_request_id = st.selectbox(
-            "Оберіть остаточно закриту заявку",
-            options=list(_locked_labels),
-            format_func=lambda request_id: _locked_labels[request_id],
-            key="sa_locked_request_id",
-        )
-        _locked_row = _locked_df[
-            _locked_df["id"].astype(int).eq(int(_locked_request_id))
-        ].iloc[0]
-
-        _locked_code = clean(_locked_row.get("strat_code"))
-        _locked_measure_info = strat_df[
-            strat_df["code"].astype(str).str.strip().str.rstrip(".")
-            == _locked_code.rstrip(".")
-        ].copy()
-        _locked_indicator_name = clean(_locked_row.get("indicator_name"))
-        if (
-            clean(_locked_row.get("object_kind")) == "indicator"
-            and _locked_indicator_name
-            and "indicator" in _locked_measure_info.columns
-        ):
-            _locked_indicator_match = _locked_measure_info[
-                _locked_measure_info["indicator"].astype(str).str.strip().str.casefold()
-                == _locked_indicator_name.casefold()
-            ]
-            if not _locked_indicator_match.empty:
-                _locked_measure_info = _locked_indicator_match
-
-        _locked_mi = _locked_measure_info.iloc[0] if not _locked_measure_info.empty else None
-        try:
-            _locked_year = int(str(_locked_row.get("year") or "").strip())
-        except (TypeError, ValueError):
-            _locked_year = None
-        _locked_target = (
-            clean(_locked_mi.get(f"target_{_locked_year}", ""))
-            if _locked_mi is not None and _locked_year is not None
-            else ""
-        )
-        _locked_future_targets = (
-            [
-                _locked_mi.get(f"target_{year}", "")
-                for year in range(_locked_year + 1, 2035)
-            ]
-            if _locked_mi is not None and _locked_year is not None
-            else []
-        )
-
-        st.markdown(
-            f"""
-            <div class="review-box">
-                <div class="review-title">Заявка ID {int(_locked_request_id)} · захід {_esc(clean(_locked_row.get('strat_code')))}</div>
-                <div><b>Період:</b> {_esc(clean(_locked_row.get('year')))} · {_esc(clean(_locked_row.get('quarter')))} квартал</div>
-                <div><b>ССП:</b> {_esc(clean(_locked_row.get('department')))}</div>
-                <div><b>Відповідальна особа:</b> {_esc(clean(_locked_row.get('responsible_person')))}</div>
-                <div><b>Поточний статус виконання:</b> {_esc(clean(_locked_row.get('status')))}</div>
-                <div><b>Поточне фактичне значення:</b> {_esc(clean(_locked_row.get('numeric_value')))}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        _locked_status_options = [
-            "Виконано",
-            "Частково виконано",
-            "Не виконано",
-            "Не настав час",
-            "Втратило актуальність",
-        ]
-        _locked_current_status = clean(_locked_row.get("status"))
-        _locked_status_index = (
-            _locked_status_options.index(_locked_current_status)
-            if _locked_current_status in _locked_status_options
-            else 0
-        )
-
-        with st.expander("✏️ Відкрити форму коригування", expanded=False):
-            with st.form(f"sa_locked_correction_form_{int(_locked_request_id)}"):
-                sa_locked_status = st.selectbox(
-                    "Статус виконання",
-                    _locked_status_options,
-                    index=_locked_status_index,
-                )
-                sa_locked_value = st.text_input(
-                    "Фактичне значення",
-                    value=clean(_locked_row.get("numeric_value")),
-                    help="Можна ввести число або текстове значення, наприклад «так» чи «ні».",
-                )
-                sa_locked_progress = st.text_area(
-                    "Опис прогресу",
-                    value=clean(_locked_row.get("progress_text")),
-                    height=120,
-                )
-                sa_locked_risks = st.text_area(
-                    "Ризики / проблеми / відхилення",
-                    value=clean(_locked_row.get("risks")),
-                    height=100,
-                )
-                sa_locked_npa = st.text_input(
-                    "Посилання на НПА",
-                    value=clean(_locked_row.get("npa_link")),
-                )
-                sa_locked_reason = st.text_area(
-                    "Обґрунтування коригування",
-                    height=110,
-                    placeholder=(
-                        "Наприклад: надійшов уточнений звіт від ССП; попередні дані "
-                        "містили технічну помилку."
-                    ),
-                )
-                sa_locked_submit = st.form_submit_button(
-                    "Підтвердити коригування закритої заявки",
-                    type="primary",
-                    use_container_width=True,
-                )
-
-            if sa_locked_submit:
-                sa_locked_errors = []
-                if not clean(sa_locked_reason):
-                    sa_locked_errors.append("Обґрунтування коригування є обов'язковим.")
-
-                sa_locked_unit = clean(_locked_mi.get("unit")) if _locked_mi is not None else ""
-                if clean(sa_locked_value):
-                    sa_locked_value_ok, sa_locked_value_error = validate_fact_value_for_target(
-                        sa_locked_value,
-                        sa_locked_unit,
-                        _locked_target,
-                        _locked_future_targets,
-                    )
-                    if not sa_locked_value_ok:
-                        sa_locked_errors.append(sa_locked_value_error)
-
-                sa_locked_conflict_error = status_value_conflict(
-                    sa_locked_status,
-                    sa_locked_value,
-                    _locked_target,
-                    sa_locked_unit,
-                    _locked_code,
-                    _locked_future_targets,
-                )
-                if sa_locked_conflict_error:
-                    sa_locked_errors.append(sa_locked_conflict_error)
-
-                if sa_locked_errors:
-                    for sa_locked_error in sa_locked_errors:
-                        st.error(sa_locked_error)
-                else:
-                    try:
-                        _locked_updates = prepare_monitoring_payload({
-                            "status": sa_locked_status,
-                            "numeric_value": sa_locked_value,
-                            "progress_text": sa_locked_progress,
-                            "risks": sa_locked_risks,
-                            "npa_link": sa_locked_npa,
-                        })
-                        correct_locked_request(
-                            request_id=int(_locked_request_id),
-                            updates=_locked_updates,
-                            reason=clean(sa_locked_reason),
-                            user=current_user,
-                        )
-
-                        # Email не є частиною транзакції БД: помилка листа не відкочує
-                        # вже виконане коригування, але отримує окремий код інциденту.
-                        try:
-                            _locked_chain = schemes.parse_chain(_locked_row.get("approval_chain"))
-                            if _locked_chain:
-                                _locked_last_stage = _locked_chain[-1]
-                                notify_events.notify_superadmin_correction(
-                                    _locked_last_stage.get("email", ""),
-                                    _locked_last_stage.get("name", ""),
-                                    clean(_locked_row.get("strat_code")),
-                                    clean(_locked_row.get("year")),
-                                    clean(_locked_row.get("quarter")),
-                                    reason=clean(sa_locked_reason),
-                                    editor_name=(
-                                        clean(current_user.get("full_name"))
-                                        or clean(current_user.get("name"))
-                                        or "Супер-адміністратор"
-                                    ),
-                                    kind=clean(_locked_row.get("object_kind")) or "measure",
-                                )
-                        except Exception as notify_exc:
-                            show_warning(
-                                "Коригування збережено, але останній ланці не відправлено миттєвий лист.",
-                                notify_exc,
-                                "Email після коригування закритої заявки",
-                            )
-
-                        st.session_state["sa_locked_correction_notice"] = (
-                            f"Заявку ID {int(_locked_request_id)} скориговано. "
-                            "Вона залишається остаточно закритою."
-                        )
-                        monitoring_data.invalidate_monitoring_cache()
-                        st.rerun()
-                    except TransitionRejected as exc:
-                        st.error(exc.message)
-                    except Exception as exc:
-                        show_incident(exc, context="Атомарне коригування закритої заявки")
-
-    st.markdown('</div>', unsafe_allow_html=True)
-
 if filtered.empty:
     st.info("За обраними фільтрами заявок не знайдено.")
     _render_superadmin_bottom_tools()
@@ -2967,175 +3355,20 @@ with st.container(border=True):
 selected_id = int(selected_request.split("|", 1)[0].replace("ID", "").strip())
 selected_row = _selectable[_selectable["id"].astype(int) == selected_id].iloc[0]
 
-approval_status = clean(selected_row["approval_status"])
-selected_code   = clean(selected_row["strat_code"])
-
-# Довідка зі стратегічної матриці та річний орієнтир заявки.
-year_val = clean(selected_row.get("year", "")).strip()
-_code_key = selected_code.strip().rstrip(".")
-_strat_record = _strat_row_lookup.get(_code_key, {})
-target_year_val = clean(_strat_record.get(f"target_{year_val}", "")) if year_val else ""
-
-_object_type = clean(_strat_record.get("object_type")).strip().lower()
-_object_number_label = {
-    "measure": "Захід №",
-    "task": "Завдання №",
-    "goal": "Стратегічна ціль №",
-}.get(_object_type, "Об’єкт №")
-_object_name = clean(_strat_record.get("name")) or "—"
-_product_type = clean(_strat_record.get("product_type")) or "—"
-_indicator = clean(_strat_record.get("indicator")) or "—"
-_unit = clean(_strat_record.get("unit")) or "—"
-_resp_main = clean(_strat_record.get("resp_main")) or "—"
-_resp_co_1 = clean(_strat_record.get("resp_co_1")) or "—"
-_resp_co_2 = clean(_strat_record.get("resp_co_2")) or "—"
-_start_quarter = _planned_quarter_label(_strat_record.get("start_date_plan"))
-_end_quarter = _planned_quarter_label(_strat_record.get("end_date_plan"))
-_term_label = "—" if _start_quarter == "—" and _end_quarter == "—" else f"{_start_quarter} — {_end_quarter}"
-
-# Дані самої заявки та маршрут погодження.
-person_name = clean(selected_row.get("responsible_person")) or "—"
-person_phone = clean(selected_row.get("phone")) or "—"
-person_email = clean(selected_row.get("email")) or "—"
-_fact_value = _fact_for_request(selected_row)
-_progress_value = clean(selected_row.get("progress_text")) or "—"
-_risks_value = clean(selected_row.get("risks")) or "Не зазначено"
-_npa_raw = clean(selected_row.get("npa_link", "")) if "npa_link" in selected_row.index else ""
-_req_chain = schemes.parse_chain(selected_row.get("approval_chain")) if "approval_chain" in selected_row.index else []
-_req_stage = schemes.parse_stage(selected_row.get("chain_stage")) if "chain_stage" in selected_row.index else 0
-_req_scheme_label = clean(selected_row.get("scheme_label", "")) if "scheme_label" in selected_row.index else ""
-_req_kind = clean(selected_row.get("object_kind", "")) if "object_kind" in selected_row.index else "measure"
-_req_dept_nums = re.findall(r"\d+", clean(selected_row.get("department", "")))
-_req_dept_idx = _req_dept_nums[0] if _req_dept_nums else ""
-
-if _npa_raw:
-    _npa_links_html = "".join(
-        f'<div>🔗 <a href="{_esc(link.strip())}" target="_blank" rel="noopener noreferrer">'
-        f'{_esc(link.strip())}</a></div>'
-        for link in re.split(r"[\n;,]+", _npa_raw)
-        if link.strip()
-    ) or "—"
-else:
-    _npa_links_html = "—"
-
-_route_nodes = [
-    '<div class="admin-route-node">'
-    '<span class="admin-route-role">Подавач</span>'
-    f'{_esc(person_name if person_name != "—" else person_email)}'
-    '</div>'
-]
-_current_route_stage = schemes.current_stage(_req_chain, _req_stage) if _req_chain else None
-for _stage_index, _stage in enumerate(_req_chain):
-    _stage_label = clean(_stage.get("label")) or schemes.STAGE_LABELS.get(clean(_stage.get("role")), "Ланка")
-    _stage_person = clean(_stage.get("name")) or clean(_stage.get("email")) or "—"
-    _current_class = " current" if _current_route_stage is not None and _stage_index == _req_stage else ""
-    _route_nodes.append(
-        f'<div class="admin-route-node{_current_class}">'
-        f'<span class="admin-route-role">{_esc(_stage_label)}</span>'
-        f'{_esc(_stage_person)}</div>'
-    )
-_route_html = '<span class="admin-route-arrow">→</span>'.join(_route_nodes)
-_route_caption = _esc(_req_scheme_label) if _req_scheme_label else "Маршрут погодження"
-
-# ──────────────────────────────────────────────
-# КАРТКА ЗАЯВКИ — довідкова інформація про об’єкт стратегічного плану
-# ──────────────────────────────────────────────
-
-st.markdown(
-    f"""
-    <div class="card">
-        <div class="card-title">Картка заявки</div>
-        <div class="badge-wrap">
-            <div class="badge">{_esc(_object_number_label)} {_esc(selected_code)}</div>
-            <div class="badge">ID {_esc(clean(selected_row.get('id')))}</div>
-        </div>
-        <div class="admin-object-name">{_esc(_object_name)}</div>
-        <div class="admin-reference-grid">
-            <div class="admin-reference-row">
-                <div class="admin-reference-label">Тип продукту</div>
-                <div class="admin-reference-value">{_esc(_product_type)}</div>
-            </div>
-            <div class="admin-reference-row">
-                <div class="admin-reference-label">Індикатор</div>
-                <div class="admin-reference-value">{_esc(_indicator)}</div>
-            </div>
-            <div class="admin-reference-row">
-                <div class="admin-reference-label">Одиниця виміру</div>
-                <div class="admin-reference-value">{_esc(_unit)}</div>
-            </div>
-            <div class="admin-reference-row wide">
-                <div class="admin-reference-label">Відповідальний ССП</div>
-                <div class="admin-reference-value">
-                    {_esc(_resp_main)} &nbsp;·&nbsp; Спів. 1: {_esc(_resp_co_1)}
-                    &nbsp;·&nbsp; Спів. 2: {_esc(_resp_co_2)}
-                </div>
-            </div>
-            <div class="admin-reference-row wide">
-                <div class="admin-reference-label">Термін</div>
-                <div class="admin-reference-value">{_esc(_term_label)}</div>
-            </div>
-        </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-# ──────────────────────────────────────────────
-# ПОДАНІ ВІДОМОСТІ — усе, що фактично подав структурний підрозділ
-# ──────────────────────────────────────────────
-
-_target_heading = f"Цільовий орієнтир на {year_val} рік" if year_val else "Цільовий орієнтир"
-st.markdown(
-    f"""
-    <div class="card">
-        <div class="card-title">Подані відомості</div>
-        <div class="admin-submission-grid">
-            <div class="admin-data-field">
-                <div class="admin-data-label">Звітний період</div>
-                <div class="admin-data-value">{_esc(_period_label(selected_row.get('year'), selected_row.get('quarter')))}</div>
-            </div>
-            <div class="admin-data-field">
-                <div class="admin-data-label">{_esc(_target_heading)}</div>
-                <div class="admin-data-value">{_esc(target_year_val or '—')}</div>
-            </div>
-            <div class="admin-data-field">
-                <div class="admin-data-label">Фактичне значення</div>
-                <div class="admin-data-value">{_esc(_fact_value)}</div>
-            </div>
-            <div class="admin-data-field">
-                <div class="admin-data-label">Статус виконання</div>
-                <div class="admin-data-value">{_esc(clean(selected_row.get('status')) or '—')}</div>
-            </div>
-            <div class="admin-data-field wide">
-                <div class="admin-data-label">Опис прогресу виконання</div>
-                <div class="admin-data-value">{_html_cell(_progress_value)}</div>
-            </div>
-            <div class="admin-data-field wide">
-                <div class="admin-data-label">Ризики / проблеми / відхилення</div>
-                <div class="admin-data-value">{_html_cell(_risks_value)}</div>
-            </div>
-            <div class="admin-data-field wide">
-                <div class="admin-data-label">Посилання на НПА</div>
-                <div class="admin-data-value">{_npa_links_html}</div>
-            </div>
-            <div class="admin-data-field wide">
-                <div class="admin-data-label">Схема погодження</div>
-                <div class="admin-route-caption">{_route_caption}</div>
-                <div class="admin-route-row">{_route_html}</div>
-            </div>
-            <div class="admin-data-field wide">
-                <div class="admin-data-label">Дані відповідальної особи</div>
-                <div class="admin-contact-row">
-                    <div class="admin-contact-item"><strong>ПІБ</strong>{_esc(person_name)}</div>
-                    <div class="admin-contact-item"><strong>Телефон</strong>{_esc(person_phone)}</div>
-                    <div class="admin-contact-item"><strong>Email</strong>{_esc(person_email)}</div>
-                </div>
-            </div>
-        </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+_detail_context = _render_request_detail_cards(selected_row)
+approval_status = _detail_context["approval_status"]
+selected_code = _detail_context["selected_code"]
+year_val = _detail_context["year_val"]
+target_year_val = _detail_context["target_year_val"]
+_strat_record = _detail_context["strat_record"]
+_unit = _detail_context["unit"]
+person_name = _detail_context["person_name"]
+person_phone = _detail_context["person_phone"]
+person_email = _detail_context["person_email"]
+_req_chain = _detail_context["req_chain"]
+_req_stage = _detail_context["req_stage"]
+_req_kind = _detail_context["req_kind"]
+_req_dept_idx = _detail_context["req_dept_idx"]
 
 # ──────────────────────────────────────────────
 # КОНФЛІКТ: заявка по заходу, який уже ЗАКРИТО ВРУЧНУ
@@ -3858,7 +4091,7 @@ if st.session_state.get("adm_last_decision_notice"):
 
 
 
-logs_df = load_logs(selected_id)
+logs_df = load_logs(selected_id, selected_row)
 
 if logs_df.empty:
     st.info("Історії змін для цієї заявки поки що немає.")

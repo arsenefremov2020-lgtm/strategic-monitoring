@@ -1095,7 +1095,8 @@ section[data-testid="stSidebar"] [data-auth-sidebar-profile="true"] a:hover {
 }
 
 .myreq-table-scroll {
-    height: 316px;
+    height: auto;
+    max-height: 390px;
     overflow: auto;
     border: 1px solid #DCE4F0;
     border-radius: 12px;

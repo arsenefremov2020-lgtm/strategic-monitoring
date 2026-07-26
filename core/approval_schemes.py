@@ -88,6 +88,10 @@ APPROVAL_SCHEMES: dict[str, list[str]] = {
         [ROLE_ADMIN, ROLE_UNIT_HEAD, ROLE_SSP_DEPUTY, ROLE_SSP_HEAD],
     "Керівник управління → Координатор → Керівник ССП":
         [ROLE_UNIT_HEAD, ROLE_ADMIN, ROLE_SSP_HEAD],
+    "Керівник управління → Координатор → Заступник керівника ССП":
+        [ROLE_UNIT_HEAD, ROLE_ADMIN, ROLE_SSP_DEPUTY],
+    "Керівник управління → Координатор → Заступник керівника ССП → Керівник ССП":
+        [ROLE_UNIT_HEAD, ROLE_ADMIN, ROLE_SSP_DEPUTY, ROLE_SSP_HEAD],
     "Заступник керівника ССП → Координатор → Керівник ССП":
         [ROLE_SSP_DEPUTY, ROLE_ADMIN, ROLE_SSP_HEAD],
     "Керівник управління → Заступник → Координатор → Керівник ССП":
@@ -149,6 +153,218 @@ def _approval_role_rank(role: str) -> int:
 
 def _scheme_has_required_coordinator(roles: list[str]) -> bool:
     return ROLE_ADMIN in roles and roles[-1] != ROLE_ADMIN
+
+
+_VERTICAL_APPROVAL_ROLES = (
+    ROLE_UNIT_HEAD,
+    ROLE_SSP_DEPUTY,
+    ROLE_SSP_HEAD,
+)
+
+
+def _roles_from_chain(chain) -> list[str]:
+    """Нормалізований список ролей із JSON-ланцюга або готового списку."""
+    return [
+        str(stage.get("role") or "").strip()
+        for stage in parse_chain(chain)
+        if str(stage.get("role") or "").strip()
+    ]
+
+
+def scheme_name_for_roles(roles_or_chain) -> str:
+    """Назва каталожної схеми для точної послідовності ролей, якщо вона є."""
+    if isinstance(roles_or_chain, list) and all(
+        isinstance(item, str) for item in roles_or_chain
+    ):
+        roles = [str(item or "").strip() for item in roles_or_chain if str(item or "").strip()]
+    else:
+        roles = _roles_from_chain(roles_or_chain)
+    for name, catalog_roles in APPROVAL_SCHEMES.items():
+        if roles == catalog_roles:
+            return name
+    return ""
+
+
+def roles_with_recorded_decisions(chain, logs) -> list[str]:
+    """Ролі ланок, які вже ухвалювали рішення за журналом заявки.
+
+    Це важливо для заявок, які вища ланка повернула назад координатору:
+    така ланка стоїть після координатора в поточному JSON-маршруті, але її
+    рівень уже не можна прибрати або замінити нижчим.
+    """
+    parsed_chain = parse_chain(chain)
+    if not parsed_chain or logs is None:
+        return []
+
+    if hasattr(logs, "iterrows"):
+        rows = (row for _, row in logs.iterrows())
+    elif isinstance(logs, (list, tuple)):
+        rows = iter(logs)
+    else:
+        return []
+
+    role_by_waiting_status = {
+        status: role for role, status in STAGE_WAITING_STATUS.items()
+    }
+    decision_prefixes = (
+        "погодження ланкою",
+        "погодження супер-адміном",
+        "повернення",
+        "редагування ланкою",
+        "ескалація",
+    )
+    decided_roles: set[str] = set()
+    for row in rows:
+        getter = row.get if hasattr(row, "get") else lambda key, default=None: default
+        old_status = str(getter("old_status", "") or "").strip()
+        role = role_by_waiting_status.get(old_status)
+        if not role:
+            continue
+        action = str(getter("action", "") or "").strip().casefold()
+        if not action.startswith(decision_prefixes):
+            continue
+        decided_roles.add(role)
+
+    return [
+        str(stage.get("role") or "").strip()
+        for stage in parsed_chain
+        if str(stage.get("role") or "").strip() in decided_roles
+    ]
+
+
+def _coordinator_scheme_context(
+    chain,
+    stage_idx: int,
+    decided_roles=None,
+):
+    parsed_chain = parse_chain(chain)
+    coordinator_idx = parse_stage(stage_idx)
+    coordinator = current_stage(parsed_chain, coordinator_idx)
+    if not coordinator or str(coordinator.get("role") or "").strip() != ROLE_ADMIN:
+        return parsed_chain, coordinator_idx, [], 0
+
+    all_roles = [
+        str(stage.get("role") or "").strip()
+        for stage in parsed_chain
+    ]
+    completed = {
+        str(role or "").strip()
+        for role in (decided_roles or [])
+        if str(role or "").strip()
+    }
+
+    # Якщо супер-адмін уже ухвалював рішення, вертикаль нижче нього більше
+    # не перебудовується: це окрема найвища ланка маршруту.
+    if ROLE_SUPER_ADMIN in completed:
+        protected_roles = all_roles[: coordinator_idx + 1]
+        return parsed_chain, coordinator_idx, protected_roles, _approval_role_rank(ROLE_SUPER_ADMIN)
+
+    protected_end = coordinator_idx
+    for index, role in enumerate(all_roles):
+        if role in completed:
+            protected_end = max(protected_end, index)
+    protected_roles = all_roles[: protected_end + 1]
+
+    passed_vertical_ranks = [
+        _approval_role_rank(role)
+        for role in set(protected_roles) | completed
+        if role in _VERTICAL_APPROVAL_ROLES
+    ]
+    ceiling = max(passed_vertical_ranks, default=_approval_role_rank(ROLE_ADMIN))
+    return parsed_chain, coordinator_idx, protected_roles, ceiling
+
+
+def _valid_coordinator_catalog_scheme(
+    candidate_roles: list[str], protected_roles: list[str], ceiling: int,
+) -> bool:
+    """Доменні правила зміни лише ще не пройденого хвоста маршруту."""
+    if not protected_roles or ROLE_ADMIN not in protected_roles:
+        return False
+    if candidate_roles[: len(protected_roles)] != protected_roles:
+        return False
+
+    tail_roles = candidate_roles[len(protected_roles):]
+    if not tail_roles:
+        return False
+    if any(role not in _VERTICAL_APPROVAL_ROLES for role in tail_roles):
+        return False
+    if len(set(candidate_roles)) != len(candidate_roles):
+        return False
+
+    tail_ranks = [_approval_role_rank(role) for role in tail_roles]
+    if any(rank <= ceiling for rank in tail_ranks):
+        return False
+    if any(left >= right for left, right in zip(tail_ranks, tail_ranks[1:])):
+        return False
+    return candidate_roles[-1] != ROLE_ADMIN
+
+
+def scheme_options_for_coordinator(
+    chain,
+    stage_idx: int,
+    current_scheme_name: str = "",
+    decided_roles=None,
+) -> list[str]:
+    """Альтернативні каталожні схеми, доступні координатору.
+
+    Пройдена частина маршруту до координатора включно та ланки, які вже
+    ухвалювали рішення після нього, зберігаються дослівно. У хвіст можна
+    додавати лише унікальні вертикальні ланки з рангом строго
+    вище за найвищий уже пройдений рівень, у порядку зростання рангу.
+    Поточна схема до результату не включається: сторінка показує її окремо як
+    типовий варіант «залишити як є».
+    """
+    parsed_chain, coordinator_idx, protected_roles, ceiling = _coordinator_scheme_context(
+        chain, stage_idx, decided_roles
+    )
+    if not protected_roles or ceiling >= _approval_role_rank(ROLE_SUPER_ADMIN):
+        return []
+
+    current_scheme_name = str(current_scheme_name or "").strip()
+    if current_scheme_name == SUBMITTER_SELF_APPROVAL_SCHEME:
+        return []
+
+    inferred_current = scheme_name_for_roles(parsed_chain)
+    current_name = (
+        current_scheme_name
+        if current_scheme_name in APPROVAL_SCHEMES
+        else inferred_current
+    )
+    current_roles = APPROVAL_SCHEMES.get(current_name, _roles_from_chain(parsed_chain))
+
+    options: list[str] = []
+    for name, candidate_roles in APPROVAL_SCHEMES.items():
+        if name == SUBMITTER_SELF_APPROVAL_SCHEME:
+            continue
+        if name == current_name or candidate_roles == current_roles:
+            continue
+        if _valid_coordinator_catalog_scheme(candidate_roles, protected_roles, ceiling):
+            options.append(name)
+    return options
+
+
+def coordinator_scheme_tail_roles(
+    chain,
+    stage_idx: int,
+    scheme_name: str,
+    decided_roles=None,
+) -> list[str] | None:
+    """Повний хвіст вибраної схеми після координатора.
+
+    ``None`` означає, що схема не зберігає захищену частину маршруту або
+    додає ланку не вище вже досягнутої стелі.
+    """
+    _, coordinator_idx, protected_roles, ceiling = _coordinator_scheme_context(
+        chain, stage_idx, decided_roles
+    )
+    roles = APPROVAL_SCHEMES.get(str(scheme_name or "").strip())
+    if not protected_roles or roles is None:
+        return None
+    if roles[: len(protected_roles)] != protected_roles:
+        return None
+    if not _valid_coordinator_catalog_scheme(roles, protected_roles, ceiling):
+        return None
+    return list(roles[coordinator_idx + 1:])
 
 
 def scheme_options_for_submitter(role: str) -> list[str]:

@@ -7,6 +7,7 @@ scripts/send_notifications.py, які запускає GitHub Actions).
 Викликаються прямо зі Streamlit-сторінок у момент дії:
 - заявку подано → пороговий зведений лист першій ланці (не частіше разу на 2 години);
 - ланка погодила → лист наступній ланці;
+- координатор змінив схему → інформаційний лист новим майбутнім ланкам;
 - заявку повернуто → лист адресату повернення (подавачу/ланці);
 - заявку погоджено остаточно → лист подавачу;
 - ручне закриття підтверджено → лист керівнику ССП.
@@ -321,6 +322,30 @@ def notify_superadmin_correction(to_email: str, to_name: str, code: str, year: s
     )
     _fire(to_email, subject, body, "superadmin_correction",
           f"{kind}:{code}:{year}:{quarter}:{to_email}")
+
+
+def notify_included_in_chain(to_email: str, to_name: str, stage_label: str,
+                              changed_by: str, code: str, year: str,
+                              quarter: str, kind: str = "measure") -> None:
+    """Інформує майбутню ланку, яку координатор додав до схеми погодження."""
+    if not str(to_email or "").strip():
+        return
+    subject = "Зміна схеми погодження: вас включено до схеми"
+    body = (
+        f"<p>Шановний(а) {to_name or stage_label or ''}!</p>"
+        f"<p>{changed_by or 'Координатор'} для "
+        f"{_request_line(code, year, quarter, kind)} змінив(ла) схему "
+        f"погодження та включив(ла) вас як ланку «<b>{stage_label}</b>».</p>"
+        f"<p>Зараз заявка може перебувати на попередній ланці. Коли настане "
+        f"ваша черга ухвалювати рішення, система надішле окреме повідомлення.</p>"
+    )
+    _fire(
+        to_email,
+        subject,
+        body,
+        ntype="chain_included",
+        related_key=f"{code}|{year}|{quarter}|{stage_label}|{to_email}",
+    )
 
 
 def notify_excluded_from_chain(to_email: str, to_name: str, changed_by: str,

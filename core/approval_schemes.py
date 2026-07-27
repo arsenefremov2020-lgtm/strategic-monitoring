@@ -433,6 +433,94 @@ def build_chain(scheme_name: str, persons: dict[str, dict]) -> list[dict]:
     return chain
 
 
+def append_final_coordinator_after_head_edit(
+    chain,
+    ssp_index: str,
+) -> tuple[list[dict] | None, int | None]:
+    """Додає того самого координатора фінальною ланкою після редагування керівником ССП.
+
+    Наявний маршрут не обрізається: усі вже пройдені ланки лишаються в
+    ланцюгу як історія. Якщо координатор уже є останньою ланкою, повторно
+    його не дублюємо.
+    """
+    parsed = [dict(stage) for stage in parse_chain(chain)]
+    if parsed and str(parsed[-1].get("role") or "").strip() == ROLE_ADMIN:
+        return parsed, len(parsed) - 1
+
+    coordinator = next(
+        (dict(stage) for stage in parsed if str(stage.get("role") or "").strip() == ROLE_ADMIN),
+        None,
+    )
+    if coordinator is None or not (coordinator.get("email") or coordinator.get("name")):
+        candidates = stage_candidates(ROLE_ADMIN, ssp_index)
+        if not candidates:
+            return None, None
+        candidate = candidates[0]
+        coordinator = {
+            "role": ROLE_ADMIN,
+            "label": STAGE_LABELS[ROLE_ADMIN],
+            "email": str(candidate.get("email") or "").strip().lower(),
+            "name": str(candidate.get("name") or "").strip(),
+        }
+    else:
+        coordinator["role"] = ROLE_ADMIN
+        coordinator["label"] = STAGE_LABELS[ROLE_ADMIN]
+        coordinator["email"] = str(coordinator.get("email") or "").strip().lower()
+        coordinator["name"] = str(coordinator.get("name") or "").strip()
+
+    parsed.append(coordinator)
+    return parsed, len(parsed) - 1
+
+
+def scheme_label_for_chain(chain) -> str:
+    """Каталожна назва або послідовність назв ролей для нестандартного маршруту."""
+    parsed = parse_chain(chain)
+    catalog_name = scheme_name_for_roles(parsed)
+    if catalog_name:
+        return catalog_name
+    return " → ".join(
+        str(stage.get("label") or STAGE_LABELS.get(stage.get("role"), stage.get("role", ""))).strip()
+        for stage in parsed
+        if str(stage.get("role") or "").strip()
+    )
+
+
+def first_approval_stage_has_acted(chain, logs) -> bool:
+    """Чи зафіксовано хоча б одне рішення першої ланки погодження."""
+    parsed = parse_chain(chain)
+    if not parsed or logs is None:
+        return False
+    try:
+        if hasattr(logs, "empty") and logs.empty:
+            return False
+    except Exception:
+        pass
+
+    first_waiting_status = waiting_status_for_stage(parsed[0])
+    decision_prefixes = (
+        "погодження",
+        "повернення",
+        "редагування ланкою",
+        "ескалація",
+        "зміна схеми погодження",
+    )
+    if hasattr(logs, "iterrows"):
+        rows = (row for _, row in logs.iterrows())
+    else:
+        try:
+            rows = iter(logs)
+        except TypeError:
+            return False
+
+    for row in rows:
+        getter = row.get if hasattr(row, "get") else lambda key, default=None: default
+        old_status = str(getter("old_status", "") or "").strip()
+        action = str(getter("action", "") or "").strip().casefold()
+        if old_status == first_waiting_status and action.startswith(decision_prefixes):
+            return True
+    return False
+
+
 def chain_to_json(chain: list[dict]) -> str:
     return json.dumps(chain, ensure_ascii=False)
 

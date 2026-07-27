@@ -2,50 +2,18 @@
 # scripts/send_notifications.py
 
 """
-Щоденна розсилка email-сповіщень системи моніторингу.
+Планова email-розсилка системи моніторингу.
 
-Запускається ЗЗОВНІ Streamlit-застосунку — з GitHub Actions за розкладом
-(.github/workflows/notifications.yml), бо сам застосунок працює лише тоді,
-коли відкритий у когось у браузері.
+Скрипт запускається GitHub Actions двічі на будній день і формує для кожного
+отримувача повний зріз незакритих питань станом на момент запуску. Порожні
+дайджести не надсилаються. Миттєві листи зі Streamlit-сторінок вимкнені в
+core/notify_events.py.
 
-Що робить за один запуск:
-1. Читає користувачів із users_access.xlsx (той самий файл, що й застосунок).
-2. Читає заявки moніторингу з Supabase (monitoring_requests).
-3. Формує ПЕРСОНАЛЬНІ сповіщення за роллю:
+Антидубль прив'язаний до конкретного слоту дня: morning / evening. Тому
+ранковий лист не блокує вечірній, а випадковий повтор того самого слоту не
+створює дубль.
 
-   ССП (відповідальна особа):
-   • нагадування про дедлайн подання (до 15 числа місяця після кварталу) —
-     надсилається у "розумні" дні: за 10, 5, 2 і 1 день до дедлайну,
-     і ЛИШЕ якщо за ССП користувача ще немає подання за звітний квартал;
-   • дайджест: заявки його ССП, повернуті на доопрацювання (з коментарем
-     координатора) + погоджені за останню добу.
-
-   Керівник ССП / Керівник управління / Заступник керівника ССП:
-   • дайджест: заявки його ССП зі статусом саме ЙОГО ланки
-     ("Очікує: Керівник ССП" / "Очікує: Керівник управління" /
-      "Очікує: Заступник керівника ССП"), з тривалістю очікування.
-
-   Адміністратор (координатор):
-   • дайджест по ЙОГО закріплених ССП: нові заявки "Очікує погодження"
-     за добу; кількість заявок, що чекають понад 5 днів (окремим блоком —
-     це критичний сигнал); повернуті, які так і не переподані понад 7 днів.
-
-   Супер-адмін:
-   • зведений дайджест по всій системі + запити на ручне закриття,
-     що очікують підтвердження (closeout_requests).
-
-4. Антиспам:
-   • перед кожною відправкою перевіряє notification_log: той самий
-     (отримувач + тип + related_key) не надсилається повторно протягом
-     періоду охолодження (дедлайн-нагадування — 1 раз на календарний день
-     "розкладу", дайджести — не частіше 1 разу на добу);
-   • якщо для користувача НЕМАЄ жодної змістовної події — лист НЕ
-     надсилається взагалі (порожні дайджести заборонені);
-   • кілька подій одного отримувача обʼєднуються в ОДИН лист.
-
-5. Кожну відправку (успішну чи ні) логує в notification_log.
-
-Необхідні змінні середовища (GitHub Secrets):
+Необхідні змінні середовища:
     SUPABASE_URL, SUPABASE_KEY
     SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM (опц.)
     NOTIFICATIONS_DRY_RUN=1  → тестовий прогін без реальної відправки
@@ -55,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -68,6 +37,7 @@ from core.data_types import normalise_closeout_frame, normalise_monitoring_frame
 from core.db import fetch_all  # noqa: E402
 from core.emails import send_email  # noqa: E402
 from core.timeutils import now_kyiv  # noqa: E402
+from core.superadmin_routing import resolve_manual_closeout_route  # noqa: E402
 
 DEADLINE_DAY = 15    # подання до 15 числа місяця, наступного за звітним кварталом
 REMINDER_DAYS_BEFORE = [10, 5, 2, 1]   # за скільки днів до дедлайну нагадуємо
@@ -218,9 +188,8 @@ def load_pending_closeouts(supabase) -> pd.DataFrame:
         return pd.DataFrame()
 
 
-def already_sent(supabase, email: str, ntype: str, related_key: str, cooldown_hours: int = 20) -> bool:
-    """Перевірка антиспаму через notification_log."""
-    since = (datetime.now(timezone.utc) - timedelta(hours=cooldown_hours)).isoformat()
+def already_sent(supabase, email: str, ntype: str, related_key: str) -> bool:
+    """Чи був уже успішно надісланий саме цей денний слот дайджеста."""
     try:
         resp = (
             supabase.table("notification_log")
@@ -229,13 +198,12 @@ def already_sent(supabase, email: str, ntype: str, related_key: str, cooldown_ho
             .eq("notification_type", ntype)
             .eq("related_key", related_key)
             .eq("status", "sent")
-            .gte("sent_at", since)
             .limit(1)
             .execute()
         )
         return bool(resp.data)
     except Exception as exc:
-        # Якщо журнал недоступний — краще НЕ надсилати, ніж заспамити.
+        # Fail closed: без журналу не ризикуємо подвоїти розсилку.
         print(f"!! notification_log недоступний ({exc}) — пропускаю {ntype} для {email}")
         return True
 
@@ -373,57 +341,192 @@ def _parse_chain(value) -> list[dict]:
         return []
 
 
-def build_escalations(requests: pd.DataFrame, users: list[dict]) -> dict[str, list[dict]]:
-    """И1: map recipient email to requests waiting on one stage for >5 days."""
+def digest_slot(today: datetime, *, force_run: bool = False) -> str | None:
+    """Повертає morning/evening для двох київських слотів розсилки."""
+    if today.hour == 8:
+        return "morning"
+    if today.hour == 16:
+        return "evening"
+    if force_run:
+        return "morning" if today.hour < 12 else "evening"
+    return None
+
+
+def _stage_index(value) -> int:
+    try:
+        return max(int(float(clean(value) or 0)), 0)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
+def _current_stage(row) -> dict:
+    chain = _parse_chain(row.get("approval_chain"))
+    stage = _stage_index(row.get("chain_stage"))
+    return chain[stage] if stage < len(chain) else {}
+
+
+def _name_tokens(value) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[a-zа-яіїєґ']+", clean(value).lower())
+        if len(token) >= 4
+    }
+
+
+def _stage_matches_user(stage: dict, user: dict) -> bool:
+    stage_email = clean(stage.get("email")).lower()
+    user_email = clean(user.get("email")).lower()
+    if stage_email:
+        return bool(user_email and stage_email == user_email)
+
+    user_role = clean(user.get("role"))
+    stage_role = clean(stage.get("role"))
+    if user_role == "super_admin":
+        stage_tokens = _name_tokens(stage.get("name"))
+        user_tokens = _name_tokens(user.get("full_name"))
+        return bool(stage_tokens and user_tokens and stage_tokens & user_tokens)
+    return bool(stage_role and stage_role == user_role)
+
+
+def _request_waits_for_user(row, user: dict) -> bool:
+    status = clean(row.get("approval_status"))
+    if not status.startswith("Очікує"):
+        return False
+
+    current = _current_stage(row)
+    if current:
+        return _stage_matches_user(current, user)
+
+    # Legacy fallback for records without approval_chain.
+    legacy_status = {
+        "admin": "Очікує погодження",
+        "unit_head": "Очікує: Керівник управління",
+        "ssp_deputy": "Очікує: Заступник керівника ССП",
+        "ssp_head": "Очікує: Керівник ССП",
+    }.get(clean(user.get("role")))
+    return bool(legacy_status and status == legacy_status)
+
+
+def _route_matches_superadmin(route: dict, superadmin: dict) -> bool:
+    email = clean(superadmin.get("email")).lower()
+    route_emails = {
+        clean(route.get("assigned_superadmin_email")).lower(),
+        clean(route.get("senior_superadmin_email")).lower(),
+    }
+    route_emails.discard("")
+    if email and email in route_emails:
+        return True
+
+    user_tokens = _name_tokens(superadmin.get("full_name"))
+    route_tokens = (
+        _name_tokens(route.get("assigned_superadmin_name"))
+        | _name_tokens(route.get("senior_superadmin_name"))
+    )
+    return bool(user_tokens and route_tokens and user_tokens & route_tokens)
+
+
+def assigned_admin_emails_for_superadmin(users: list[dict], superadmin: dict) -> set[str]:
+    """Адміністратори, закріплені за супер-адміном чинною route-логікою."""
+    result: set[str] = set()
+    for admin in users:
+        if clean(admin.get("role")) != "admin":
+            continue
+        route = resolve_manual_closeout_route(admin)
+        if _route_matches_superadmin(route, superadmin):
+            email = clean(admin.get("email")).lower()
+            if email:
+                result.add(email)
+    return result
+
+
+def _department_indexes(row) -> set[str]:
+    return set(re.findall(r"\d+", clean(row.get("department"))))
+
+
+def _current_admin_email(row, admin_users: list[dict]) -> str:
+    current = _current_stage(row)
+    if clean(current.get("role")) == "admin":
+        email = clean(current.get("email")).lower()
+        if email:
+            return email
+
+    if clean(row.get("approval_status")) != "Очікує погодження":
+        return ""
+    indexes = _department_indexes(row)
+    matches = []
+    for admin in admin_users:
+        allowed = set(admin.get("allowed") or [])
+        if "*" in allowed or (indexes and indexes & allowed):
+            email = clean(admin.get("email")).lower()
+            if email:
+                matches.append(email)
+    return matches[0] if len(set(matches)) == 1 else ""
+
+
+def build_superadmin_stuck_map(
+    requests: pd.DataFrame,
+    users: list[dict],
+) -> dict[str, list[dict]]:
+    """Заявки на адмінській ланці >5 днів для закріплених адміністраторів."""
     result: dict[str, list[dict]] = {}
     if requests.empty:
         return result
-    superadmins = {
-        clean(user.get("email")).lower()
-        for user in users
-        if user.get("role") == "super_admin" and clean(user.get("email"))
+
+    admins = [user for user in users if clean(user.get("role")) == "admin"]
+    superadmins = [
+        user for user in users if clean(user.get("role")) == "super_admin"
+    ]
+    assigned = {
+        clean(user.get("email")).lower(): assigned_admin_emails_for_superadmin(users, user)
+        for user in superadmins
+        if clean(user.get("email"))
     }
-    waiting_statuses = {
-        "Очікує погодження",
-        "Очікує: Керівник ССП",
-        "Очікує: Керівник управління",
-        "Очікує: Заступник керівника ССП",
-        "Очікує: Супер-адмін",
-    }
+
     for _, row in requests.iterrows():
-        status = clean(row.get("approval_status"))
-        if status not in waiting_statuses:
+        current = _current_stage(row)
+        if current and clean(current.get("role")) != "admin":
             continue
-        days = _days_since(row.get("_stage_since") or row.get("submitted_at"))
-        if days <= STALE_DAYS:
+        if not current and clean(row.get("approval_status")) != "Очікує погодження":
             continue
-        chain = _parse_chain(row.get("approval_chain"))
-        try:
-            stage = max(int(float(clean(row.get("chain_stage")) or 0)), 0)
-        except (TypeError, ValueError):
-            stage = 0
-        current = chain[stage] if stage < len(chain) else {}
-        final = chain[-1] if chain else {}
-        recipients = set(superadmins)
-        for stage_item in (current, final):
-            email = clean(stage_item.get("email")).lower()
-            if email:
-                recipients.add(email)
-        if not recipients:
+
+        admin_email = _current_admin_email(row, admins)
+        if not admin_email:
             continue
+        days = _days_since_or_none(row.get("_stage_since"))
+        # Важливо: без журналу не підміняємо момент входу submitted_at.
+        if days is None or days <= STALE_DAYS:
+            continue
+
         item = {
             "id": row.get("id"),
             "strat_code": clean(row.get("strat_code")),
             "year": clean(row.get("year")),
             "quarter": clean(row.get("quarter")),
             "days": days,
-            "stage_label": clean(current.get("label")) or status.replace("Очікує: ", ""),
+            "admin_email": admin_email,
         }
-        for email in recipients:
-            result.setdefault(email, []).append(item)
+        for superadmin_email, admin_emails in assigned.items():
+            if admin_email in admin_emails:
+                result.setdefault(superadmin_email, []).append(item)
+
     for items in result.values():
         items.sort(key=lambda item: (-int(item["days"]), str(item["strat_code"])))
     return result
+
+
+def _closeout_matches_superadmin(row, superadmin: dict) -> bool:
+    route = {
+        "assigned_superadmin_email": row.get("assigned_superadmin_email"),
+        "assigned_superadmin_name": row.get("assigned_superadmin_name"),
+        "senior_superadmin_email": row.get("senior_superadmin_email"),
+        "senior_superadmin_name": row.get("senior_superadmin_name"),
+    }
+    if not any(clean(value) for value in route.values()):
+        route = resolve_manual_closeout_route({
+            "email": row.get("admin_email"),
+            "full_name": row.get("admin_id") or row.get("admin_name"),
+        })
+    return _route_matches_superadmin(route, superadmin)
 
 
 def li(text: str) -> str:
@@ -445,14 +548,16 @@ def block(title: str, items: list[str], accent: str = "#005BBB") -> str:
 
 def main() -> int:
     today = now_kyiv()
+    slot = digest_slot(today, force_run=FORCE_RUN)
     print(
-        f"== Розсилка сповіщень, Київ: {today:%d.%m.%Y %H:%M %Z}, "
-        f"DRY_RUN={DRY_RUN}, FORCE_RUN={FORCE_RUN} =="
+        f"== Дайджест моніторингу, Київ: {today:%d.%m.%Y %H:%M %Z}, "
+        f"slot={slot or 'none'}, DRY_RUN={DRY_RUN}, FORCE_RUN={FORCE_RUN} =="
     )
-    # A6: GitHub runs at both possible UTC offsets. Exactly one run falls
-    # into the Kyiv 08:00–08:59 window. Manual test runs can explicitly force.
-    if not FORCE_RUN and today.hour != 8:
-        print("-- Зараз у Києві не 08-ма година; розсилку тихо завершено.")
+    if not FORCE_RUN and today.weekday() >= 5:
+        print("-- Вихідний день; планову розсилку завершено.")
+        return 0
+    if slot is None:
+        print("-- Зараз у Києві не плановий слот 08:30 або 16:30; завершено.")
         return 0
 
     supabase = get_supabase()
@@ -463,54 +568,46 @@ def main() -> int:
     if not users:
         return 0
 
-    for col in ("approval_status", "submitted_at", "admin_comment", "strat_code",
-                "year", "quarter", "department", "object_kind", "id"):
+    for col in (
+        "approval_status", "submitted_at", "admin_comment", "strat_code",
+        "year", "quarter", "department", "object_kind", "id",
+        "approval_chain", "chain_stage",
+    ):
         if not requests.empty and col not in requests.columns:
             requests[col] = ""
 
-    # «Останні зміни» заявок — з журналу дій (updated_at у таблиці немає):
-    # request_id → (час останньої зміни, час перших "Погоджено"/"Повернуто")
     logs = load_logs(supabase)
     last_change_at, approved_at, returned_at, stage_since = build_log_maps(logs)
     if not requests.empty:
-        _ids = requests["id"]
-        requests["_last_change_at"] = _ids.map(last_change_at).fillna(requests["submitted_at"])
-        requests["_approved_at"] = _ids.map(approved_at)
-        requests["_returned_at"] = _ids.map(returned_at)
-        requests["_stage_since"] = _ids.map(stage_since).fillna(requests["submitted_at"])
+        ids = pd.to_numeric(requests["id"], errors="coerce")
+        requests["_last_change_at"] = ids.map(last_change_at).fillna(requests["submitted_at"])
+        requests["_approved_at"] = ids.map(approved_at)
+        requests["_returned_at"] = ids.map(returned_at)
+        # Не підміняємо submitted_at: для супер-адмінського правила потрібен
+        # саме початок поточного статусного відрізка з monitoring_logs.
+        requests["_stage_since"] = ids.map(stage_since)
 
-    escalations_by_email = build_escalations(requests, users)
+    superadmin_stuck = build_superadmin_stuck_map(requests, users)
     period = current_reporting_period(today)
     day_str = today.strftime("%Y-%m-%d")
+    slot_label = "ранковий" if slot == "morning" else "вечірній"
 
     sent_count = 0
 
     for user in users:
-        email = user["email"]
-        role = user["role"]
-        allowed = user["allowed"]
-        name = user["full_name"] or "колего"
+        email = clean(user.get("email")).lower()
+        role = clean(user.get("role"))
+        allowed = user.get("allowed") or []
+        name = clean(user.get("full_name")) or "колего"
+        if not email:
+            continue
 
         sections: list[str] = []
         ntype = f"{role}_digest"
-        related_key = f"digest:{day_str}"
-
+        related_key = f"digest:{day_str}:{slot}"
         my_requests = _req_for_ssp(requests, allowed) if not requests.empty else requests
 
-        # ---------- И1: ескалація заявок, що зависли на одній ланці ----------
-        _escalations = escalations_by_email.get(email.lower(), [])
-        if _escalations:
-            sections.append(block(
-                f"🚨 Заявки, що очікують понад {STALE_DAYS} днів: {len(_escalations)}",
-                [li(
-                    f"Ланка: <b>{item['stage_label']}</b>; заявка №{item['id']} — "
-                    f"захід <b>{item['strat_code']}</b> "
-                    f"({item['quarter']} кв. {item['year']}); очікує <b>{item['days']} дн.</b>"
-                ) for item in _escalations[:20]],
-                accent="#b91c1c",
-            ))
-
-        # ---------- ССП: дедлайн-нагадування ----------
+        # ---------- ССП: дедлайн і всі повернуті заявки ----------
         if role == "ssp" and period:
             year, quarter, deadline = period
             days_left = (deadline.date() - today.date()).days
@@ -529,122 +626,158 @@ def main() -> int:
                     sections.append(block(
                         f"{urgency} Нагадування про подання відомостей",
                         [li(
-                            f"До <b>{deadline:%d.%m.%Y}</b> (залишилось <b>{days_left} дн.</b>) необхідно "
-                            f"подати відомості моніторингу за <b>{quarter} квартал {year} року</b> "
-                            f"по заходах вашого підрозділу. Станом на сьогодні подання за цей "
-                            f"період від вашого ССП у системі не зафіксовано."
+                            f"До <b>{deadline:%d.%m.%Y}</b> (залишилось <b>{days_left} дн.</b>) "
+                            f"необхідно подати відомості за <b>{quarter} квартал {year} року</b>."
                         )],
                         accent="#b45309" if days_left > 2 else "#b91c1c",
                     ))
 
-        # ---------- ССП: повернуті та погоджені ----------
         if role == "ssp" and not my_requests.empty:
-            statuses = my_requests["approval_status"].astype(str)
-
-            returned = my_requests[statuses == "Повернуто на доопрацювання"]
+            returned = my_requests[
+                my_requests["approval_status"].astype(str) == "Повернуто на доопрацювання"
+            ]
             if not returned.empty:
                 items = []
-                for _, r in returned.head(10).iterrows():
-                    comment = clean(r.get("admin_comment"))
+                for _, row in returned.head(20).iterrows():
+                    comment = clean(row.get("admin_comment"))
                     comment_part = f" Коментар координатора: «{comment[:160]}»" if comment else ""
                     items.append(li(
-                        f"Захід <b>{clean(r.get('strat_code'))}</b> "
-                        f"({clean(r.get('quarter'))} кв. {clean(r.get('year'))}) — "
+                        f"Захід <b>{clean(row.get('strat_code'))}</b> "
+                        f"({clean(row.get('quarter'))} кв. {clean(row.get('year'))}) — "
                         f"повернуто на доопрацювання.{comment_part}"
                     ))
-                sections.append(block("↩️ Повернуто на доопрацювання", items, accent="#b91c1c"))
-
-            approved_recent = my_requests[
-                (statuses == "Погоджено")
-                & (my_requests["_approved_at"].apply(_hours_since_or_none).fillna(9999) <= 26)
-            ]
-            if not approved_recent.empty:
                 sections.append(block(
-                    "✅ Погоджено за останню добу",
-                    [li(
-                        f"Захід <b>{clean(r.get('strat_code'))}</b> "
-                        f"({clean(r.get('quarter'))} кв. {clean(r.get('year'))})"
-                    ) for _, r in approved_recent.head(10).iterrows()],
-                    accent="#15803d",
+                    f"↩️ Повернуто на доопрацювання: {len(returned)}",
+                    items,
+                    accent="#b91c1c",
                 ))
 
-        # ---------- Ланки схеми погодження: що чекає САМЕ цієї ролі ----------
-        # Статуси ланок — ті самі, що ставить застосунок
-        # (core/approval_schemes.STAGE_WAITING_STATUS).
-        STAGE_STATUS_BY_ROLE = {
-            "ssp_head": "Очікує: Керівник ССП",
-            "unit_head": "Очікує: Керівник управління",
-            "ssp_deputy": "Очікує: Заступник керівника ССП",
-        }
-        stage_status = STAGE_STATUS_BY_ROLE.get(role)
-        if stage_status and not my_requests.empty:
-            waiting_sign = my_requests[
-                my_requests["approval_status"].astype(str) == stage_status
-            ]
-            if not waiting_sign.empty:
+        # ---------- Ланки вертикалі: повний зріз заявок на їхній ланці ----------
+        if role in {"ssp_head", "unit_head", "ssp_deputy"} and not my_requests.empty:
+            mask = my_requests.apply(lambda row: _request_waits_for_user(row, user), axis=1)
+            waiting = my_requests[mask]
+            if not waiting.empty:
                 items = []
-                for _, r in waiting_sign.head(15).iterrows():
-                    days = _days_since(r.get("_last_change_at") or r.get("submitted_at"))
-                    flag = " ⚠️" if days >= STALE_DAYS else ""
+                for _, row in waiting.head(25).iterrows():
+                    days = _days_since_or_none(row.get("_stage_since"))
+                    if days is None:
+                        days = _days_since(row.get("submitted_at"))
+                    flag = " ⚠️" if days > STALE_DAYS else ""
                     items.append(li(
-                        f"Захід <b>{clean(r.get('strat_code'))}</b> "
-                        f"({clean(r.get('quarter'))} кв. {clean(r.get('year'))}) — "
-                        f"очікує вашого рішення {days} дн.{flag}"
+                        f"Захід <b>{clean(row.get('strat_code'))}</b> "
+                        f"({clean(row.get('quarter'))} кв. {clean(row.get('year'))}) — "
+                        f"очікує вашого рішення <b>{days} дн.</b>{flag}"
                     ))
                 sections.append(block(
-                    f"✍️ Очікують вашого рішення: {len(waiting_sign)}",
+                    f"✍️ Очікують вашого рішення: {len(waiting)}",
                     items,
                 ))
 
-        # ---------- Адміністратор ----------
-        if role in ("admin", "super_admin") and not my_requests.empty:
-            statuses = my_requests["approval_status"].astype(str)
-
-            new_pending = my_requests[
-                (statuses == "Очікує погодження")
-                & (my_requests["submitted_at"].apply(_hours_since) <= 26)
-            ]
-            if not new_pending.empty:
+        # ---------- Координатор: усі на його ланці + усі повернуті ----------
+        if role == "admin" and not my_requests.empty:
+            pending_mask = my_requests.apply(
+                lambda row: _request_waits_for_user(row, user),
+                axis=1,
+            )
+            pending = my_requests[pending_mask]
+            if not pending.empty:
+                items = []
+                for _, row in pending.head(25).iterrows():
+                    days = _days_since_or_none(row.get("_stage_since"))
+                    if days is None:
+                        days = _days_since(row.get("submitted_at"))
+                    items.append(li(
+                        f"Заявка №{clean(row.get('id'))}: захід "
+                        f"<b>{clean(row.get('strat_code'))}</b> "
+                        f"({clean(row.get('quarter'))} кв. {clean(row.get('year'))}) — "
+                        f"на вашій ланці <b>{days} дн.</b>"
+                    ))
                 sections.append(block(
-                    f"📬 Нові заявки за добу: {len(new_pending)}",
-                    [li(
-                        f"Захід <b>{clean(r.get('strat_code'))}</b> "
-                        f"({clean(r.get('quarter'))} кв. {clean(r.get('year'))})"
-                    ) for _, r in new_pending.head(15).iterrows()],
+                    f"📬 На координаторському розгляді: {len(pending)}",
+                    items,
                 ))
 
-            returned_stuck = my_requests[
-                (statuses == "Повернуто на доопрацювання")
-                & (my_requests["_returned_at"].apply(_days_since_or_none).fillna(0) >= RETURNED_STALE_DAYS)
+            returned = my_requests[
+                my_requests["approval_status"].astype(str) == "Повернуто на доопрацювання"
             ]
-            if not returned_stuck.empty:
+            if not returned.empty:
+                items = []
+                for _, row in returned.head(20).iterrows():
+                    days = _days_since_or_none(row.get("_returned_at"))
+                    days_text = f"; не переподано {days} дн." if days is not None else ""
+                    items.append(li(
+                        f"Заявка №{clean(row.get('id'))}: захід "
+                        f"<b>{clean(row.get('strat_code'))}</b> "
+                        f"({clean(row.get('quarter'))} кв. {clean(row.get('year'))})"
+                        f"{days_text}"
+                    ))
                 sections.append(block(
-                    f"🕳 Повернуті й не переподані понад {RETURNED_STALE_DAYS} днів: {len(returned_stuck)}",
-                    [li(
-                        f"Захід <b>{clean(r.get('strat_code'))}</b> "
-                        f"({clean(r.get('quarter'))} кв. {clean(r.get('year'))})"
-                    ) for _, r in returned_stuck.head(10).iterrows()],
+                    f"↩️ Повернуті й ще не переподані: {len(returned)}",
+                    items,
                     accent="#b45309",
                 ))
 
-        # ---------- Супер-адмін: запити на ручне закриття ----------
-        if role == "super_admin" and not closeouts.empty:
-            sections.append(block(
-                f"🔐 Запити на ручне закриття, що очікують підтвердження: {len(closeouts)}",
-                [li(
-                    f"Захід <b>{clean(r.get('strat_code'))}</b> "
-                    f"({clean(r.get('period_quarter'))} кв. {clean(r.get('period_year'))}) — "
-                    f"від {clean(r.get('admin_email'))}"
-                ) for _, r in closeouts.head(10).iterrows()],
-                accent="#6d28d9",
-            ))
+        # ---------- Супер-адмін: лише дві дозволені умови ----------
+        if role == "super_admin":
+            stuck = superadmin_stuck.get(email, [])
+            if stuck:
+                sections.append(block(
+                    f"🚨 Заявки закріплених адміністраторів на їхній ланці понад {STALE_DAYS} днів: {len(stuck)}",
+                    [li(
+                        f"Адміністратор: <b>{item['admin_email']}</b>; заявка №{item['id']} — "
+                        f"захід <b>{item['strat_code']}</b> "
+                        f"({item['quarter']} кв. {item['year']}); "
+                        f"на адмінській ланці <b>{item['days']} дн.</b>"
+                    ) for item in stuck[:25]],
+                    accent="#b91c1c",
+                ))
 
-        # ---------- Відправка (тільки якщо є що сказати) ----------
+            if not requests.empty:
+                own_mask = requests.apply(
+                    lambda row: _request_waits_for_user(row, user),
+                    axis=1,
+                )
+                own_waiting = requests[own_mask]
+            else:
+                own_waiting = requests
+            if not own_waiting.empty:
+                sections.append(block(
+                    f"🧭 Надійшло на ваше погодження: {len(own_waiting)}",
+                    [li(
+                        f"Заявка №{clean(row.get('id'))}: захід "
+                        f"<b>{clean(row.get('strat_code'))}</b> "
+                        f"({clean(row.get('quarter'))} кв. {clean(row.get('year'))})"
+                    ) for _, row in own_waiting.head(25).iterrows()],
+                    accent="#6d28d9",
+                ))
+
+            if not closeouts.empty:
+                own_closeouts = closeouts[
+                    closeouts.apply(
+                        lambda row: _closeout_matches_superadmin(row, user),
+                        axis=1,
+                    )
+                ]
+            else:
+                own_closeouts = closeouts
+            if not own_closeouts.empty:
+                sections.append(block(
+                    f"🔐 Запити на ручне закриття на вашому розгляді: {len(own_closeouts)}",
+                    [li(
+                        f"Запит №{clean(row.get('id'))}: захід "
+                        f"<b>{clean(row.get('strat_code'))}</b> "
+                        f"({clean(row.get('period_quarter'))} кв. "
+                        f"{clean(row.get('period_year'))}) — "
+                        f"від {clean(row.get('admin_email'))}"
+                    ) for _, row in own_closeouts.head(25).iterrows()],
+                    accent="#6d28d9",
+                ))
+
         if not sections:
             continue
 
         if already_sent(supabase, email, ntype, related_key):
-            print(f"-- {email}: {ntype} вже надсилався сьогодні, пропускаю")
+            print(f"-- {email}: {slot_label} слот уже надсилався, пропускаю")
             continue
 
         role_label = {
@@ -656,10 +789,14 @@ def main() -> int:
             "super_admin": "супер-адміністратора",
         }.get(role, role)
 
-        subject = f"Моніторинг СП — сповіщення для {role_label} · {today:%d.%m.%Y}"
+        subject = (
+            f"Моніторинг СП — {slot_label} дайджест для {role_label} · "
+            f"{today:%d.%m.%Y}"
+        )
         body = (
             f'<p>Вітаємо, <b>{name}</b>!</p>'
-            f'<p>Актуальні події системи моніторингу, що стосуються вас:</p>'
+            f'<p>Повний зріз незакритих питань станом на '
+            f'<b>{today:%d.%m.%Y %H:%M}</b> за київським часом:</p>'
             + "".join(sections)
             + '<p style="margin-top:16px;">Перейдіть у систему, щоб опрацювати зазначені пункти.</p>'
         )
@@ -669,8 +806,15 @@ def main() -> int:
             sent_count += 1
             continue
 
-        ok, error = send_email(email, subject, body, title="Сповіщення системи моніторингу")
-        log_notification(supabase, email, role, ntype, related_key, subject, body, ok, error)
+        ok, error = send_email(
+            email,
+            subject,
+            body,
+            title="Дайджест системи моніторингу",
+        )
+        log_notification(
+            supabase, email, role, ntype, related_key, subject, body, ok, error
+        )
         print(f"{'OK ' if ok else 'ERR'} {email} ({role}) — {error or 'надіслано'}")
         if ok:
             sent_count += 1

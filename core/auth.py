@@ -302,7 +302,9 @@ def get_current_user_role() -> str:
 
 def get_current_user_role_label() -> str:
     user = get_current_user()
-    return user.get("role_label") or get_role_label(user.get("role"))
+    # Єдине джерело підпису — фактична нормалізована роль, яку використовує
+    # навігація та бізнес-логіка. Поле role_label у Excel може бути застарілим.
+    return get_role_label(user.get("role"))
 
 
 def get_current_user_ssp() -> str | None:
@@ -423,7 +425,7 @@ def _render_sidebar_auth_notice(message: str, kind: str) -> None:
 def _render_sidebar_auth_profile(user: dict) -> None:
     """Render authenticated-user metadata as one stable sidebar block."""
     full_name = escape(str(user.get("full_name") or "Користувач"))
-    role_label = escape(str(user.get("role_label") or get_role_label(user.get("role"))))
+    role_label = escape(str(get_role_label(user.get("role"))))
     lines = [
         f'<div data-auth-sidebar-profile-line="true">Користувач: {full_name}</div>',
         f'<div data-auth-sidebar-profile-line="true">Роль: {role_label}</div>',

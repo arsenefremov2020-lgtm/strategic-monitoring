@@ -34,17 +34,49 @@ def _name(user: dict | None) -> str:
     return str((user or {}).get("full_name") or (user or {}).get("name") or "").strip().lower()
 
 
-def resolve_manual_closeout_route(admin_user: dict | None) -> dict[str, str]:
-    """Повертає першого і старшого супер-адміна для заявки ручного закриття."""
+
+def assigned_superadmins_for_admin(admin_user: dict | None) -> list[dict[str, str]]:
+    """Повертає всіх супер-адмінів, за якими закріплений адміністратор.
+
+    Перший елемент — основний адресат, другий — старший супер-адмін.
+    Єфремов Арсен Олександрович належить до пари Канєвська → Перун.
+    """
     email = _email(admin_user)
     name = _name(admin_user)
 
-    if email in GROUP_PASTUSHYNA_EMAILS or any(part in name for part in ("провиць", "курдибан", "бойко")):
-        first, senior = PASTUSHYNA, DELIUSTO
-    elif email in GROUP_KANIEVSKA_EMAILS or any(part in name for part in ("ковальчук", "єфрем", "чемоданов")):
-        first, senior = KANIEVSKA, PERUN
-    else:
-        first, senior = KANIEVSKA, PERUN
+    if email in GROUP_PASTUSHYNA_EMAILS or any(
+        part in name for part in ("провиць", "курдибан", "бойко")
+    ):
+        return [dict(PASTUSHYNA), dict(DELIUSTO)]
+
+    if email in GROUP_KANIEVSKA_EMAILS or any(
+        part in name for part in ("ковальчук", "єфрем", "чемоданов")
+    ):
+        return [dict(KANIEVSKA), dict(PERUN)]
+
+    return [dict(KANIEVSKA), dict(PERUN)]
+
+
+def is_superadmin_assigned_to_admin(
+    superadmin_user: dict | None,
+    admin_user: dict | None,
+) -> bool:
+    """Чи входить супер-адмін до переліку кураторів цього адміністратора."""
+    current_email = _email(superadmin_user)
+    current_name = _name(superadmin_user)
+    for supervisor in assigned_superadmins_for_admin(admin_user):
+        supervisor_email = str(supervisor.get("email") or "").strip().lower()
+        supervisor_name = str(supervisor.get("name") or "").strip().lower()
+        if supervisor_email and current_email and supervisor_email == current_email:
+            return True
+        if supervisor_name and current_name and supervisor_name in current_name:
+            return True
+    return False
+
+def resolve_manual_closeout_route(admin_user: dict | None) -> dict[str, str]:
+    """Повертає першого і старшого супер-адміна для заявки ручного закриття."""
+    supervisors = assigned_superadmins_for_admin(admin_user)
+    first, senior = supervisors[0], supervisors[1]
 
     return {
         "assigned_superadmin_name": first["name"],

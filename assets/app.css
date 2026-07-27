@@ -1096,8 +1096,9 @@ section[data-testid="stSidebar"] [data-auth-sidebar-profile="true"] a:hover {
 
 .myreq-table-scroll {
     height: auto;
-    max-height: 390px;
-    overflow: auto;
+    max-height: none;
+    overflow-x: auto;
+    overflow-y: hidden;
     border: 1px solid #DCE4F0;
     border-radius: 12px;
     background: #FFFFFF;
@@ -1105,12 +1106,27 @@ section[data-testid="stSidebar"] [data-auth-sidebar-profile="true"] a:hover {
 
 .myreq-html-table {
     width: 1900px;
-    min-width: 100%;
+    min-width: 1900px;
     table-layout: fixed;
     border-collapse: separate;
     border-spacing: 0;
     color: #132238;
     font-size: 13px;
+}
+
+.myreq-html-table thead,
+.myreq-html-table tbody tr {
+    display: table;
+    width: 100%;
+    table-layout: fixed;
+}
+
+.myreq-html-table tbody {
+    display: block;
+    max-height: 345px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-gutter: stable;
 }
 
 .myreq-html-table th,

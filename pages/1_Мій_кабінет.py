@@ -23,17 +23,6 @@ from core.transitions import (
     resubmit_request,
     return_request as atomic_return_request,
 )
-from core.drafts import (
-    clear_draft_recovery,
-    editor_generation,
-    forget_draft_state,
-    load_drafts_for_keys,
-    make_draft_key,
-    queue_draft,
-    render_draft_autosave_worker,
-    render_draft_recovery,
-    save_draft_now,
-)
 from core.submission_ui import render_submission_notice, set_submission_notice
 
 from core.access import (
@@ -326,24 +315,71 @@ header[data-testid="stHeader"] {
     box-shadow: none !important;
 }
 
-/* ── Таб підтвердження ── */
+/* ── Панель рішення ланки: той самий спокійний підхід, що й в адмінці ── */
 .sign-panel {
-    background: #E4F5EC;
-    border: 2px solid #118847;
-    border-radius: 16px;
-    padding: 22px 26px;
-    margin-bottom: 14px;
+    background: #FFFFFF;
+    border: 1px solid #DCE4F0;
+    border-left: 4px solid #4D8DFF;
+    border-radius: 12px;
+    padding: 11px 15px;
+    margin: 10px 0 8px 0;
+    box-shadow: 0 3px 10px rgba(15,23,42,0.045);
 }
 .sign-panel-title {
-    font-size: 18px;
+    font-size: 17px;
     font-weight: 900;
-    color: #0C713A;
-    margin-bottom: 6px;
+    color: #132238;
+    margin-bottom: 3px;
 }
 .sign-panel-sub {
+    font-size: 13px;
+    color: #61708A;
+    line-height: 1.45;
+    margin-bottom: 0;
+}
+.cabinet-decision-card {
+    background: #FFFFFF;
+    border: 1px solid #DCE4F0;
+    border-radius: 12px;
+    padding: 13px 17px;
+    margin: 8px 0 10px 0;
+}
+.cabinet-decision-guidance {
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
+    border-left: 4px solid #4D8DFF;
+    border-radius: 10px;
+    padding: 10px 13px;
+    margin: 7px 0 10px 0;
+    color: #132238;
+    font-size: 13px;
+    font-weight: 650;
+    line-height: 1.55;
+}
+.cabinet-decision-guidance p {
+    margin: 0 0 7px 0;
+}
+.cabinet-decision-guidance p:last-child {
+    margin-bottom: 0;
+}
+.cabinet-control-label,
+.cabinet-comment-header {
+    color: #132238;
     font-size: 14px;
-    color: #0C713A;
-    margin-bottom: 16px;
+    font-weight: 900;
+    line-height: 1.35;
+    margin: 7px 0 6px 0;
+}
+.cabinet-decision-box {
+    background: #EAF1FF;
+    border: 1px solid #BFD3F2;
+    border-radius: 10px;
+    color: #132238;
+    font-size: 13px;
+    font-weight: 800;
+    line-height: 1.45;
+    padding: 9px 12px;
+    margin: 8px 0 10px 0;
 }
 /* Кнопка підтвердити — зелена */
 div[data-testid="stButton"].sign-btn > button {
@@ -620,6 +656,44 @@ def load_requests():
     return df
 
 
+def load_request_live(request_id):
+    """Пряме читання однієї заявки без кешу перед показом дій."""
+    try:
+        rows = fetch_all(
+            "monitoring_requests",
+            "*",
+            filters=[("eq", "id", int(request_id))],
+        )
+    except Exception as exc:
+        log_cosmetic_error("Актуальна перевірка заявки у Мій кабінет", exc)
+        return None
+    return dict(rows[0]) if rows else None
+
+
+def _queue_cabinet_selection_reset(request_id):
+    """На наступному rerun обрати іншу актуальну заявку або порожній стан."""
+    st.session_state["cab_selection_reset_pending"] = True
+    st.session_state["cab_processed_request_id"] = int(request_id)
+
+
+def _render_cabinet_decision_notices():
+    """Стабільні зелені повідомлення після rerun — унизу панелі дій."""
+    success_text = clean(st.session_state.get("cab_action_success_notice"))
+    switch_text = clean(st.session_state.get("cab_last_decision_notice"))
+    if success_text:
+        st.success(success_text)
+    if switch_text:
+        st.success(switch_text)
+    if success_text or switch_text:
+        if st.button(
+            "Зрозуміло, приховати це повідомлення",
+            key="cab_dismiss_decision_notice",
+        ):
+            st.session_state.pop("cab_action_success_notice", None)
+            st.session_state.pop("cab_last_decision_notice", None)
+            st.rerun()
+
+
 def load_logs(request_id):
     rows = fetch_all(
         "monitoring_logs",
@@ -662,20 +736,6 @@ def write_log(request_id, action, old_status, new_status, comment, changed_by="�
         "changed_by": _actor_identity(changed_by)
     }).execute()
 
-
-
-def _apply_widget_draft_once(context_key, content, mapping):
-    marker_key = f"draft_widgets_applied::{context_key}"
-    if not content or st.session_state.get(marker_key):
-        return
-    for content_key, widget_key in mapping.items():
-        if content_key in content:
-            st.session_state[widget_key] = content[content_key]
-    st.session_state[marker_key] = True
-
-
-def _clear_widget_draft_marker(context_key):
-    st.session_state.pop(f"draft_widgets_applied::{context_key}", None)
 
 
 # ============================================================
@@ -888,6 +948,7 @@ st.caption(f"Знайдено відомостей: {len(filtered)}")
 
 if filtered.empty:
     st.info("За обраними параметрами відбору відомостей не знайдено.")
+    _render_cabinet_decision_notices()
     render_footer()
     st.stop()
 
@@ -954,12 +1015,6 @@ _render_html_table(
 # DETAILED VIEW
 # ============================================================
 
-if st.session_state.get("cab_last_decision_notice"):
-    st.warning(st.session_state["cab_last_decision_notice"], icon="⚠️")
-    if st.button("Зрозуміло, приховати це повідомлення", key="cab_dismiss_decision_notice"):
-        st.session_state.pop("cab_last_decision_notice", None)
-        st.rerun()
-
 st.markdown(
     '<div class="card cabinet-section-card">'
     '<div class="card-title">Детальний перегляд та підтвердження</div>'
@@ -967,772 +1022,809 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-options = []
-for _, row in filtered.iterrows():
-    prefix = "🟣 " if _request_is_my_turn(row) else ""
-    options.append(
-        f"{prefix}ID {row['id']} | {row['strat_code']} | "
-        f"{row['year']} {row['quarter']} квартал | {row['approval_status']}"
-    )
-
-selected = st.selectbox("Оберіть заявку", options)
-
-raw_id = selected.replace("🟣 ", "").split("|")[0].replace("ID", "").strip()
-selected_id = int(raw_id)
-selected_row = filtered[filtered["id"].astype(int) == selected_id].iloc[0]
-
-approval = clean(selected_row["approval_status"])
-code = clean(selected_row["strat_code"])
-badge_class = status_badge_class(approval)
-
-st.markdown(f"""
-<div class="badge-wrap">
-    <div class="badge {badge_class}">Статус: {display_text(approval)}</div>
-    <div class="badge">ID {selected_id}</div>
-    <div class="badge">Захід {display_text(code)}</div>
-    <div class="badge">Рік: {display_text(selected_row["year"])}</div>
-    <div class="badge">Квартал: {display_text(selected_row["quarter"])}</div>
-</div>
-""", unsafe_allow_html=True)
-
-mi = _strat_lookup.get(code.rstrip("."))
-if mi is not None:
-    st.markdown(f"""
-    <div class="step-box">
-        <b>{display_text(code)} — {display_text(mi.get("name"))}</b><br>
-        <span style="color:#132238;font-weight:750;">Індикатор: {display_text(mi.get("indicator"))}</span><br>
-        <span style="color:#132238;font-weight:750;">Одиниця виміру: {display_text(mi.get("unit"))}</span><br>
-        <span style="color:#132238;font-weight:750;">Терміни: {display_text(mi.get("start_date_plan"))} — {display_text(mi.get("end_date_plan"))}</span>
-    </div>
-    """, unsafe_allow_html=True)
-
-try:
-    _cab_record_year = int(str(selected_row.get("year") or "").strip())
-except (TypeError, ValueError):
-    _cab_record_year = None
-
-_cab_selected_target = (
-    clean(mi.get(f"target_{_cab_record_year}", ""))
-    if mi is not None and _cab_record_year is not None
-    else ""
-)
-_cab_future_targets = (
-    [mi.get(f"target_{year}", "") for year in range(_cab_record_year + 1, 2035)]
-    if mi is not None and _cab_record_year is not None
-    else []
-)
-
-st.markdown(f"""
-<div class="info-grid">
-    <div class="info-card info-card-blue">
-        <div class="info-label">Статус виконання</div>
-        <div class="info-value">{display_text("Не настав час" if is_period_locked(selected_row.get("year"), selected_row.get("quarter")) else selected_row["status"])}</div>
-    </div>
-    <div class="info-card info-card-green">
-        <div class="info-label">Фактичне значення</div>
-        <div class="info-value">{display_text(_request_fact(selected_row))}</div>
-    </div>
-    <div class="info-card info-card-yellow">
-        <div class="info-label">ССП</div>
-        <div class="info-value">{display_text(selected_row["department"])}</div>
-    </div>
-</div>
-""", unsafe_allow_html=True)
-
-# ── Поля лише для читання ────────────────────────────────────────────────────
-p1, p2, p3 = st.columns(3)
-with p1:
-    st.text_input(
-        "ПІБ подавача заявки",
-        value=clean(selected_row["responsible_person"]),
-        disabled=True,
-        key=f"v_resp_{selected_id}",
-    )
-with p2:
-    st.text_input(
-        "Телефон",
-        value=clean(selected_row["phone"]),
-        disabled=True,
-        key=f"v_phone_{selected_id}",
-    )
-with p3:
-    st.text_input(
-        "Email",
-        value=clean(selected_row["email"]),
-        disabled=True,
-        key=f"v_email_{selected_id}",
-    )
-
-_progress_html = _html_cell(selected_row.get("progress_text"))
-_risks_html = _html_cell(selected_row.get("risks"))
-st.markdown(
-    '<div class="cabinet-readonly-block">'
-    '<div class="cabinet-readonly-label">Опис прогресу</div>'
-    f'<div class="cabinet-readonly-value">{_progress_html}</div>'
-    '</div>',
-    unsafe_allow_html=True,
-)
-st.markdown(
-    '<div class="cabinet-readonly-block">'
-    '<div class="cabinet-readonly-label">Ризики / проблеми / відхилення</div>'
-    f'<div class="cabinet-readonly-value">{_risks_html}</div>'
-    '</div>',
-    unsafe_allow_html=True,
-)
-
-if has_value(selected_row["admin_comment"]):
-    st.markdown(f"""
-    <div class="comment-box cabinet-muted-box">
-        <div class="comment-title">Коментар координатора</div>
-        <div class="comment-text">{display_text(selected_row["admin_comment"])}</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-# ── Посилання на НПА: рядок відображається завжди ──
-_npa_raw = clean(selected_row.get("npa_link", ""))
-if _npa_raw:
-    _links_html = "".join(
-        f'<div>🔗 <a href="{escape(url.strip())}" target="_blank">{escape(url.strip())}</a></div>'
-        for url in re.split(r"[\n;,]+", _npa_raw)
-        if url.strip()
-    )
-else:
-    _links_html = "—"
-st.markdown(
-    '<div class="cabinet-readonly-block">'
-    '<div class="cabinet-readonly-label">Посилання на НПА</div>'
-    f'<div class="cabinet-readonly-value">{_links_html}</div>'
-    '</div>',
-    unsafe_allow_html=True,
-)
-
-# ── Маршрут погодження: візуальний ланцюжок + підпис прогресу ──
-_chain = schemes.parse_chain(selected_row.get("approval_chain"))
-_stage_idx = schemes.parse_stage(selected_row.get("chain_stage"))
-if _chain:
-    _scheme_lbl = clean(selected_row.get("scheme_label"))
-    _route_nodes = [
-        '<div class="cabinet-route-node">'
-        '<span class="cabinet-route-role">Подавач</span>'
-        f'{escape(clean(selected_row.get("responsible_person")) or clean(selected_row.get("email")) or "—")}'
-        '</div>'
-    ]
-    for _route_index, _route_stage in enumerate(_chain):
-        _route_label = clean(_route_stage.get("label")) or schemes.STAGE_LABELS.get(
-            clean(_route_stage.get("role")),
-            "Ланка",
-        )
-        _route_person = (
-            clean(_route_stage.get("name"))
-            or clean(_route_stage.get("email"))
-            or "—"
-        )
-        _current_class = " current" if _route_index == _stage_idx and approval in schemes.ALL_WAITING_STATUSES else ""
-        _route_nodes.append(
-            f'<div class="cabinet-route-node{_current_class}">'
-            f'<span class="cabinet-route-role">{escape(_route_label)}</span>'
-            f'{escape(_route_person)}</div>'
-        )
-    _route_html = '<span class="cabinet-route-arrow">→</span>'.join(_route_nodes)
-    _progress_text = schemes.chain_progress_text(_chain, _stage_idx, approval)
-    st.markdown(
-        '<div class="comment-box cabinet-muted-box">'
-        f'<div class="comment-title">Схема погодження{(" · " + escape(_scheme_lbl)) if _scheme_lbl else ""}</div>'
-        f'<div class="cabinet-route-row">{_route_html}</div>'
-        f'<div class="cabinet-route-caption">{escape(_progress_text)}</div>'
-        '</div>',
-        unsafe_allow_html=True,
-    )
-
-# ============================================================
-# ACTION PANEL — панель дій поточної ланки схеми погодження
-# ============================================================
-# Заявка з ланцюгом: дії доступні, коли ПОТОЧНА ланка — це саме цей
-# користувач (за email; якщо email у ланці не вказано — за роллю).
-# Успадковані заявки без ланцюга: стара поведінка — керівник ССП
-# діє за статусу «Очікує: Керівник ССП».
-
 _my_email = str(current_user.get("email") or "").strip().lower()
 _my_role = current_user.get("role")
 
-_waiting_statuses = set(schemes.ALL_WAITING_STATUSES)
+_CAB_REQUEST_PLACEHOLDER = "— Оберіть заявку —"
+_CAB_REQUEST_SELECTOR_KEY = "cabinet_request_selector"
 
-if _chain:
-    _stage = schemes.current_stage(_chain, _stage_idx)
-    is_my_turn = (
-        approval in _waiting_statuses
-        and _stage is not None
-        and (
-            (_stage.get("email") and _stage.get("email") == _my_email)
-            or (not _stage.get("email") and _stage.get("role") == _my_role)
-        )
+options = [_CAB_REQUEST_PLACEHOLDER]
+_option_by_id = {}
+for _, row in filtered.iterrows():
+    prefix = "🟣 " if _request_is_my_turn(row) else ""
+    option_label = (
+        f"{prefix}ID {row['id']} | {row['strat_code']} | "
+        f"{row['year']} {row['quarter']} квартал | {row['approval_status']}"
     )
-    _stage_label = _stage.get("label", "") if _stage else ""
-else:
-    is_my_turn = (approval == "Очікує: Керівник ССП" and _my_role == ROLE_SSP_HEAD)
-    _stage_label = "Керівник ССП"
+    options.append(option_label)
+    try:
+        _option_by_id[int(float(str(row["id"])))] = option_label
+    except (TypeError, ValueError):
+        pass
 
-if is_my_turn:
+if st.session_state.pop("cab_selection_reset_pending", False):
+    _processed_id = st.session_state.pop("cab_processed_request_id", None)
+    _next_pending_ids = []
+    for _value in pd.to_numeric(_pending_for_me.get("id"), errors="coerce").dropna().tolist():
+        _candidate_id = int(_value)
+        if _candidate_id != _processed_id and _candidate_id in _option_by_id:
+            _next_pending_ids.append(_candidate_id)
+    st.session_state[_CAB_REQUEST_SELECTOR_KEY] = (
+        _option_by_id[_next_pending_ids[0]]
+        if _next_pending_ids
+        else _CAB_REQUEST_PLACEHOLDER
+    )
+elif st.session_state.get(_CAB_REQUEST_SELECTOR_KEY) not in options:
+    _current_pending_ids = [
+        int(value)
+        for value in pd.to_numeric(_pending_for_me.get("id"), errors="coerce").dropna().tolist()
+        if int(value) in _option_by_id
+    ]
+    st.session_state[_CAB_REQUEST_SELECTOR_KEY] = (
+        _option_by_id[_current_pending_ids[0]]
+        if _current_pending_ids
+        else _CAB_REQUEST_PLACEHOLDER
+    )
+
+selected = st.selectbox(
+    "Оберіть заявку",
+    options,
+    key=_CAB_REQUEST_SELECTOR_KEY,
+)
+
+if selected == _CAB_REQUEST_PLACEHOLDER:
+    st.info(
+        "Оберіть заявку для детального перегляду. Після ухвалення рішення "
+        "попередній вибір скидається автоматично."
+    )
+    _render_cabinet_decision_notices()
+else:
+    raw_id = selected.replace("🟣 ", "").split("|")[0].replace("ID", "").strip()
+    selected_id = int(raw_id)
+    selected_row = filtered[filtered["id"].astype(int) == selected_id].iloc[0].copy()
+
+    _live_request = load_request_live(selected_id)
+    _live_request_verified = _live_request is not None
+    if _live_request_verified:
+        for _live_key, _live_value in _live_request.items():
+            selected_row[_live_key] = _live_value
+
+    approval = clean(selected_row["approval_status"])
+    code = clean(selected_row["strat_code"])
+    badge_class = status_badge_class(approval)
+
     st.markdown(f"""
-    <div class="sign-panel">
-        <div class="sign-panel-title">✍️ Дії ланки «{escape(_stage_label)}»</div>
-        <div class="sign-panel-sub">
-            Ознайомтесь із відомостями вище та оберіть одну з дій. При поверненні —
-            обов'язково залиште коментар та оберіть, кому саме повертається заявка.
+    <div class="badge-wrap">
+        <div class="badge {badge_class}">Статус: {display_text(approval)}</div>
+        <div class="badge">ID {selected_id}</div>
+        <div class="badge">Захід {display_text(code)}</div>
+        <div class="badge">Рік: {display_text(selected_row["year"])}</div>
+        <div class="badge">Квартал: {display_text(selected_row["quarter"])}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    mi = _strat_lookup.get(code.rstrip("."))
+    if mi is not None:
+        st.markdown(f"""
+        <div class="step-box">
+            <b>{display_text(code)} — {display_text(mi.get("name"))}</b><br>
+            <span style="color:#132238;font-weight:750;">Індикатор: {display_text(mi.get("indicator"))}</span><br>
+            <span style="color:#132238;font-weight:750;">Одиниця виміру: {display_text(mi.get("unit"))}</span><br>
+            <span style="color:#132238;font-weight:750;">Терміни: {display_text(mi.get("start_date_plan"))} — {display_text(mi.get("end_date_plan"))}</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+    try:
+        _cab_record_year = int(str(selected_row.get("year") or "").strip())
+    except (TypeError, ValueError):
+        _cab_record_year = None
+
+    _cab_selected_target = (
+        clean(mi.get(f"target_{_cab_record_year}", ""))
+        if mi is not None and _cab_record_year is not None
+        else ""
+    )
+    _cab_future_targets = (
+        [mi.get(f"target_{year}", "") for year in range(_cab_record_year + 1, 2035)]
+        if mi is not None and _cab_record_year is not None
+        else []
+    )
+
+    st.markdown(f"""
+    <div class="info-grid">
+        <div class="info-card info-card-blue">
+            <div class="info-label">Статус виконання</div>
+            <div class="info-value">{display_text("Не настав час" if is_period_locked(selected_row.get("year"), selected_row.get("quarter")) else selected_row["status"])}</div>
+        </div>
+        <div class="info-card info-card-green">
+            <div class="info-label">Фактичне значення</div>
+            <div class="info-value">{display_text(_request_fact(selected_row))}</div>
+        </div>
+        <div class="info-card info-card-yellow">
+            <div class="info-label">ССП</div>
+            <div class="info-value">{display_text(selected_row["department"])}</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    leader_comment = st.text_area(
-        "Коментар (обов'язковий при поверненні)",
-        height=90,
-        placeholder="Вкажіть причину повернення або зауваження...",
-        key=f"leader_comment_{selected_id}"
-    )
+    # ── Поля лише для читання ────────────────────────────────────────────────────
+    p1, p2, p3 = st.columns(3)
+    with p1:
+        st.text_input(
+            "ПІБ подавача заявки",
+            value=clean(selected_row["responsible_person"]),
+            disabled=True,
+            key=f"v_resp_{selected_id}",
+        )
+    with p2:
+        st.text_input(
+            "Телефон",
+            value=clean(selected_row["phone"]),
+            disabled=True,
+            key=f"v_phone_{selected_id}",
+        )
+    with p3:
+        st.text_input(
+            "Email",
+            value=clean(selected_row["email"]),
+            disabled=True,
+            key=f"v_email_{selected_id}",
+        )
 
-    # ТЗ 3.16: користувач має розуміти наслідок дії ЩЕ ДО натискання кнопки —
-    # показуємо, кому саме перейде заявка після погодження.
-    _preview_next = schemes.current_stage(_chain, _stage_idx + 1) if _chain else None
-    if _preview_next is not None:
-        _next_who = clean(_preview_next.get("name", "") or _preview_next.get("email", ""))
-        _next_note = (
-            f"➡️ Після погодження заявка перейде наступній ланці: "
-            f"«{clean(_preview_next.get('label', ''))}»"
-            + (f" — {_next_who}" if _next_who else "")
-        )
-    else:
-        _next_note = (
-            "➡️ Наступної наперед визначеної ланки немає — після погодження ви "
-            "зможете завершити погодження або передати вище."
-        )
-    # ТЗ 3.17: попередження про незворотність.
+    _progress_html = _html_cell(selected_row.get("progress_text"))
+    _risks_html = _html_cell(selected_row.get("risks"))
     st.markdown(
-        f'<div style="background:#FDF3D8;border:1px solid #F4B400;border-radius:10px;'
-        f'padding:8px 12px;margin-bottom:8px;font-size:13px;color:#8A6400;">'
-        f'<div style="font-weight:800;">{escape(_next_note)}</div>'
-        f'<div style="margin-top:2px;">⚠️ Після погодження ви більше не зможете '
-        f'змінити своє рішення — заявка повернеться до вас лише в разі '
-        f'повернення на доопрацювання наступними ланками.</div></div>',
+        '<div class="cabinet-readonly-block">'
+        '<div class="cabinet-readonly-label">Опис прогресу</div>'
+        f'<div class="cabinet-readonly-value">{_progress_html}</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="cabinet-readonly-block">'
+        '<div class="cabinet-readonly-label">Ризики / проблеми / відхилення</div>'
+        f'<div class="cabinet-readonly-value">{_risks_html}</div>'
+        '</div>',
         unsafe_allow_html=True,
     )
 
-    # Адресати повернення: подавач + усі попередні ланки
-    if _chain:
-        _targets = schemes.return_targets(_chain, _stage_idx)
-    else:
-        _targets = [
-            {"key": "submitter", "label": "Подавачу (відповідальній особі ССП)",
-             "status": "Повернуто на доопрацювання", "new_stage": 0},
-            {"key": "legacy_admin", "label": "Координатору",
-             "status": "Очікує погодження", "new_stage": 0},
-        ]
+    if has_value(selected_row["admin_comment"]):
+        st.markdown(f"""
+        <div class="comment-box cabinet-muted-box">
+            <div class="comment-title">Коментар координатора</div>
+            <div class="comment-text">{display_text(selected_row["admin_comment"])}</div>
+        </div>
+        """, unsafe_allow_html=True)
 
-    btn_col1, btn_col2 = st.columns([1, 1.6])
-
-    with btn_col1:
-        sign_btn = st.button("✅ Погодити та передати далі", use_container_width=True,
-                             key=f"sign_{selected_id}")
-    with btn_col2:
-        rc1, rc2 = st.columns([1.7, 1])
-        with rc1:
-            _target_labels = [t["label"] for t in _targets]
-            _picked_target_label = st.selectbox(
-                "Кому повернути", _target_labels,
-                key=f"return_target_{selected_id}", label_visibility="collapsed",
-            )
-        with rc2:
-            return_btn = st.button("↩️ Повернути", use_container_width=True,
-                                   key=f"ret_{selected_id}")
-
-    _picked_target = _targets[_target_labels.index(_picked_target_label)]
-
-    # ── Динамічний вибір наступної ланки (пункт "схеми погодження мають
-    # бути різні для кожної ланки"): якщо в ланцюга вже НЕМАЄ наперед
-    # визначеної наступної ланки, саме ЦЯ ланка (а не подавач і не
-    # координатор заздалегідь) вирішує — завершити заявку на собі, чи
-    # передати вище (лише вище — керівнику ССП; спуститися "нижче себе"
-    # чи повернутися до вже пройденого рівня не можна). Для керівника
-    # ССП варіантів немає — він завжди найвища ланка.
-    _next_after_me = schemes.current_stage(_chain, _stage_idx + 1) if _chain else None
-    _my_next_role_options = []
-    if _chain and not _next_after_me:
-        _my_next_role_options = schemes.next_stage_role_options(_my_role)
-
-    _my_chosen_next_role = None
-    _my_chosen_next_person = None
-    if _my_next_role_options:
-        _my_req_dept_nums = re.findall(r"\d+", clean(selected_row.get("department", "")))
-        _my_req_dept_idx = _my_req_dept_nums[0] if _my_req_dept_nums else ""
-        _my_next_choice_labels = [f"Завершити на «{_stage_label}» (без додаткової ланки)"] + [
-            f"Передати ланці «{schemes.STAGE_LABELS[r]}»" for r in _my_next_role_options
-        ]
-        _my_next_choice = st.selectbox(
-            "Що далі після вашого рішення",
-            _my_next_choice_labels,
-            key=f"cab_next_stage_choice_{selected_id}",
+    # ── Посилання на НПА: рядок відображається завжди ──
+    _npa_raw = clean(selected_row.get("npa_link", ""))
+    if _npa_raw:
+        _links_html = "".join(
+            f'<div>🔗 <a href="{escape(url.strip())}" target="_blank">{escape(url.strip())}</a></div>'
+            for url in re.split(r"[\n;,]+", _npa_raw)
+            if url.strip()
         )
-        if _my_next_choice != _my_next_choice_labels[0]:
-            _my_chosen_next_role = _my_next_role_options[_my_next_choice_labels.index(_my_next_choice) - 1]
-            _my_next_candidates = schemes.stage_candidates(_my_chosen_next_role, _my_req_dept_idx)
-            if len(_my_next_candidates) > 1:
-                _my_cand_labels = [schemes.candidate_label(c) for c in _my_next_candidates]
-                _my_picked_cand_label = st.selectbox(
-                    f"Хто саме — {schemes.STAGE_LABELS[_my_chosen_next_role]}",
-                    _my_cand_labels,
-                    key=f"cab_next_stage_person_{selected_id}",
-                )
-                _my_chosen_next_person = _my_next_candidates[_my_cand_labels.index(_my_picked_cand_label)]
-            elif _my_next_candidates:
-                _my_chosen_next_person = _my_next_candidates[0]
-                st.caption(f"→ {schemes.candidate_label(_my_chosen_next_person)}")
-            else:
-                st.error(
-                    f"Немає користувача ролі «{schemes.STAGE_LABELS[_my_chosen_next_role]}» "
-                    f"для цього ССП. Оберіть «Завершити» або зверніться до супер-адміна."
-                )
+    else:
+        _links_html = "—"
+    st.markdown(
+        '<div class="cabinet-readonly-block">'
+        '<div class="cabinet-readonly-label">Посилання на НПА</div>'
+        f'<div class="cabinet-readonly-value">{_links_html}</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 
-    # ── Погодити та передати далі ───────────────────────────
-    if sign_btn:
-        _sign_blocked = False
-        if _chain and _next_after_me:
-            # ЗАСТАРІЛИЙ ланцюг: наступна ланка вже наперед відома.
-            new_status, new_stage = schemes.status_after_approve(_chain, _stage_idx)
-            _final_chain_for_notify = _chain
-        elif _chain and _my_chosen_next_role:
-            if not _my_chosen_next_person:
-                st.error("Оберіть конкретну особу для наступної ланки.")
-                _sign_blocked = True
-                new_status, new_stage, _final_chain_for_notify = approval, _stage_idx, _chain
-            else:
-                _new_chain, new_status, new_stage = schemes.advance_with_new_stage(
-                    _chain, _stage_idx, _my_chosen_next_role, _my_req_dept_idx, _my_chosen_next_person
+    # ── Маршрут погодження: візуальний ланцюжок + підпис прогресу ──
+    _chain = schemes.parse_chain(selected_row.get("approval_chain"))
+    _stage_idx = schemes.parse_stage(selected_row.get("chain_stage"))
+    if _chain:
+        _scheme_lbl = clean(selected_row.get("scheme_label"))
+        _route_nodes = [
+            '<div class="cabinet-route-node">'
+            '<span class="cabinet-route-role">Подавач</span>'
+            f'{escape(clean(selected_row.get("responsible_person")) or clean(selected_row.get("email")) or "—")}'
+            '</div>'
+        ]
+        for _route_index, _route_stage in enumerate(_chain):
+            _route_label = clean(_route_stage.get("label")) or schemes.STAGE_LABELS.get(
+                clean(_route_stage.get("role")),
+                "Ланка",
+            )
+            _route_person = (
+                clean(_route_stage.get("name"))
+                or clean(_route_stage.get("email"))
+                or "—"
+            )
+            _current_class = " current" if _route_index == _stage_idx and approval in schemes.ALL_WAITING_STATUSES else ""
+            _route_nodes.append(
+                f'<div class="cabinet-route-node{_current_class}">'
+                f'<span class="cabinet-route-role">{escape(_route_label)}</span>'
+                f'{escape(_route_person)}</div>'
+            )
+        _route_html = '<span class="cabinet-route-arrow">→</span>'.join(_route_nodes)
+        _progress_text = schemes.chain_progress_text(_chain, _stage_idx, approval)
+        st.markdown(
+            '<div class="comment-box cabinet-muted-box">'
+            f'<div class="comment-title">Схема погодження{(" · " + escape(_scheme_lbl)) if _scheme_lbl else ""}</div>'
+            f'<div class="cabinet-route-row">{_route_html}</div>'
+            f'<div class="cabinet-route-caption">{escape(_progress_text)}</div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+    # ============================================================
+    # ACTION PANEL — панель дій поточної ланки схеми погодження
+    # ============================================================
+
+    _waiting_statuses = set(schemes.ALL_WAITING_STATUSES)
+
+    if _chain:
+        _stage = schemes.current_stage(_chain, _stage_idx)
+        _stage_label = clean(_stage.get("label")) if _stage else ""
+    else:
+        _stage = None
+        _stage_label = "Керівник ССП"
+    is_my_turn = bool(
+        _live_request_verified
+        and _request_is_my_turn(selected_row)
+    )
+
+    if is_my_turn:
+        st.markdown(
+            f'<div class="sign-panel">'
+            f'<div class="sign-panel-title">Дії ланки «{escape(_stage_label)}»</div>'
+            '<div class="sign-panel-sub">Оберіть рішення після перевірки даних заявки.</div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<div class="cabinet-decision-card">'
+            '<div class="cabinet-decision-guidance">'
+            '<p>Якщо зауважень немає, погодьте заявку: вона перейде наступній ланці схеми або отримає статус «Погоджено», якщо маршрут завершено.</p>'
+            '<p>Якщо дані потребують виправлення, поверніть заявку подавачу або на попередню ланку та обов’язково зазначте причину.</p>'
+            '<p>Після застосування рішення попередня заявка буде прибрана з активного перегляду, а кабінет переключиться на наступну актуальну заявку.</p>'
+            '</div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+        _next_after_me = schemes.current_stage(_chain, _stage_idx + 1) if _chain else None
+        _approve_option = "Погодити та передати далі" if _next_after_me else "Погодити"
+
+        st.markdown('<div class="cabinet-control-label">Оберіть рішення</div>', unsafe_allow_html=True)
+        decision = st.radio(
+            "Оберіть рішення",
+            [_approve_option, "Повернути на доопрацювання"],
+            horizontal=True,
+            key=f"cab_decision_radio_{selected_id}",
+            label_visibility="collapsed",
+        )
+
+        # Адресати повернення: подавач + усі попередні ланки.
+        if _chain:
+            _targets = schemes.return_targets(_chain, _stage_idx)
+        else:
+            _targets = [
+                {"key": "submitter", "label": "Подавачу (відповідальній особі ССП)",
+                 "status": "Повернуто на доопрацювання", "new_stage": 0},
+                {"key": "legacy_admin", "label": "Координатору",
+                 "status": "Очікує погодження", "new_stage": 0},
+            ]
+        _target_labels = [target["label"] for target in _targets]
+        _picked_target = None
+        if decision == "Повернути на доопрацювання":
+            st.markdown('<div class="cabinet-control-label">Кому повернути</div>', unsafe_allow_html=True)
+            _picked_target_label = st.selectbox(
+                "Кому повернути",
+                _target_labels,
+                key=f"return_target_{selected_id}",
+                label_visibility="collapsed",
+            )
+            _picked_target = _targets[_target_labels.index(_picked_target_label)]
+
+        # Якщо після поточної ланки маршрут не визначено, ця ланка може завершити
+        # погодження або призначити дозволену вищу ланку. Транзакційна механіка
+        # лишається тією самою, що була до візуальної стандартизації.
+        _my_next_role_options = []
+        if decision == _approve_option and _chain and not _next_after_me:
+            _my_next_role_options = schemes.next_stage_role_options(_my_role)
+
+        _my_chosen_next_role = None
+        _my_chosen_next_person = None
+        _my_req_dept_idx = ""
+        if _my_next_role_options:
+            _my_req_dept_nums = re.findall(r"\d+", clean(selected_row.get("department", "")))
+            _my_req_dept_idx = _my_req_dept_nums[0] if _my_req_dept_nums else ""
+            _my_next_choice_labels = [
+                f"Завершити на «{_stage_label}» (без додаткової ланки)"
+            ] + [
+                f"Передати ланці «{schemes.STAGE_LABELS[role]}»"
+                for role in _my_next_role_options
+            ]
+            st.markdown('<div class="cabinet-control-label">Наступна ланка</div>', unsafe_allow_html=True)
+            _my_next_choice = st.selectbox(
+                "Наступна ланка",
+                _my_next_choice_labels,
+                key=f"cab_next_stage_choice_{selected_id}",
+                label_visibility="collapsed",
+            )
+            if _my_next_choice != _my_next_choice_labels[0]:
+                _my_chosen_next_role = _my_next_role_options[
+                    _my_next_choice_labels.index(_my_next_choice) - 1
+                ]
+                _my_next_candidates = schemes.stage_candidates(
+                    _my_chosen_next_role,
+                    _my_req_dept_idx,
                 )
-                if _new_chain is None:
-                    st.error("Не вдалося призначити наступну ланку.")
+                if len(_my_next_candidates) > 1:
+                    _my_cand_labels = [
+                        schemes.candidate_label(candidate)
+                        for candidate in _my_next_candidates
+                    ]
+                    _my_picked_cand_label = st.selectbox(
+                        f"Хто саме — {schemes.STAGE_LABELS[_my_chosen_next_role]}",
+                        _my_cand_labels,
+                        key=f"cab_next_stage_person_{selected_id}",
+                    )
+                    _my_chosen_next_person = _my_next_candidates[
+                        _my_cand_labels.index(_my_picked_cand_label)
+                    ]
+                elif _my_next_candidates:
+                    _my_chosen_next_person = _my_next_candidates[0]
+                    st.caption(f"→ {schemes.candidate_label(_my_chosen_next_person)}")
+                else:
+                    st.error(
+                        f"Немає користувача ролі «{schemes.STAGE_LABELS[_my_chosen_next_role]}» "
+                        f"для цього ССП. Оберіть завершення погодження або зверніться до супер-адміна."
+                    )
+
+        if decision == _approve_option:
+            if _next_after_me is not None:
+                _next_who = clean(_next_after_me.get("name")) or clean(_next_after_me.get("email"))
+                _decision_hint = (
+                    f"Заявку буде передано ланці «{clean(_next_after_me.get('label'))}»"
+                    + (f" — {_next_who}" if _next_who else "")
+                )
+            elif _my_chosen_next_role:
+                _decision_hint = f"Заявку буде передано ланці «{schemes.STAGE_LABELS[_my_chosen_next_role]}»"
+            else:
+                _decision_hint = "Заявка завершить поточну схему погодження й отримає статус «Погоджено»."
+        else:
+            _decision_hint = (
+                f"Заявку буде повернуто: {_picked_target['label']}."
+                if _picked_target is not None
+                else "Оберіть адресата повернення."
+            )
+        if decision == _approve_option and not _my_next_role_options:
+            st.markdown(
+                '<div class="cabinet-control-label">Наступна ланка</div>',
+                unsafe_allow_html=True,
+            )
+        st.markdown(
+            f'<div class="cabinet-decision-box">{escape(_decision_hint)}</div>',
+            unsafe_allow_html=True,
+        )
+
+        st.markdown('<div class="cabinet-comment-header">Коментар до рішення</div>', unsafe_allow_html=True)
+        leader_comment = st.text_area(
+            "Коментар до рішення",
+            height=110,
+            placeholder=(
+                "Вкажіть причину повернення або зауваження..."
+                if decision == "Повернути на доопрацювання"
+                else "За потреби додайте коментар до погодження..."
+            ),
+            key=f"leader_comment_{selected_id}",
+            label_visibility="collapsed",
+        )
+
+        apply_decision_btn = st.button(
+            "Застосувати рішення",
+            use_container_width=True,
+            key=f"cab_apply_decision_{selected_id}",
+        )
+
+        if apply_decision_btn and decision == _approve_option:
+            _sign_blocked = False
+            if _chain and _next_after_me:
+                new_status, new_stage = schemes.status_after_approve(_chain, _stage_idx)
+                _final_chain_for_notify = _chain
+            elif _chain and _my_chosen_next_role:
+                if not _my_chosen_next_person:
+                    st.error("Оберіть конкретну особу для наступної ланки.")
                     _sign_blocked = True
                     new_status, new_stage, _final_chain_for_notify = approval, _stage_idx, _chain
                 else:
-                    _chain = _new_chain
-                    _final_chain_for_notify = _new_chain
-        elif _chain:
-            new_status, new_stage = schemes.finalize_here(_stage_idx)
-            _final_chain_for_notify = _chain
-        else:
-            new_status, new_stage = "Погоджено", _stage_idx + 1
-            _final_chain_for_notify = _chain
-
-        if _sign_blocked:
-            render_footer()
-            st.stop()
-
-        _approval_comment = clean(leader_comment) or f"Погоджено ланкою «{_stage_label}»"
-
-        try:
-            approve_request_step(
-                request_id=int(selected_id),
-                expected_status=approval,
-                expected_chain_stage=int(_stage_idx),
-                new_status=new_status,
-                new_chain_stage=int(new_stage),
-                approval_chain=(schemes.chain_to_json(_chain) if _chain else None),
-                comment=_approval_comment,
-                action=f"Погодження ланкою «{_stage_label}»",
-                user=current_user,
-                created_by=f"{role_label} / погодження",
-            )
-
-            # Миттєві сповіщення
-            try:
-                if new_status == "Погоджено":
-                    notify_events.notify_approved(
-                        clean(selected_row.get("email", "")),
-                        clean(selected_row.get("responsible_person", "")),
-                        code, clean(selected_row.get("year", "")), clean(selected_row.get("quarter", "")),
+                    _new_chain, new_status, new_stage = schemes.advance_with_new_stage(
+                        _chain,
+                        _stage_idx,
+                        _my_chosen_next_role,
+                        _my_req_dept_idx,
+                        _my_chosen_next_person,
                     )
-                elif _final_chain_for_notify:
-                    _next = schemes.current_stage(_final_chain_for_notify, new_stage)
-                    if _next:
-                        notify_events.notify_stage_assigned(
-                            _next.get("email", ""), _next.get("name", ""), _next.get("label", ""),
-                            code, clean(selected_row.get("year", "")), clean(selected_row.get("quarter", "")),
-                            submitter=clean(selected_row.get("responsible_person", "")),
-                        )
-            except Exception as notify_exc:
-                show_warning(
-                    "Рішення збережено, але миттєве email-сповіщення не відправлено.",
-                    notify_exc,
-                    "Email після погодження у Мій кабінет",
-                )
-
-            if new_status == "Погоджено":
-                st.success("✅ Заявка пройшла всі етапи схеми. Статус: «Погоджено».")
+                    if _new_chain is None:
+                        st.error("Не вдалося призначити наступну ланку.")
+                        _sign_blocked = True
+                        new_status, new_stage, _final_chain_for_notify = approval, _stage_idx, _chain
+                    else:
+                        _chain = _new_chain
+                        _final_chain_for_notify = _new_chain
+            elif _chain:
+                new_status, new_stage = schemes.finalize_here(_stage_idx)
+                _final_chain_for_notify = _chain
             else:
-                _next = schemes.current_stage(_final_chain_for_notify, new_stage) if _final_chain_for_notify else None
-                if _next:
-                    _who = _next.get("name") or _next.get("email") or _next.get("label")
-                    st.success(
-                        f"✅ Підтверджено. Заявка одразу надійшла наступній ланці — "
-                        f"**{_next.get('label','')}** ({_who}). "
-                        f"Вона вже бачить її у своєму кабінеті у списку «Активні до розгляду»."
-                    )
-                else:
-                    st.success(f"✅ Підтверджено. Новий статус: «{new_status}».")
-            st.session_state["cab_last_decision_notice"] = (
-                "Рішення застосовано. Якщо в черзі є ще заявки — систему щойно "
-                "переключило на НАСТУПНУ заявку. Це не помилка: перегляньте її "
-                "дані з самого початку, перш ніж ухвалювати рішення."
-            )
-            monitoring_data.invalidate_monitoring_cache()
-            st.rerun()
-        except TransitionRejected as exc:
-            st.error(exc.message)
-        except Exception as exc:
-            show_incident(exc, context="Атомарне погодження заявки у Мій кабінет")
+                new_status, new_stage = "Погоджено", _stage_idx + 1
+                _final_chain_for_notify = _chain
 
-    # ── Повернути на доопрацювання ──────────────────────────
-    if return_btn:
-        if not clean(leader_comment):
-            st.error("Вкажіть коментар перед поверненням на доопрацювання.")
-        else:
-            try:
-                atomic_return_request(
-                    request_id=int(selected_id),
-                    expected_status=approval,
-                    expected_chain_stage=int(_stage_idx),
-                    new_status=_picked_target["status"],
-                    new_chain_stage=int(_picked_target["new_stage"]),
-                    comment=clean(leader_comment),
-                    action=f"Повернення на доопрацювання: {_picked_target['label']}",
-                    user=current_user,
-                    created_by=f"{role_label} / повернення",
-                )
+            if not _sign_blocked:
+                _approval_comment = clean(leader_comment) or f"Погоджено ланкою «{_stage_label}»"
                 try:
-                    if _picked_target["key"] == "submitter":
-                        notify_events.notify_returned(
-                            clean(selected_row.get("email", "")),
-                            clean(selected_row.get("responsible_person", "")),
-                            code, clean(selected_row.get("year", "")), clean(selected_row.get("quarter", "")),
-                            by_label=_stage_label, comment=clean(leader_comment),
-                        )
-                    elif _picked_target["key"].startswith("stage:") and _chain:
-                        _tstage = _chain[_picked_target["new_stage"]]
-                        notify_events.notify_returned(
-                            _tstage.get("email", ""), _tstage.get("name", ""),
-                            code, clean(selected_row.get("year", "")), clean(selected_row.get("quarter", "")),
-                            by_label=_stage_label, comment=clean(leader_comment),
-                        )
-                except Exception as notify_exc:
-                    show_warning(
-                        "Заявку повернуто, але миттєве email-сповіщення не відправлено.",
-                        notify_exc,
-                        "Email після повернення у Мій кабінет",
+                    approve_request_step(
+                        request_id=int(selected_id),
+                        expected_status=approval,
+                        expected_chain_stage=int(_stage_idx),
+                        new_status=new_status,
+                        new_chain_stage=int(new_stage),
+                        approval_chain=(schemes.chain_to_json(_chain) if _chain else None),
+                        comment=_approval_comment,
+                        action=f"Погодження ланкою «{_stage_label}»",
+                        user=current_user,
+                        created_by=f"{role_label} / погодження",
                     )
-                st.warning(f"↩️ Заявку повернуто: {_picked_target['label']}.")
-                st.session_state["cab_last_decision_notice"] = (
-                    "Рішення застосовано. Якщо в черзі є ще заявки — систему щойно "
-                    "переключило на НАСТУПНУ заявку. Це не помилка: перегляньте її "
-                    "дані з самого початку, перш ніж ухвалювати рішення."
+
+                    try:
+                        if new_status == "Погоджено":
+                            notify_events.notify_approved(
+                                clean(selected_row.get("email")),
+                                clean(selected_row.get("responsible_person")),
+                                code,
+                                clean(selected_row.get("year")),
+                                clean(selected_row.get("quarter")),
+                            )
+                        elif _final_chain_for_notify:
+                            _next = schemes.current_stage(_final_chain_for_notify, new_stage)
+                            if _next:
+                                notify_events.notify_stage_assigned(
+                                    _next.get("email", ""),
+                                    _next.get("name", ""),
+                                    _next.get("label", ""),
+                                    code,
+                                    clean(selected_row.get("year")),
+                                    clean(selected_row.get("quarter")),
+                                    submitter=clean(selected_row.get("responsible_person")),
+                                )
+                    except Exception as notify_exc:
+                        show_warning(
+                            "Рішення збережено, але миттєве email-сповіщення не відправлено.",
+                            notify_exc,
+                            "Email після погодження у Мій кабінет",
+                        )
+
+                    if new_status == "Погоджено":
+                        _success_notice = "Заявка пройшла всі етапи схеми. Статус: «Погоджено»."
+                    else:
+                        _next = (
+                            schemes.current_stage(_final_chain_for_notify, new_stage)
+                            if _final_chain_for_notify
+                            else None
+                        )
+                        if _next:
+                            _who = _next.get("name") or _next.get("email") or _next.get("label")
+                            _success_notice = (
+                                f"Підтверджено. Заявка надійшла наступній ланці — "
+                                f"«{_next.get('label', '')}» ({_who})."
+                            )
+                        else:
+                            _success_notice = f"Підтверджено. Новий статус: «{new_status}»."
+                    st.session_state["cab_action_success_notice"] = _success_notice
+                    st.session_state["cab_last_decision_notice"] = (
+                        "Рішення застосовано. Якщо в черзі є ще заявки — систему переключено "
+                        "на наступну заявку. Перевірте її дані з початку перед новим рішенням."
+                    )
+                    _queue_cabinet_selection_reset(selected_id)
+                    monitoring_data.invalidate_monitoring_cache()
+                    st.rerun()
+                except TransitionRejected as exc:
+                    st.error(exc.message)
+                except Exception as exc:
+                    show_incident(exc, context="Атомарне погодження заявки у Мій кабінет")
+
+        if apply_decision_btn and decision == "Повернути на доопрацювання":
+            if not clean(leader_comment):
+                st.error("Вкажіть коментар перед поверненням на доопрацювання.")
+            elif _picked_target is None:
+                st.error("Оберіть адресата повернення.")
+            else:
+                try:
+                    atomic_return_request(
+                        request_id=int(selected_id),
+                        expected_status=approval,
+                        expected_chain_stage=int(_stage_idx),
+                        new_status=_picked_target["status"],
+                        new_chain_stage=int(_picked_target["new_stage"]),
+                        comment=clean(leader_comment),
+                        action=f"Повернення на доопрацювання: {_picked_target['label']}",
+                        user=current_user,
+                        created_by=f"{role_label} / повернення",
+                    )
+                    try:
+                        if _picked_target["key"] == "submitter":
+                            notify_events.notify_returned(
+                                clean(selected_row.get("email")),
+                                clean(selected_row.get("responsible_person")),
+                                code,
+                                clean(selected_row.get("year")),
+                                clean(selected_row.get("quarter")),
+                                by_label=_stage_label,
+                                comment=clean(leader_comment),
+                            )
+                        elif _picked_target["key"].startswith("stage:") and _chain:
+                            _target_stage = _chain[_picked_target["new_stage"]]
+                            notify_events.notify_returned(
+                                _target_stage.get("email", ""),
+                                _target_stage.get("name", ""),
+                                code,
+                                clean(selected_row.get("year")),
+                                clean(selected_row.get("quarter")),
+                                by_label=_stage_label,
+                                comment=clean(leader_comment),
+                            )
+                    except Exception as notify_exc:
+                        show_warning(
+                            "Заявку повернуто, але миттєве email-сповіщення не відправлено.",
+                            notify_exc,
+                            "Email після повернення у Мій кабінет",
+                        )
+                    st.session_state["cab_action_success_notice"] = (
+                        f"Заявку повернуто: {_picked_target['label']}."
+                    )
+                    st.session_state["cab_last_decision_notice"] = (
+                        "Рішення застосовано. Якщо в черзі є ще заявки — систему переключено "
+                        "на наступну заявку. Перевірте її дані з початку перед новим рішенням."
+                    )
+                    _queue_cabinet_selection_reset(selected_id)
+                    monitoring_data.invalidate_monitoring_cache()
+                    st.rerun()
+                except TransitionRejected as exc:
+                    st.error(exc.message)
+                except Exception as exc:
+                    show_incident(exc, context="Атомарне повернення заявки у Мій кабінет")
+
+        _render_cabinet_decision_notices()
+
+        # Ланка може виправити дані напряму. Механізм чернеток і відновлення
+        # незбереженого стану видалено; зберігається лише явна дія користувача.
+        if not schemes.is_final_locked(selected_row):
+            with st.expander(f"Редагувати дані заявки (від імені ланки «{_stage_label}»)"):
+                st.caption(
+                    "Використовуйте, якщо простіше виправити дані самостійно, ніж "
+                    "повертати заявку відповідальній особі. Попередню версію буде "
+                    "збережено в історії; заявка повернеться на розгляд координатору."
                 )
-                monitoring_data.invalidate_monitoring_cache()
-                st.rerun()
-            except TransitionRejected as exc:
-                st.error(exc.message)
-            except Exception as exc:
-                show_incident(exc, context="Атомарне повернення заявки у Мій кабінет")
+                _cab_coord_idx = coordinator_stage_index(_chain) if _chain else 0
+                _cab_status_key = f"cab_edit_status_{selected_id}_{_stage_idx}"
+                _cab_value_key = f"cab_edit_value_{selected_id}_{_stage_idx}"
+                _cab_progress_key = f"cab_edit_progress_{selected_id}_{_stage_idx}"
+                _cab_risks_key = f"cab_edit_risks_{selected_id}_{_stage_idx}"
 
-    # ── Редагувати дані напряму (пункт 3 нового ТЗ) ──────────
-    # Ланка погодження може виправити звітні дані сама. В4 проводить
-    # оновлення, дві версії та журнал однією транзакцією, а В2 перевіряє
-    # updated_at всередині тієї самої функції бази.
-    if not schemes.is_final_locked(selected_row):
-        with st.expander(f"✏️ Редагувати дані заявки (від імені ланки «{_stage_label}»)"):
-            st.caption(
-                "Використовуйте, якщо простіше виправити дані самостійно, ніж "
-                "повертати заявку відповідальній особі. Попередню версію буде "
-                "збережено в історії; заявка повернеться на розгляд координатору."
-            )
-
-            _cab_coord_idx = coordinator_stage_index(_chain) if _chain else 0
-            _cab_draft_context = f"stage_edit::{selected_id}::{_stage_idx}"
-            _cab_draft_key = make_draft_key(
-                clean(selected_row.get("object_kind")) or "measure",
-                selected_row.get("strat_code"), selected_row.get("year"),
-                selected_row.get("quarter"), mode="stage_edit", request_id=int(selected_id),
-            )
-            _cab_draft_rows = load_drafts_for_keys(
-                clean(current_user.get("email")), [_cab_draft_key]
-            )
-            _cab_restored_map = render_draft_recovery(
-                context_key=_cab_draft_context,
-                user_email=clean(current_user.get("email")),
-                draft_rows=_cab_draft_rows,
-            )
-            _cab_restored = _cab_restored_map.get(_cab_draft_key, {})
-
-            _cab_generation = editor_generation(_cab_draft_context)
-            _cab_status_key = f"cab_edit_status_{selected_id}_{_cab_generation}"
-            _cab_value_key = f"cab_edit_value_{selected_id}_{_cab_generation}"
-            _cab_progress_key = f"cab_edit_progress_{selected_id}_{_cab_generation}"
-            _cab_risks_key = f"cab_edit_risks_{selected_id}_{_cab_generation}"
-            _apply_widget_draft_once(
-                _cab_draft_context, _cab_restored,
-                {
-                    "status": _cab_status_key,
-                    "numeric_value": _cab_value_key,
-                    "progress_text": _cab_progress_key,
-                    "risks": _cab_risks_key,
-                },
-            )
-
-            _cab_status_options = list(SUBMISSION_STATUS_OPTIONS)
-            _cab_current_status = clean(selected_row["status"])
-            _cab_status_index = (
-                _cab_status_options.index(_cab_current_status)
-                if _cab_current_status in _cab_status_options else 0
-            )
-
-            cab_new_status = st.selectbox(
-                "Статус виконання", _cab_status_options, index=_cab_status_index,
-                key=_cab_status_key,
-            )
-            cab_new_value = st.text_input(
-                "Фактичне значення", value=clean(selected_row["numeric_value"]),
-                key=_cab_value_key,
-            )
-            cab_new_progress = st.text_area(
-                "Опис прогресу", value=clean(selected_row["progress_text"]),
-                height=110, key=_cab_progress_key,
-            )
-            cab_new_risks = st.text_area(
-                "Ризики / проблеми / відхилення", value=clean(selected_row["risks"]),
-                height=110, key=_cab_risks_key,
-            )
-
-            _cab_draft_content = {
-                "status": cab_new_status,
-                "numeric_value": cab_new_value,
-                "progress_text": cab_new_progress,
-                "risks": cab_new_risks,
-            }
-            _cab_has_changes = (
-                cab_new_status != clean(selected_row.get("status"))
-                or clean(cab_new_value) != clean(selected_row.get("numeric_value"))
-                or clean(cab_new_progress) != clean(selected_row.get("progress_text"))
-                or clean(cab_new_risks) != clean(selected_row.get("risks"))
-            )
-            if (not _cab_draft_rows or _cab_restored_map) and (
-                _cab_has_changes or _cab_restored_map
-            ):
-                queue_draft(
-                    clean(current_user.get("email")), _cab_draft_key, _cab_draft_content
+                _cab_status_options = list(SUBMISSION_STATUS_OPTIONS)
+                _cab_current_status = clean(selected_row.get("status"))
+                _cab_status_index = (
+                    _cab_status_options.index(_cab_current_status)
+                    if _cab_current_status in _cab_status_options
+                    else 0
                 )
-            render_draft_autosave_worker()
+                cab_new_status = st.selectbox(
+                    "Статус виконання",
+                    _cab_status_options,
+                    index=_cab_status_index,
+                    key=_cab_status_key,
+                )
+                cab_new_value = st.text_input(
+                    "Фактичне значення",
+                    value=clean(selected_row.get("numeric_value")) or clean(selected_row.get("value_text")),
+                    key=_cab_value_key,
+                )
+                cab_new_progress = st.text_area(
+                    "Опис прогресу",
+                    value=clean(selected_row.get("progress_text")),
+                    height=110,
+                    key=_cab_progress_key,
+                )
+                cab_new_risks = st.text_area(
+                    "Ризики / проблеми / відхилення",
+                    value=clean(selected_row.get("risks")),
+                    height=110,
+                    key=_cab_risks_key,
+                )
+                cab_edit_submit = st.button(
+                    "Зберегти й надіслати координатору",
+                    use_container_width=True,
+                    key=f"cab_edit_submit_{selected_id}",
+                )
 
-            cab_edit_submit = st.button(
-                "💾 Зберегти й надіслати координатору",
-                use_container_width=True,
-                key=f"cab_edit_submit_{selected_id}",
-            )
+                if cab_edit_submit:
+                    cab_edit_errors = []
+                    if not has_value(cab_new_value) or not has_value(cab_new_progress):
+                        cab_edit_errors.append("Заповніть фактичне значення та опис прогресу.")
 
-            if cab_edit_submit:
-                cab_edit_errors = []
-                if not has_value(cab_new_value) or not has_value(cab_new_progress):
-                    cab_edit_errors.append("Заповніть фактичне значення та опис прогресу.")
+                    cab_unit = clean(mi.get("unit")) if mi is not None else ""
+                    if has_value(cab_new_value):
+                        cab_value_ok, cab_value_error = validate_fact_value_for_target(
+                            cab_new_value,
+                            cab_unit,
+                            _cab_selected_target,
+                            _cab_future_targets,
+                        )
+                        if not cab_value_ok:
+                            cab_edit_errors.append(cab_value_error)
 
-                cab_unit = clean(mi.get("unit")) if mi is not None else ""
-                if has_value(cab_new_value):
-                    cab_value_ok, cab_value_error = validate_fact_value_for_target(
+                    cab_conflict_error = status_value_conflict(
+                        cab_new_status,
                         cab_new_value,
-                        cab_unit,
                         _cab_selected_target,
+                        cab_unit,
+                        code,
                         _cab_future_targets,
                     )
-                    if not cab_value_ok:
-                        cab_edit_errors.append(cab_value_error)
+                    if cab_conflict_error:
+                        cab_edit_errors.append(cab_conflict_error)
 
-                cab_conflict_error = status_value_conflict(
-                    cab_new_status,
-                    cab_new_value,
-                    _cab_selected_target,
-                    cab_unit,
-                    code,
-                    _cab_future_targets,
-                )
-                if cab_conflict_error:
-                    cab_edit_errors.append(cab_conflict_error)
-
-                if cab_edit_errors:
-                    for cab_error in cab_edit_errors:
-                        st.error(cab_error)
-                else:
-                    _cab_update = prepare_monitoring_payload({
-                        "status": cab_new_status,
-                        "numeric_value": cab_new_value,
-                        "progress_text": cab_new_progress,
-                        "risks": cab_new_risks,
-                        "admin_comment": "",
-                        "submitted_at": datetime.now(timezone.utc).isoformat(),
-                        "log_comment": (
-                            f"Відредаговано ланкою «{_stage_label}»; "
-                            "надіслано координатору повторно."
-                        ),
-                    })
-                    try:
-                        result = resubmit_request(
-                            request_id=int(selected_id),
-                            expected_updated_at=clean(selected_row.get("updated_at")),
-                            expected_status=approval,
-                            expected_chain_stage=int(_stage_idx),
-                            target_chain_stage=int(_cab_coord_idx),
-                            payload=_cab_update,
-                            mode="stage_edit",
-                            action=f"Редагування ланкою «{_stage_label}»",
-                            user=current_user,
-                            created_by_before=f"{role_label} / до редагування",
-                            created_by_after=f"{role_label} / редагування",
-                            draft_email=clean(current_user.get("email")),
-                            draft_key=_cab_draft_key,
-                        )
-                        forget_draft_state([_cab_draft_key])
-
-                        if _chain:
-                            _cab_coord_stage = _chain[_cab_coord_idx]
-                            try:
-                                notify_events.notify_stage_assigned(
-                                    _cab_coord_stage.get("email", ""),
-                                    _cab_coord_stage.get("name", ""),
-                                    _cab_coord_stage.get("label", ""),
-                                    code,
-                                    clean(selected_row.get("year", "")),
-                                    clean(selected_row.get("quarter", "")),
-                                    submitter=clean(selected_row.get("responsible_person", "")),
-                                    kind=clean(selected_row.get("object_kind", "")) or "measure",
-                                )
-                            except Exception as notify_exc:
-                                show_warning(
-                                    "Зміни збережено, але координатору не відправлено миттєвий лист.",
-                                    notify_exc,
-                                    "Email після редагування ланкою погодження",
-                                )
-
-                        clear_draft_recovery(_cab_draft_context)
-                        _clear_widget_draft_marker(_cab_draft_context)
-                        set_submission_notice(
-                            first_stage_label=(
-                                result.data.get("first_stage_label")
-                                or (_chain[_cab_coord_idx].get("label") if _chain else "Координатор")
+                    if cab_edit_errors:
+                        for cab_error in cab_edit_errors:
+                            st.error(cab_error)
+                    else:
+                        _cab_update = prepare_monitoring_payload({
+                            "status": cab_new_status,
+                            "numeric_value": cab_new_value,
+                            "progress_text": cab_new_progress,
+                            "risks": cab_new_risks,
+                            "admin_comment": "",
+                            "submitted_at": datetime.now(timezone.utc).isoformat(),
+                            "log_comment": (
+                                f"Відредаговано ланкою «{_stage_label}»; "
+                                "надіслано координатору повторно."
                             ),
-                            codes=[code],
-                            repeated=True,
-                        )
-                        monitoring_data.invalidate_monitoring_cache()
-                        st.rerun()
-                    except TransitionRejected as exc:
-                        if exc.code in {"concurrent_change", "state_changed"}:
-                            try:
-                                save_draft_now(
-                                    clean(current_user.get("email")),
-                                    _cab_draft_key,
-                                    _cab_draft_content,
-                                )
-                            except Exception as draft_exc:
-                                show_warning(
-                                    "Чернетку змін не вдалося зберегти.",
-                                    draft_exc,
-                                    "Чернетка після конфлікту редагування ланкою",
-                                )
-                        st.error(exc.message)
-                    except Exception as exc:
+                        })
                         try:
-                            save_draft_now(
-                                clean(current_user.get("email")),
-                                _cab_draft_key,
-                                _cab_draft_content,
+                            result = resubmit_request(
+                                request_id=int(selected_id),
+                                expected_updated_at=clean(selected_row.get("updated_at")),
+                                expected_status=approval,
+                                expected_chain_stage=int(_stage_idx),
+                                target_chain_stage=int(_cab_coord_idx),
+                                payload=_cab_update,
+                                mode="stage_edit",
+                                action=f"Редагування ланкою «{_stage_label}»",
+                                user=current_user,
+                                created_by_before=f"{role_label} / до редагування",
+                                created_by_after=f"{role_label} / редагування",
                             )
-                        except Exception as draft_exc:
-                            show_warning(
-                                "Чернетку змін не вдалося зберегти.",
-                                draft_exc,
-                                "Чернетка після помилки редагування ланкою",
+
+                            if _chain:
+                                _cab_coord_stage = _chain[_cab_coord_idx]
+                                try:
+                                    notify_events.notify_stage_assigned(
+                                        _cab_coord_stage.get("email", ""),
+                                        _cab_coord_stage.get("name", ""),
+                                        _cab_coord_stage.get("label", ""),
+                                        code,
+                                        clean(selected_row.get("year")),
+                                        clean(selected_row.get("quarter")),
+                                        submitter=clean(selected_row.get("responsible_person")),
+                                        kind=clean(selected_row.get("object_kind")) or "measure",
+                                    )
+                                except Exception as notify_exc:
+                                    show_warning(
+                                        "Зміни збережено, але координатору не відправлено миттєвий лист.",
+                                        notify_exc,
+                                        "Email після редагування ланкою погодження",
+                                    )
+
+                            set_submission_notice(
+                                first_stage_label=(
+                                    result.data.get("first_stage_label")
+                                    or (_chain[_cab_coord_idx].get("label") if _chain else "Координатор")
+                                ),
+                                codes=[code],
+                                repeated=True,
                             )
-                        show_incident(exc, context="Атомарне редагування заявки ланкою погодження")
-else:
-    if approval == "Погоджено":
-        st.success("✅ Заявку вже підтверджено. Жодних дій не потрібно.")
-    elif approval in _waiting_statuses:
-        if _chain:
-            st.info(f"🕐 Зараз не ваша ланка. {schemes.chain_progress_text(_chain, _stage_idx, approval)}")
-        else:
-            st.info("🕐 Заявка ще не надійшла на ваш етап погодження.")
-    elif approval == "Повернуто на доопрацювання":
-        st.warning("↩️ Заявку повернуто відповідальному на доопрацювання.")
+                            _queue_cabinet_selection_reset(selected_id)
+                            monitoring_data.invalidate_monitoring_cache()
+                            st.rerun()
+                        except TransitionRejected as exc:
+                            st.error(exc.message)
+                        except Exception as exc:
+                            show_incident(
+                                exc,
+                                context="Атомарне редагування заявки ланкою погодження",
+                            )
     else:
-        st.info("Для цього статусу дій не передбачено.")
+        if not _live_request_verified:
+            st.info(
+                "Не вдалося підтвердити актуальний стан заявки в базі. "
+                "Кнопки рішення вимкнено; оновіть сторінку й повторіть перевірку."
+            )
+        elif approval == "Погоджено":
+            st.info("Заявку вже опрацьовано й погоджено. Додаткові дії не потрібні.")
+        elif approval in _waiting_statuses:
+            if _chain:
+                st.info(
+                    "Заявка вже не перебуває на вашій ланці. "
+                    f"{schemes.chain_progress_text(_chain, _stage_idx, approval)}"
+                )
+            else:
+                st.info("Заявка вже не перебуває на вашому етапі погодження.")
+        elif approval == "Повернуто на доопрацювання":
+            st.info("Заявку вже повернуто на доопрацювання. Дії цієї ланки не потрібні.")
+        else:
+            st.info("Заявку вже опрацьовано; для поточного стану дій цієї ланки немає.")
+        _render_cabinet_decision_notices()
 
-# ============================================================
-# LOG HISTORY
-# ============================================================
+    # ============================================================
+    # LOG HISTORY
+    # ============================================================
 
-logs_df = load_logs(selected_id)
-st.markdown(
-    '<div class="card cabinet-section-card">'
-    '<div class="card-title">Історія зміни статусу</div>'
-    '</div>',
-    unsafe_allow_html=True,
-)
-# ЄДИНИЙ компонент таймлайну для всієї системи (core/ui.py, ТЗ 16.13)
-render_request_timeline(logs_df, with_table_expander=False)
+    logs_df = load_logs(selected_id)
+    st.markdown(
+        '<div class="card cabinet-section-card">'
+        '<div class="card-title">Історія зміни статусу</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    # ЄДИНИЙ компонент таймлайну для всієї системи (core/ui.py, ТЗ 16.13)
+    render_request_timeline(logs_df, with_table_expander=False)
 
-_history_logs = logs_df.copy()
-_versions_df = load_versions(selected_id)
-_log_timestamps = pd.to_datetime(
-    _history_logs["changed_at"]
-    if "changed_at" in _history_logs.columns
-    else pd.Series([], dtype="object"),
-    errors="coerce",
-    utc=True,
-)
-_history_facts = []
-_history_progress = []
-if not _versions_df.empty and "created_at" in _versions_df.columns:
-    _versions_df = _versions_df.copy()
-    _versions_df["_ts"] = pd.to_datetime(
-        _versions_df["created_at"],
+    _history_logs = logs_df.copy()
+    _versions_df = load_versions(selected_id)
+    _log_timestamps = pd.to_datetime(
+        _history_logs["changed_at"]
+        if "changed_at" in _history_logs.columns
+        else pd.Series([], dtype="object"),
         errors="coerce",
         utc=True,
     )
-    _versions_df = _versions_df.sort_values("_ts")
-    for _timestamp in _log_timestamps:
-        _snapshot = (
-            _versions_df[_versions_df["_ts"] <= _timestamp]
-            if pd.notna(_timestamp)
-            else _versions_df.iloc[0:0]
+    _history_facts = []
+    _history_progress = []
+    if not _versions_df.empty and "created_at" in _versions_df.columns:
+        _versions_df = _versions_df.copy()
+        _versions_df["_ts"] = pd.to_datetime(
+            _versions_df["created_at"],
+            errors="coerce",
+            utc=True,
         )
-        _version_row = _snapshot.iloc[-1] if not _snapshot.empty else None
-        if _version_row is not None:
-            _history_facts.append(_request_fact(_version_row))
-            _history_progress.append(clean(_version_row.get("progress_text")) or "—")
-        else:
-            _history_facts.append(_request_fact(selected_row))
-            _history_progress.append(clean(selected_row.get("progress_text")) or "—")
-else:
-    _history_facts = [_request_fact(selected_row)] * len(_history_logs)
-    _history_progress = [clean(selected_row.get("progress_text")) or "—"] * len(_history_logs)
+        _versions_df = _versions_df.sort_values("_ts")
+        for _timestamp in _log_timestamps:
+            _snapshot = (
+                _versions_df[_versions_df["_ts"] <= _timestamp]
+                if pd.notna(_timestamp)
+                else _versions_df.iloc[0:0]
+            )
+            _version_row = _snapshot.iloc[-1] if not _snapshot.empty else None
+            if _version_row is not None:
+                _history_facts.append(_request_fact(_version_row))
+                _history_progress.append(clean(_version_row.get("progress_text")) or "—")
+            else:
+                _history_facts.append(_request_fact(selected_row))
+                _history_progress.append(clean(selected_row.get("progress_text")) or "—")
+    else:
+        _history_facts = [_request_fact(selected_row)] * len(_history_logs)
+        _history_progress = [clean(selected_row.get("progress_text")) or "—"] * len(_history_logs)
 
-if not _history_logs.empty:
-    _history_logs["Фактичне значення"] = _history_facts
-    _history_logs["Опис прогресу"] = _history_progress
+    if not _history_logs.empty:
+        _history_logs["Фактичне значення"] = _history_facts
+        _history_logs["Опис прогресу"] = _history_progress
 
-_history_table = prepare_human_log_table(
-    _history_logs,
-    extra_columns=["Фактичне значення", "Опис прогресу"],
-)
-with st.expander("Повна історія змін заявки (табличний вигляд)"):
-    _render_html_table(
-        list(_history_table.columns),
-        [list(row) for row in _history_table.itertuples(index=False, name=None)],
-        empty_message="Історії змін для цієї заявки поки що немає.",
+    _history_table = prepare_human_log_table(
+        _history_logs,
+        extra_columns=["Фактичне значення", "Опис прогресу"],
     )
+    with st.expander("Повна історія змін заявки (табличний вигляд)"):
+        _render_html_table(
+            list(_history_table.columns),
+            [list(row) for row in _history_table.itertuples(index=False, name=None)],
+            empty_message="Історії змін для цієї заявки поки що немає.",
+        )
 
 # ============================================================
 # РУЧНІ ЗАКРИТТЯ ЗАХОДІВ — реакція керівника ССП

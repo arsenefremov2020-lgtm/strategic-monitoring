@@ -423,6 +423,15 @@ table.custom-table td {
     line-height: 1.32;
 }
 
+/* Числові й текстові значення показників у річних колонках.
+   Правило застосовується лише до звичайного вмісту make_cell();
+   кольорові статусні бейджі мають власні inline-кольори й не зачіпаються. */
+table.custom-table td.col-year:not(.status-review):not(.status-approved):not(.status-returned):not(.status-empty):not(.status-notyet):not(.status-manual-closeout):not(.risk-cell) > .cell-nowrap,
+table.custom-table td.col-year:not(.status-review):not(.status-approved):not(.status-returned):not(.status-empty):not(.status-notyet):not(.status-manual-closeout):not(.risk-cell) > .cell-fixed {
+    color: #132238;
+    font-weight: 850;
+}
+
 table.custom-table tr:nth-child(even) {
     background-color: #F7F9FC;
 }

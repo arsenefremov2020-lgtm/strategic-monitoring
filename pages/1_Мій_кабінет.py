@@ -15,11 +15,16 @@ from core.stage4 import format_kyiv_datetime, quarter_to_roman
 from core.strategic_data import load_strat_matrix as core_load_strat_matrix
 from core import monitoring_data
 from core.statuses import SUBMISSION_STATUS_OPTIONS
-from core.validation import status_value_conflict, validate_fact_value_for_target
+from core.validation import (
+    cumulative_quarter_decrease_error,
+    status_value_conflict,
+    validate_fact_value_for_target,
+)
 from core.versioning import coordinator_stage_index
 from core.transitions import (
     TransitionRejected,
     approve_request_step,
+    resubmit_head_edit_to_final_coordinator,
     resubmit_request,
     return_request as atomic_return_request,
 )
@@ -1672,10 +1677,52 @@ else:
 
                 if cab_edit_submit:
                     cab_edit_errors = []
-                    if not has_value(cab_new_value) or not has_value(cab_new_progress):
-                        cab_edit_errors.append("Заповніть фактичне значення та опис прогресу.")
+                    if not has_value(cab_new_value):
+                        cab_edit_errors.append("Заповніть фактичне значення.")
 
                     cab_unit = clean(mi.get("unit")) if mi is not None else ""
+                    cab_decrease_error = cumulative_quarter_decrease_error(
+                        df,
+                        code=code,
+                        year=selected_row.get("year"),
+                        quarter=selected_row.get("quarter"),
+                        value=cab_new_value,
+                        progress_text=cab_new_progress,
+                        unit=cab_unit,
+                        department=selected_row.get("department"),
+                        object_kind=selected_row.get("object_kind") or "measure",
+                    )
+                    if not has_value(cab_new_progress):
+                        cab_edit_errors.append(
+                            cab_decrease_error or "Заповніть опис прогресу."
+                        )
+
+                    _cab_chain_for_edit = _chain
+                    _cab_target_stage = _cab_coord_idx
+                    _cab_head_edit_scheme_label = clean(selected_row.get("scheme_label"))
+                    if _my_role == ROLE_SSP_HEAD:
+                        _cab_ssp_numbers = re.findall(
+                            r"\d+", clean(selected_row.get("department"))
+                        )
+                        _cab_ssp_index = (
+                            _cab_ssp_numbers[0]
+                            if _cab_ssp_numbers
+                            else clean(current_user.get("ssp_index"))
+                        )
+                        _cab_chain_for_edit, _cab_target_stage = (
+                            schemes.append_final_coordinator_after_head_edit(
+                                _chain, _cab_ssp_index
+                            )
+                        )
+                        if _cab_chain_for_edit is None or _cab_target_stage is None:
+                            cab_edit_errors.append(
+                                "Для цього ССП не визначено координатора, якого можна "
+                                "додати фінальною ланкою після редагування керівником ССП."
+                            )
+                        else:
+                            _cab_head_edit_scheme_label = schemes.scheme_label_for_chain(
+                                _cab_chain_for_edit
+                            )
                     if has_value(cab_new_value):
                         cab_value_ok, cab_value_error = validate_fact_value_for_target(
                             cab_new_value,
@@ -1710,26 +1757,47 @@ else:
                             "submitted_at": datetime.now(timezone.utc).isoformat(),
                             "log_comment": (
                                 f"Відредаговано ланкою «{_stage_label}»; "
-                                "надіслано координатору повторно."
+                                + (
+                                    "координатора додано фінальною ланкою погодження."
+                                    if _my_role == ROLE_SSP_HEAD
+                                    else "надіслано координатору повторно."
+                                )
                             ),
                         })
                         try:
-                            result = resubmit_request(
-                                request_id=int(selected_id),
-                                expected_updated_at=clean(selected_row.get("updated_at")),
-                                expected_status=approval,
-                                expected_chain_stage=int(_stage_idx),
-                                target_chain_stage=int(_cab_coord_idx),
-                                payload=_cab_update,
-                                mode="stage_edit",
-                                action=f"Редагування ланкою «{_stage_label}»",
-                                user=current_user,
-                                created_by_before=f"{role_label} / до редагування",
-                                created_by_after=f"{role_label} / редагування",
-                            )
+                            if _my_role == ROLE_SSP_HEAD:
+                                result = resubmit_head_edit_to_final_coordinator(
+                                    request_id=int(selected_id),
+                                    expected_updated_at=clean(selected_row.get("updated_at")),
+                                    expected_status=approval,
+                                    expected_chain_stage=int(_stage_idx),
+                                    existing_coordinator_stage=int(_cab_coord_idx),
+                                    final_coordinator_stage=int(_cab_target_stage),
+                                    approval_chain=schemes.chain_to_json(_cab_chain_for_edit),
+                                    scheme_label=_cab_head_edit_scheme_label,
+                                    payload=_cab_update,
+                                    action=f"Редагування ланкою «{_stage_label}»",
+                                    user=current_user,
+                                    created_by_before=f"{role_label} / до редагування",
+                                    created_by_after=f"{role_label} / редагування",
+                                )
+                            else:
+                                result = resubmit_request(
+                                    request_id=int(selected_id),
+                                    expected_updated_at=clean(selected_row.get("updated_at")),
+                                    expected_status=approval,
+                                    expected_chain_stage=int(_stage_idx),
+                                    target_chain_stage=int(_cab_target_stage),
+                                    payload=_cab_update,
+                                    mode="stage_edit",
+                                    action=f"Редагування ланкою «{_stage_label}»",
+                                    user=current_user,
+                                    created_by_before=f"{role_label} / до редагування",
+                                    created_by_after=f"{role_label} / редагування",
+                                )
 
-                            if _chain:
-                                _cab_coord_stage = _chain[_cab_coord_idx]
+                            if _cab_chain_for_edit:
+                                _cab_coord_stage = _cab_chain_for_edit[_cab_target_stage]
                                 try:
                                     notify_events.notify_stage_assigned(
                                         _cab_coord_stage.get("email", ""),
@@ -1751,7 +1819,7 @@ else:
                             set_submission_notice(
                                 first_stage_label=(
                                     result.data.get("first_stage_label")
-                                    or (_chain[_cab_coord_idx].get("label") if _chain else "Координатор")
+                                    or (_cab_chain_for_edit[_cab_target_stage].get("label") if _cab_chain_for_edit else "Координатор")
                                 ),
                                 codes=[code],
                                 repeated=True,

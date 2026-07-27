@@ -2813,8 +2813,13 @@ def _coordinator_attention_bucket(row) -> str:
     if not coordinator_indexes:
         return "waiting"
 
-    coordinator_index = coordinator_indexes[0]
-    # Якщо заявка вже перейшла вище координатора, його рішення виконане.
+    # Після редагування керівником ССП координатор може бути доданий ще раз
+    # фінальною ланкою. Поточна координаторська ланка завжди означає «на розгляді».
+    current = schemes.current_stage(chain, stage_index)
+    if current and clean(current.get("role")) == schemes.ROLE_ADMIN:
+        return "waiting"
+
+    coordinator_index = coordinator_indexes[-1]
     if stage_index > coordinator_index:
         return "approved"
     return "waiting"
@@ -3451,8 +3456,15 @@ if admin_work_mode == "Ручне закриття заходів":
             co_year_col, co_quarter_col = st.columns(2)
             with co_year_col:
                 co_year = st.selectbox("Рік", list(range(2026, 2035)), key="closeout_year")
+            _co_quarter_options = (
+                ["III", "IV"] if int(co_year) == 2026 else ["I", "II", "III", "IV"]
+            )
+            if st.session_state.get("closeout_quarter") not in _co_quarter_options:
+                st.session_state["closeout_quarter"] = _co_quarter_options[0]
             with co_quarter_col:
-                co_quarter = st.selectbox("Квартал", ["I", "II", "III", "IV"], key="closeout_quarter")
+                co_quarter = st.selectbox(
+                    "Квартал", _co_quarter_options, key="closeout_quarter"
+                )
 
             _co_duplicate = _active_closeout_for_period(
                 closeout_df, co_code, co_year, co_quarter, _co_unit,
@@ -3495,6 +3507,11 @@ if admin_work_mode == "Ручне закриття заходів":
 
             if co_submit:
                 form_errors = []
+                if int(co_year) == 2026 and _quarter_number(co_quarter) in {1, 2}:
+                    form_errors.append(
+                        "Ручне закриття за I–II квартали 2026 року недоступне: "
+                        "ці квартали перебувають поза періодом моніторингу."
+                    )
                 if not clean(co_reason).strip():
                     form_errors.append("Підстава для ручного закриття є обов'язковою.")
                 if not clean(co_fact_value).strip():

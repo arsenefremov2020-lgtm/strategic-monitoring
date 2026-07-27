@@ -24,7 +24,11 @@ from core.transitions import (
 )
 from core.access import filter_requests_for_user, get_prefilled_user_contacts
 from core.operational import build_target_map
-from core.validation import status_value_conflict, validate_fact_value_for_target
+from core.validation import (
+    cumulative_quarter_decrease_error,
+    status_value_conflict,
+    validate_fact_value_for_target,
+)
 from config.users import get_user_by_email
 
 current_user = page_setup("Мої заявки", page_name="Мої заявки")
@@ -343,6 +347,7 @@ df = filter_requests_for_user(
     current_user,
     ssp_columns=["department"]
 )
+_all_accessible_requests = df.copy()
 
 prefilled_contacts = get_prefilled_user_contacts(current_user)
 
@@ -458,31 +463,6 @@ def _auto_textarea_height(value, min_height=68, max_height=260) -> int:
     logical_lines = text.splitlines() or [""]
     visual_lines = sum(max(1, (len(line) // 90) + 1) for line in logical_lines)
     return min(max_height, max(min_height, 44 + visual_lines * 22))
-
-
-def _next_stage_has_acted(logs: pd.DataFrame, chain: list[dict]) -> bool:
-    """True, якщо перша після подавача ланка вже зробила будь-яку дію."""
-    if not chain or logs is None or logs.empty:
-        return False
-
-    first_stage = chain[0] or {}
-    stage_email = clean(first_stage.get("email")).lower()
-    stage_name = clean(first_stage.get("name")).casefold()
-    stage_role = clean(first_stage.get("role")).casefold()
-
-    for _, log_row in logs.iterrows():
-        actor_email = clean(log_row.get("actor_email")).lower()
-        actor_name = clean(log_row.get("actor_name")).casefold()
-        actor_role = clean(log_row.get("actor_role")).casefold()
-        changed_by = clean(log_row.get("changed_by")).casefold()
-
-        if stage_email and (actor_email == stage_email or stage_email in changed_by):
-            return True
-        if stage_name and actor_name == stage_name:
-            return True
-        if stage_role and actor_role == stage_role:
-            return True
-    return False
 
 
 st.markdown('<div class="ua-line"></div>', unsafe_allow_html=True)
@@ -907,7 +887,7 @@ _render_holder_strip()
 # ============================================================
 
 _first_stage_waiting = schemes.waiting_status_for_stage(_chain[0]) if _chain else ""
-_next_stage_acted = _next_stage_has_acted(logs_df, _chain)
+_next_stage_acted = schemes.first_approval_stage_has_acted(_chain, logs_df)
 _can_early_modify = bool(
     _chain
     and approval in set(schemes.ALL_WAITING_STATUSES)
@@ -972,10 +952,22 @@ if _can_early_modify:
             de_errors = []
             if not has_value(de_new_value):
                 de_errors.append("Заповніть фактичне значення.")
-            if not has_value(de_new_progress):
-                de_errors.append("Заповніть опис прогресу.")
 
             de_unit = clean(mi.get("unit")) if mi is not None else ""
+            de_decrease_error = cumulative_quarter_decrease_error(
+                _all_accessible_requests,
+                code=code,
+                year=selected_row.get("year"),
+                quarter=selected_row.get("quarter"),
+                value=de_new_value,
+                progress_text=de_new_progress,
+                unit=de_unit,
+                department=selected_row.get("department"),
+                object_kind=selected_row.get("object_kind") or "measure",
+            )
+            if not has_value(de_new_progress):
+                de_errors.append(de_decrease_error or "Заповніть опис прогресу.")
+
             de_future_targets = _future_targets_for_record(selected_row, mi)
             if has_value(de_new_value):
                 de_value_ok, de_value_error = validate_fact_value_for_target(
@@ -1251,8 +1243,21 @@ if approval == "Повернуто на доопрацювання":
         errors = []
         if not has_value(new_value):
             errors.append("Заповніть фактичне значення.")
+
+        unit = clean(mi.get("unit")) if mi is not None else ""
+        decrease_error = cumulative_quarter_decrease_error(
+            _all_accessible_requests,
+            code=code,
+            year=selected_row.get("year"),
+            quarter=selected_row.get("quarter"),
+            value=new_value,
+            progress_text=new_progress,
+            unit=unit,
+            department=selected_row.get("department"),
+            object_kind=selected_row.get("object_kind") or "measure",
+        )
         if not has_value(new_progress):
-            errors.append("Заповніть опис прогресу.")
+            errors.append(decrease_error or "Заповніть опис прогресу.")
         if not has_value(new_responsible):
             errors.append("Заповніть ПІБ відповідальної особи.")
         if not has_value(new_phone):
@@ -1262,7 +1267,6 @@ if approval == "Повернуто на доопрацювання":
         elif not valid_email(new_email):
             errors.append("Email має некоректний формат.")
 
-        unit = clean(mi.get("unit")) if mi is not None else ""
         future_targets = _future_targets_for_record(selected_row, mi)
         if has_value(new_value):
             value_ok, value_error = validate_fact_value_for_target(

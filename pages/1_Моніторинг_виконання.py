@@ -29,6 +29,7 @@ from core.period_locks import is_period_locked
 from core import approval_schemes as schemes
 from core import notify_events
 from core.validation import (
+    cumulative_quarter_decrease_error,
     is_x_value,
     status_value_conflict,
     validate_fact_value,
@@ -1923,11 +1924,25 @@ def validate_submission():
         fact_value = raw_value(row.get(quarter_label, ""))
         target_value = raw_value(row.get(col_target, ""))
         unit = raw_value(row.get("Одиниці\nвиміру", ""))
+        decrease_error = cumulative_quarter_decrease_error(
+            monitoring_df,
+            code=code,
+            year=selected_year,
+            quarter=selected_quarter,
+            value=fact_value,
+            progress_text=row.get("Опис\nпрогресу", ""),
+            unit=unit,
+            department=selected_ssp_index,
+            object_kind="measure",
+        )
         missing_fields = [
             field for field in required_editable_cols
             if not raw_value(row.get(field, ""))
         ]
         for field_name in missing_fields:
+            if field_name == "Опис\nпрогресу" and decrease_error:
+                errors.append(f"У заході {code}: {decrease_error}.")
+                continue
             field_label = field_name.replace("\n", " ")
             errors.append(
                 f"У заході {code} не заповнено поле «{field_label}». "

@@ -3038,7 +3038,6 @@ def _render_locked_correction_mode(source_df: pd.DataFrame):
             sa_locked_value = st.text_input(
                 "Фактичне значення",
                 value=_fact_for_request(locked_row).replace("—", ""),
-                help="Можна ввести число або текстове значення, наприклад «так» чи «ні».",
             )
             sa_locked_progress = st.text_area(
                 "Опис прогресу", value=clean(locked_row.get("progress_text")), height=120,

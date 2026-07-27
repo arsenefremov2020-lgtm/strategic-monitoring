@@ -170,15 +170,20 @@ def legend_badge(
     s = clean(state)
     c = LEGEND_COLORS.get(s, LEGEND_COLORS["Не враховано"])
     label = s if s in LEGEND_COLORS else "Не враховано"
+    text_color = c["fg"]
+    text_weight = 800
     if display_value is None:
         if label == "Закрито адміністратором":
             label = "🔒 Закрито адміністратором"
     else:
         label = clean(display_value) or "—"
+        text_color = "#132238"
+        text_weight = 900
     return (
         f'<span style="display:inline-block;padding:2px 10px;border-radius:20px;'
-        f'font-size:11px;font-weight:800;background:{c["bg"]};color:{c["fg"]};'
-        f'border:1px solid {c["border"]};{extra_style}">{_escape(label)}</span>'
+        f'font-size:11px;font-weight:{text_weight};background:{c["bg"]};'
+        f'color:{text_color};border:1px solid {c["border"]};'
+        f'{extra_style}">{_escape(label)}</span>'
     )
 
 

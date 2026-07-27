@@ -2,17 +2,16 @@ import streamlit as st
 import pandas as pd
 from core.data_types import normalise_closeout_frame, prepare_monitoring_payload
 from core.db import fetch_all, get_supabase_client
-from core.ui import load_css, render_request_timeline
+from core.ui import load_css, prepare_human_log_table, render_request_timeline
 from core.errors import log_cosmetic_error, show_incident, show_warning
-from core.notifications import render_notifications_panel
 from core.config import FILE_PATH, SHEET_NAME
 from core.excel_loader import read_excel_sheet
 from datetime import datetime, timezone
 from html import escape
 import re
 from core.page_setup import page_setup, render_footer
-from core.timeutils import now_kyiv
 from core.period_locks import is_period_locked
+from core.stage4 import format_kyiv_datetime, quarter_to_roman
 from core.strategic_data import load_strat_matrix as core_load_strat_matrix
 from core import monitoring_data
 from core.statuses import SUBMISSION_STATUS_OPTIONS
@@ -84,9 +83,21 @@ header[data-testid="stHeader"] {
     background: rgba(255,255,255,0.94);
     border: 1px solid #DCE4F0;
     border-radius: 16px;
-    padding: 22px 26px;
     margin-bottom: 18px;
     box-shadow: 0 8px 24px rgba(15,23,42,0.06);
+}
+.header-box {
+    padding: 16px 22px;
+}
+.card {
+    padding: 22px 26px;
+}
+.cabinet-section-card {
+    padding: 12px 18px;
+    margin-bottom: 10px;
+}
+.cabinet-section-card .card-title {
+    margin-bottom: 0;
 }
 .header-title {
     font-size: 32px;
@@ -202,6 +213,15 @@ header[data-testid="stHeader"] {
     margin: 18px 0 6px 0;
     box-shadow: 0 8px 20px rgba(245,158,11,0.12);
 }
+.comment-box.cabinet-muted-box {
+    background: #FFF8E8;
+    border: 1px solid #E5C66B;
+    color: #5E4A18;
+    border-radius: 14px;
+    padding: 14px 16px;
+    margin: 14px 0 6px 0;
+    box-shadow: 0 4px 12px rgba(138,100,0,0.08);
+}
 .comment-title {
     font-size: 14px;
     font-weight: 950;
@@ -213,6 +233,97 @@ header[data-testid="stHeader"] {
     font-size: 15px;
     line-height: 1.6;
     font-weight: 750;
+}
+
+.cabinet-readonly-block {
+    background: #EAF1FF;
+    border: 1px solid #BFD3F2;
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin: 10px 0;
+}
+.cabinet-readonly-label {
+    color: #132238;
+    font-size: 12px;
+    font-weight: 900;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+.cabinet-readonly-value {
+    color: #132238;
+    font-size: 15px;
+    font-weight: 850;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+}
+.cabinet-readonly-value a {
+    color: #005BBB;
+    font-weight: 850;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+.cabinet-route-caption {
+    color: #5E4A18;
+    font-size: 12px;
+    font-weight: 850;
+    margin-bottom: 8px;
+}
+.cabinet-route-row {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    gap: 7px;
+    overflow-x: auto;
+    padding: 2px 0 6px;
+    scrollbar-width: thin;
+}
+.cabinet-route-node {
+    flex: 0 0 auto;
+    min-width: 150px;
+    max-width: 250px;
+    background: #EAF1FF;
+    border: 1px solid #BFD3F2;
+    border-radius: 10px;
+    padding: 8px 10px;
+    color: #132238;
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1.4;
+}
+.cabinet-route-node.current {
+    background: #FFF4ED;
+    border: 2px solid #FF7A45;
+    box-shadow: 0 0 0 2px rgba(255,122,69,0.10);
+}
+.cabinet-route-role {
+    display: block;
+    color: #132238;
+    font-size: 11px;
+    font-weight: 900;
+    margin-bottom: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+.cabinet-route-arrow {
+    flex: 0 0 auto;
+    align-self: center;
+    color: #61708A;
+    font-size: 18px;
+    font-weight: 900;
+}
+[data-testid="stMain"] div[data-testid="stForm"]:has(.cabinet-filter-form-marker) div[data-testid="stFormSubmitButton"] button {
+    background: #FFFFFF !important;
+    border: 1.5px solid #BFD3F2 !important;
+    color: #132238 !important;
+    box-shadow: none !important;
+}
+[data-testid="stMain"] div[data-testid="stForm"]:has(.cabinet-filter-form-marker) div[data-testid="stFormSubmitButton"] button:hover {
+    background: #F7F9FC !important;
+    border-color: #9FBCE8 !important;
+    color: #132238 !important;
+    box-shadow: none !important;
 }
 
 /* ── Таб підтвердження ── */
@@ -317,6 +428,152 @@ def display_text(value, fallback="—"):
     return escape(text) if text else fallback
 
 
+def _html_cell(value):
+    """Безпечне HTML-представлення значення комірки."""
+    value_text = clean(value).strip()
+    return escape(value_text).replace("\n", "<br>") if value_text else "—"
+
+
+def _render_html_table(headers, rows, empty_message="Записів немає."):
+    """Єдиний HTML-рендер через глобальні класи таблиць системи."""
+    if not rows:
+        st.info(empty_message)
+        return
+    header_html = "".join(f"<th>{escape(str(header))}</th>" for header in headers)
+    body_html = "".join(
+        "<tr>" + "".join(f"<td>{_html_cell(value)}</td>" for value in row) + "</tr>"
+        for row in rows
+    )
+    st.markdown(
+        '<div class="myreq-table-scroll"><table class="myreq-html-table">'
+        f"<thead><tr>{header_html}</tr></thead><tbody>{body_html}</tbody>"
+        "</table></div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _period_label(year, quarter):
+    roman = quarter_to_roman(quarter)
+    qnum = {"I": "1", "II": "2", "III": "3", "IV": "4"}.get(
+        roman,
+        clean(quarter),
+    )
+    qnum = str(qnum).upper().removeprefix("Q")
+    return f"{clean(year)} Q{qnum}" if clean(year) else f"Q{qnum}"
+
+
+def _request_fact(row):
+    return clean(row.get("numeric_value")) or clean(row.get("value_text")) or "—"
+
+
+def _request_is_my_turn(row):
+    approval_status = clean(row.get("approval_status"))
+    chain = schemes.parse_chain(row.get("approval_chain"))
+    stage_index = schemes.parse_stage(row.get("chain_stage"))
+    my_email = clean(current_user.get("email")).lower()
+    my_role = current_user.get("role")
+
+    if chain:
+        stage = schemes.current_stage(chain, stage_index)
+        if approval_status not in set(schemes.ALL_WAITING_STATUSES) or stage is None:
+            return False
+        stage_email = clean(stage.get("email")).lower()
+        return (
+            bool(stage_email and stage_email == my_email)
+            or (not stage_email and stage.get("role") == my_role)
+        )
+
+    return approval_status == "Очікує: Керівник ССП" and my_role == ROLE_SSP_HEAD
+
+
+def _build_strat_lookup(frame):
+    if frame is None or frame.empty or "code" not in frame.columns:
+        return {}
+    lookup = {}
+    for _, row in frame.iterrows():
+        code_key = clean(row.get("code")).rstrip(".")
+        if code_key and code_key not in lookup:
+            lookup[code_key] = row
+    return lookup
+
+
+@st.cache_data(show_spinner=False)
+def load_initial_submitters(request_ids):
+    """Один масовий запит найперших версій для таблиць кабінету."""
+    ids = sorted({int(request_id) for request_id in request_ids if request_id is not None})
+    if not ids:
+        return {}
+    try:
+        rows = fetch_all(
+            "monitoring_request_versions",
+            "request_id,version_number,created_at,responsible_person",
+            filters=[("in_", "request_id", ids)],
+            order=[("request_id", False), ("version_number", False), ("created_at", False)],
+        )
+    except Exception as exc:
+        log_cosmetic_error("Масове завантаження перших версій у Мій кабінет", exc)
+        return {}
+
+    versions = pd.DataFrame(rows)
+    if versions.empty or "request_id" not in versions.columns:
+        return {}
+    versions["_request_id"] = pd.to_numeric(versions["request_id"], errors="coerce")
+    versions["_version_number"] = pd.to_numeric(
+        versions.get("version_number"),
+        errors="coerce",
+    )
+    versions["_created_at"] = pd.to_datetime(
+        versions.get("created_at"),
+        errors="coerce",
+        utc=True,
+    )
+    versions = versions.dropna(subset=["_request_id"]).sort_values(
+        ["_request_id", "_version_number", "_created_at"],
+        ascending=[True, True, True],
+        na_position="last",
+    )
+    first_rows = versions.groupby("_request_id", sort=False).head(1)
+    return {
+        int(row["_request_id"]): clean(row.get("responsible_person"))
+        for _, row in first_rows.iterrows()
+    }
+
+
+def _request_table_rows(frame, strat_lookup, initial_submitters):
+    rows = []
+    if frame is None or frame.empty:
+        return rows
+    for _, row in frame.iterrows():
+        try:
+            request_id = int(float(str(row.get("id"))))
+        except (TypeError, ValueError):
+            request_id = clean(row.get("id"))
+        code = clean(row.get("strat_code"))
+        strat_row = strat_lookup.get(code.rstrip("."))
+        try:
+            year_number = int(float(str(row.get("year"))))
+        except (TypeError, ValueError):
+            year_number = None
+        target = (
+            clean(strat_row.get(f"target_{year_number}"))
+            if strat_row is not None and year_number is not None
+            else ""
+        )
+        first_submitter = initial_submitters.get(request_id, "") if isinstance(request_id, int) else ""
+        rows.append([
+            request_id,
+            code or "—",
+            _period_label(row.get("year"), row.get("quarter")),
+            target or "—",
+            _request_fact(row),
+            clean(row.get("approval_status")) or "—",
+            clean(row.get("scheme_label")) or "—",
+            first_submitter or clean(row.get("responsible_person")) or "—",
+            format_kyiv_datetime(row.get("submitted_at")) or "—",
+        ])
+    return rows
+
+
 def status_badge_class(status):
     status = clean(status)
     if status == "Погоджено":
@@ -373,6 +630,16 @@ def load_logs(request_id):
     return pd.DataFrame(rows)
 
 
+def load_versions(request_id):
+    rows = fetch_all(
+        "monitoring_request_versions",
+        "*",
+        filters=[("eq", "request_id", int(request_id))],
+        order=("created_at", True),
+    )
+    return pd.DataFrame(rows)
+
+
 
 def _actor_identity(role_label):
     """Повний підпис дії для журналу: роль + ПІБ + email поточного користувача."""
@@ -415,26 +682,15 @@ def _clear_widget_draft_marker(context_key):
 # MAIN DATA
 # ============================================================
 
-_refresh_col1, _refresh_col2 = st.columns([4, 1])
-with _refresh_col2:
-    if st.button("🔄 Оновити зараз", use_container_width=True, key="cabinet_refresh"):
-        monitoring_data.invalidate_monitoring_cache()
-        st.rerun()
-with _refresh_col1:
-    _kyiv_now = now_kyiv()
-    st.caption(
-        f"🕓 Дані оновлено о {_kyiv_now.strftime('%H:%M:%S')} (Київ). "
-        "Список оновлюється автоматично; кнопкою можна оновити миттєво."
-    )
-
 df = load_requests()
 strat_df = load_strat_matrix()
 
 required_cols = [
     "id", "year", "quarter", "department", "responsible_person", "phone", "email",
-    "strat_code", "status", "progress_text", "numeric_value", "risks",
+    "strat_code", "status", "progress_text", "numeric_value", "value_text", "risks",
     "submitted_at", "approval_status", "admin_comment", "file_names", "file_urls",
-    "start_date", "end_date", "updated_at"
+    "start_date", "end_date", "updated_at", "npa_link", "scheme_label",
+    "approval_chain", "chain_stage"
 ]
 for col in required_cols:
     if col not in df.columns:
@@ -469,70 +725,142 @@ st.markdown(f"""
         дії: погодити та передати далі або повернути на доопрацювання (подавачу чи на
         будь-яку попередню ланку).
     </div>
-    <div class="badge-wrap">
-        <div class="badge badge-purple">● Роль: {role_label}</div>
-        <div class="badge">● Дія: погодження / повернення</div>
-    </div>
 </div>
 """, unsafe_allow_html=True)
 
 render_submission_notice()
-render_notifications_panel(df, mode="cabinet")
 
 # ============================================================
 # FILTERS
 # ============================================================
 
-st.markdown(
-    '<div class="card"><div class="card-title">Параметри відбору</div>'
-    '<div class="card-subtitle">Оберіть самостійний структурний підрозділ та статус погодження.</div>'
-    '<div class="filter-panel">',
-    unsafe_allow_html=True
-)
-
 if "cabinet_filters_applied_v19" not in st.session_state:
-    st.session_state["cabinet_filters_applied_v19"] = {"department": None, "year": "Усі", "status": "Усі", "search": ""}
+    st.session_state["cabinet_filters_applied_v19"] = {
+        "department": None,
+        "year": "Усі",
+        "status": "Усі",
+        "search": "",
+    }
 
-c1, c2, c3, c4 = st.columns(4)
-with c1:
-    departments = sorted(df["department"].dropna().astype(str).unique().tolist())
-    if user_has_all_ssp_access(current_user):
-        available_departments = departments
-    else:
-        available_departments = get_available_ssp_options_for_user(current_user, all_options=departments)
-        allowed_indexes = current_user.get("allowed_ssp_indexes", [])
-        available_departments = [d for d in departments if any(str(index) in str(d) for index in allowed_indexes)] or available_departments
-    if not available_departments:
-        st.warning("Для цього користувача немає доступних ССП.")
-        render_footer()
-        st.stop()
-    current_dep = st.session_state["cabinet_filters_applied_v19"].get("department") or available_departments[0]
-    dep_index = available_departments.index(current_dep) if current_dep in available_departments else 0
-    selected_department_pending = st.selectbox(
-        "Самостійний структурний підрозділ", available_departments, index=dep_index,
-        disabled=should_lock_ssp_fields(current_user), key="cabinet_department_pending"
+departments = sorted(df["department"].dropna().astype(str).unique().tolist())
+if user_has_all_ssp_access(current_user):
+    available_departments = departments
+else:
+    available_departments = get_available_ssp_options_for_user(
+        current_user,
+        all_options=departments,
     )
-with c2:
-    years = ["Усі"] + sorted(df["year"].dropna().astype(str).unique().tolist())
-    _cur_year = st.session_state["cabinet_filters_applied_v19"].get("year", "Усі")
-    selected_year_pending = st.selectbox("Рік", years, index=years.index(_cur_year) if _cur_year in years else 0, key="cabinet_year_pending")
-with c3:
-    _cur_status = st.session_state["cabinet_filters_applied_v19"].get("status", "Усі")
-    selected_status_pending = st.selectbox("Статус погодження", APPROVAL_FILTER_OPTIONS, index=APPROVAL_FILTER_OPTIONS.index(_cur_status) if _cur_status in APPROVAL_FILTER_OPTIONS else 0, key="cabinet_status_pending")
-with c4:
-    search_pending = st.text_input("Пошук за ID або кодом заходу", value=st.session_state["cabinet_filters_applied_v19"].get("search", ""), key="cabinet_search_pending")
+    allowed_indexes = current_user.get("allowed_ssp_indexes", [])
+    available_departments = [
+        department
+        for department in departments
+        if any(str(index) in str(department) for index in allowed_indexes)
+    ] or available_departments
 
-ba, bb, bc = st.columns([1, 1, 1.2])
-with ba:
-    if st.button("Застосувати обрані параметри", type="primary", use_container_width=True, key="cabinet_apply_filters_v19"):
-        st.session_state["cabinet_filters_applied_v19"] = {"department": selected_department_pending, "year": selected_year_pending, "status": selected_status_pending, "search": search_pending}
-        st.rerun()
-with bb:
-    if st.button("Скинути параметри", use_container_width=True, key="cabinet_reset_filters_v19"):
-        st.session_state["cabinet_filters_applied_v19"] = {"department": available_departments[0], "year": "Усі", "status": "Усі", "search": ""}
-        st.rerun()
-with bc:
-    st.caption("Заявки фільтруються тільки після застосування параметрів.")
+if not available_departments:
+    st.warning("Для цього користувача немає доступних ССП.")
+    render_footer()
+    st.stop()
+
+_filter_defaults = {
+    "department": available_departments[0],
+    "year": "Усі",
+    "status": "Усі",
+    "search": "",
+}
+_pending_filter_keys = {
+    "department": "cabinet_department_pending",
+    "year": "cabinet_year_pending",
+    "status": "cabinet_status_pending",
+    "search": "cabinet_search_pending",
+}
+for _filter_name, _widget_key in _pending_filter_keys.items():
+    st.session_state.setdefault(
+        _widget_key,
+        st.session_state["cabinet_filters_applied_v19"].get(
+            _filter_name,
+            _filter_defaults[_filter_name],
+        ) or _filter_defaults[_filter_name],
+    )
+
+years = ["Усі"] + sorted(df["year"].dropna().astype(str).unique().tolist())
+_valid_filter_options = {
+    "department": available_departments,
+    "year": years,
+    "status": APPROVAL_FILTER_OPTIONS,
+}
+for _filter_name, _options in _valid_filter_options.items():
+    _widget_key = _pending_filter_keys[_filter_name]
+    if st.session_state.get(_widget_key) not in _options:
+        st.session_state[_widget_key] = _filter_defaults[_filter_name]
+
+
+def _apply_cabinet_filters_v19():
+    st.session_state["cabinet_filters_applied_v19"] = {
+        name: st.session_state.get(widget_key, _filter_defaults[name])
+        for name, widget_key in _pending_filter_keys.items()
+    }
+
+
+def _reset_cabinet_filters_v19():
+    st.session_state["cabinet_filters_applied_v19"] = _filter_defaults.copy()
+    for name, widget_key in _pending_filter_keys.items():
+        st.session_state[widget_key] = _filter_defaults[name]
+
+
+with st.form("cabinet_filters_form_v19"):
+    st.markdown(
+        '<span class="cabinet-filter-form-marker" aria-hidden="true"></span>',
+        unsafe_allow_html=True,
+    )
+    st.markdown('<div class="filter-title">Параметри відбору</div>', unsafe_allow_html=True)
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.markdown('<div class="filter-field-label">ССП</div>', unsafe_allow_html=True)
+        st.selectbox(
+            "Самостійний структурний підрозділ",
+            available_departments,
+            key=_pending_filter_keys["department"],
+            disabled=should_lock_ssp_fields(current_user),
+            label_visibility="collapsed",
+        )
+    with c2:
+        st.markdown('<div class="filter-field-label">Рік</div>', unsafe_allow_html=True)
+        st.selectbox(
+            "Рік",
+            years,
+            key=_pending_filter_keys["year"],
+            label_visibility="collapsed",
+        )
+    with c3:
+        st.markdown('<div class="filter-field-label">Статус погодження</div>', unsafe_allow_html=True)
+        st.selectbox(
+            "Статус погодження",
+            APPROVAL_FILTER_OPTIONS,
+            key=_pending_filter_keys["status"],
+            label_visibility="collapsed",
+        )
+    with c4:
+        st.markdown('<div class="filter-field-label">Пошук за ID або кодом заходу</div>', unsafe_allow_html=True)
+        st.text_input(
+            "Пошук за ID або кодом заходу",
+            key=_pending_filter_keys["search"],
+            label_visibility="collapsed",
+        )
+
+    ba, bb = st.columns([2, 1])
+    with ba:
+        st.form_submit_button(
+            "Застосувати обрані параметри",
+            use_container_width=True,
+            on_click=_apply_cabinet_filters_v19,
+        )
+    with bb:
+        st.form_submit_button(
+            "Скинути параметри",
+            use_container_width=True,
+            on_click=_reset_cabinet_filters_v19,
+        )
 
 _applied_cab = st.session_state["cabinet_filters_applied_v19"]
 selected_department = _applied_cab.get("department") or available_departments[0]
@@ -544,7 +872,9 @@ filtered = df[df["department"].astype(str) == str(selected_department)].copy()
 if selected_year != "Усі":
     filtered = filtered[filtered["year"].astype(str) == str(selected_year)]
 if selected_status == "Активні до розгляду":
-    filtered = filtered[filtered["approval_status"].astype(str).isin(schemes.ALL_WAITING_STATUSES)]
+    filtered = filtered[
+        filtered["approval_status"].astype(str).isin(schemes.ALL_WAITING_STATUSES)
+    ]
 elif selected_status != "Усі":
     filtered = filtered[filtered["approval_status"].astype(str) == selected_status]
 if search.strip():
@@ -555,7 +885,6 @@ if search.strip():
     ]
 
 st.caption(f"Знайдено відомостей: {len(filtered)}")
-st.markdown('</div></div>', unsafe_allow_html=True)
 
 if filtered.empty:
     st.info("За обраними параметрами відбору відомостей не знайдено.")
@@ -580,39 +909,46 @@ m4.metric("🔴 Повернуто", returned)
 m5.metric("🟢 Погоджено", approved)
 
 # ============================================================
-# REQUEST LIST
+# REQUEST LISTS
 # ============================================================
 
-st.markdown('<div class="card"><div class="card-title">Перелік відомостей</div>', unsafe_allow_html=True)
-
-show_df = filtered.copy()
-show_df["_visual_status"] = show_df.apply(
-    lambda row: "Не настав час"
-    if is_period_locked(row.get("year"), row.get("quarter"))
-    else row.get("status", ""),
-    axis=1,
-)
-show_df = show_df.rename(columns={
-    "id": "ID",
-    "year": "Рік",
-    "quarter": "Квартал",
-    "strat_code": "Код заходу",
-    "_visual_status": "Статус виконання",
-    "numeric_value": "Фактичне значення",
-    "approval_status": "Статус погодження",
-    "responsible_person": "Відповідальна особа",
-    "submitted_at": "Дата подання",
-    "admin_comment": "Коментар координатора"
-})
-
-show_cols = [
-    "ID", "Рік", "Квартал", "Код заходу", "Статус виконання",
-    "Фактичне значення", "Статус погодження", "Відповідальна особа",
-    "Дата подання", "Коментар координатора"
+_table_headers = [
+    "ID",
+    "Код заходу",
+    "Звітний період",
+    "Цільовий орієнтир",
+    "Фактичне значення",
+    "Статус погодження",
+    "Застосована схема погодження",
+    "Особа, яка подала заявку",
+    "Дата подання",
 ]
-available_show_cols = [c for c in show_cols if c in show_df.columns]
-st.dataframe(show_df[available_show_cols], use_container_width=True, hide_index=True)
-st.markdown('</div>', unsafe_allow_html=True)
+_strat_lookup = _build_strat_lookup(strat_df)
+_request_ids = tuple(
+    int(value)
+    for value in pd.to_numeric(filtered.get("id"), errors="coerce").dropna().tolist()
+)
+_initial_submitters = load_initial_submitters(_request_ids)
+
+with st.expander("Перелік усіх відомостей", expanded=False):
+    _render_html_table(
+        _table_headers,
+        _request_table_rows(filtered, _strat_lookup, _initial_submitters),
+        empty_message="Доступних відомостей за обраними параметрами немає.",
+    )
+
+st.markdown(
+    '<div class="myreq-section-header">'
+    '<div class="myreq-section-title">Перелік заявок на погодженні</div>'
+    '</div>',
+    unsafe_allow_html=True,
+)
+_pending_for_me = filtered[filtered.apply(_request_is_my_turn, axis=1)].copy()
+_render_html_table(
+    _table_headers,
+    _request_table_rows(_pending_for_me, _strat_lookup, _initial_submitters),
+    empty_message="Заявок, що зараз очікують вашого рішення, немає.",
+)
 
 # ============================================================
 # DETAILED VIEW
@@ -624,13 +960,19 @@ if st.session_state.get("cab_last_decision_notice"):
         st.session_state.pop("cab_last_decision_notice", None)
         st.rerun()
 
-st.markdown('<div class="card"><div class="card-title">Детальний перегляд та підтвердження</div>', unsafe_allow_html=True)
+st.markdown(
+    '<div class="card cabinet-section-card">'
+    '<div class="card-title">Детальний перегляд та підтвердження</div>'
+    '</div>',
+    unsafe_allow_html=True,
+)
 
 options = []
 for _, row in filtered.iterrows():
-    prefix = "🟣 " if row["approval_status"] == "Очікує: Керівник ССП" else ""
+    prefix = "🟣 " if _request_is_my_turn(row) else ""
     options.append(
-        f"{prefix}ID {row['id']} | {row['strat_code']} | {row['year']} {row['quarter']} квартал | {row['approval_status']}"
+        f"{prefix}ID {row['id']} | {row['strat_code']} | "
+        f"{row['year']} {row['quarter']} квартал | {row['approval_status']}"
     )
 
 selected = st.selectbox("Оберіть заявку", options)
@@ -653,19 +995,16 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-measure_info = strat_df[strat_df["code"].astype(str).str.strip() == code].copy()
-if not measure_info.empty:
-    mi = measure_info.iloc[0]
+mi = _strat_lookup.get(code.rstrip("."))
+if mi is not None:
     st.markdown(f"""
     <div class="step-box">
-        <b>{display_text(code)} — {display_text(mi["name"])}</b><br>
-        <span style="color:#61708A;">Індикатор: {display_text(mi["indicator"])}</span><br>
-        <span style="color:#61708A;">Одиниця виміру: {display_text(mi["unit"])}</span><br>
-        <span style="color:#61708A;">Терміни: {display_text(mi["start_date_plan"])} — {display_text(mi["end_date_plan"])}</span>
+        <b>{display_text(code)} — {display_text(mi.get("name"))}</b><br>
+        <span style="color:#132238;font-weight:750;">Індикатор: {display_text(mi.get("indicator"))}</span><br>
+        <span style="color:#132238;font-weight:750;">Одиниця виміру: {display_text(mi.get("unit"))}</span><br>
+        <span style="color:#132238;font-weight:750;">Терміни: {display_text(mi.get("start_date_plan"))} — {display_text(mi.get("end_date_plan"))}</span>
     </div>
     """, unsafe_allow_html=True)
-else:
-    mi = None
 
 try:
     _cab_record_year = int(str(selected_row.get("year") or "").strip())
@@ -691,7 +1030,7 @@ st.markdown(f"""
     </div>
     <div class="info-card info-card-green">
         <div class="info-label">Фактичне значення</div>
-        <div class="info-value">{display_text(selected_row["numeric_value"])}</div>
+        <div class="info-value">{display_text(_request_fact(selected_row))}</div>
     </div>
     <div class="info-card info-card-yellow">
         <div class="info-label">ССП</div>
@@ -700,65 +1039,110 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-st.markdown('</div>', unsafe_allow_html=True)
-
 # ── Поля лише для читання ────────────────────────────────────────────────────
-st.markdown('<div class="card">', unsafe_allow_html=True)
-
 p1, p2, p3 = st.columns(3)
 with p1:
-    st.text_input("ПІБ відповідальної особи", value=clean(selected_row["responsible_person"]),
-                  disabled=True, key=f"v_resp_{selected_id}")
+    st.text_input(
+        "ПІБ подавача заявки",
+        value=clean(selected_row["responsible_person"]),
+        disabled=True,
+        key=f"v_resp_{selected_id}",
+    )
 with p2:
-    st.text_input("Телефон", value=clean(selected_row["phone"]),
-                  disabled=True, key=f"v_phone_{selected_id}")
+    st.text_input(
+        "Телефон",
+        value=clean(selected_row["phone"]),
+        disabled=True,
+        key=f"v_phone_{selected_id}",
+    )
 with p3:
-    st.text_input("Email", value=clean(selected_row["email"]),
-                  disabled=True, key=f"v_email_{selected_id}")
+    st.text_input(
+        "Email",
+        value=clean(selected_row["email"]),
+        disabled=True,
+        key=f"v_email_{selected_id}",
+    )
 
-st.text_area("Опис прогресу", value=clean(selected_row["progress_text"]),
-             disabled=True, height=120, key=f"v_prog_{selected_id}")
-st.text_area("Ризики / проблеми / відхилення", value=clean(selected_row["risks"]),
-             disabled=True, height=100, key=f"v_risks_{selected_id}")
+_progress_html = _html_cell(selected_row.get("progress_text"))
+_risks_html = _html_cell(selected_row.get("risks"))
+st.markdown(
+    '<div class="cabinet-readonly-block">'
+    '<div class="cabinet-readonly-label">Опис прогресу</div>'
+    f'<div class="cabinet-readonly-value">{_progress_html}</div>'
+    '</div>',
+    unsafe_allow_html=True,
+)
+st.markdown(
+    '<div class="cabinet-readonly-block">'
+    '<div class="cabinet-readonly-label">Ризики / проблеми / відхилення</div>'
+    f'<div class="cabinet-readonly-value">{_risks_html}</div>'
+    '</div>',
+    unsafe_allow_html=True,
+)
 
 if has_value(selected_row["admin_comment"]):
     st.markdown(f"""
-    <div class="comment-box">
+    <div class="comment-box cabinet-muted-box">
         <div class="comment-title">Коментар координатора</div>
         <div class="comment-text">{display_text(selected_row["admin_comment"])}</div>
     </div>
     """, unsafe_allow_html=True)
 
-# ── Посилання на НПА (клікабельні; може бути декілька) ──
-_npa_raw = clean(selected_row.get("npa_link", "")) if "npa_link" in selected_row.index else ""
+# ── Посилання на НПА: рядок відображається завжди ──
+_npa_raw = clean(selected_row.get("npa_link", ""))
 if _npa_raw:
     _links_html = "".join(
-        f'<div>🔗 <a href="{escape(u.strip())}" target="_blank">{escape(u.strip())}</a></div>'
-        for u in re.split(r"[\n;,]+", _npa_raw) if u.strip()
+        f'<div>🔗 <a href="{escape(url.strip())}" target="_blank">{escape(url.strip())}</a></div>'
+        for url in re.split(r"[\n;,]+", _npa_raw)
+        if url.strip()
     )
-    st.markdown(f"""
-    <div class="comment-box">
-        <div class="comment-title">Посилання на НПА / підтвердні документи</div>
-        <div class="comment-text">{_links_html}</div>
-    </div>
-    """, unsafe_allow_html=True)
+else:
+    _links_html = "—"
+st.markdown(
+    '<div class="cabinet-readonly-block">'
+    '<div class="cabinet-readonly-label">Посилання на НПА</div>'
+    f'<div class="cabinet-readonly-value">{_links_html}</div>'
+    '</div>',
+    unsafe_allow_html=True,
+)
 
-# ── Маршрут погодження (схема + прогрес) ──
-_chain = schemes.parse_chain(selected_row.get("approval_chain")) if "approval_chain" in selected_row.index else []
-_stage_idx = schemes.parse_stage(selected_row.get("chain_stage")) if "chain_stage" in selected_row.index else 0
+# ── Маршрут погодження: візуальний ланцюжок + підпис прогресу ──
+_chain = schemes.parse_chain(selected_row.get("approval_chain"))
+_stage_idx = schemes.parse_stage(selected_row.get("chain_stage"))
 if _chain:
-    _scheme_lbl = clean(selected_row.get("scheme_label", "")) if "scheme_label" in selected_row.index else ""
-    st.markdown(f"""
-    <div class="comment-box">
-        <div class="comment-title">Схема погодження{(" · " + escape(_scheme_lbl)) if _scheme_lbl else ""}</div>
-        <div class="comment-text">
-            {escape(schemes.chain_route_text(_chain))}<br>
-            <b>{escape(schemes.chain_progress_text(_chain, _stage_idx, approval))}</b>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-st.markdown('</div>', unsafe_allow_html=True)
+    _scheme_lbl = clean(selected_row.get("scheme_label"))
+    _route_nodes = [
+        '<div class="cabinet-route-node">'
+        '<span class="cabinet-route-role">Подавач</span>'
+        f'{escape(clean(selected_row.get("responsible_person")) or clean(selected_row.get("email")) or "—")}'
+        '</div>'
+    ]
+    for _route_index, _route_stage in enumerate(_chain):
+        _route_label = clean(_route_stage.get("label")) or schemes.STAGE_LABELS.get(
+            clean(_route_stage.get("role")),
+            "Ланка",
+        )
+        _route_person = (
+            clean(_route_stage.get("name"))
+            or clean(_route_stage.get("email"))
+            or "—"
+        )
+        _current_class = " current" if _route_index == _stage_idx and approval in schemes.ALL_WAITING_STATUSES else ""
+        _route_nodes.append(
+            f'<div class="cabinet-route-node{_current_class}">'
+            f'<span class="cabinet-route-role">{escape(_route_label)}</span>'
+            f'{escape(_route_person)}</div>'
+        )
+    _route_html = '<span class="cabinet-route-arrow">→</span>'.join(_route_nodes)
+    _progress_text = schemes.chain_progress_text(_chain, _stage_idx, approval)
+    st.markdown(
+        '<div class="comment-box cabinet-muted-box">'
+        f'<div class="comment-title">Схема погодження{(" · " + escape(_scheme_lbl)) if _scheme_lbl else ""}</div>'
+        f'<div class="cabinet-route-row">{_route_html}</div>'
+        f'<div class="cabinet-route-caption">{escape(_progress_text)}</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 
 # ============================================================
 # ACTION PANEL — панель дій поточної ланки схеми погодження
@@ -1273,7 +1657,6 @@ if is_my_turn:
                             )
                         show_incident(exc, context="Атомарне редагування заявки ланкою погодження")
 else:
-    st.markdown('<div class="card">', unsafe_allow_html=True)
     if approval == "Погоджено":
         st.success("✅ Заявку вже підтверджено. Жодних дій не потрібно.")
     elif approval in _waiting_statuses:
@@ -1285,17 +1668,71 @@ else:
         st.warning("↩️ Заявку повернуто відповідальному на доопрацювання.")
     else:
         st.info("Для цього статусу дій не передбачено.")
-    st.markdown('</div>', unsafe_allow_html=True)
 
 # ============================================================
 # LOG HISTORY
 # ============================================================
 
 logs_df = load_logs(selected_id)
-st.markdown('<div class="card"><div class="card-title">Історія зміни статусу</div>', unsafe_allow_html=True)
+st.markdown(
+    '<div class="card cabinet-section-card">'
+    '<div class="card-title">Історія зміни статусу</div>'
+    '</div>',
+    unsafe_allow_html=True,
+)
 # ЄДИНИЙ компонент таймлайну для всієї системи (core/ui.py, ТЗ 16.13)
-render_request_timeline(logs_df)
-st.markdown('</div>', unsafe_allow_html=True)
+render_request_timeline(logs_df, with_table_expander=False)
+
+_history_logs = logs_df.copy()
+_versions_df = load_versions(selected_id)
+_log_timestamps = pd.to_datetime(
+    _history_logs["changed_at"]
+    if "changed_at" in _history_logs.columns
+    else pd.Series([], dtype="object"),
+    errors="coerce",
+    utc=True,
+)
+_history_facts = []
+_history_progress = []
+if not _versions_df.empty and "created_at" in _versions_df.columns:
+    _versions_df = _versions_df.copy()
+    _versions_df["_ts"] = pd.to_datetime(
+        _versions_df["created_at"],
+        errors="coerce",
+        utc=True,
+    )
+    _versions_df = _versions_df.sort_values("_ts")
+    for _timestamp in _log_timestamps:
+        _snapshot = (
+            _versions_df[_versions_df["_ts"] <= _timestamp]
+            if pd.notna(_timestamp)
+            else _versions_df.iloc[0:0]
+        )
+        _version_row = _snapshot.iloc[-1] if not _snapshot.empty else None
+        if _version_row is not None:
+            _history_facts.append(_request_fact(_version_row))
+            _history_progress.append(clean(_version_row.get("progress_text")) or "—")
+        else:
+            _history_facts.append(_request_fact(selected_row))
+            _history_progress.append(clean(selected_row.get("progress_text")) or "—")
+else:
+    _history_facts = [_request_fact(selected_row)] * len(_history_logs)
+    _history_progress = [clean(selected_row.get("progress_text")) or "—"] * len(_history_logs)
+
+if not _history_logs.empty:
+    _history_logs["Фактичне значення"] = _history_facts
+    _history_logs["Опис прогресу"] = _history_progress
+
+_history_table = prepare_human_log_table(
+    _history_logs,
+    extra_columns=["Фактичне значення", "Опис прогресу"],
+)
+with st.expander("Повна історія змін заявки (табличний вигляд)"):
+    _render_html_table(
+        list(_history_table.columns),
+        [list(row) for row in _history_table.itertuples(index=False, name=None)],
+        empty_message="Історії змін для цієї заявки поки що немає.",
+    )
 
 # ============================================================
 # РУЧНІ ЗАКРИТТЯ ЗАХОДІВ — реакція керівника ССП

@@ -1,21 +1,12 @@
 # core/notify_events.py
 
 """
-Миттєві email-сповіщення про ПОДІЇ (на відміну від щоденних дайджестів
-scripts/send_notifications.py, які запускає GitHub Actions).
+Сумісний API подієвих сповіщень.
 
-Викликаються прямо зі Streamlit-сторінок у момент дії:
-- заявку подано → пороговий зведений лист першій ланці (не частіше разу на 2 години);
-- ланка погодила → лист наступній ланці;
-- координатор змінив схему → інформаційний лист новим майбутнім ланкам;
-- заявку повернуто → лист адресату повернення (подавачу/ланці);
-- заявку погоджено остаточно → лист подавачу;
-- ручне закриття підтверджено → лист керівнику ССП.
-
-Принципи:
-- НІКОЛИ не ламає інтерфейс: будь-яка помилка (не налаштований SMTP,
-  мережа) мовчки логуються в notification_log зі status=failed;
-- кожен лист фіксується в notification_log (аудит + антидубль).
+Публічні функції цього модуля й надалі викликаються зі Streamlit-сторінок,
+щоб не змінювати бізнес-переходи та інтерфейс. Миттєве надсилання email
+вимкнене централізовано: усі листи користувачам формує лише плановий
+дайджест scripts/send_notifications.py.
 """
 
 from __future__ import annotations
@@ -24,7 +15,6 @@ from datetime import datetime, timedelta
 from html import escape
 
 from core import approval_schemes as schemes
-from core.emails import send_email, email_configured
 from core.errors import log_exception
 from core.timeutils import now_kyiv
 
@@ -52,29 +42,8 @@ def _log(supabase, email: str, ntype: str, related_key: str,
 
 def _fire(to_email: str, subject: str, body_html: str,
           ntype: str, related_key: str, log_sent_at: str | None = None) -> None:
-    """Надіслати лист і залогувати результат. Ніколи не кидає винятків."""
-    to_email = str(to_email or "").strip().lower()
-    if not to_email or "@" not in to_email:
-        return
-    try:
-        from core.db import get_supabase_client
-        supabase = get_supabase_client()
-    except Exception:
-        supabase = None
-
-    if not email_configured():
-        if supabase is not None:
-            _log(supabase, to_email, ntype, related_key, subject, body_html,
-                 False, "SMTP не налаштований", sent_at=log_sent_at)
-        return
-
-    ok, error = send_email(to_email, subject, body_html,
-                           title="Сповіщення системи моніторингу")
-    if supabase is not None:
-        _log(
-            supabase, to_email, ntype, related_key, subject, body_html, ok, error,
-            sent_at=log_sent_at,
-        )
+    """Сумісна заглушка: миттєві email повністю вимкнено."""
+    return
 
 
 def _request_line(code: str, year: str, quarter: str, kind: str = "measure") -> str:
@@ -178,6 +147,8 @@ def notify_new_requests_throttled(stage_email: str, stage_name: str,
     ланки погодження й адресні події використовують notify_stage_assigned(),
     notify_returned() та notify_approved() без цього cooldown.
     """
+    return
+
     email = str(stage_email or "").strip().lower()
     if not email or "@" not in email:
         return

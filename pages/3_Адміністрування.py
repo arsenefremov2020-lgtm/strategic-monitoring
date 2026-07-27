@@ -45,7 +45,11 @@ from core.validation import (
 )
 from config.roles import ROLE_SUPER_ADMIN
 from core.access import filter_actions_for_user
-from core.superadmin_routing import resolve_manual_closeout_route, senior_superadmin_for
+from core.superadmin_routing import (
+    is_superadmin_assigned_to_admin,
+    resolve_manual_closeout_route,
+    senior_superadmin_for,
+)
 from core.versioning import save_request_version
 from core.transitions import (
     TransitionRejected,
@@ -2130,11 +2134,11 @@ def _assigned_admin_requests(frame: pd.DataFrame) -> list[tuple[pd.Series, str]]
         if not stage or clean(stage.get("role")) != schemes.ROLE_ADMIN:
             continue
         coordinator = clean(stage.get("name")) or clean(stage.get("email")) or "—"
-        route = resolve_manual_closeout_route({
+        coordinator_user = {
             "email": clean(stage.get("email")),
             "full_name": clean(stage.get("name")),
-        })
-        if _route_matches_current_superadmin(route, current_user):
+        }
+        if is_superadmin_assigned_to_admin(current_user, coordinator_user):
             matched.append((row, coordinator))
     return matched
 
@@ -2789,33 +2793,160 @@ def generate_resolution(row, recommendation, plan_val_str):
 # ATTENTION SUMMARY
 # ──────────────────────────────────────────────
 
-def build_attention_summary(df):
-    data = df.copy()
+def _coordinator_attention_bucket(row) -> str:
+    """Статус заявки з погляду поточного координатора, а не всього маршруту."""
+    approval = clean(row.get("approval_status")).strip()
+    if approval == "Повернуто на доопрацювання":
+        return "returned"
+    if approval == "Погоджено":
+        return "approved"
+
+    chain = schemes.parse_chain(row.get("approval_chain"))
+    stage_index = schemes.parse_stage(row.get("chain_stage"))
+    if not chain:
+        return "waiting"
+
+    coordinator_indexes = [
+        index for index, stage in enumerate(chain)
+        if clean(stage.get("role")) == schemes.ROLE_ADMIN
+    ]
+    if not coordinator_indexes:
+        return "waiting"
+
+    coordinator_index = coordinator_indexes[0]
+    # Якщо заявка вже перейшла вище координатора, його рішення виконане.
+    if stage_index > coordinator_index:
+        return "approved"
+    return "waiting"
+
+
+def build_attention_summary(frame):
+    data = frame.copy()
     if data.empty:
-        return {k: pd.DataFrame() for k in
-                ["long_waiting", "waiting", "not_counted", "returned", "approved"]}
+        return {
+            key: pd.DataFrame()
+            for key in ["long_waiting", "waiting", "not_counted", "returned", "approved"]
+        }
 
     data["days_waiting"] = data["submitted_at"].apply(days_waiting)
+    data["_coordinator_bucket"] = data.apply(_coordinator_attention_bucket, axis=1)
+    waiting_mask = data["_coordinator_bucket"].eq("waiting")
 
     return {
-        # ТЗ-правка (09.07.2026, п.3): категорії ВЗАЄМОВИКЛЮЧНІ — кожна
-        # заявка потрапляє рівно в одну картку, без дублювання.
         "long_waiting": data[
-            (data["approval_status"].astype(str).isin(schemes.ALL_WAITING_STATUSES)) &
-            (data["days_waiting"].fillna(0) > 5)
+            waiting_mask & (data["days_waiting"].fillna(0) > 5)
         ].copy(),
         "waiting": data[
-            (data["approval_status"].astype(str).isin(schemes.ALL_WAITING_STATUSES)) &
-            (data["days_waiting"].fillna(0) <= 5)
+            waiting_mask & (data["days_waiting"].fillna(0) <= 5)
         ].copy(),
         "not_counted": data.iloc[0:0].copy(),
-        "returned": data[
-            data["approval_status"].astype(str) == "Повернуто на доопрацювання"
-        ].copy(),
-        "approved": data[
-            data["approval_status"].astype(str) == "Погоджено"
-        ].copy(),
+        "returned": data[data["_coordinator_bucket"].eq("returned")].copy(),
+        "approved": data[data["_coordinator_bucket"].eq("approved")].copy(),
     }
+
+
+def _render_coordinator_summary(scope_df: pd.DataFrame) -> None:
+    """Зведення і діаграма лише за поточною відфільтрованою зоною координатора."""
+    attention = build_attention_summary(scope_df)
+
+    def _att(title, value, note, css):
+        return (
+            f'<div class="attention-card {css}">'
+            f'<div class="attention-title">{title}</div>'
+            f'<div class="attention-value">{value}</div>'
+            f'<div class="attention-note">{note}</div>'
+            f'</div>'
+        )
+
+    long_waiting = len(attention["long_waiting"])
+    waiting = len(attention["waiting"])
+    returned = len(attention["returned"])
+    approved = len(attention["approved"])
+
+    st.markdown(
+        '<div class="attention-grid">'
+        + _att("Погоджено", approved, "Координатор уже ухвалив рішення", "att-green")
+        + _att(
+            "На розгляді", waiting, "Ще очікують рішення координатора",
+            "att-yellow" if waiting else "att-green",
+        )
+        + _att(
+            "На розгляді понад 5 днів", long_waiting,
+            "Очікують рішення координатора понад 5 днів",
+            "att-red" if long_waiting else "att-green",
+        )
+        + _att(
+            "На доопрацюванні", returned, "Повернуті для виправлення",
+            "att-blue" if returned else "att-green",
+        )
+        + '</div>',
+        unsafe_allow_html=True,
+    )
+
+    def sort_and_show(frame):
+        frame = _sort_by_ssp(frame)
+        if frame.empty:
+            st.info("Записів немає.")
+            return
+        _render_html_table(
+            _REQUEST_TABLE_HEADERS,
+            [_request_table_values(row) for _, row in frame.iterrows()],
+        )
+
+    with st.expander("Перегляд записів"):
+        tab_approved, tab_waiting, tab_long, tab_returned = st.tabs([
+            "Погоджено",
+            "На розгляді",
+            "На розгляді понад 5 днів",
+            "На доопрацюванні",
+        ])
+        with tab_approved:
+            sort_and_show(attention["approved"])
+        with tab_waiting:
+            sort_and_show(attention["waiting"])
+        with tab_long:
+            sort_and_show(attention["long_waiting"])
+        with tab_returned:
+            sort_and_show(attention["returned"])
+
+    status_counts = {
+        "Погоджено": approved,
+        "На розгляді": waiting,
+        "На розгляді понад 5 днів": long_waiting,
+        "На доопрацюванні": returned,
+    }
+    chart_df = pd.DataFrame({
+        "Статус": list(status_counts.keys()),
+        "Кількість": list(status_counts.values()),
+    })
+    chart_df = chart_df[chart_df["Кількість"] > 0]
+
+    if chart_df.empty:
+        st.info("Даних для відображення немає.")
+        return
+
+    fig = px.pie(
+        chart_df,
+        names="Статус",
+        values="Кількість",
+        hole=0.48,
+        title="Стан заявок координатора за застосованими фільтрами",
+        color="Статус",
+        color_discrete_map={
+            "На розгляді понад 5 днів": "#DC4A4A",
+            "На розгляді": "#FF7A45",
+            "На доопрацюванні": "#4D8DFF",
+            "Погоджено": "#1E9E57",
+        },
+    )
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font_color="#61708A",
+        title_font_color="#132238",
+        legend=dict(font=dict(color="#61708A"), bgcolor="rgba(0,0,0,0)"),
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
 
 # ══════════════════════════════════════════════
@@ -3184,6 +3315,18 @@ if (
         key="dismiss_superadmin_closeout_decision_notice",
     ):
         st.session_state.pop("superadmin_closeout_decision_notice", None)
+        st.rerun()
+
+if (
+    admin_work_mode == "Основний режим координатора"
+    and st.session_state.get("superadmin_request_decision_notice")
+):
+    st.success(st.session_state["superadmin_request_decision_notice"])
+    if st.button(
+        "Зрозуміло, приховати це повідомлення",
+        key="dismiss_superadmin_request_decision_notice",
+    ):
+        st.session_state.pop("superadmin_request_decision_notice", None)
         st.rerun()
 
 if _is_superadmin_current and admin_work_mode == "Основний режим координатора":
@@ -3718,108 +3861,7 @@ if _is_superadmin_current:
     # Для супер-адміна діє вже локально звужений набір без оглядових фільтрів.
     filtered = df.copy()
 else:
-    attention = build_attention_summary(df)
-
-    # ──────────────────────────────────────────────
-    # СИСТЕМНИЙ АНАЛІЗ
-    # ──────────────────────────────────────────────
-
-    def _att(title, value, note, css):
-        return (
-            f'<div class="attention-card {css}">'
-            f'<div class="attention-title">{title}</div>'
-            f'<div class="attention-value">{value}</div>'
-            f'<div class="attention-note">{note}</div>'
-            f'</div>'
-        )
-
-    _lw  = len(attention["long_waiting"])
-    _wt  = len(attention["waiting"])
-    _ret = len(attention["returned"])
-    _appr= len(attention["approved"])
-
-    st.markdown(
-        '<div class="attention-grid">'
-        + _att("Погоджено",                _appr, "Пройшли всю схему погодження",          "att-green")
-        + _att("На розгляді",              _wt,   "У процесі погодження (до 5 днів)",      "att-yellow" if _wt   else "att-green")
-        + _att("На розгляді понад 5 днів", _lw,   "За легендою вважаються «Не враховано»", "att-red"    if _lw   else "att-green")
-        + _att("На доопрацюванні",         _ret,  "Повернуті для виправлення",             "att-blue"   if _ret  else "att-green")
-        + '</div>',
-        unsafe_allow_html=True
-    )
-
-    # Expander — таблиці з вкладками
-
-    def sort_and_show(frame):
-        frame = _sort_by_ssp(frame)
-        if frame.empty:
-            st.info("Записів немає.")
-            return
-        table_rows = [
-            _request_table_values(row)
-            for _, row in frame.iterrows()
-        ]
-        _render_html_table(_REQUEST_TABLE_HEADERS, table_rows)
-
-
-    with st.expander("Перегляд записів"):
-        t1, t2, t3, t4 = st.tabs([
-            "Погоджено",
-            "На розгляді",
-            "На розгляді понад 5 днів",
-            "На доопрацюванні",
-        ])
-        with t1:
-            sort_and_show(attention["approved"])
-        with t2:
-            sort_and_show(attention["waiting"])
-        with t3:
-            sort_and_show(attention["long_waiting"])
-        with t4:
-            sort_and_show(attention["returned"])
-
-    # ──────────────────────────────────────────────
-    # ІНФОГРАФІКА
-    # ──────────────────────────────────────────────
-
-    # ТЗ-правка (09.07.2026, п.3): категорії інфографіки взаємовиключні —
-    # кожна заявка облікована рівно один раз.
-    status_counts = {
-        "Погоджено":                len(attention["approved"]),
-        "На розгляді":              len(attention["waiting"]),
-        "На розгляді понад 5 днів": len(attention["long_waiting"]),
-        "На доопрацюванні":         len(attention["returned"]),
-    }
-
-    chart_df = pd.DataFrame({
-        "Статус":    list(status_counts.keys()),
-        "Кількість": list(status_counts.values())
-    })
-    chart_df = chart_df[chart_df["Кількість"] > 0]
-
-    if not chart_df.empty:
-        color_map = {
-            "На розгляді понад 5 днів": "#DC4A4A",
-            "На розгляді":              "#FF7A45",
-            "Не враховано":             "#FF7A45",
-            "На доопрацюванні":         "#4D8DFF",
-            "Погоджено":                "#1E9E57",
-        }
-        fig = px.pie(
-            chart_df, names="Статус", values="Кількість", hole=0.48,
-            title="Розподіл заявок за статусом виконання",
-            color="Статус", color_discrete_map=color_map
-        )
-        fig.update_layout(
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            font_color="#61708A",
-            title_font_color="#132238",
-            legend=dict(font=dict(color="#61708A"), bgcolor="rgba(0,0,0,0)")
-        )
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("Даних для відображення немає.")
+    attention_for_quick = build_attention_summary(df)
 
     # ──────────────────────────────────────────────
     # ПАРАМЕТРИ ВІДБОРУ
@@ -4009,7 +4051,7 @@ else:
         elif quick_filter == "Останні подані":
             filtered = filtered.sort_values("submitted_at", ascending=False).head(10)
         elif quick_filter == "На розгляді понад 5 днів":
-            filtered = attention["long_waiting"].copy()
+            filtered = attention_for_quick["long_waiting"].copy()
 
         if search_query.strip():
             sq = search_query.strip().lower()
@@ -4031,6 +4073,9 @@ if filtered.empty:
     _render_superadmin_bottom_tools()
     render_footer()
     st.stop()
+
+if not _is_superadmin_current:
+    _render_coordinator_summary(filtered)
 
 # ──────────────────────────────────────────────
 # ЧЕРГА НА РОЗГЛЯД
@@ -4393,8 +4438,11 @@ if _is_super_turn and not schemes.is_final_locked(selected_row):
                         notify_exc,
                         "Email після рішення супер-адміна",
                     )
+                st.session_state["superadmin_request_decision_notice"] = (
+                    "Рішення супер-адміна зафіксовано. "
+                    f"Заявка ID {int(selected_id)} успішно опрацьована."
+                )
                 monitoring_data.invalidate_monitoring_cache()
-                st.success("✅ Рішення супер-адміна зафіксовано.")
                 st.rerun()
             except TransitionRejected as exc:
                 st.error(exc.message)
@@ -4402,647 +4450,654 @@ if _is_super_turn and not schemes.is_final_locked(selected_row):
                 show_incident(exc, context="Атомарне рішення супер-адміна")
     st.markdown('</div>', unsafe_allow_html=True)
 
-st.markdown(
-    '<div class="card decision-card">'
-    '<div class="card-title">Рішення адміністратора</div>',
-    unsafe_allow_html=True,
+_show_admin_decision_panel = bool(
+    not _is_superadmin_current
+    and _is_admin_turn
+    and not schemes.is_final_locked(selected_row)
 )
 
-default_comment = clean(selected_row["admin_comment"])
-
-if _req_chain and not _is_admin_turn and not _is_super_turn:
-    st.info(
-        f"⏳ Зараз черга ланки «{(_current_waiting_stage or {}).get('label','')}» "
-        f"({(_current_waiting_stage or {}).get('name','') or (_current_waiting_stage or {}).get('email','')}). "
-        "Координатор не може погодити, повернути чи будь-як вплинути на "
-        "заявку замість цієї ланки — лише переглянути дані вище. Дочекайтеся "
-        "її рішення; воно з'явиться тут автоматично."
-    )
-elif schemes.is_final_locked(selected_row):
-    st.info(
-        "🔒 Заявку остаточно закрито — останню ланку схеми погодження "
-        "пройдено (статус «Погоджено»). Рішення координатора (погодити або "
-        "повернути на доопрацювання) для цієї заявки "
-        "більше не застосовуються.\n\n"
-        "Якщо з'явилася нова, актуальніша інформація по заходу — "
-        "скоригувати вже подані дані (не маршрут погодження) може "
-        "лише супер-адмін через окрему дію «Скоригувати дані після закриття»."
-    )
-else:
-    # Поточний хвіст маршруту після координатора. Вертикальну схему можна
-    # перебудувати лише через доменні правила core/approval_schemes.py;
-    # супер-адмін додається окремою незалежною дією.
-    _next_after_admin = None
-    if _req_chain and 0 <= _req_stage < len(_req_chain):
-        _next_after_admin = schemes.current_stage(_req_chain, _req_stage + 1)
-
-    _stored_route_label_for_action = clean(selected_row.get("scheme_label"))
-    _catalog_tail_expected = (
-        _stored_route_label_for_action in schemes.APPROVAL_SCHEMES
-        and _stored_route_label_for_action != schemes.SUBMITTER_SELF_APPROVAL_SCHEME
-    )
-    if _req_chain and (_next_after_admin or _catalog_tail_expected):
-        _approve_option = "Погодити та передати далі"
-    elif _req_chain:
-        _approve_option = "Погодити"
-    else:
-        _approve_option = "Підтвердити (передати керівнику ССП)"
-
-    if _req_chain:
-        _adm_targets = schemes.return_targets(_req_chain, _req_stage)
-    else:
-        _adm_targets = [{
-            "key": "submitter",
-            "label": "Подавачу (відповідальній особі ССП)",
-            "status": "Повернуто на доопрацювання",
-            "new_stage": 0,
-        }]
-    _adm_target_labels = [target["label"] for target in _adm_targets]
-
+if _show_admin_decision_panel:
     st.markdown(
-        """
-        <div class="decision-guidance">
-            <p>Після звірки поданих відомостей, якщо зауважень немає, погодьте заявку. За наявності доступних альтернатив можна обрати повну схему вертикалі: пройдена частина маршруту не змінюється, а нові ланки додаються лише вище вже досягнутого рівня.</p>
-            <p>Додавання супер-адміна для додаткової перевірки є окремою дією і не замінює вибір вертикальної схеми.</p>
-            <p>Коментар адміністратора є обов’язковим для будь-якого рішення. Його побачить наступна ланка погодження, а текст буде зафіксовано в журналі дій.</p>
-        </div>
-        """,
+        '<div class="card decision-card">'
+        '<div class="card-title">Рішення адміністратора</div>',
         unsafe_allow_html=True,
     )
 
-    st.markdown(
-        '<div class="admin-control-label">Оберіть рішення</div>',
-        unsafe_allow_html=True,
-    )
-    decision = st.radio(
-        "Оберіть рішення",
-        [_approve_option, "Повернути на доопрацювання"],
-        horizontal=True,
-        key=f"decision_radio_{selected_id}",
-        label_visibility="collapsed",
-    )
+    default_comment = clean(selected_row["admin_comment"])
 
-    _chain_override = None
-    _added_chain_stages = []
-    _selected_scheme_label = ""
-    _scheme_build_blocked = False
-
-    if decision == _approve_option and _req_chain:
-        _prefix_chain = list(_req_chain[: _req_stage + 1])
-        _old_tail = list(_req_chain[_req_stage + 1:])
-        _old_vertical_tail = [
-            stage for stage in _old_tail
-            if clean(stage.get("role")) != ROLE_SUPER_ADMIN
-        ]
-        _old_super_stages = [
-            stage for stage in _old_tail
-            if clean(stage.get("role")) == ROLE_SUPER_ADMIN
-        ]
-        _vertical_chain_for_catalog = _prefix_chain + _old_vertical_tail
-
-        try:
-            _coordinator_history = load_logs(selected_id, selected_row)
-            _decided_route_roles = schemes.roles_with_recorded_decisions(
-                _req_chain,
-                _coordinator_history,
-            )
-        except Exception as history_exc:
-            log_cosmetic_error(
-                "Визначення вже пройдених ланок для зміни схеми",
-                history_exc,
-            )
-            _decided_route_roles = []
-
-        _stored_scheme_name = clean(selected_row.get("scheme_label"))
-        _inferred_scheme_name = schemes.scheme_name_for_roles(
-            _vertical_chain_for_catalog
+    if _req_chain and not _is_admin_turn and not _is_super_turn:
+        st.info(
+            f"⏳ Зараз черга ланки «{(_current_waiting_stage or {}).get('label','')}» "
+            f"({(_current_waiting_stage or {}).get('name','') or (_current_waiting_stage or {}).get('email','')}). "
+            "Координатор не може погодити, повернути чи будь-як вплинути на "
+            "заявку замість цієї ланки — лише переглянути дані вище. Дочекайтеся "
+            "її рішення; воно з'явиться тут автоматично."
         )
-        _vertical_roles_now = [
-            clean(stage.get("role")) for stage in _vertical_chain_for_catalog
-        ]
-        _current_scheme_name = _inferred_scheme_name
-        if (
-            _stored_scheme_name in schemes.APPROVAL_SCHEMES
-            and schemes.APPROVAL_SCHEMES[_stored_scheme_name] == _vertical_roles_now
-        ):
-            _current_scheme_name = _stored_scheme_name
-
-        _scheme_alternatives = schemes.scheme_options_for_coordinator(
-            _vertical_chain_for_catalog,
-            _req_stage,
-            _current_scheme_name,
-            decided_roles=_decided_route_roles,
+    elif schemes.is_final_locked(selected_row):
+        st.info(
+            "🔒 Заявку остаточно закрито — останню ланку схеми погодження "
+            "пройдено (статус «Погоджено»). Рішення координатора (погодити або "
+            "повернути на доопрацювання) для цієї заявки "
+            "більше не застосовуються.\n\n"
+            "Якщо з'явилася нова, актуальніша інформація по заходу — "
+            "скоригувати вже подані дані (не маршрут погодження) може "
+            "лише супер-адмін через окрему дію «Скоригувати дані після закриття»."
         )
-        _chosen_scheme_name = _current_scheme_name
-        _scheme_changed = False
+    else:
+        # Поточний хвіст маршруту після координатора. Вертикальну схему можна
+        # перебудувати лише через доменні правила core/approval_schemes.py;
+        # супер-адмін додається окремою незалежною дією.
+        _next_after_admin = None
+        if _req_chain and 0 <= _req_stage < len(_req_chain):
+            _next_after_admin = schemes.current_stage(_req_chain, _req_stage + 1)
 
-        if _scheme_alternatives:
-            _current_scheme_text = (
-                _current_scheme_name
-                or schemes.chain_route_text(_vertical_chain_for_catalog)
-                or "поточний маршрут"
-            )
-            _keep_scheme_option = f"Залишити як є — {_current_scheme_text}"
-            _scheme_display_options = [_keep_scheme_option] + _scheme_alternatives
-            _scheme_choice = st.selectbox(
-                "Схема погодження",
-                _scheme_display_options,
-                index=0,
-                key=f"adm_full_scheme_{selected_id}",
-            )
-            if _scheme_choice != _keep_scheme_option:
-                _chosen_scheme_name = _scheme_choice
-                _scheme_changed = True
+        _stored_route_label_for_action = clean(selected_row.get("scheme_label"))
+        _catalog_tail_expected = (
+            _stored_route_label_for_action in schemes.APPROVAL_SCHEMES
+            and _stored_route_label_for_action != schemes.SUBMITTER_SELF_APPROVAL_SCHEME
+        )
+        if _req_chain and (_next_after_admin or _catalog_tail_expected):
+            _approve_option = "Погодити та передати далі"
+        elif _req_chain:
+            _approve_option = "Погодити"
+        else:
+            _approve_option = "Підтвердити (передати керівнику ССП)"
 
-        if _scheme_changed:
-            _desired_vertical_roles = schemes.coordinator_scheme_tail_roles(
+        if _req_chain:
+            _adm_targets = schemes.return_targets(_req_chain, _req_stage)
+        else:
+            _adm_targets = [{
+                "key": "submitter",
+                "label": "Подавачу (відповідальній особі ССП)",
+                "status": "Повернуто на доопрацювання",
+                "new_stage": 0,
+            }]
+        _adm_target_labels = [target["label"] for target in _adm_targets]
+
+        st.markdown(
+            """
+            <div class="decision-guidance">
+                <p>Після звірки поданих відомостей, якщо зауважень немає, погодьте заявку. За наявності доступних альтернатив можна обрати повну схему вертикалі: пройдена частина маршруту не змінюється, а нові ланки додаються лише вище вже досягнутого рівня.</p>
+                <p>Додавання супер-адміна для додаткової перевірки є окремою дією і не замінює вибір вертикальної схеми.</p>
+                <p>Коментар адміністратора є обов’язковим для будь-якого рішення. Його побачить наступна ланка погодження, а текст буде зафіксовано в журналі дій.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        st.markdown(
+            '<div class="admin-control-label">Оберіть рішення</div>',
+            unsafe_allow_html=True,
+        )
+        decision = st.radio(
+            "Оберіть рішення",
+            [_approve_option, "Повернути на доопрацювання"],
+            horizontal=True,
+            key=f"decision_radio_{selected_id}",
+            label_visibility="collapsed",
+        )
+
+        _chain_override = None
+        _added_chain_stages = []
+        _selected_scheme_label = ""
+        _scheme_build_blocked = False
+
+        if decision == _approve_option and _req_chain:
+            _prefix_chain = list(_req_chain[: _req_stage + 1])
+            _old_tail = list(_req_chain[_req_stage + 1:])
+            _old_vertical_tail = [
+                stage for stage in _old_tail
+                if clean(stage.get("role")) != ROLE_SUPER_ADMIN
+            ]
+            _old_super_stages = [
+                stage for stage in _old_tail
+                if clean(stage.get("role")) == ROLE_SUPER_ADMIN
+            ]
+            _vertical_chain_for_catalog = _prefix_chain + _old_vertical_tail
+
+            try:
+                _coordinator_history = load_logs(selected_id, selected_row)
+                _decided_route_roles = schemes.roles_with_recorded_decisions(
+                    _req_chain,
+                    _coordinator_history,
+                )
+            except Exception as history_exc:
+                log_cosmetic_error(
+                    "Визначення вже пройдених ланок для зміни схеми",
+                    history_exc,
+                )
+                _decided_route_roles = []
+
+            _stored_scheme_name = clean(selected_row.get("scheme_label"))
+            _inferred_scheme_name = schemes.scheme_name_for_roles(
+                _vertical_chain_for_catalog
+            )
+            _vertical_roles_now = [
+                clean(stage.get("role")) for stage in _vertical_chain_for_catalog
+            ]
+            _current_scheme_name = _inferred_scheme_name
+            if (
+                _stored_scheme_name in schemes.APPROVAL_SCHEMES
+                and schemes.APPROVAL_SCHEMES[_stored_scheme_name] == _vertical_roles_now
+            ):
+                _current_scheme_name = _stored_scheme_name
+
+            _scheme_alternatives = schemes.scheme_options_for_coordinator(
                 _vertical_chain_for_catalog,
                 _req_stage,
-                _chosen_scheme_name,
+                _current_scheme_name,
                 decided_roles=_decided_route_roles,
             )
-            if _desired_vertical_roles is None:
-                st.error(
-                    "Обрана схема не зберігає вже пройдену частину маршруту. "
-                    "Оберіть іншу схему."
+            _chosen_scheme_name = _current_scheme_name
+            _scheme_changed = False
+
+            if _scheme_alternatives:
+                _current_scheme_text = (
+                    _current_scheme_name
+                    or schemes.chain_route_text(_vertical_chain_for_catalog)
+                    or "поточний маршрут"
                 )
-                _desired_vertical_roles = []
-                _scheme_build_blocked = True
-        else:
-            _desired_vertical_roles = [
-                clean(stage.get("role")) for stage in _old_vertical_tail
+                _keep_scheme_option = f"Залишити як є — {_current_scheme_text}"
+                _scheme_display_options = [_keep_scheme_option] + _scheme_alternatives
+                _scheme_choice = st.selectbox(
+                    "Схема погодження",
+                    _scheme_display_options,
+                    index=0,
+                    key=f"adm_full_scheme_{selected_id}",
+                )
+                if _scheme_choice != _keep_scheme_option:
+                    _chosen_scheme_name = _scheme_choice
+                    _scheme_changed = True
+
+            if _scheme_changed:
+                _desired_vertical_roles = schemes.coordinator_scheme_tail_roles(
+                    _vertical_chain_for_catalog,
+                    _req_stage,
+                    _chosen_scheme_name,
+                    decided_roles=_decided_route_roles,
+                )
+                if _desired_vertical_roles is None:
+                    st.error(
+                        "Обрана схема не зберігає вже пройдену частину маршруту. "
+                        "Оберіть іншу схему."
+                    )
+                    _desired_vertical_roles = []
+                    _scheme_build_blocked = True
+            else:
+                _desired_vertical_roles = [
+                    clean(stage.get("role")) for stage in _old_vertical_tail
+                ]
+
+            _desired_vertical_stages = []
+            _used_old_stage_indexes = set()
+            for _tail_position, _tail_role in enumerate(_desired_vertical_roles):
+                _existing_stage = None
+                for _old_index, _old_stage in enumerate(_old_vertical_tail):
+                    if _old_index in _used_old_stage_indexes:
+                        continue
+                    if clean(_old_stage.get("role")) == _tail_role:
+                        _existing_stage = dict(_old_stage)
+                        _used_old_stage_indexes.add(_old_index)
+                        break
+
+                if _existing_stage is not None:
+                    _existing_stage["label"] = schemes.STAGE_LABELS.get(
+                        _tail_role, clean(_existing_stage.get("label"))
+                    )
+                    _desired_vertical_stages.append(_existing_stage)
+                    continue
+
+                _role_candidates = schemes.stage_candidates(
+                    _tail_role, str(_req_dept_idx)
+                )
+                _chosen_candidate = None
+                if len(_role_candidates) > 1:
+                    _candidate_labels = [
+                        schemes.candidate_label(candidate)
+                        for candidate in _role_candidates
+                    ]
+                    _candidate_choice = st.selectbox(
+                        f"Хто саме — {schemes.STAGE_LABELS[_tail_role]}",
+                        _candidate_labels,
+                        key=(
+                            f"adm_scheme_person_{selected_id}_"
+                            f"{_tail_position}_{_tail_role}"
+                        ),
+                    )
+                    _chosen_candidate = _role_candidates[
+                        _candidate_labels.index(_candidate_choice)
+                    ]
+                elif _role_candidates:
+                    _chosen_candidate = _role_candidates[0]
+                    st.caption(
+                        f"→ {schemes.STAGE_LABELS[_tail_role]}: "
+                        f"{schemes.candidate_label(_chosen_candidate)}"
+                    )
+                else:
+                    st.error(
+                        f"Для ССП {_req_dept_idx or '—'} не знайдено користувача "
+                        f"ролі «{schemes.STAGE_LABELS[_tail_role]}». "
+                        "Оберіть іншу схему."
+                    )
+                    _scheme_build_blocked = True
+
+                if _chosen_candidate is not None:
+                    _desired_vertical_stages.append({
+                        "role": _tail_role,
+                        "label": schemes.STAGE_LABELS[_tail_role],
+                        "email": clean(_chosen_candidate.get("email")).lower(),
+                        "name": clean(_chosen_candidate.get("name")),
+                    })
+
+            _sa_route = resolve_manual_closeout_route(current_user)
+            _existing_super_stage = (
+                dict(_old_super_stages[0]) if _old_super_stages else None
+            )
+            _add_superadmin = st.checkbox(
+                "Додати супер-адміна після координатора для додаткової перевірки",
+                value=_existing_super_stage is not None,
+                key=f"adm_insert_superadmin_{selected_id}",
+            )
+            _superadmin_stage = None
+            if _add_superadmin:
+                _superadmin_stage = _existing_super_stage or {
+                    "role": ROLE_SUPER_ADMIN,
+                    "label": schemes.STAGE_LABELS[ROLE_SUPER_ADMIN],
+                    "email": clean(_sa_route["assigned_superadmin_email"]).lower(),
+                    "name": clean(_sa_route["assigned_superadmin_name"]),
+                }
+                _superadmin_stage["role"] = ROLE_SUPER_ADMIN
+                _superadmin_stage["label"] = schemes.STAGE_LABELS[ROLE_SUPER_ADMIN]
+                st.caption(
+                    f"→ {_sa_route['assigned_superadmin_name']} · "
+                    f"{_sa_route['routing_note']}"
+                )
+
+            _new_tail = (
+                ([_superadmin_stage] if _superadmin_stage is not None else [])
+                + _desired_vertical_stages
+            )
+            _candidate_chain = _prefix_chain + _new_tail
+
+            _old_identities = [_approval_stage_identity(stage) for stage in _req_chain]
+            _new_identities = [_approval_stage_identity(stage) for stage in _candidate_chain]
+            _excluded_stages = [
+                stage for stage in _old_tail
+                if _approval_stage_identity(stage) not in _new_identities
+            ]
+            _added_chain_stages = [
+                stage for stage in _new_tail
+                if _approval_stage_identity(stage) not in _old_identities
             ]
 
-        _desired_vertical_stages = []
-        _used_old_stage_indexes = set()
-        for _tail_position, _tail_role in enumerate(_desired_vertical_roles):
-            _existing_stage = None
-            for _old_index, _old_stage in enumerate(_old_vertical_tail):
-                if _old_index in _used_old_stage_indexes:
-                    continue
-                if clean(_old_stage.get("role")) == _tail_role:
-                    _existing_stage = dict(_old_stage)
-                    _used_old_stage_indexes.add(_old_index)
-                    break
-
-            if _existing_stage is not None:
-                _existing_stage["label"] = schemes.STAGE_LABELS.get(
-                    _tail_role, clean(_existing_stage.get("label"))
-                )
-                _desired_vertical_stages.append(_existing_stage)
-                continue
-
-            _role_candidates = schemes.stage_candidates(
-                _tail_role, str(_req_dept_idx)
-            )
-            _chosen_candidate = None
-            if len(_role_candidates) > 1:
-                _candidate_labels = [
-                    schemes.candidate_label(candidate)
-                    for candidate in _role_candidates
-                ]
-                _candidate_choice = st.selectbox(
-                    f"Хто саме — {schemes.STAGE_LABELS[_tail_role]}",
-                    _candidate_labels,
-                    key=(
-                        f"adm_scheme_person_{selected_id}_"
-                        f"{_tail_position}_{_tail_role}"
-                    ),
-                )
-                _chosen_candidate = _role_candidates[
-                    _candidate_labels.index(_candidate_choice)
-                ]
-            elif _role_candidates:
-                _chosen_candidate = _role_candidates[0]
-                st.caption(
-                    f"→ {schemes.STAGE_LABELS[_tail_role]}: "
-                    f"{schemes.candidate_label(_chosen_candidate)}"
-                )
+            if _scheme_changed:
+                _selected_scheme_label = _chosen_scheme_name
             else:
-                st.error(
-                    f"Для ССП {_req_dept_idx or '—'} не знайдено користувача "
-                    f"ролі «{schemes.STAGE_LABELS[_tail_role]}». "
-                    "Оберіть іншу схему."
+                _selected_scheme_label = _stored_scheme_name
+
+            if not _scheme_build_blocked and _candidate_chain != _req_chain:
+                _new_stage_index = _req_stage + 1
+                _new_next_stage = schemes.current_stage(
+                    _candidate_chain, _new_stage_index
                 )
-                _scheme_build_blocked = True
+                if _new_next_stage is None:
+                    _new_status = schemes.APPROVED_STATUS
+                else:
+                    _new_status = schemes.waiting_status_for_stage(_new_next_stage)
 
-            if _chosen_candidate is not None:
-                _desired_vertical_stages.append({
-                    "role": _tail_role,
-                    "label": schemes.STAGE_LABELS[_tail_role],
-                    "email": clean(_chosen_candidate.get("email")).lower(),
-                    "name": clean(_chosen_candidate.get("name")),
-                })
+                _change_parts = []
+                if _selected_scheme_label and _selected_scheme_label != _stored_scheme_name:
+                    _change_parts.append(f"схема «{_selected_scheme_label}»")
+                if _add_superadmin and _existing_super_stage is None:
+                    _change_parts.append("додано супер-адміна після координатора")
+                if not _add_superadmin and _existing_super_stage is not None:
+                    _change_parts.append("супер-адміна вилучено з хвоста маршруту")
+                _change_description = "; ".join(_change_parts) or "оновлено хвіст маршруту"
 
-        _sa_route = resolve_manual_closeout_route(current_user)
-        _existing_super_stage = (
-            dict(_old_super_stages[0]) if _old_super_stages else None
-        )
-        _add_superadmin = st.checkbox(
-            "Додати супер-адміна після координатора для додаткової перевірки",
-            value=_existing_super_stage is not None,
-            key=f"adm_insert_superadmin_{selected_id}",
-        )
-        _superadmin_stage = None
-        if _add_superadmin:
-            _superadmin_stage = _existing_super_stage or {
-                "role": ROLE_SUPER_ADMIN,
-                "label": schemes.STAGE_LABELS[ROLE_SUPER_ADMIN],
-                "email": clean(_sa_route["assigned_superadmin_email"]).lower(),
-                "name": clean(_sa_route["assigned_superadmin_name"]),
-            }
-            _superadmin_stage["role"] = ROLE_SUPER_ADMIN
-            _superadmin_stage["label"] = schemes.STAGE_LABELS[ROLE_SUPER_ADMIN]
-            st.caption(
-                f"→ {_sa_route['assigned_superadmin_name']} · "
-                f"{_sa_route['routing_note']}"
+                _chain_override = (
+                    _candidate_chain,
+                    _new_status,
+                    _new_stage_index,
+                    _excluded_stages,
+                    f"Погодження координатором → {_change_description}",
+                )
+
+                if _excluded_stages:
+                    st.warning(
+                        "Зі схеми буде виключено: "
+                        + ", ".join(
+                            clean(stage.get("name"))
+                            or clean(stage.get("email"))
+                            or clean(stage.get("label"))
+                            for stage in _excluded_stages
+                        )
+                        + ". Кожному адресату з email надійде повідомлення."
+                    )
+
+        return_target_label = None
+        if decision == "Повернути на доопрацювання":
+            return_target_label = st.selectbox(
+                "Кому повернути",
+                _adm_target_labels,
+                key=f"adm_return_target_{selected_id}",
             )
 
-        _new_tail = (
-            ([_superadmin_stage] if _superadmin_stage is not None else [])
-            + _desired_vertical_stages
-        )
-        _candidate_chain = _prefix_chain + _new_tail
-
-        _old_identities = [_approval_stage_identity(stage) for stage in _req_chain]
-        _new_identities = [_approval_stage_identity(stage) for stage in _candidate_chain]
-        _excluded_stages = [
-            stage for stage in _old_tail
-            if _approval_stage_identity(stage) not in _new_identities
-        ]
-        _added_chain_stages = [
-            stage for stage in _new_tail
-            if _approval_stage_identity(stage) not in _old_identities
-        ]
-
-        if _scheme_changed:
-            _selected_scheme_label = _chosen_scheme_name
+        if _chain_override is not None:
+            _preview_chain, _, _preview_stage_index, _, _ = _chain_override
+            _preview_next_stage = schemes.current_stage(
+                _preview_chain, _preview_stage_index
+            )
+            _approve_decision_hint = (
+                f"🖊 Заявку буде передано ланці «{clean(_preview_next_stage.get('label'))}»"
+                if _preview_next_stage is not None
+                else "✅ Заявка отримає статус «Погоджено»"
+            )
+        elif _req_chain and _next_after_admin:
+            _approve_decision_hint = "🖊 Заявку буде передано на наступну ланку схеми погодження"
+        elif _req_chain:
+            _approve_decision_hint = "✅ Заявка отримає статус «Погоджено»"
         else:
-            _selected_scheme_label = _stored_scheme_name
+            _approve_decision_hint = "🖊 Заявка перейде до керівника ССП на підтвердження"
 
-        if not _scheme_build_blocked and _candidate_chain != _req_chain:
-            _new_stage_index = _req_stage + 1
-            _new_next_stage = schemes.current_stage(
-                _candidate_chain, _new_stage_index
-            )
-            if _new_next_stage is None:
-                _new_status = schemes.APPROVED_STATUS
-            else:
-                _new_status = schemes.waiting_status_for_stage(_new_next_stage)
+        decision_labels = {
+            _approve_option: _approve_decision_hint,
+            "Повернути на доопрацювання":
+                "↩ Повернено на доопрацювання — адресат отримає сповіщення",
+        }
 
-            _change_parts = []
-            if _selected_scheme_label and _selected_scheme_label != _stored_scheme_name:
-                _change_parts.append(f"схема «{_selected_scheme_label}»")
-            if _add_superadmin and _existing_super_stage is None:
-                _change_parts.append("додано супер-адміна після координатора")
-            if not _add_superadmin and _existing_super_stage is not None:
-                _change_parts.append("супер-адміна вилучено з хвоста маршруту")
-            _change_description = "; ".join(_change_parts) or "оновлено хвіст маршруту"
+        st.markdown(
+            f'<div class="decision-box">{decision_labels.get(decision, decision)}</div>',
+            unsafe_allow_html=True
+        )
 
-            _chain_override = (
-                _candidate_chain,
-                _new_status,
-                _new_stage_index,
-                _excluded_stages,
-                f"Погодження координатором → {_change_description}",
-            )
+        st.markdown(
+            '<div class="comment-header">✏ Коментар адміністратора</div>',
+            unsafe_allow_html=True
+        )
 
-            if _excluded_stages:
-                st.warning(
-                    "Зі схеми буде виключено: "
-                    + ", ".join(
-                        clean(stage.get("name"))
-                        or clean(stage.get("email"))
-                        or clean(stage.get("label"))
-                        for stage in _excluded_stages
+        admin_comment = st.text_area(
+            "Введіть коментар або обґрунтування рішення",
+            value=default_comment,
+            height=130,
+            key=f"admin_comment_form_{selected_id}",
+            label_visibility="collapsed"
+        )
+
+        confirm_decision = st.button(
+            "Застосувати рішення",
+            use_container_width=True,
+            key=f"admin_apply_decision_{selected_id}",
+        )
+
+        if confirm_decision:
+            _extra_update = {}
+            _notify_action = None   # ("stage", stage_dict) | ("approved",) | ("returned", target)
+            _excluded_after_transition = []
+            _added_after_transition = []
+            _decision_blocked = bool(_scheme_build_blocked)
+
+            if _scheme_build_blocked:
+                st.error("Рішення не збережено: обрану схему неможливо сформувати для цього ССП.")
+
+            if not clean(admin_comment).strip():
+                st.error("Коментар адміністратора є обов’язковим для будь-якого рішення.")
+                _decision_blocked = True
+
+            if not _decision_blocked and decision == _approve_option:
+                if _req_chain and _chain_override is not None:
+                    _oc, _ost, _ostg, _excluded, _oact = _chain_override
+                    new_status = _ost
+                    _extra_update["approval_chain"] = schemes.chain_to_json(_oc)
+                    _extra_update["chain_stage"] = int(_ostg)
+                    action_text = _oact
+                    _next_override_stage = schemes.current_stage(_oc, _ostg)
+                    if _next_override_stage is None:
+                        success_text = (
+                            "✅ Підтверджено. Оновлену схему пройдено повністю; "
+                            "заявка отримала статус «Погоджено»."
+                        )
+                        _notify_action = ("approved",)
+                    else:
+                        _who_next = (
+                            _next_override_stage.get("name")
+                            or _next_override_stage.get("email")
+                            or ""
+                        )
+                        success_text = (
+                            f"✅ Підтверджено. Схему оновлено; заявка надійшла ланці "
+                            f"«{_next_override_stage.get('label', '')}»"
+                            f"{f' ({_who_next})' if _who_next else ''}."
+                        )
+                        _notify_action = ("stage", _next_override_stage)
+                    _excluded_after_transition = list(_excluded)
+                    _added_after_transition = list(_added_chain_stages)
+                elif _req_chain and _next_after_admin:
+                    new_status, _new_stage = schemes.status_after_approve(
+                        _req_chain, _req_stage
                     )
-                    + ". Кожному адресату з email надійде повідомлення."
-                )
-
-    return_target_label = None
-    if decision == "Повернути на доопрацювання":
-        return_target_label = st.selectbox(
-            "Кому повернути",
-            _adm_target_labels,
-            key=f"adm_return_target_{selected_id}",
-        )
-
-    if _chain_override is not None:
-        _preview_chain, _, _preview_stage_index, _, _ = _chain_override
-        _preview_next_stage = schemes.current_stage(
-            _preview_chain, _preview_stage_index
-        )
-        _approve_decision_hint = (
-            f"🖊 Заявку буде передано ланці «{clean(_preview_next_stage.get('label'))}»"
-            if _preview_next_stage is not None
-            else "✅ Заявка отримає статус «Погоджено»"
-        )
-    elif _req_chain and _next_after_admin:
-        _approve_decision_hint = "🖊 Заявку буде передано на наступну ланку схеми погодження"
-    elif _req_chain:
-        _approve_decision_hint = "✅ Заявка отримає статус «Погоджено»"
-    else:
-        _approve_decision_hint = "🖊 Заявка перейде до керівника ССП на підтвердження"
-
-    decision_labels = {
-        _approve_option: _approve_decision_hint,
-        "Повернути на доопрацювання":
-            "↩ Повернено на доопрацювання — адресат отримає сповіщення",
-    }
-
-    st.markdown(
-        f'<div class="decision-box">{decision_labels.get(decision, decision)}</div>',
-        unsafe_allow_html=True
-    )
-
-    st.markdown(
-        '<div class="comment-header">✏ Коментар адміністратора</div>',
-        unsafe_allow_html=True
-    )
-
-    admin_comment = st.text_area(
-        "Введіть коментар або обґрунтування рішення",
-        value=default_comment,
-        height=130,
-        key=f"admin_comment_form_{selected_id}",
-        label_visibility="collapsed"
-    )
-
-    confirm_decision = st.button(
-        "Застосувати рішення",
-        use_container_width=True,
-        key=f"admin_apply_decision_{selected_id}",
-    )
-
-    if confirm_decision:
-        _extra_update = {}
-        _notify_action = None   # ("stage", stage_dict) | ("approved",) | ("returned", target)
-        _excluded_after_transition = []
-        _added_after_transition = []
-        _decision_blocked = bool(_scheme_build_blocked)
-
-        if _scheme_build_blocked:
-            st.error("Рішення не збережено: обрану схему неможливо сформувати для цього ССП.")
-
-        if not clean(admin_comment).strip():
-            st.error("Коментар адміністратора є обов’язковим для будь-якого рішення.")
-            _decision_blocked = True
-
-        if not _decision_blocked and decision == _approve_option:
-            if _req_chain and _chain_override is not None:
-                _oc, _ost, _ostg, _excluded, _oact = _chain_override
-                new_status = _ost
-                _extra_update["approval_chain"] = schemes.chain_to_json(_oc)
-                _extra_update["chain_stage"] = int(_ostg)
-                action_text = _oact
-                _next_override_stage = schemes.current_stage(_oc, _ostg)
-                if _next_override_stage is None:
+                    _extra_update["chain_stage"] = int(_new_stage)
+                    if new_status == schemes.APPROVED_STATUS:
+                        action_text = "Погодження координатором (остання ланка схеми)"
+                        success_text = (
+                            "✅ Заявка пройшла всі етапи схеми. Статус: «Погоджено»."
+                        )
+                        _notify_action = ("approved",)
+                    else:
+                        action_text = (
+                            f"Погодження координатором → передано далі: {new_status}"
+                        )
+                        _who_next = (
+                            _next_after_admin.get("name")
+                            or _next_after_admin.get("email")
+                            or ""
+                        )
+                        success_text = (
+                            "✅ Підтверджено. Заявка одразу надійшла наступній ланці — "
+                            f"{_next_after_admin.get('label', '')}"
+                            f"{f' ({_who_next})' if _who_next else ''}. "
+                            "Вона вже бачить її у кабінеті у списку «Активні до розгляду»."
+                        )
+                        _notify_action = ("stage", _next_after_admin)
+                elif _req_chain:
+                    new_status, _new_stage = schemes.finalize_here(_req_stage)
+                    _extra_update["chain_stage"] = int(_new_stage)
+                    action_text = "Погодження координатором (завершено на координаторі)"
                     success_text = (
-                        "✅ Підтверджено. Оновлену схему пройдено повністю; "
-                        "заявка отримала статус «Погоджено»."
+                        "✅ Заявка погоджена координатором остаточно. "
+                        "Статус: «Погоджено»."
                     )
                     _notify_action = ("approved",)
                 else:
-                    _who_next = (
-                        _next_override_stage.get("name")
-                        or _next_override_stage.get("email")
-                        or ""
-                    )
+                    new_status = "Очікує: Керівник ССП"
+                    action_text = "Передано керівнику ССП на підтвердження"
                     success_text = (
-                        f"✅ Підтверджено. Схему оновлено; заявка надійшла ланці "
-                        f"«{_next_override_stage.get('label', '')}»"
-                        f"{f' ({_who_next})' if _who_next else ''}."
+                        "✅ Заявку передано керівнику ССП на підтвердження. "
+                        "Після підтвердження дані відобразяться на головній сторінці."
                     )
-                    _notify_action = ("stage", _next_override_stage)
-                _excluded_after_transition = list(_excluded)
-                _added_after_transition = list(_added_chain_stages)
-            elif _req_chain and _next_after_admin:
-                new_status, _new_stage = schemes.status_after_approve(
-                    _req_chain, _req_stage
-                )
-                _extra_update["chain_stage"] = int(_new_stage)
-                if new_status == schemes.APPROVED_STATUS:
-                    action_text = "Погодження координатором (остання ланка схеми)"
-                    success_text = (
-                        "✅ Заявка пройшла всі етапи схеми. Статус: «Погоджено»."
-                    )
-                    _notify_action = ("approved",)
-                else:
-                    action_text = (
-                        f"Погодження координатором → передано далі: {new_status}"
-                    )
-                    _who_next = (
-                        _next_after_admin.get("name")
-                        or _next_after_admin.get("email")
-                        or ""
-                    )
-                    success_text = (
-                        "✅ Підтверджено. Заявка одразу надійшла наступній ланці — "
-                        f"{_next_after_admin.get('label', '')}"
-                        f"{f' ({_who_next})' if _who_next else ''}. "
-                        "Вона вже бачить її у кабінеті у списку «Активні до розгляду»."
-                    )
-                    _notify_action = ("stage", _next_after_admin)
-            elif _req_chain:
-                new_status, _new_stage = schemes.finalize_here(_req_stage)
-                _extra_update["chain_stage"] = int(_new_stage)
-                action_text = "Погодження координатором (завершено на координаторі)"
-                success_text = (
-                    "✅ Заявка погоджена координатором остаточно. "
-                    "Статус: «Погоджено»."
-                )
-                _notify_action = ("approved",)
-            else:
-                new_status = "Очікує: Керівник ССП"
-                action_text = "Передано керівнику ССП на підтвердження"
-                success_text = (
-                    "✅ Заявку передано керівнику ССП на підтвердження. "
-                    "Після підтвердження дані відобразяться на головній сторінці."
-                )
-        elif not _decision_blocked and decision == "Повернути на доопрацювання":
-            _picked = _adm_targets[_adm_target_labels.index(return_target_label)]
-            new_status = _picked["status"]
-            action_text = f"Повернення на доопрацювання: {_picked['label']}"
-            success_text = f"↩ Заявку повернуто: {_picked['label']}."
-            if _req_chain:
-                _extra_update["chain_stage"] = int(_picked["new_stage"])
-            _notify_action = ("returned", _picked)
-        if not _decision_blocked:
-            try:
-                _target_stage = int(_extra_update.get("chain_stage", _req_stage))
-                if decision == "Повернути на доопрацювання":
-                    atomic_return_request(
-                        request_id=int(selected_id),
-                        expected_status=approval_status,
-                        expected_chain_stage=int(_req_stage),
-                        new_status=new_status,
-                        new_chain_stage=_target_stage,
-                        comment=clean(admin_comment),
-                        action=action_text,
-                        user=current_user,
-                        created_by="Координатор / повернення",
-                    )
-                else:
-                    approve_request_step(
-                        request_id=int(selected_id),
-                        expected_status=approval_status,
-                        expected_chain_stage=int(_req_stage),
-                        new_status=new_status,
-                        new_chain_stage=_target_stage,
-                        approval_chain=_extra_update.get("approval_chain"),
-                        comment=clean(admin_comment),
-                        action=action_text,
-                        user=current_user,
-                        created_by="Координатор / рішення",
-                    )
-
-                if (
-                    decision != "Повернути на доопрацювання"
-                    and _selected_scheme_label
-                    and _selected_scheme_label != clean(selected_row.get("scheme_label"))
-                ):
-                    try:
-                        supabase.table("monitoring_requests").update({
-                            "scheme_label": _selected_scheme_label,
-                        }).eq("id", int(selected_id)).execute()
-                    except Exception as scheme_label_exc:
-                        show_warning(
-                            "Маршрут оновлено, але назву схеми в картці не синхронізовано.",
-                            scheme_label_exc,
-                            "Синхронізація назви схеми погодження",
-                        )
-
-                _next_notified_identity = (
-                    _approval_stage_identity(_notify_action[1])
-                    if _notify_action
-                    and _notify_action[0] == "stage"
-                    and _notify_action[1]
-                    else None
-                )
-                for _added in _added_after_transition:
-                    try:
-                        write_log(
-                            selected_id,
-                            "Зміна схеми погодження координатором: включено "
-                            f"{clean(_added.get('name')) or clean(_added.get('email')) or clean(_added.get('label'))}",
-                            approval_status,
-                            new_status,
-                            admin_comment,
-                        )
-                    except Exception as audit_exc:
-                        show_warning(
-                            "Рішення збережено, але додатковий запис про включення до ланцюжка не створено.",
-                            audit_exc,
-                            "Додатковий журнал включення до ланцюжка",
-                        )
-
-                    if _approval_stage_identity(_added) == _next_notified_identity:
-                        continue
-                    try:
-                        notify_events.notify_included_in_chain(
-                            _added.get("email", ""),
-                            _added.get("name", ""),
-                            _added.get("label", ""),
-                            _actor_identity("Координатор"),
-                            selected_code,
-                            _req_year,
-                            _req_quarter,
-                            kind=_req_kind or "measure",
-                        )
-                    except Exception as notify_exc:
-                        show_warning(
-                            "Рішення збережено, але лист новій майбутній ланці не надіслано.",
-                            notify_exc,
-                            "Сповіщення про включення до схеми погодження",
-                        )
-
-                for _ex in _excluded_after_transition:
-                    try:
-                        write_log(
-                            selected_id,
-                            "Зміна схеми погодження координатором: виключено "
-                            f"{clean(_ex.get('name')) or clean(_ex.get('email'))}",
-                            approval_status, new_status, admin_comment,
-                        )
-                    except Exception as audit_exc:
-                        show_warning(
-                            "Рішення збережено, але додатковий запис про виключення з ланцюжка не створено.",
-                            audit_exc,
-                            "Додатковий журнал виключення з ланцюжка",
-                        )
-                    try:
-                        notify_events.notify_excluded_from_chain(
-                            _ex.get("email", ""), _ex.get("name", ""),
-                            _actor_identity("Координатор"),
-                            selected_code, _req_year, _req_quarter,
-                            kind=_req_kind or "measure",
-                        )
-                    except Exception as notify_exc:
-                        show_warning(
-                            "Рішення збережено, але лист виключеній ланці не надіслано.",
-                            notify_exc,
-                            "Сповіщення про виключення з ланцюжка погодження",
-                        )
-
-                # Миттєві email-сповіщення не входять у транзакцію БД.
+            elif not _decision_blocked and decision == "Повернути на доопрацювання":
+                _picked = _adm_targets[_adm_target_labels.index(return_target_label)]
+                new_status = _picked["status"]
+                action_text = f"Повернення на доопрацювання: {_picked['label']}"
+                success_text = f"↩ Заявку повернуто: {_picked['label']}."
+                if _req_chain:
+                    _extra_update["chain_stage"] = int(_picked["new_stage"])
+                _notify_action = ("returned", _picked)
+            if not _decision_blocked:
                 try:
-                    if _notify_action and _notify_action[0] == "approved":
-                        notify_events.notify_approved(
-                            clean(selected_row.get("email", "")),
-                            clean(selected_row.get("responsible_person", "")),
-                            selected_code, _req_year, _req_quarter, kind=_req_kind or "measure",
+                    _target_stage = int(_extra_update.get("chain_stage", _req_stage))
+                    if decision == "Повернути на доопрацювання":
+                        atomic_return_request(
+                            request_id=int(selected_id),
+                            expected_status=approval_status,
+                            expected_chain_stage=int(_req_stage),
+                            new_status=new_status,
+                            new_chain_stage=_target_stage,
+                            comment=clean(admin_comment),
+                            action=action_text,
+                            user=current_user,
+                            created_by="Координатор / повернення",
                         )
-                    elif _notify_action and _notify_action[0] == "stage" and _notify_action[1]:
-                        _nx = _notify_action[1]
-                        notify_events.notify_stage_assigned(
-                            _nx.get("email", ""), _nx.get("name", ""), _nx.get("label", ""),
-                            selected_code, _req_year, _req_quarter,
-                            submitter=clean(selected_row.get("responsible_person", "")),
-                            kind=_req_kind or "measure",
+                    else:
+                        approve_request_step(
+                            request_id=int(selected_id),
+                            expected_status=approval_status,
+                            expected_chain_stage=int(_req_stage),
+                            new_status=new_status,
+                            new_chain_stage=_target_stage,
+                            approval_chain=_extra_update.get("approval_chain"),
+                            comment=clean(admin_comment),
+                            action=action_text,
+                            user=current_user,
+                            created_by="Координатор / рішення",
                         )
-                    elif _notify_action and _notify_action[0] == "returned":
-                        _tg = _notify_action[1]
-                        if _tg["key"] == "submitter":
-                            notify_events.notify_returned(
+
+                    if (
+                        decision != "Повернути на доопрацювання"
+                        and _selected_scheme_label
+                        and _selected_scheme_label != clean(selected_row.get("scheme_label"))
+                    ):
+                        try:
+                            supabase.table("monitoring_requests").update({
+                                "scheme_label": _selected_scheme_label,
+                            }).eq("id", int(selected_id)).execute()
+                        except Exception as scheme_label_exc:
+                            show_warning(
+                                "Маршрут оновлено, але назву схеми в картці не синхронізовано.",
+                                scheme_label_exc,
+                                "Синхронізація назви схеми погодження",
+                            )
+
+                    _next_notified_identity = (
+                        _approval_stage_identity(_notify_action[1])
+                        if _notify_action
+                        and _notify_action[0] == "stage"
+                        and _notify_action[1]
+                        else None
+                    )
+                    for _added in _added_after_transition:
+                        try:
+                            write_log(
+                                selected_id,
+                                "Зміна схеми погодження координатором: включено "
+                                f"{clean(_added.get('name')) or clean(_added.get('email')) or clean(_added.get('label'))}",
+                                approval_status,
+                                new_status,
+                                admin_comment,
+                            )
+                        except Exception as audit_exc:
+                            show_warning(
+                                "Рішення збережено, але додатковий запис про включення до ланцюжка не створено.",
+                                audit_exc,
+                                "Додатковий журнал включення до ланцюжка",
+                            )
+
+                        if _approval_stage_identity(_added) == _next_notified_identity:
+                            continue
+                        try:
+                            notify_events.notify_included_in_chain(
+                                _added.get("email", ""),
+                                _added.get("name", ""),
+                                _added.get("label", ""),
+                                _actor_identity("Координатор"),
+                                selected_code,
+                                _req_year,
+                                _req_quarter,
+                                kind=_req_kind or "measure",
+                            )
+                        except Exception as notify_exc:
+                            show_warning(
+                                "Рішення збережено, але лист новій майбутній ланці не надіслано.",
+                                notify_exc,
+                                "Сповіщення про включення до схеми погодження",
+                            )
+
+                    for _ex in _excluded_after_transition:
+                        try:
+                            write_log(
+                                selected_id,
+                                "Зміна схеми погодження координатором: виключено "
+                                f"{clean(_ex.get('name')) or clean(_ex.get('email'))}",
+                                approval_status, new_status, admin_comment,
+                            )
+                        except Exception as audit_exc:
+                            show_warning(
+                                "Рішення збережено, але додатковий запис про виключення з ланцюжка не створено.",
+                                audit_exc,
+                                "Додатковий журнал виключення з ланцюжка",
+                            )
+                        try:
+                            notify_events.notify_excluded_from_chain(
+                                _ex.get("email", ""), _ex.get("name", ""),
+                                _actor_identity("Координатор"),
+                                selected_code, _req_year, _req_quarter,
+                                kind=_req_kind or "measure",
+                            )
+                        except Exception as notify_exc:
+                            show_warning(
+                                "Рішення збережено, але лист виключеній ланці не надіслано.",
+                                notify_exc,
+                                "Сповіщення про виключення з ланцюжка погодження",
+                            )
+
+                    # Миттєві email-сповіщення не входять у транзакцію БД.
+                    try:
+                        if _notify_action and _notify_action[0] == "approved":
+                            notify_events.notify_approved(
                                 clean(selected_row.get("email", "")),
                                 clean(selected_row.get("responsible_person", "")),
+                                selected_code, _req_year, _req_quarter, kind=_req_kind or "measure",
+                            )
+                        elif _notify_action and _notify_action[0] == "stage" and _notify_action[1]:
+                            _nx = _notify_action[1]
+                            notify_events.notify_stage_assigned(
+                                _nx.get("email", ""), _nx.get("name", ""), _nx.get("label", ""),
                                 selected_code, _req_year, _req_quarter,
-                                by_label="Координатор", comment=clean(admin_comment),
+                                submitter=clean(selected_row.get("responsible_person", "")),
                                 kind=_req_kind or "measure",
                             )
-                        elif _tg["key"].startswith("stage:") and _req_chain:
-                            _ts = _req_chain[_tg["new_stage"]]
-                            notify_events.notify_returned(
-                                _ts.get("email", ""), _ts.get("name", ""),
-                                selected_code, _req_year, _req_quarter,
-                                by_label="Координатор", comment=clean(admin_comment),
-                                kind=_req_kind or "measure",
-                            )
-                except Exception as notify_exc:
-                    show_warning(
-                        "Рішення збережено, але миттєве email-сповіщення не відправлено.",
-                        notify_exc,
-                        "Email після рішення координатора",
+                        elif _notify_action and _notify_action[0] == "returned":
+                            _tg = _notify_action[1]
+                            if _tg["key"] == "submitter":
+                                notify_events.notify_returned(
+                                    clean(selected_row.get("email", "")),
+                                    clean(selected_row.get("responsible_person", "")),
+                                    selected_code, _req_year, _req_quarter,
+                                    by_label="Координатор", comment=clean(admin_comment),
+                                    kind=_req_kind or "measure",
+                                )
+                            elif _tg["key"].startswith("stage:") and _req_chain:
+                                _ts = _req_chain[_tg["new_stage"]]
+                                notify_events.notify_returned(
+                                    _ts.get("email", ""), _ts.get("name", ""),
+                                    selected_code, _req_year, _req_quarter,
+                                    by_label="Координатор", comment=clean(admin_comment),
+                                    kind=_req_kind or "measure",
+                                )
+                    except Exception as notify_exc:
+                        show_warning(
+                            "Рішення збережено, але миттєве email-сповіщення не відправлено.",
+                            notify_exc,
+                            "Email після рішення координатора",
+                        )
+
+                    # Пункт із тестування: стале (не зникаюче) повідомлення, щоб
+                    # координатор точно побачив і зрозумів, що ЦЯ заявка вже
+                    # оброблена — і якщо список автоматично перейшов до іншої
+                    # заявки, це НОВА заявка, яку варто переглянути з початку,
+                    # а не "не зарахувалось попереднє рішення".
+                    st.session_state["adm_last_decision_notice"] = (
+                        f"{success_text} Якщо в черзі є ще заявки — систему щойно "
+                        f"переключило на НАСТУПНУ заявку. Це не помилка: перегляньте "
+                        f"її дані з самого початку, перш ніж ухвалювати рішення."
                     )
+                    monitoring_data.invalidate_monitoring_cache()
+                    st.rerun()
+                except TransitionRejected as exc:
+                    st.error(exc.message)
+                except Exception as exc:
+                    show_incident(exc, context="Атомарне рішення координатора")
 
-                # Пункт із тестування: стале (не зникаюче) повідомлення, щоб
-                # координатор точно побачив і зрозумів, що ЦЯ заявка вже
-                # оброблена — і якщо список автоматично перейшов до іншої
-                # заявки, це НОВА заявка, яку варто переглянути з початку,
-                # а не "не зарахувалось попереднє рішення".
-                st.session_state["adm_last_decision_notice"] = (
-                    f"{success_text} Якщо в черзі є ще заявки — систему щойно "
-                    f"переключило на НАСТУПНУ заявку. Це не помилка: перегляньте "
-                    f"її дані з самого початку, перш ніж ухвалювати рішення."
-                )
-                monitoring_data.invalidate_monitoring_cache()
-                st.rerun()
-            except TransitionRejected as exc:
-                st.error(exc.message)
-            except Exception as exc:
-                show_incident(exc, context="Атомарне рішення координатора")
-
-st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
 if st.session_state.get("adm_last_decision_notice"):
     st.success(st.session_state["adm_last_decision_notice"])

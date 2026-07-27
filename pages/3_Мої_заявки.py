@@ -661,59 +661,53 @@ m4.metric("Погоджено", approved)
 # REQUEST LIST — HTML TABLE
 # ============================================================
 
-st.markdown(
-    '<div class="myreq-section-header"><div class="myreq-section-title">'
-    'Перелік поданих відомостей</div></div>',
-    unsafe_allow_html=True,
-)
+with st.expander("Перелік поданих відомостей", expanded=False):
+    _table_rows = []
+    for _, _row in filtered.iterrows():
+        _coord_name, _coord_phone = _coordinator_details(_row)
+        _table_rows.append(
+            "<tr>"
+            f"<td>{display_text(_row.get('id'))}</td>"
+            f"<td>{display_text(_period_label(_row.get('year'), _row.get('quarter')))}</td>"
+            f"<td>{display_text(_target_for_record(_row))}</td>"
+            f"<td>{display_text(_fact_for_record(_row))}</td>"
+            f"<td>{display_text(_row.get('_visual_status'))}</td>"
+            f"<td>{display_text(_row.get('approval_status'))}</td>"
+            f"<td>{display_text(_coord_name)}</td>"
+            f"<td>{display_text(_coord_phone)}</td>"
+            f"<td>{display_text(_row.get('admin_comment'))}</td>"
+            f"<td>{display_text(format_kyiv_datetime(_row.get('submitted_at')))}</td>"
+            "</tr>"
+        )
 
-_table_rows = []
-for _, _row in filtered.iterrows():
-    _coord_name, _coord_phone = _coordinator_details(_row)
-    _table_rows.append(
-        "<tr>"
-        f"<td>{display_text(_row.get('id'))}</td>"
-        f"<td>{display_text(_period_label(_row.get('year'), _row.get('quarter')))}</td>"
-        f"<td>{display_text(_target_for_record(_row))}</td>"
-        f"<td>{display_text(_fact_for_record(_row))}</td>"
-        f"<td>{display_text(_row.get('_visual_status'))}</td>"
-        f"<td>{display_text(_row.get('approval_status'))}</td>"
-        f"<td>{display_text(_coord_name)}</td>"
-        f"<td>{display_text(_coord_phone)}</td>"
-        f"<td>{display_text(_row.get('admin_comment'))}</td>"
-        f"<td>{display_text(format_kyiv_datetime(_row.get('submitted_at')))}</td>"
-        "</tr>"
+    st.markdown(
+        """
+        <div class="myreq-table-scroll">
+          <table class="myreq-html-table">
+            <thead>
+              <tr>
+                <th>ID заявки</th>
+                <th>Звітний період</th>
+                <th>Цільовий орієнтир</th>
+                <th>Фактичне значення</th>
+                <th>Статус виконання</th>
+                <th>Статус погодження</th>
+                <th>Координатор</th>
+                <th>Номер телефону координатора</th>
+                <th>Коментар координатора</th>
+                <th>Дата подання</th>
+              </tr>
+            </thead>
+            <tbody>
+        """
+        + "".join(_table_rows)
+        + """
+            </tbody>
+          </table>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
-
-st.markdown(
-    """
-    <div class="myreq-table-scroll">
-      <table class="myreq-html-table">
-        <thead>
-          <tr>
-            <th>ID заявки</th>
-            <th>Звітний період</th>
-            <th>Цільовий орієнтир</th>
-            <th>Фактичне значення</th>
-            <th>Статус виконання</th>
-            <th>Статус погодження</th>
-            <th>Координатор</th>
-            <th>Номер телефону координатора</th>
-            <th>Коментар координатора</th>
-            <th>Дата подання</th>
-          </tr>
-        </thead>
-        <tbody>
-    """
-    + "".join(_table_rows)
-    + """
-        </tbody>
-      </table>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
 
 # ============================================================
 # DETAILED VIEW

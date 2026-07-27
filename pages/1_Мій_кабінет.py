@@ -23,7 +23,7 @@ from core.transitions import (
     resubmit_request,
     return_request as atomic_return_request,
 )
-from core.submission_ui import render_submission_notice, set_submission_notice
+from core.submission_ui import NOTICE_KEY, set_submission_notice
 
 from core.access import (
     filter_requests_for_user,
@@ -694,6 +694,24 @@ def _render_cabinet_decision_notices():
             st.rerun()
 
 
+def _render_cabinet_submission_notice():
+    """Одноразове стандартне зелене повідомлення внизу робочої зони."""
+    notice = st.session_state.pop(NOTICE_KEY, None)
+    if not isinstance(notice, dict):
+        return
+    repeated = bool(notice.get("repeated"))
+    codes = [clean(code) for code in notice.get("codes") or [] if clean(code)]
+    stage = clean(notice.get("first_stage_label")) or "Координатор"
+    if len(codes) > 1:
+        heading = "Заявки повторно подано" if repeated else "Заявки подано"
+        detail = f"Вони очікують на розгляд: {stage}."
+    else:
+        heading = "Заявку повторно подано" if repeated else "Заявку подано"
+        detail = f"Вона очікує на розгляд: {stage}."
+    code_text = f" Код: {', '.join(codes)}." if codes else ""
+    st.success(f"{heading}. {detail}{code_text}")
+
+
 def load_logs(request_id):
     rows = fetch_all(
         "monitoring_logs",
@@ -764,6 +782,7 @@ df = filter_requests_for_user(
 
 if df.empty:
     st.warning("Для цього користувача немає доступних відомостей за закріпленим ССП.")
+    _render_cabinet_submission_notice()
     render_footer()
     st.stop()
 
@@ -788,7 +807,6 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-render_submission_notice()
 
 # ============================================================
 # FILTERS
@@ -819,6 +837,7 @@ else:
 
 if not available_departments:
     st.warning("Для цього користувача немає доступних ССП.")
+    _render_cabinet_submission_notice()
     render_footer()
     st.stop()
 
@@ -949,6 +968,7 @@ st.caption(f"Знайдено відомостей: {len(filtered)}")
 if filtered.empty:
     st.info("За обраними параметрами відбору відомостей не знайдено.")
     _render_cabinet_decision_notices()
+    _render_cabinet_submission_notice()
     render_footer()
     st.stop()
 
@@ -991,7 +1011,15 @@ _request_ids = tuple(
 )
 _initial_submitters = load_initial_submitters(_request_ids)
 
-with st.expander("Перелік усіх відомостей", expanded=False):
+_cabinet_ssp_number = clean(current_user.get("ssp_index"))
+if not _cabinet_ssp_number:
+    _ssp_numbers = re.findall(r"\d+", clean(selected_department))
+    _cabinet_ssp_number = _ssp_numbers[0] if _ssp_numbers else "—"
+
+with st.expander(
+    f"Перелік поданих відомостей від ССП №{_cabinet_ssp_number}",
+    expanded=False,
+):
     _render_html_table(
         _table_headers,
         _request_table_rows(filtered, _strat_lookup, _initial_submitters),
@@ -1030,10 +1058,9 @@ _CAB_REQUEST_SELECTOR_KEY = "cabinet_request_selector"
 
 options = [_CAB_REQUEST_PLACEHOLDER]
 _option_by_id = {}
-for _, row in filtered.iterrows():
-    prefix = "🟣 " if _request_is_my_turn(row) else ""
+for _, row in _pending_for_me.iterrows():
     option_label = (
-        f"{prefix}ID {row['id']} | {row['strat_code']} | "
+        f"ID {row['id']} | {row['strat_code']} | "
         f"{row['year']} {row['quarter']} квартал | {row['approval_status']}"
     )
     options.append(option_label)
@@ -1074,14 +1101,14 @@ selected = st.selectbox(
 
 if selected == _CAB_REQUEST_PLACEHOLDER:
     st.info(
-        "Оберіть заявку для детального перегляду. Після ухвалення рішення "
-        "попередній вибір скидається автоматично."
+        "Оберіть заявку, що зараз перебуває на вашій ланці погодження. "
+        "Інші відомості ССП доступні лише в оглядовій таблиці вище."
     )
     _render_cabinet_decision_notices()
 else:
-    raw_id = selected.replace("🟣 ", "").split("|")[0].replace("ID", "").strip()
+    raw_id = selected.split("|")[0].replace("ID", "").strip()
     selected_id = int(raw_id)
-    selected_row = filtered[filtered["id"].astype(int) == selected_id].iloc[0].copy()
+    selected_row = _pending_for_me[_pending_for_me["id"].astype(int) == selected_id].iloc[0].copy()
 
     _live_request = load_request_live(selected_id)
     _live_request_verified = _live_request is not None
@@ -1825,6 +1852,8 @@ else:
             [list(row) for row in _history_table.itertuples(index=False, name=None)],
             empty_message="Історії змін для цієї заявки поки що немає.",
         )
+
+_render_cabinet_submission_notice()
 
 # ============================================================
 # РУЧНІ ЗАКРИТТЯ ЗАХОДІВ — реакція керівника ССП

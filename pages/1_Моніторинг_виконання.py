@@ -1451,6 +1451,11 @@ filtered_measures = filtered_measures[
     filtered_measures.apply(lambda row: has_target_for_year(row, selected_year), axis=1)
 ]
 
+if filtered_measures.empty:
+    st.info("Заходи для подання моніторингової інформації відсутні")
+    render_footer()
+    st.stop()
+
 filtered_codes = filtered_measures["code"].astype(str).str.strip().tolist()
 monitoring_selected = subset_monitoring_for_selection(
     monitoring_df,

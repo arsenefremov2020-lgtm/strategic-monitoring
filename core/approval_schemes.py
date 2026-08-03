@@ -1,30 +1,15 @@
 # core/approval_schemes.py
 
-"""
-Схеми погодження заявок моніторингу.
+"""Динамічний маршрут погодження заявок моніторингу.
 
-Концепція:
-- подавач (ССП) при поданні обирає СХЕМУ — фіксований порядок ланок
-  погодження — і КОНКРЕТНИХ осіб для кожної ланки свого ССП;
-- координатор (адміністратор) є ОБОВʼЯЗКОВОЮ ланкою в кожній схемі
-  (може бути не першим, але без нього заявка не пройде);
-- адміністратор може підтвердити або змінити схему — зміна логуються;
-- кожна ланка може повернути заявку: подавачу або на будь-яку
-  попередню ланку (на вибір).
+Ланцюг зберігається в ``monitoring_requests.approval_chain`` як JSON-рядок::
 
-Ланцюг зберігається в monitoring_requests.approval_chain як JSON-рядок:
     [{"role": "admin", "label": "Координатор",
       "email": "...", "name": "..."}, ...]
-chain_stage — індекс ПОТОЧНОЇ ланки, що очікує рішення.
 
-Статуси approval_status синхронізовані з ланцюгом так, щоб
-успадкований код (Dashboard, статистика, email-дайджести) продовжував
-працювати без змін:
-    admin      → "Очікує погодження"        (успадкований статус координатора)
-    ssp_head   → "Очікує: Керівник ССП"     (ланка керівника ССП)
-    unit_head  → "Очікує: Керівник управління"
-    ssp_deputy → "Очікує: Заступник керівника ССП"
-    завершено  → "Погоджено"
+``chain_stage`` — індекс поточної ланки, яка очікує рішення. Нова заявка
+завжди починається з єдиної ланки координатора відповідного ССП. Наступні
+ланки додаються поступово діями учасників маршруту.
 """
 
 from __future__ import annotations
@@ -33,13 +18,49 @@ import json
 from datetime import datetime, timezone
 
 from config.roles import (
-    ROLE_SSP,
     ROLE_ADMIN,
-    ROLE_SSP_HEAD,
-    ROLE_UNIT_HEAD,
     ROLE_SSP_DEPUTY,
+    ROLE_SSP_HEAD,
     ROLE_SUPER_ADMIN,
 )
+
+
+# ------------------------------------------------------------
+# Статуси заявки
+# ------------------------------------------------------------
+
+STATUS_COORDINATOR_REVIEW = "На розгляді координатора"
+STATUS_RETURNED_BY_COORDINATOR = "Повернуто на доопрацювання координатором"
+STATUS_RETURNED_BY_MANAGER = "Повернуто на доопрацювання керівником"
+STATUS_RETURNED_BY_SUPERADMIN = "Повернуто на доопрацювання супер-адміном"
+STATUS_WAITING_MANAGER_SELECTION = "Очікує вибору керівника"
+STATUS_SUPERADMIN_REVIEW = "На розгляді супер-адміна"
+STATUS_MANAGER_REVIEW = "На розгляді керівника"
+APPROVED_STATUS = "Погоджено"
+
+ALL_WAITING_STATUSES = [
+    STATUS_COORDINATOR_REVIEW,
+    STATUS_WAITING_MANAGER_SELECTION,
+    STATUS_SUPERADMIN_REVIEW,
+    STATUS_MANAGER_REVIEW,
+]
+
+ALL_RETURNED_STATUSES = [
+    STATUS_RETURNED_BY_COORDINATOR,
+    STATUS_RETURNED_BY_MANAGER,
+    STATUS_RETURNED_BY_SUPERADMIN,
+]
+
+ALL_APPROVAL_STATUSES = [
+    STATUS_COORDINATOR_REVIEW,
+    STATUS_RETURNED_BY_COORDINATOR,
+    STATUS_RETURNED_BY_MANAGER,
+    STATUS_RETURNED_BY_SUPERADMIN,
+    STATUS_WAITING_MANAGER_SELECTION,
+    STATUS_SUPERADMIN_REVIEW,
+    STATUS_MANAGER_REVIEW,
+    APPROVED_STATUS,
+]
 
 
 # ------------------------------------------------------------
@@ -47,479 +68,23 @@ from config.roles import (
 # ------------------------------------------------------------
 
 STAGE_LABELS = {
-    ROLE_ADMIN:       "Координатор",
-    ROLE_UNIT_HEAD:   "Керівник управління",
-    ROLE_SSP_DEPUTY:  "Заступник керівника ССП",
-    ROLE_SSP_HEAD:    "Керівник ССП",
+    ROLE_ADMIN: "Координатор",
+    ROLE_SSP_DEPUTY: "Заступник керівника ССП",
+    ROLE_SSP_HEAD: "Керівник ССП",
     ROLE_SUPER_ADMIN: "Супер-адмін",
 }
 
 STAGE_WAITING_STATUS = {
-    ROLE_ADMIN:       "Очікує погодження",
-    ROLE_SSP_HEAD:    "Очікує: Керівник ССП",
-    ROLE_UNIT_HEAD:   "Очікує: Керівник управління",
-    ROLE_SSP_DEPUTY:  "Очікує: Заступник керівника ССП",
-    ROLE_SUPER_ADMIN: "Очікує: Супер-адмін",
+    ROLE_ADMIN: STATUS_COORDINATOR_REVIEW,
+    ROLE_SSP_DEPUTY: STATUS_MANAGER_REVIEW,
+    ROLE_SSP_HEAD: STATUS_MANAGER_REVIEW,
+    ROLE_SUPER_ADMIN: STATUS_SUPERADMIN_REVIEW,
 }
-
-APPROVED_STATUS = "Погоджено"
-RETURNED_STATUS = "Повернуто на доопрацювання"
-
-# Статуси, за яких заявка «у процесі погодження» (для фільтрів/кабінетів)
-ALL_WAITING_STATUSES = list(STAGE_WAITING_STATUS.values())
-
-
-# ------------------------------------------------------------
-# Каталог схем (фіксований; координатор — обовʼязковий у кожній)
-# ------------------------------------------------------------
-
-APPROVAL_SCHEMES: dict[str, list[str]] = {
-    "Координатор → Керівник ССП":
-        [ROLE_ADMIN, ROLE_SSP_HEAD],
-    "Координатор → Керівник управління":
-        [ROLE_ADMIN, ROLE_UNIT_HEAD],
-    "Координатор → Заступник керівника ССП":
-        [ROLE_ADMIN, ROLE_SSP_DEPUTY],
-    "Координатор → Керівник управління → Керівник ССП":
-        [ROLE_ADMIN, ROLE_UNIT_HEAD, ROLE_SSP_HEAD],
-    "Координатор → Заступник керівника ССП → Керівник ССП":
-        [ROLE_ADMIN, ROLE_SSP_DEPUTY, ROLE_SSP_HEAD],
-    "Координатор → Керівник управління → Заступник → Керівник ССП":
-        [ROLE_ADMIN, ROLE_UNIT_HEAD, ROLE_SSP_DEPUTY, ROLE_SSP_HEAD],
-    "Керівник управління → Координатор → Керівник ССП":
-        [ROLE_UNIT_HEAD, ROLE_ADMIN, ROLE_SSP_HEAD],
-    "Керівник управління → Координатор → Заступник керівника ССП":
-        [ROLE_UNIT_HEAD, ROLE_ADMIN, ROLE_SSP_DEPUTY],
-    "Керівник управління → Координатор → Заступник керівника ССП → Керівник ССП":
-        [ROLE_UNIT_HEAD, ROLE_ADMIN, ROLE_SSP_DEPUTY, ROLE_SSP_HEAD],
-    "Заступник керівника ССП → Координатор → Керівник ССП":
-        [ROLE_SSP_DEPUTY, ROLE_ADMIN, ROLE_SSP_HEAD],
-    "Керівник управління → Заступник → Координатор → Керівник ССП":
-        [ROLE_UNIT_HEAD, ROLE_SSP_DEPUTY, ROLE_ADMIN, ROLE_SSP_HEAD],
-
-    # Єдина схема для випадків, коли подавач сам є однією з ланок
-    # погодження (керівник ССП / керівник управління / заступник):
-    # немає сенсу, щоб особа погоджувала саму себе, тож маршрут
-    # звужується рівно до обов'язкової ланки координатора.
-    "Координатор (без додаткових ланок)":
-        [ROLE_ADMIN],
-}
-
-DEFAULT_SCHEME = "Координатор → Керівник ССП"
-
-# Схема, яка застосовується примусово (без вибору), коли заявку подає
-# роль, що сама фігурує серед ланок погодження.
-SUBMITTER_SELF_APPROVAL_SCHEME = "Координатор (без додаткових ланок)"
-
-
-def scheme_options() -> list[str]:
-    return list(APPROVAL_SCHEMES.keys())
-
-
-def submitter_is_approving_role(role: str) -> bool:
-    """
-    Чи є роль подавача однією з тих, що самі можуть бути ланкою
-    погодження (керівник ССП / керівник управління / заступник).
-
-    Для звичайного «Відповідального від ССП» (ROLE_SSP) — False,
-    для нього діють усі схеми без обмежень.
-    """
-    return role in (ROLE_SSP_HEAD, ROLE_UNIT_HEAD, ROLE_SSP_DEPUTY)
-
-
-def _approval_role_rank(role: str) -> int:
-    """
-    Ієрархія для перевірки, що подавач не створює маршрут нижче себе.
-
-    Організаційна вертикаль погодження (ТЗ DEMO 1.9):
-        координатор → керівник управління → заступник керівника ССП →
-        керівник ССП.
-    Тобто заступник керівника ССП СТОЇТЬ ВИЩЕ за керівника управління —
-    раніше вони помилково вважалися рівними, і заступник міг обрати
-    маршрут із «нижчою» ланкою керівника управління.
-    """
-    if role == ROLE_ADMIN:
-        return 0
-    if role == ROLE_UNIT_HEAD:
-        return 1
-    if role == ROLE_SSP_DEPUTY:
-        return 2
-    if role == ROLE_SSP_HEAD:
-        return 3
-    if role == ROLE_SUPER_ADMIN:
-        return 4
-    return -1
-
-
-def _scheme_has_required_coordinator(roles: list[str]) -> bool:
-    return ROLE_ADMIN in roles and roles[-1] != ROLE_ADMIN
-
-
-_VERTICAL_APPROVAL_ROLES = (
-    ROLE_UNIT_HEAD,
-    ROLE_SSP_DEPUTY,
-    ROLE_SSP_HEAD,
-)
-
-
-def _roles_from_chain(chain) -> list[str]:
-    """Нормалізований список ролей із JSON-ланцюга або готового списку."""
-    return [
-        str(stage.get("role") or "").strip()
-        for stage in parse_chain(chain)
-        if str(stage.get("role") or "").strip()
-    ]
-
-
-def scheme_name_for_roles(roles_or_chain) -> str:
-    """Назва каталожної схеми для точної послідовності ролей, якщо вона є."""
-    if isinstance(roles_or_chain, list) and all(
-        isinstance(item, str) for item in roles_or_chain
-    ):
-        roles = [str(item or "").strip() for item in roles_or_chain if str(item or "").strip()]
-    else:
-        roles = _roles_from_chain(roles_or_chain)
-    for name, catalog_roles in APPROVAL_SCHEMES.items():
-        if roles == catalog_roles:
-            return name
-    return ""
-
-
-def roles_with_recorded_decisions(chain, logs) -> list[str]:
-    """Ролі ланок, які вже ухвалювали рішення за журналом заявки.
-
-    Це важливо для заявок, які вища ланка повернула назад координатору:
-    така ланка стоїть після координатора в поточному JSON-маршруті, але її
-    рівень уже не можна прибрати або замінити нижчим.
-    """
-    parsed_chain = parse_chain(chain)
-    if not parsed_chain or logs is None:
-        return []
-
-    if hasattr(logs, "iterrows"):
-        rows = (row for _, row in logs.iterrows())
-    elif isinstance(logs, (list, tuple)):
-        rows = iter(logs)
-    else:
-        return []
-
-    role_by_waiting_status = {
-        status: role for role, status in STAGE_WAITING_STATUS.items()
-    }
-    decision_prefixes = (
-        "погодження ланкою",
-        "погодження супер-адміном",
-        "повернення",
-        "редагування ланкою",
-        "ескалація",
-    )
-    decided_roles: set[str] = set()
-    for row in rows:
-        getter = row.get if hasattr(row, "get") else lambda key, default=None: default
-        old_status = str(getter("old_status", "") or "").strip()
-        role = role_by_waiting_status.get(old_status)
-        if not role:
-            continue
-        action = str(getter("action", "") or "").strip().casefold()
-        if not action.startswith(decision_prefixes):
-            continue
-        decided_roles.add(role)
-
-    return [
-        str(stage.get("role") or "").strip()
-        for stage in parsed_chain
-        if str(stage.get("role") or "").strip() in decided_roles
-    ]
-
-
-def _coordinator_scheme_context(
-    chain,
-    stage_idx: int,
-    decided_roles=None,
-):
-    parsed_chain = parse_chain(chain)
-    coordinator_idx = parse_stage(stage_idx)
-    coordinator = current_stage(parsed_chain, coordinator_idx)
-    if not coordinator or str(coordinator.get("role") or "").strip() != ROLE_ADMIN:
-        return parsed_chain, coordinator_idx, [], 0
-
-    all_roles = [
-        str(stage.get("role") or "").strip()
-        for stage in parsed_chain
-    ]
-    completed = {
-        str(role or "").strip()
-        for role in (decided_roles or [])
-        if str(role or "").strip()
-    }
-
-    # Якщо супер-адмін уже ухвалював рішення, вертикаль нижче нього більше
-    # не перебудовується: це окрема найвища ланка маршруту.
-    if ROLE_SUPER_ADMIN in completed:
-        protected_roles = all_roles[: coordinator_idx + 1]
-        return parsed_chain, coordinator_idx, protected_roles, _approval_role_rank(ROLE_SUPER_ADMIN)
-
-    protected_end = coordinator_idx
-    for index, role in enumerate(all_roles):
-        if role in completed:
-            protected_end = max(protected_end, index)
-    protected_roles = all_roles[: protected_end + 1]
-
-    passed_vertical_ranks = [
-        _approval_role_rank(role)
-        for role in set(protected_roles) | completed
-        if role in _VERTICAL_APPROVAL_ROLES
-    ]
-    ceiling = max(passed_vertical_ranks, default=_approval_role_rank(ROLE_ADMIN))
-    return parsed_chain, coordinator_idx, protected_roles, ceiling
-
-
-def _valid_coordinator_catalog_scheme(
-    candidate_roles: list[str], protected_roles: list[str], ceiling: int,
-) -> bool:
-    """Доменні правила зміни лише ще не пройденого хвоста маршруту."""
-    if not protected_roles or ROLE_ADMIN not in protected_roles:
-        return False
-    if candidate_roles[: len(protected_roles)] != protected_roles:
-        return False
-
-    tail_roles = candidate_roles[len(protected_roles):]
-    if not tail_roles:
-        return False
-    if any(role not in _VERTICAL_APPROVAL_ROLES for role in tail_roles):
-        return False
-    if len(set(candidate_roles)) != len(candidate_roles):
-        return False
-
-    tail_ranks = [_approval_role_rank(role) for role in tail_roles]
-    if any(rank <= ceiling for rank in tail_ranks):
-        return False
-    if any(left >= right for left, right in zip(tail_ranks, tail_ranks[1:])):
-        return False
-    return candidate_roles[-1] != ROLE_ADMIN
-
-
-def scheme_options_for_coordinator(
-    chain,
-    stage_idx: int,
-    current_scheme_name: str = "",
-    decided_roles=None,
-) -> list[str]:
-    """Альтернативні каталожні схеми, доступні координатору.
-
-    Пройдена частина маршруту до координатора включно та ланки, які вже
-    ухвалювали рішення після нього, зберігаються дослівно. У хвіст можна
-    додавати лише унікальні вертикальні ланки з рангом строго
-    вище за найвищий уже пройдений рівень, у порядку зростання рангу.
-    Поточна схема до результату не включається: сторінка показує її окремо як
-    типовий варіант «залишити як є».
-    """
-    parsed_chain, coordinator_idx, protected_roles, ceiling = _coordinator_scheme_context(
-        chain, stage_idx, decided_roles
-    )
-    if not protected_roles or ceiling >= _approval_role_rank(ROLE_SUPER_ADMIN):
-        return []
-
-    current_scheme_name = str(current_scheme_name or "").strip()
-    if current_scheme_name == SUBMITTER_SELF_APPROVAL_SCHEME:
-        return []
-
-    inferred_current = scheme_name_for_roles(parsed_chain)
-    current_name = (
-        current_scheme_name
-        if current_scheme_name in APPROVAL_SCHEMES
-        else inferred_current
-    )
-    current_roles = APPROVAL_SCHEMES.get(current_name, _roles_from_chain(parsed_chain))
-
-    options: list[str] = []
-    for name, candidate_roles in APPROVAL_SCHEMES.items():
-        if name == SUBMITTER_SELF_APPROVAL_SCHEME:
-            continue
-        if name == current_name or candidate_roles == current_roles:
-            continue
-        if _valid_coordinator_catalog_scheme(candidate_roles, protected_roles, ceiling):
-            options.append(name)
-    return options
-
-
-def coordinator_scheme_tail_roles(
-    chain,
-    stage_idx: int,
-    scheme_name: str,
-    decided_roles=None,
-) -> list[str] | None:
-    """Повний хвіст вибраної схеми після координатора.
-
-    ``None`` означає, що схема не зберігає захищену частину маршруту або
-    додає ланку не вище вже досягнутої стелі.
-    """
-    _, coordinator_idx, protected_roles, ceiling = _coordinator_scheme_context(
-        chain, stage_idx, decided_roles
-    )
-    roles = APPROVAL_SCHEMES.get(str(scheme_name or "").strip())
-    if not protected_roles or roles is None:
-        return None
-    if roles[: len(protected_roles)] != protected_roles:
-        return None
-    if not _valid_coordinator_catalog_scheme(roles, protected_roles, ceiling):
-        return None
-    return list(roles[coordinator_idx + 1:])
-
-
-def scheme_options_for_submitter(role: str) -> list[str]:
-    """
-    Повертає список схем, доступних подавачу DEMO 1.9.
-
-    Правила ТЗ:
-    - координатор обов'язковий у кожній схемі;
-    - координатор не може бути останньою ланкою, крім спеціального випадку,
-      коли дані подає керівник ССП;
-    - подавач-ланка погодження не може створити маршрут нижче себе;
-    - керівник ССП подає тільки через координатора.
-    """
-    role = str(role or "").strip()
-
-    if role == ROLE_SSP_HEAD:
-        return [SUBMITTER_SELF_APPROVAL_SCHEME]
-
-    if role == ROLE_SSP:
-        return [
-            name for name, roles in APPROVAL_SCHEMES.items()
-            if _scheme_has_required_coordinator(roles)
-        ]
-
-    if role in (ROLE_UNIT_HEAD, ROLE_SSP_DEPUTY):
-        submitter_rank = _approval_role_rank(role)
-        options: list[str] = []
-        for name, roles in APPROVAL_SCHEMES.items():
-            if not _scheme_has_required_coordinator(roles):
-                continue
-            # Не дозволяємо маршрути, де є ланка, НИЖЧА за подавача,
-            # а також маршрути, що містять САМОГО подавача як ланку
-            # (особа не може погоджувати власне подання).
-            ranked_roles = [r for r in roles if r in (ROLE_UNIT_HEAD, ROLE_SSP_DEPUTY, ROLE_SSP_HEAD)]
-            if any(_approval_role_rank(r) < submitter_rank for r in ranked_roles):
-                continue
-            if role in ranked_roles:
-                continue
-            options.append(name)
-        return options or [SUBMITTER_SELF_APPROVAL_SCHEME]
-
-    return scheme_options()
 
 
 # ------------------------------------------------------------
 # Побудова та читання ланцюга
 # ------------------------------------------------------------
-
-def build_chain(scheme_name: str, persons: dict[str, dict]) -> list[dict]:
-    """
-    Будує ланцюг для схеми.
-
-    persons: {role: {"email": ..., "name": ...}} — конкретні особи,
-    обрані подавачем (або адміністратором при зміні схеми).
-    """
-    roles = APPROVAL_SCHEMES.get(scheme_name, APPROVAL_SCHEMES[DEFAULT_SCHEME])
-    chain = []
-    for role in roles:
-        person = persons.get(role, {}) or {}
-        chain.append({
-            "role": role,
-            "label": STAGE_LABELS.get(role, role),
-            "email": str(person.get("email") or "").strip().lower(),
-            "name": str(person.get("name") or "").strip(),
-        })
-    return chain
-
-
-def append_final_coordinator_after_head_edit(
-    chain,
-    ssp_index: str,
-) -> tuple[list[dict] | None, int | None]:
-    """Додає того самого координатора фінальною ланкою після редагування керівником ССП.
-
-    Наявний маршрут не обрізається: усі вже пройдені ланки лишаються в
-    ланцюгу як історія. Якщо координатор уже є останньою ланкою, повторно
-    його не дублюємо.
-    """
-    parsed = [dict(stage) for stage in parse_chain(chain)]
-    if parsed and str(parsed[-1].get("role") or "").strip() == ROLE_ADMIN:
-        return parsed, len(parsed) - 1
-
-    coordinator = next(
-        (dict(stage) for stage in parsed if str(stage.get("role") or "").strip() == ROLE_ADMIN),
-        None,
-    )
-    if coordinator is None or not (coordinator.get("email") or coordinator.get("name")):
-        candidates = stage_candidates(ROLE_ADMIN, ssp_index)
-        if not candidates:
-            return None, None
-        candidate = candidates[0]
-        coordinator = {
-            "role": ROLE_ADMIN,
-            "label": STAGE_LABELS[ROLE_ADMIN],
-            "email": str(candidate.get("email") or "").strip().lower(),
-            "name": str(candidate.get("name") or "").strip(),
-        }
-    else:
-        coordinator["role"] = ROLE_ADMIN
-        coordinator["label"] = STAGE_LABELS[ROLE_ADMIN]
-        coordinator["email"] = str(coordinator.get("email") or "").strip().lower()
-        coordinator["name"] = str(coordinator.get("name") or "").strip()
-
-    parsed.append(coordinator)
-    return parsed, len(parsed) - 1
-
-
-def scheme_label_for_chain(chain) -> str:
-    """Каталожна назва або послідовність назв ролей для нестандартного маршруту."""
-    parsed = parse_chain(chain)
-    catalog_name = scheme_name_for_roles(parsed)
-    if catalog_name:
-        return catalog_name
-    return " → ".join(
-        str(stage.get("label") or STAGE_LABELS.get(stage.get("role"), stage.get("role", ""))).strip()
-        for stage in parsed
-        if str(stage.get("role") or "").strip()
-    )
-
-
-def first_approval_stage_has_acted(chain, logs) -> bool:
-    """Чи зафіксовано хоча б одне рішення першої ланки погодження."""
-    parsed = parse_chain(chain)
-    if not parsed or logs is None:
-        return False
-    try:
-        if hasattr(logs, "empty") and logs.empty:
-            return False
-    except Exception:
-        pass
-
-    first_waiting_status = waiting_status_for_stage(parsed[0])
-    decision_prefixes = (
-        "погодження",
-        "повернення",
-        "редагування ланкою",
-        "ескалація",
-        "зміна схеми погодження",
-    )
-    if hasattr(logs, "iterrows"):
-        rows = (row for _, row in logs.iterrows())
-    else:
-        try:
-            rows = iter(logs)
-        except TypeError:
-            return False
-
-    for row in rows:
-        getter = row.get if hasattr(row, "get") else lambda key, default=None: default
-        old_status = str(getter("old_status", "") or "").strip()
-        action = str(getter("action", "") or "").strip().casefold()
-        if old_status == first_waiting_status and action.startswith(decision_prefixes):
-            return True
-    return False
-
 
 def chain_to_json(chain: list[dict]) -> str:
     return json.dumps(chain, ensure_ascii=False)
@@ -560,47 +125,110 @@ def current_stage(chain: list[dict], stage_idx: int) -> dict | None:
 def waiting_status_for_stage(stage: dict | None) -> str:
     if not stage:
         return APPROVED_STATUS
-    return STAGE_WAITING_STATUS.get(stage.get("role"), f"Очікує: {stage.get('label', '')}")
+    return STAGE_WAITING_STATUS.get(
+        str(stage.get("role") or "").strip(),
+        STATUS_MANAGER_REVIEW,
+    )
 
 
 def status_after_approve(chain: list[dict], stage_idx: int) -> tuple[str, int]:
-    """Статус і новий chain_stage після погодження поточною ланкою."""
+    """Статус і новий ``chain_stage`` після погодження поточною ланкою."""
     next_idx = stage_idx + 1
     next_stage = current_stage(chain, next_idx)
-    if next_stage is None:
-        return APPROVED_STATUS, next_idx
-    return waiting_status_for_stage(next_stage), next_idx
+    if next_stage is not None:
+        return waiting_status_for_stage(next_stage), next_idx
+
+    stage = current_stage(chain, stage_idx)
+    if stage and str(stage.get("role") or "").strip() == ROLE_ADMIN:
+        return STATUS_WAITING_MANAGER_SELECTION, next_idx
+    return APPROVED_STATUS, next_idx
+
+
+def scheme_label_for_chain(chain) -> str:
+    """Послідовність назв ланок без прив’язки до каталогу сталих схем."""
+    return " → ".join(
+        str(
+            stage.get("label")
+            or STAGE_LABELS.get(stage.get("role"), stage.get("role", ""))
+        ).strip()
+        for stage in parse_chain(chain)
+        if str(stage.get("role") or "").strip()
+    )
+
+
+def chain_route_text(chain: list[dict]) -> str:
+    """Маршрут одним рядком: «Координатор (Іваненко) → Керівник ССП»."""
+    parts = []
+    for stage in chain:
+        who = stage.get("name") or stage.get("email") or ""
+        parts.append(f"{stage.get('label', '')}" + (f" ({who})" if who else ""))
+    return " → ".join(parts)
+
+
+def chain_progress_text(chain: list[dict], stage_idx: int, approval_status: str) -> str:
+    """Людський опис прогресу погодження."""
+    if not chain:
+        return ""
+    total = len(chain)
+    if approval_status == APPROVED_STATUS:
+        return f"Схему пройдено повністю ({total}/{total})"
+    if approval_status == STATUS_WAITING_MANAGER_SELECTION:
+        return "Координатор погодив · очікує вибору керівника"
+    stage = current_stage(chain, stage_idx)
+    if stage is None:
+        return f"Етап {min(stage_idx, total)}/{total}"
+    who = stage.get("name") or stage.get("email") or ""
+    who_part = f" ({who})" if who else ""
+    return f"Етап {stage_idx + 1}/{total} · очікує: {stage.get('label', '')}{who_part}"
+
+
+def first_approval_stage_has_acted(chain, logs) -> bool:
+    """Чи зафіксовано хоча б одне рішення першої ланки погодження."""
+    parsed = parse_chain(chain)
+    if not parsed or logs is None:
+        return False
+    try:
+        if hasattr(logs, "empty") and logs.empty:
+            return False
+    except Exception:
+        pass
+
+    first_waiting_status = waiting_status_for_stage(parsed[0])
+    first_stage_role = str(parsed[0].get("role") or "").strip()
+    accepted_old_statuses = {first_waiting_status}
+    if first_stage_role == ROLE_ADMIN:
+        accepted_old_statuses.add("Очікує погодження")
+    decision_prefixes = (
+        "погодження",
+        "повернення",
+        "редагування координатором",
+        "редагування ланкою",
+        "ескалація",
+        "зміна схеми погодження",
+    )
+    if hasattr(logs, "iterrows"):
+        rows = (row for _, row in logs.iterrows())
+    else:
+        try:
+            rows = iter(logs)
+        except TypeError:
+            return False
+
+    for row in rows:
+        getter = row.get if hasattr(row, "get") else lambda key, default=None: default
+        old_status = str(getter("old_status", "") or "").strip()
+        action = str(getter("action", "") or "").strip().casefold()
+        if old_status in accepted_old_statuses and action.startswith(decision_prefixes):
+            return True
+    return False
 
 
 # ------------------------------------------------------------
 # Остаточне закриття заявки (final_locked)
 # ------------------------------------------------------------
-#
-# Правило: щойно ОСТАННЯ ланка схеми погодила заявку — вона закрита
-# НАЗАВЖДИ для звичайних дій застосунку (зокрема для зміни/перепризначення
-# схеми погодження адміністратором). Це не залежить від того, що станеться
-# зі схемою пізніше: final_locked виставляється ОДИН РАЗ і більше жодна
-# функція застосунку його не знімає.
-#
-# Додатково те саме гарантує тригер бази даних (див. migrations/010_final_lock.sql),
-# який фізично забороняє зміну approval_status / chain_stage / approval_chain
-# для рядка з final_locked = true — незалежно від того, з якого коду
-# прийшов запит на зміну.
-#
-# Право редагувати ДАНІ (не маршрут) уже закритої заявки має лише
-# супер-адмін — окремим, явним і аудованим шляхом (див. core/superadmin_edit.py,
-# наступна ітерація), який final_locked не знімає.
 
 def finalize_update_payload(update_data: dict, new_status: str) -> dict:
-    """
-    Додає до payload оновлення заявки позначку остаточного закриття,
-    якщо new_status — це APPROVED_STATUS ("Погоджено").
-
-    ВАЖЛИВО: усі місця коду, які виставляють approval_status="Погоджено"
-    (координатор у 3_Адміністрування.py, інші ланки у 1_Мій_кабінет.py),
-    мають пропускати свій update-словник через цю функцію — так є
-    рівно ОДНЕ місце, де вирішується "заявку закрито остаточно чи ні".
-    """
+    """Єдина точка додавання ознаки остаточного закриття."""
     data = dict(update_data)
     if new_status == APPROVED_STATUS:
         data["final_locked"] = True
@@ -616,14 +244,7 @@ def _truthy(value) -> bool:
 
 
 def is_final_locked(row) -> bool:
-    """
-    Чи заявку остаточно закрито (final_locked).
-
-    Читає колонку final_locked, якщо вона є в рядку. Якщо міграція
-    010_final_lock.sql ще не застосована (колонки немає) — фолбек на
-    порівняння approval_status == "Погоджено", щоб код не падав і
-    поводився принаймні як раніше, доки міграцію не накатили.
-    """
+    """Чи заявку остаточно закрито (final_locked)."""
     has_col = False
     try:
         has_col = "final_locked" in row.index
@@ -638,51 +259,33 @@ def is_final_locked(row) -> bool:
         if value is not None and str(value).strip() not in ("", "none", "nan", "None"):
             return _truthy(value)
 
-    approval_status = row.get("approval_status") if hasattr(row, "get") else row["approval_status"]
+    approval_status = (
+        row.get("approval_status") if hasattr(row, "get") else row["approval_status"]
+    )
     return str(approval_status or "").strip() == APPROVED_STATUS
-
-
-def chain_progress_text(chain: list[dict], stage_idx: int, approval_status: str) -> str:
-    """Людський опис прогресу: «Етап 2/3 · очікує: Керівник управління (ПІБ)»."""
-    if not chain:
-        return ""
-    total = len(chain)
-    if approval_status == APPROVED_STATUS:
-        return f"Схему пройдено повністю ({total}/{total})"
-    stage = current_stage(chain, stage_idx)
-    if stage is None:
-        return f"Етап {min(stage_idx, total)}/{total}"
-    who = stage.get("name") or stage.get("email") or ""
-    who_part = f" ({who})" if who else ""
-    return f"Етап {stage_idx + 1}/{total} · очікує: {stage.get('label','')}{who_part}"
-
-
-def chain_route_text(chain: list[dict]) -> str:
-    """Схема одним рядком: «Координатор (Іваненко) → Керівник ССП (Петренко)»."""
-    parts = []
-    for stage in chain:
-        who = stage.get("name") or stage.get("email") or ""
-        parts.append(f"{stage.get('label','')}" + (f" ({who})" if who else ""))
-    return " → ".join(parts)
 
 
 # ------------------------------------------------------------
 # Повернення на доопрацювання
 # ------------------------------------------------------------
 
-def return_targets(chain: list[dict], stage_idx: int) -> list[dict]:
-    """
-    Куди поточна ланка може повернути заявку:
-    - завжди: подавачу (ССП);
-    - плюс будь-яка ПОПЕРЕДНЯ ланка ланцюга.
+def returned_status_for_role(role: str) -> str:
+    role = str(role or "").strip()
+    if role == ROLE_ADMIN:
+        return STATUS_RETURNED_BY_COORDINATOR
+    if role == ROLE_SUPER_ADMIN:
+        return STATUS_RETURNED_BY_SUPERADMIN
+    return STATUS_RETURNED_BY_MANAGER
 
-    Повертає список: {"key": "submitter"|"stage:<i>", "label": ...,
-                      "status": ..., "new_stage": int}
-    """
+
+def return_targets(chain: list[dict], stage_idx: int) -> list[dict]:
+    """Адресати повернення: подавач і попередні ланки маршруту."""
+    current = current_stage(chain, stage_idx)
+    current_role = str((current or {}).get("role") or "").strip()
     targets = [{
         "key": "submitter",
         "label": "Подавачу (відповідальній особі ССП)",
-        "status": RETURNED_STATUS,
+        "status": returned_status_for_role(current_role),
         "new_stage": 0,
     }]
     for i in range(stage_idx):
@@ -691,7 +294,7 @@ def return_targets(chain: list[dict], stage_idx: int) -> list[dict]:
         who_part = f" ({who})" if who else ""
         targets.append({
             "key": f"stage:{i}",
-            "label": f"{stage.get('label','')}{who_part}",
+            "label": f"{stage.get('label', '')}{who_part}",
             "status": waiting_status_for_stage(stage),
             "new_stage": i,
         })
@@ -703,21 +306,13 @@ def return_targets(chain: list[dict], stage_idx: int) -> list[dict]:
 # ------------------------------------------------------------
 
 def _admin_covers_ssp(user: dict, ssp_index: str) -> bool:
-    """Чи закріплений адміністратор саме за цим ССП як КООРДИНАТОР.
-
-    Береться окреме поле coordinator_ssp_indexes — конкретні ССП з таблиці.
-    Широкий доступ '*' (у власника/супер-адміна) НЕ робить його
-    координатором усіх підрозділів: інакше «універсальний» адмін ставав
-    координатором геть усіх ССП, зокрема чужих.
-    """
+    """Чи закріплений адміністратор саме за цим ССП як координатор."""
     ssp_index = str(ssp_index or "").strip()
     if not ssp_index:
         return False
     coord = [str(a).strip() for a in (user.get("coordinator_ssp_indexes") or [])]
     if coord:
         return ssp_index in coord
-    # Фолбек для сумісності зі старими записами без нового поля:
-    # явний перелік allowed без '*'.
     allowed = [str(a).strip() for a in (user.get("allowed_ssp_indexes") or [])]
     own = str(user.get("ssp_index") or "").strip()
     if "*" in allowed:
@@ -734,34 +329,24 @@ def _user_matches_ssp(user: dict, ssp_index: str) -> bool:
 
 
 def stage_candidates(role: str, ssp_index: str) -> list[dict]:
-    """
-    Повертає активних користувачів-кандидатів на ланку для ССП:
-    [{"email": ..., "name": ..., "extra": unit_name}]
-
-    Для координатора — адміністратори, за якими закріплений цей ССП
-    (якщо таких немає — усі адміністратори), плюс супер-адміни.
-    """
-    from config.users import get_users_by_role  # локальний імпорт (уникнення циклів)
+    """Активні користувачі-кандидати на конкретну ланку для ССП."""
+    from config.users import get_users_by_role  # локальний імпорт без циклу
 
     ssp_index = str(ssp_index or "").strip()
-    result: list[dict] = []
-
     if role == ROLE_ADMIN:
-        # Координатор — РІВНО той адміністратор, за яким закріплений цей ССП
-        # (за колонкою доступів). Ніякого фолбеку «усі адміністратори» і
-        # без домішування супер-адмінів: інакше у відповідального ССП
-        # з'являвся вибір адміна, а ССП міг піти не до свого координатора.
         admins = list(get_users_by_role(ROLE_ADMIN).values())
-        pool = [u for u in admins if _admin_covers_ssp(u, ssp_index)]
+        pool = [user for user in admins if _admin_covers_ssp(user, ssp_index)]
     else:
         pool = [
-            u for u in get_users_by_role(role).values()
-            if not ssp_index or _user_matches_ssp(u, ssp_index)
+            user
+            for user in get_users_by_role(role).values()
+            if not ssp_index or _user_matches_ssp(user, ssp_index)
         ]
 
+    result: list[dict] = []
     seen = set()
     for user in pool:
-        email = str(user.get("email") or "").lower()
+        email = str(user.get("email") or "").strip().lower()
         if not email or email in seen:
             continue
         seen.add(email)
@@ -779,79 +364,36 @@ def candidate_label(candidate: dict) -> str:
 
 
 # ------------------------------------------------------------
-# НОВА МОДЕЛЬ МАРШРУТУ (виправлення після тестування, липень 2026)
+# Динамічне формування маршруту
 # ------------------------------------------------------------
-#
-# Раніше маршрут ПОВНІСТЮ будувався наперед — подавач (чи адмін при зміні
-# схеми) визначав усі ланки одразу, включно з тими, кого ще навіть не
-# розглядав жоден координатор. Це призводило до збою: координатор міг
-# натиснути "погодити" за ланку, чия черга ще не настала (бо ланцюг уже
-# містив цю ланку наперед), і заявка стрибала на наступний етап "повз"
-# фактичного власника черги.
-#
-# Тепер маршрут будується ПОКРОКОВО: кожна заявка завжди починається
-# рівно з координатора (initial_chain). Коли підходить черга ланки —
-# САМЕ вона (а не подавач і не будь-хто інший) вирішує, що далі:
-# завершити заявку на собі, чи призначити наступною ланкою когось
-# СТАРШОГО за себе (не може "спуститися нижче себе" чи повернути на вже
-# пройдений рівень). Ієрархія:
-#   Координатор -> {Керівник управління, Заступник керівника ССП} -> Керівник ССП
-# Координатор може призначити будь-яку з трьох ролей далі (або завершити
-# сам). Керівник управління/Заступник можуть призначити далі лише
-# Керівника ССП (або завершити самі). Керівник ССП — завжди останній.
-
-ROLE_RANK: dict[str, int] = {
-    ROLE_UNIT_HEAD: 1,
-    ROLE_SSP_DEPUTY: 1,
-    ROLE_SSP_HEAD: 2,
-}
-
 
 def initial_chain(ssp_index: str) -> list[dict]:
-    """
-    Ланцюг заявки одразу після подання: РІВНО одна ланка — координатор,
-    закріплений за цим ССП. Порожній список, якщо координатора не
-    знайдено (подання тоді неможливе — це перевіряється у формі подання).
-    """
+    """Стартовий маршрут: єдина ланка координатора відповідного ССП."""
     candidates = stage_candidates(ROLE_ADMIN, ssp_index)
     if not candidates:
         return []
-    c = candidates[0]
+    coordinator = candidates[0]
     return [{
         "role": ROLE_ADMIN,
         "label": STAGE_LABELS[ROLE_ADMIN],
-        "email": c["email"],
-        "name": c["name"],
+        "email": coordinator["email"],
+        "name": coordinator["name"],
     }]
 
 
-def next_stage_role_options(current_role: str) -> list[str]:
-    """
-    Ролі, які поточна ланка (current_role) МОЖЕ призначити наступною.
-    Координатор — будь-яку з трьох. Керівник управління/Заступник —
-    лише Керівника ССП (єдина роль старша за них). Керівник ССП —
-    нікого (він завжди останній, вище нікого немає).
-    """
-    if current_role == ROLE_ADMIN:
-        return [ROLE_UNIT_HEAD, ROLE_SSP_DEPUTY, ROLE_SSP_HEAD]
-    current_rank = ROLE_RANK.get(current_role, 99)
-    return [role for role, rank in ROLE_RANK.items() if rank > current_rank]
-
-
 def is_stage_role(chain: list[dict], stage_idx: int, role: str) -> bool:
-    """Чи належить ПОТОЧНА ланка ланцюга саме цій ролі (перевірка "чи моя черга")."""
+    """Чи належить поточна ланка заданій ролі."""
     stage = current_stage(chain, stage_idx)
     return bool(stage) and stage.get("role") == role
 
 
-def append_stage(chain: list[dict], next_role: str, ssp_index: str,
-                  person: dict | None = None) -> list[dict] | None:
-    """
-    Додає нову ланку в кінець ланцюга і повертає НОВИЙ ланцюг (список).
-    person — конкретна обрана особа {"email":..., "name":...}, якщо
-    кандидатів на роль було кілька і хтось уже обрав; якщо не передано —
-    береться перший (єдиний) кандидат. None, якщо кандидатів немає.
-    """
+def append_stage(
+    chain: list[dict],
+    next_role: str,
+    ssp_index: str,
+    person: dict | None = None,
+) -> list[dict] | None:
+    """Додає нову ланку в кінець маршруту."""
     if person and person.get("email"):
         chosen = person
     else:
@@ -874,14 +416,14 @@ def finalize_here(stage_idx: int) -> tuple[str, int]:
     return APPROVED_STATUS, stage_idx + 1
 
 
-def advance_with_new_stage(chain: list[dict], stage_idx: int, next_role: str,
-                           ssp_index: str, person: dict | None = None):
-    """
-    Додає next_role як наступну ланку одразу після поточної й повертає
-    (new_chain, new_status, new_stage_idx). (None, None, None), якщо для
-    next_role немає жодного кандидата (наприклад, для цього ССП не
-    призначено такої ролі).
-    """
+def advance_with_new_stage(
+    chain: list[dict],
+    stage_idx: int,
+    next_role: str,
+    ssp_index: str,
+    person: dict | None = None,
+):
+    """Додає наступну ланку й переводить заявку на неї."""
     new_chain = append_stage(chain, next_role, ssp_index, person)
     if new_chain is None:
         return None, None, None

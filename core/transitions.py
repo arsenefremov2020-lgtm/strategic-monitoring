@@ -92,40 +92,6 @@ def return_request(*, request_id: int, expected_status: str,
     })
 
 
-def resubmit_head_edit_to_final_coordinator(
-    *,
-    request_id: int,
-    expected_updated_at: str,
-    expected_status: str,
-    expected_chain_stage: int,
-    existing_coordinator_stage: int,
-    final_coordinator_stage: int,
-    approval_chain: str,
-    scheme_label: str,
-    payload: dict[str, Any],
-    action: str,
-    user: dict,
-    created_by_before: str,
-    created_by_after: str,
-) -> TransitionResult:
-    """Атомарно редагує дані керівником ССП і робить координатора фінальним."""
-    return _call("transition_resubmit_head_edit_final_coordinator", {
-        "p_request_id": int(request_id),
-        "p_expected_updated_at": expected_updated_at,
-        "p_expected_status": expected_status,
-        "p_expected_chain_stage": int(expected_chain_stage),
-        "p_existing_coordinator_stage": int(existing_coordinator_stage),
-        "p_final_coordinator_stage": int(final_coordinator_stage),
-        "p_approval_chain": approval_chain,
-        "p_scheme_label": scheme_label,
-        "p_payload": payload,
-        "p_action": action,
-        "p_actor": actor_payload(user),
-        "p_created_by_before": created_by_before,
-        "p_created_by_after": created_by_after,
-    })
-
-
 def withdraw_request(*, request_id: int, expected_status: str,
                      expected_chain_stage: int, comment: str,
                      user: dict) -> TransitionResult:

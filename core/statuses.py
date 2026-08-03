@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from core.approval_schemes import ALL_WAITING_STATUSES
+from core.approval_schemes import ALL_RETURNED_STATUSES, ALL_WAITING_STATUSES
 from core.period_locks import all_periods_locked, exclude_locked_periods, is_period_locked
 from core.timeutils import now_kyiv
 
@@ -262,14 +262,14 @@ def get_record_visual_status(row) -> str:
     approval = clean(row.get("approval_status", ""))
     execution_status = clean(row.get("status", ""))
 
-    if execution_status == ST_NOTYET:
-        return ST_NOTYET
     if approval == "Погоджено":
         return "Погоджено"
-    if approval == "Повернуто на доопрацювання":
+    if approval in ALL_RETURNED_STATUSES:
         return "На доопрацюванні"
     if approval in ALL_WAITING_STATUSES:
-        return "Не враховано" if is_overdue_review_record(row) else "На розгляді"
+        return "На розгляді"
+    if execution_status == ST_NOTYET:
+        return ST_NOTYET
     return "Не враховано"
 
 

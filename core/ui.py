@@ -108,34 +108,7 @@ def render_scope_toggle(page_key: str, user: dict | None) -> bool:
 
 
 def render_auto_refresh_notice(page_key: str, *, minutes: int = 5, show_note: bool = True) -> None:
-    """Показує службову позначку автооновлення і запускає м'яке browser-refresh.
-
-    Використовується тільки на сторінках, де користувач прямо погодив TTL 5 хв:
-    Головна, Dashboard, Картка заходу, Фільтр за документом, Оцінка МіО.
-    """
-    from core.timeutils import now_kyiv
-    import streamlit.components.v1 as components
-
-    ms = max(1, int(minutes)) * 60 * 1000
-    if show_note:
-        st.info(
-            f"Дані автоматично оновлюються кожні {minutes} хвилин. "
-            f"Останнє оновлення сторінки: {now_kyiv().strftime('%d.%m.%Y %H:%M')}"
-        )
-    # Малий невидимий компонент. Не чіпає session_state, просто оновлює вкладку браузера.
-    components.html(
-        f"""
-        <script>
-        const key = 'auto_refresh_{page_key}';
-        if (!window[key]) {{
-          window[key] = true;
-          setTimeout(function() {{ window.parent.location.reload(); }}, {ms});
-        }}
-        </script>
-        """,
-        height=0,
-    )
-
+    return None
 
 def render_own_ssp_badge(user: dict | None, *, label: str = "Ваш ССП") -> None:
     """Уніфікований підпис для ролей, прив'язаних до власного ССП."""

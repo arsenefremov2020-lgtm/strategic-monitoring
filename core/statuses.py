@@ -262,14 +262,16 @@ def get_record_visual_status(row) -> str:
     approval = clean(row.get("approval_status", ""))
     execution_status = clean(row.get("status", ""))
 
+    if execution_status == ST_NOTYET:
+        return ST_NOTYET
     if approval == "Погоджено":
         return "Погоджено"
     if approval in ALL_RETURNED_STATUSES:
         return "На доопрацюванні"
     if approval in ALL_WAITING_STATUSES:
+        if is_overdue_review_record(row):
+            return "Не враховано"
         return "На розгляді"
-    if execution_status == ST_NOTYET:
-        return ST_NOTYET
     return "Не враховано"
 
 

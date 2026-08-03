@@ -74,6 +74,10 @@ STAGE_LABELS = {
     ROLE_SUPER_ADMIN: "Супер-адмін",
 }
 
+MANAGER_ROLES = (ROLE_SSP_HEAD, ROLE_SSP_DEPUTY)
+REGULATOR_ROLES = (ROLE_ADMIN, ROLE_SUPER_ADMIN)
+
+
 STAGE_WAITING_STATUS = {
     ROLE_ADMIN: STATUS_COORDINATOR_REVIEW,
     ROLE_SSP_DEPUTY: STATUS_MANAGER_REVIEW,
@@ -131,16 +135,52 @@ def waiting_status_for_stage(stage: dict | None) -> str:
     )
 
 
+def is_manager_role(role: str) -> bool:
+    return str(role or "").strip() in MANAGER_ROLES
+
+
+def manager_stage_index(chain) -> int | None:
+    """Індекс уже обраної керівницької ланки або ``None``."""
+    for index, stage in enumerate(parse_chain(chain)):
+        if is_manager_role(stage.get("role")):
+            return index
+    return None
+
+
+def coordinator_stage_index(chain) -> int:
+    """Індекс координатора; у валідному маршруті це завжди перша ланка."""
+    for index, stage in enumerate(parse_chain(chain)):
+        if str(stage.get("role") or "").strip() == ROLE_ADMIN:
+            return index
+    return 0
+
+
+def status_after_regulator(chain: list[dict], stage_idx: int) -> tuple[str, int]:
+    """Куди переходить заявка після координатора або супер-адміна.
+
+    Якщо керівника вже обирали, заявка одразу повертається на ту саму
+    керівницьку ланку. Під час першого проходу вона повертається подавачу
+    для вибору керівника.
+    """
+    manager_idx = manager_stage_index(chain)
+    if manager_idx is not None:
+        return STATUS_MANAGER_REVIEW, manager_idx
+    return STATUS_WAITING_MANAGER_SELECTION, len(parse_chain(chain))
+
+
 def status_after_approve(chain: list[dict], stage_idx: int) -> tuple[str, int]:
     """Статус і новий ``chain_stage`` після погодження поточною ланкою."""
+    stage = current_stage(chain, stage_idx)
+    role = str((stage or {}).get("role") or "").strip()
+    if role in REGULATOR_ROLES:
+        return status_after_regulator(chain, stage_idx)
+    if is_manager_role(role):
+        return APPROVED_STATUS, stage_idx + 1
+
     next_idx = stage_idx + 1
     next_stage = current_stage(chain, next_idx)
     if next_stage is not None:
         return waiting_status_for_stage(next_stage), next_idx
-
-    stage = current_stage(chain, stage_idx)
-    if stage and str(stage.get("role") or "").strip() == ROLE_ADMIN:
-        return STATUS_WAITING_MANAGER_SELECTION, next_idx
     return APPROVED_STATUS, next_idx
 
 
@@ -387,6 +427,15 @@ def is_stage_role(chain: list[dict], stage_idx: int, role: str) -> bool:
     return bool(stage) and stage.get("role") == role
 
 
+def _stage_from_person(next_role: str, person: dict) -> dict:
+    return {
+        "role": next_role,
+        "label": STAGE_LABELS.get(next_role, next_role),
+        "email": str(person.get("email") or "").strip().lower(),
+        "name": str(person.get("name") or person.get("full_name") or "").strip(),
+    }
+
+
 def append_stage(
     chain: list[dict],
     next_role: str,
@@ -401,14 +450,44 @@ def append_stage(
         if not candidates:
             return None
         chosen = candidates[0]
-    new_chain = list(chain)
-    new_chain.append({
-        "role": next_role,
-        "label": STAGE_LABELS.get(next_role, next_role),
-        "email": str(chosen.get("email") or "").strip().lower(),
-        "name": str(chosen.get("name") or "").strip(),
-    })
+    new_chain = list(parse_chain(chain))
+    new_chain.append(_stage_from_person(next_role, chosen))
     return new_chain
+
+
+def append_manager_stage(
+    chain: list[dict],
+    manager_role: str,
+    ssp_index: str,
+    person: dict | None = None,
+) -> list[dict] | None:
+    """Додає єдину завершальну керівницьку ланку."""
+    if not is_manager_role(manager_role) or manager_stage_index(chain) is not None:
+        return None
+    return append_stage(chain, manager_role, ssp_index, person)
+
+
+def insert_superadmin_after(
+    chain: list[dict],
+    stage_idx: int,
+    person: dict,
+) -> tuple[list[dict] | None, int | None]:
+    """Вставляє супер-адміна після поточної регулюючої ланки.
+
+    Керівницька ланка, якщо вона вже існує, завжди лишається останньою.
+    Повертає оновлений ланцюг та індекс доданої ланки.
+    """
+    parsed = list(parse_chain(chain))
+    current = current_stage(parsed, stage_idx)
+    if not current or str(current.get("role") or "").strip() not in REGULATOR_ROLES:
+        return None, None
+    if not person or not str(person.get("email") or "").strip():
+        return None, None
+    stage = _stage_from_person(ROLE_SUPER_ADMIN, person)
+    manager_idx = manager_stage_index(parsed)
+    insert_at = manager_idx if manager_idx is not None else len(parsed)
+    parsed.insert(insert_at, stage)
+    return parsed, insert_at
 
 
 def finalize_here(stage_idx: int) -> tuple[str, int]:
@@ -429,3 +508,173 @@ def advance_with_new_stage(
         return None, None, None
     new_stage = current_stage(new_chain, stage_idx + 1)
     return new_chain, waiting_status_for_stage(new_stage), stage_idx + 1
+
+# ------------------------------------------------------------
+# Накопичувальний опис фактичного маршруту
+# ------------------------------------------------------------
+
+def _iter_log_rows(logs):
+    if logs is None:
+        return []
+    try:
+        if hasattr(logs, "empty") and logs.empty:
+            return []
+    except Exception:
+        pass
+    if hasattr(logs, "sort_values") and hasattr(logs, "iterrows"):
+        ordered = logs
+        if "changed_at" in getattr(logs, "columns", []):
+            try:
+                ordered = logs.sort_values("changed_at", ascending=True)
+            except Exception:
+                ordered = logs
+        return [row for _, row in ordered.iterrows()]
+    try:
+        return list(logs)
+    except TypeError:
+        return []
+
+
+def _log_value(row, key: str) -> str:
+    if hasattr(row, "get"):
+        return str(row.get(key, "") or "").strip()
+    return ""
+
+
+def _actor_label(row) -> str:
+    role = _log_value(row, "actor_role")
+    return STAGE_LABELS.get(role, _log_value(row, "actor_name") or "Учасник маршруту")
+
+
+def _action_step_text(row) -> str:
+    action = _log_value(row, "action")
+    folded = action.casefold()
+    new_status = _log_value(row, "new_status")
+    comment = _log_value(row, "admin_comment")
+
+    if not action or folded.startswith("подання "):
+        return ""
+    if folded.startswith("повторне подання"):
+        return "Користувач повторно подав заявку"
+    if "вибір ролі керівника" in folded or "направлення керівнику" in folded:
+        suffix = action.split(":", 1)[1].strip() if ":" in action else ""
+        return "Вибір ролі керівника" + (f" — {suffix}" if suffix else "")
+    if "додано супер-адміна" in folded or "ескалація вищому супер-адміну" in folded:
+        return action.rstrip(".")
+    if folded.startswith("редагування"):
+        return action.rstrip(".")
+    if folded.startswith("погодження"):
+        return f"{_actor_label(row)} погодив(ла) заявку"
+    if folded.startswith("повернення"):
+        if new_status in ALL_RETURNED_STATUSES:
+            return "Заявку повернуто на доопрацювання подавачу"
+        if new_status == STATUS_COORDINATOR_REVIEW:
+            return "Заявку повернуто на доопрацювання координатору"
+        return action.rstrip(".")
+    if "розбіжність" in folded or "ручн" in folded:
+        return action.rstrip(".")
+    if comment and action:
+        return action.rstrip(".")
+    return action.rstrip(".")
+
+
+def _stage_for_status(chain: list[dict], stage_idx: int, status: str) -> dict | None:
+    """Фактична ланка для статусу, навіть коли заявка вже пішла далі."""
+    stage = current_stage(chain, stage_idx)
+    expected_roles = {
+        STATUS_COORDINATOR_REVIEW: {ROLE_ADMIN},
+        STATUS_SUPERADMIN_REVIEW: {ROLE_SUPER_ADMIN},
+        STATUS_MANAGER_REVIEW: set(MANAGER_ROLES),
+    }.get(status, set())
+    if stage and str(stage.get("role") or "").strip() in expected_roles:
+        return stage
+    if status == STATUS_COORDINATOR_REVIEW:
+        return current_stage(chain, coordinator_stage_index(chain))
+    if status == STATUS_MANAGER_REVIEW:
+        manager_idx = manager_stage_index(chain)
+        return current_stage(chain, manager_idx) if manager_idx is not None else None
+    if status == STATUS_SUPERADMIN_REVIEW:
+        for item in chain:
+            if str(item.get("role") or "").strip() == ROLE_SUPER_ADMIN:
+                return item
+    return None
+
+
+def _status_step_text(status: str, chain: list[dict], stage_idx: int) -> str:
+    status = str(status or "").strip()
+    if status == STATUS_WAITING_MANAGER_SELECTION:
+        return "Вибір ролі керівника"
+    if status in ALL_RETURNED_STATUSES:
+        return "На доопрацюванні у подавача"
+    if status == STATUS_COORDINATOR_REVIEW:
+        return "На розгляді координатора"
+    if status == STATUS_SUPERADMIN_REVIEW:
+        return "На розгляді супер-адміна"
+    if status == STATUS_MANAGER_REVIEW:
+        stage = _stage_for_status(chain, stage_idx, status)
+        label = str((stage or {}).get("label") or "керівника").strip()
+        who = str((stage or {}).get("name") or "").strip()
+        text = f"На розгляді: {label}"
+        return text + (f" — {who}" if who else "")
+    if status == APPROVED_STATUS:
+        return "Заявку погоджено остаточно"
+    return status
+
+
+def approval_scheme_steps(
+    chain,
+    stage_idx: int,
+    approval_status: str,
+    logs=None,
+) -> list[dict]:
+    """Нумеровані фактичні кроки маршруту з позначкою поточного кроку.
+
+    Таймлайн дій лишається окремим компонентом; тут формується стислий
+    накопичувальний опис для блоків «Схема погодження» та експорту.
+    """
+    parsed = parse_chain(chain)
+    if not parsed:
+        return []
+
+    texts: list[str] = ["Користувач подав заявку"]
+    last_status = ""
+    for row in _iter_log_rows(logs):
+        action_text = _action_step_text(row)
+        if action_text.startswith("Вибір ролі керівника") and texts[-1] == "Вибір ролі керівника":
+            texts[-1] = action_text
+        elif action_text and action_text != texts[-1]:
+            texts.append(action_text)
+        new_status = _log_value(row, "new_status")
+        if new_status:
+            last_status = new_status
+            log_stage = stage_idx
+            try:
+                payload = json.loads(_log_value(row, "payload_json") or "{}")
+                log_stage = parse_stage(payload.get("chain_stage", stage_idx))
+            except Exception:
+                pass
+            status_text = _status_step_text(new_status, parsed, log_stage)
+            if status_text and status_text != texts[-1]:
+                texts.append(status_text)
+
+    current_text = _status_step_text(approval_status, parsed, parse_stage(stage_idx))
+    if current_text and (not texts or texts[-1] != current_text):
+        texts.append(current_text)
+    elif not last_status and len(texts) == 1:
+        initial_text = _status_step_text(approval_status, parsed, parse_stage(stage_idx))
+        if initial_text and initial_text != texts[-1]:
+            texts.append(initial_text)
+
+    is_complete = str(approval_status or "").strip() == APPROVED_STATUS
+    return [
+        {"number": index, "text": text, "current": bool(not is_complete and index == len(texts))}
+        for index, text in enumerate(texts, start=1)
+    ]
+
+
+def approval_scheme_text(chain, stage_idx: int, approval_status: str, logs=None) -> str:
+    """Накопичувальна схема у вигляді багаторядкового нумерованого тексту."""
+    return "\n".join(
+        f"{step['number']}. {step['text']}"
+        for step in approval_scheme_steps(chain, stage_idx, approval_status, logs)
+    )

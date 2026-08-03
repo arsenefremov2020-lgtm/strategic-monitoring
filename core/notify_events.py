@@ -110,7 +110,7 @@ def _new_requests_for_first_stage(supabase, email: str, since: datetime,
     for row in response.data or []:
         if schemes.parse_stage(row.get("chain_stage")) != 0:
             continue
-        if not str(row.get("approval_status") or "").strip().startswith("Очікує"):
+        if str(row.get("approval_status") or "").strip() != schemes.STATUS_COORDINATOR_REVIEW:
             continue
         chain = schemes.parse_chain(row.get("approval_chain"))
         first_stage = chain[0] if chain else {}
@@ -222,6 +222,22 @@ def notify_stage_assigned(stage_email: str, stage_name: str, stage_label: str,
     )
     _fire(stage_email, subject, body, "stage_assigned",
           f"{kind}:{code}:{year}:{quarter}:{stage_label}:{stage_email}")
+
+
+def notify_manager_selection_required(to_email: str, to_name: str, code: str,
+                                      year: str, quarter: str, by_label: str,
+                                      kind: str = "measure") -> None:
+    """Подавач має перевірити заявку та обрати завершальну керівницьку ланку."""
+    subject = f"Моніторинг СП: оберіть керівника для заявки ({code})"
+    body = (
+        f"<p>Вітаємо, <b>{to_name or ''}</b>!</p>"
+        f"<p>{_request_line(code, year, quarter, kind)} — ланка "
+        f"«<b>{by_label}</b>» завершила перевірку.</p>"
+        f"<p>Перейдіть до розділу «Мої заявки», перевірте дані та оберіть "
+        f"керівника ССП або заступника керівника ССП для остаточного погодження.</p>"
+    )
+    _fire(to_email, subject, body, "manager_selection_required",
+          f"{kind}:{code}:{year}:{quarter}:{to_email}")
 
 
 def notify_returned(to_email: str, to_name: str, code: str, year: str,

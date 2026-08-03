@@ -666,31 +666,31 @@ def _goal_number(code: str) -> str:
     return match.group(0) if match else _export_clean(code)
 
 
-def _approval_route_and_current(record) -> tuple[str, str, str]:
-    """(координатор, діюча схема, поточний статус погодження)."""
-    from core.approval_schemes import parse_chain, parse_stage, chain_route_text, current_stage
+def _approval_route_and_current(record, logs=None) -> tuple[str, str, str]:
+    """(координатор, накопичувальна схема, поточна ланка/стан погодження)."""
+    from core import approval_schemes as schemes
+
     if record is None:
         return "", "", ""
-    chain = parse_chain(record.get("approval_chain", ""))
+    chain = schemes.parse_chain(record.get("approval_chain", ""))
     coordinator = ""
     for stage in chain:
-        if _export_clean(stage.get("role")) == "admin" or "координатор" in _export_clean(stage.get("label")).lower():
+        if _export_clean(stage.get("role")) == "admin":
             coordinator = _export_clean(stage.get("name")) or _export_clean(stage.get("email"))
             break
-    scheme = _export_clean(record.get("scheme_label"))
-    route = chain_route_text(chain)
-    if scheme and route:
-        scheme_text = f"{scheme}: {route}"
-    else:
-        scheme_text = scheme or route
 
     approval = _export_clean(record.get("approval_status"))
-    if approval == "Погоджено":
-        current = "Погоджено"
-    elif approval == "Повернуто на доопрацювання":
-        current = "Повернуто на доопрацювання"
+    stage_idx = schemes.parse_stage(record.get("chain_stage"))
+    scheme_text = schemes.approval_scheme_text(chain, stage_idx, approval, logs)
+
+    if approval == schemes.APPROVED_STATUS:
+        current = schemes.APPROVED_STATUS
+    elif approval in schemes.ALL_RETURNED_STATUSES:
+        current = approval
+    elif approval == schemes.STATUS_WAITING_MANAGER_SELECTION:
+        current = schemes.STATUS_WAITING_MANAGER_SELECTION
     else:
-        stage = current_stage(chain, parse_stage(record.get("chain_stage")))
+        stage = schemes.current_stage(chain, stage_idx)
         if stage:
             who = _export_clean(stage.get("name")) or _export_clean(stage.get("email"))
             label = _export_clean(stage.get("label"))
@@ -707,6 +707,26 @@ def _load_export_logs():
         return pd.DataFrame(fetch_all("monitoring_logs", "*", order=("changed_at", False)))
     except Exception:
         return pd.DataFrame()
+
+
+def _request_export_logs(logs_df, request_id):
+    """Журнал однієї заявки у хронологічному порядку для схеми експорту."""
+    import pandas as pd
+
+    if logs_df is None or logs_df.empty or request_id in (None, ""):
+        return pd.DataFrame()
+    if "request_id" not in logs_df.columns:
+        return pd.DataFrame()
+    try:
+        rid = int(float(str(request_id)))
+    except (TypeError, ValueError):
+        return pd.DataFrame()
+    mask = pd.to_numeric(logs_df["request_id"], errors="coerce") == rid
+    data = logs_df[mask].copy()
+    if data.empty or "changed_at" not in data.columns:
+        return data
+    data["_scheme_sort"] = pd.to_datetime(data["changed_at"], errors="coerce", utc=True)
+    return data.sort_values("_scheme_sort", na_position="last")
 
 
 def _approval_history(logs_df, request_id) -> str:
@@ -1044,11 +1064,14 @@ def _build_detailed_export_df(filtered_measures, monitoring_df, selected_years, 
                     status = "Виконано"
                 else:
                     status = ""
-                coordinator, route, current = _approval_route_and_current(record)
-                history = _approval_history(logs_df, record.get("id")) if record is not None else ""
-                scheme_history = route
-                if history:
-                    scheme_history = (scheme_history + "\n\nІсторія погоджень:\n" + history).strip()
+                record_logs = (
+                    _request_export_logs(logs_df, record.get("id"))
+                    if record is not None else None
+                )
+                coordinator, scheme_history, current = _approval_route_and_current(
+                    record,
+                    record_logs,
+                )
                 row[f"{prefix} — Статус заходу"] = status
                 row[f"{prefix} — Відповідальна особа від ССП"] = _export_clean(record.get("responsible_person")) if record is not None else ""
                 row[f"{prefix} — Координатор"] = coordinator

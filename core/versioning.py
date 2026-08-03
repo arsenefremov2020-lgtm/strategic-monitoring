@@ -9,11 +9,10 @@
 поданої інформації:
 
 - pages/3_Мої_заявки.py    — подавач редагує свою заявку (пункт 3 ТЗ);
-- pages/1_Мій_кабінет.py   — проміжна ланка (керівник ССП / керівник
-                              управління / заступник) редагує замість
-                              того, щоб повертати на доопрацювання;
-- pages/3_Адміністрування.py — супер-адмін коригує дані ВЖЕ закритої
-                              (final_locked) заявки (пункт 5 ТЗ).
+- pages/1_Мій_кабінет.py   — керівник ССП або заступник редагує дані
+                              перед остаточним погодженням;
+- pages/3_Адміністрування.py — координатор або супер-адмін редагує дані
+                              на своїй поточній ланці маршруту.
 
 Принцип той самий у всіх трьох місцях: перед тим, як перезаписати
 monitoring_requests, стара версія рядка зберігається в
@@ -23,6 +22,7 @@ monitoring_request_versions, а після запису — зберігаєть
 
 from __future__ import annotations
 
+from core import approval_schemes as schemes
 from core.data_types import normalise_monitoring_frame, prepare_monitoring_payload
 from core.db import fetch_all, get_supabase_client
 
@@ -87,8 +87,10 @@ def save_request_version(request_id, row_data: dict, created_by: str = "сист
         "start_date": _clean(row_data.get("start_date", "")),
         "end_date": _clean(row_data.get("end_date", "")),
         "npa_link": _clean(row_data.get("npa_link", "")),
-        "approval_chain": _clean(row_data.get("approval_chain", "")),
-        "chain_stage": int(row_data.get("chain_stage") or 0),
+        "approval_chain": schemes.chain_to_json(
+            schemes.parse_chain(row_data.get("approval_chain", ""))
+        ),
+        "chain_stage": schemes.parse_stage(row_data.get("chain_stage")),
         "scheme_label": _clean(row_data.get("scheme_label", "")),
         "object_kind": _clean(row_data.get("object_kind", "")),
         "object_name": _clean(row_data.get("object_name", "")),
@@ -116,12 +118,5 @@ def load_versions(request_id):
 
 
 def coordinator_stage_index(chain: list[dict]) -> int:
-    """
-    Повертає індекс ланки координатора (адміністратора) у ланцюгу.
-    Якщо не знайдено (не повинно траплятися — координатор обов'язковий) —
-    повертає 0 як безпечний фолбек.
-    """
-    for i, stage in enumerate(chain or []):
-        if stage.get("role") == "admin":
-            return i
-    return 0
+    """Сумісна обгортка над єдиним визначенням координаторської ланки."""
+    return schemes.coordinator_stage_index(chain)

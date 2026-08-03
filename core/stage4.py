@@ -15,14 +15,14 @@ from urllib.parse import quote
 import pandas as pd
 import streamlit as st
 
+from core import approval_schemes as schemes
 from core.timeutils import KYIV_TZ, now_kyiv
 
 WAITING_STATUS_LABELS = {
-    "Очікує погодження": "Координатор",
-    "Очікує: Керівник ССП": "Керівник ССП",
-    "Очікує: Керівник управління": "Керівник управління",
-    "Очікує: Заступник керівника ССП": "Заступник керівника ССП",
-    "Очікує: Супер-адмін": "Супер-адмін",
+    schemes.STATUS_COORDINATOR_REVIEW: "Координатор",
+    schemes.STATUS_WAITING_MANAGER_SELECTION: "Вибір керівника подавачем",
+    schemes.STATUS_SUPERADMIN_REVIEW: "Супер-адмін",
+    schemes.STATUS_MANAGER_REVIEW: "Керівник ССП / заступник",
 }
 CARD_TARGET_SESSION_KEY = "stage4_card_target"
 
@@ -608,7 +608,6 @@ def _stage_from_actor(row: pd.Series) -> str:
     role_map = {
         "admin": "Координатор",
         "ssp_head": "Керівник ССП",
-        "unit_head": "Керівник управління",
         "ssp_deputy": "Заступник керівника ССП",
         "super_admin": "Супер-адмін",
         "ssp": "Відповідальна особа від ССП",
@@ -621,7 +620,6 @@ def _stage_from_actor(row: pd.Series) -> str:
     if prefix:
         aliases = {
             "Адміністратор": "Координатор",
-            "Керівник управління": "Керівник управління",
             "Керівник ССП": "Керівник ССП",
             "Заступник керівника ССП": "Заступник керівника ССП",
             "Супер-адмін": "Супер-адмін",
@@ -643,7 +641,7 @@ def build_return_analytics(logs_df: pd.DataFrame, requests_df: pd.DataFrame) -> 
         logs = logs[logs["request_id"].isin(request_ids)]
         action = logs.get("action", pd.Series([""] * len(logs), index=logs.index)).astype(str)
         new_status = logs.get("new_status", pd.Series([""] * len(logs), index=logs.index)).astype(str)
-        returns = logs[(new_status == "Повернуто на доопрацювання") | action.str.contains("Повернен", case=False, na=False)].copy()
+        returns = logs[new_status.isin(schemes.ALL_RETURNED_STATUSES) | action.str.contains("Повернен", case=False, na=False)].copy()
 
     if returns.empty:
         return {
@@ -686,17 +684,23 @@ def build_return_analytics(logs_df: pd.DataFrame, requests_df: pd.DataFrame) -> 
 
 def _parse_chain_stage_label(raw_chain: Any, stage: Any, approval_status: Any) -> str:
     status = clean(approval_status)
-    if status in WAITING_STATUS_LABELS:
+    if status == schemes.STATUS_WAITING_MANAGER_SELECTION:
         return WAITING_STATUS_LABELS[status]
-    try:
-        chain = json.loads(raw_chain) if isinstance(raw_chain, str) else raw_chain
-        idx = int(float(clean(stage) or 0))
-        if isinstance(chain, list) and 0 <= idx < len(chain):
-            item = chain[idx] if isinstance(chain[idx], dict) else {}
-            return clean(item.get("label") or item.get("role")) or "Не визначено"
-    except (ValueError, TypeError, json.JSONDecodeError):
-        pass
-    return "Не визначено"
+    chain = schemes.parse_chain(raw_chain)
+    stage_idx = schemes.parse_stage(stage)
+    item = schemes.current_stage(chain, stage_idx)
+    if status == schemes.STATUS_COORDINATOR_REVIEW:
+        item = schemes.current_stage(chain, schemes.coordinator_stage_index(chain))
+    elif status == schemes.STATUS_MANAGER_REVIEW:
+        manager_idx = schemes.manager_stage_index(chain)
+        item = schemes.current_stage(chain, manager_idx) if manager_idx is not None else item
+    elif status == schemes.STATUS_SUPERADMIN_REVIEW and clean((item or {}).get("role")) != "super_admin":
+        item = next((part for part in chain if clean(part.get("role")) == "super_admin"), item)
+    if item:
+        label = clean(item.get("label") or schemes.STAGE_LABELS.get(item.get("role")))
+        who = clean(item.get("name") or item.get("email"))
+        return f"{label} ({who})" if label and who else (label or who or "Не визначено")
+    return WAITING_STATUS_LABELS.get(status, status or "Не визначено")
 
 
 def build_approval_speed_analytics(
@@ -755,7 +759,11 @@ def build_approval_speed_analytics(
             if stage_status in WAITING_STATUS_LABELS and event_time >= entered_at:
                 stage_durations.append({
                     "request_id": rid,
-                    "Ланка": WAITING_STATUS_LABELS[stage_status],
+                    "Ланка": _parse_chain_stage_label(
+                        request.get("approval_chain"),
+                        request.get("chain_stage"),
+                        stage_status,
+                    ),
                     "Днів": (event_time - entered_at).total_seconds() / 86400,
                 })
             current_status = new_status

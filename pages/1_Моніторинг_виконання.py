@@ -854,74 +854,32 @@ with st.expander("Контактна інформація відповідаль
 # Схема погодження — спільний блок для заходів та індикаторів
 # ------------------------------------------------------------
 
-def render_scheme_picker(ssp_index, key_prefix):
-    """Вибір повного маршруту погодження подавачем.
-
-    DEMO 1.9 повертає логіку вибору маршруту на етап подання, але залишає
-    обмеження: координатор обов'язковий, координатор не може бути останнім
-    (крім подання керівником ССП), а ланки нижче ролі подавача недоступні.
-    """
+def render_start_chain(ssp_index, key_prefix):
+    """Показує автоматично визначену стартову ланку координатора."""
+    _ = key_prefix
     st.markdown(
         '<div class="table-title" style="margin-top:14px;">Схема погодження</div>',
         unsafe_allow_html=True,
     )
-    submitter_role = str(current_user.get("role") or "")
-    available_schemes = schemes.scheme_options_for_submitter(submitter_role)
+    chain = schemes.initial_chain(ssp_index)
+    if not chain:
+        st.error(
+            f"Для ССП {ssp_index} не визначено координатора. "
+            "Без координатора подання неможливе."
+        )
+        return "Координатор", [], False
 
-    if not available_schemes:
-        st.error("Для вашої ролі не знайдено доступної схеми погодження.")
-        return "", [], False
-
-    default_index = 0
-    if schemes.DEFAULT_SCHEME in available_schemes:
-        default_index = available_schemes.index(schemes.DEFAULT_SCHEME)
-
-    scheme_name = st.selectbox(
-        "Схема погодження",
-        available_schemes,
-        index=default_index,
-        key=f"{key_prefix}_approval_scheme_select",
-        label_visibility="collapsed",
+    coordinator = chain[0]
+    st.markdown(
+        f'<div style="background:#F7F9FC;border:1px solid #DCE4F0;'
+        f'border-radius:10px;padding:8px 12px;margin-bottom:6px;">'
+        f'<div style="font-size:10px;font-weight:800;letter-spacing:.04em;'
+        f'text-transform:uppercase;color:#61708A;">1. Координатор</div>'
+        f'<div style="font-size:13px;font-weight:700;color:#132238;">'
+        f'{escape(coordinator.get("name") or coordinator.get("email") or "")}</div></div>',
+        unsafe_allow_html=True,
     )
-
-    roles = schemes.APPROVAL_SCHEMES.get(scheme_name, [])
-    persons: dict[str, dict] = {}
-    ready = True
-
-    for i, role in enumerate(roles, start=1):
-        candidates = schemes.stage_candidates(role, ssp_index)
-        label = schemes.STAGE_LABELS.get(role, role)
-        if not candidates:
-            ready = False
-            st.error(
-                f"Для ССП {ssp_index} не знайдено користувача для ланки «{label}». "
-                f"Без цього подання за обраною схемою неможливе."
-            )
-            continue
-
-        if len(candidates) == 1:
-            chosen = candidates[0]
-            st.markdown(
-                f'<div style="background:#F7F9FC;border:1px solid #DCE4F0;'
-                f'border-radius:10px;padding:8px 12px;margin-bottom:6px;">'
-                f'<div style="font-size:10px;font-weight:800;letter-spacing:.04em;'
-                f'text-transform:uppercase;color:#61708A;">{i}. {escape(label)}</div>'
-                f'<div style="font-size:13px;font-weight:700;color:#132238;">'
-                f'{escape(chosen.get("name") or chosen.get("email") or "")}</div></div>',
-                unsafe_allow_html=True,
-            )
-        else:
-            chosen_label = st.selectbox(
-                f"{i}. {label}",
-                [schemes.candidate_label(c) for c in candidates],
-                key=f"{key_prefix}_stage_{i}_{role}",
-            )
-            chosen = candidates[[schemes.candidate_label(c) for c in candidates].index(chosen_label)]
-        persons[role] = chosen
-
-    chain = schemes.build_chain(scheme_name, persons) if ready else []
-    return scheme_name, chain, ready
-
+    return schemes.scheme_label_for_chain(chain), chain, True
 
 
 def notify_first_stage(chain, codes, year_str, quarter_str, kind="measure"):
@@ -972,7 +930,7 @@ if submission_mode == "indicators":
                 <div class="flow-step">1. Вибір ССП і року</div>
                 <div class="flow-step">2. Дата «станом на»</div>
                 <div class="flow-step">3. Заповнення значень</div>
-                <div class="flow-step">4. Схема погодження</div>
+                <div class="flow-step">4. Визначення координатора</div>
                 <div class="flow-step">5. Відправлення</div>
             </div>
         </div>
@@ -1199,7 +1157,7 @@ if submission_mode == "indicators":
     _ind_scheme_prefix = (
         f"ind_{normalize_key(ind_ssp_index)}_{ind_year}_{ind_as_of.isoformat()}"
     )
-    ind_scheme_name, ind_chain, ind_scheme_ready = render_scheme_picker(
+    ind_scheme_name, ind_chain, ind_scheme_ready = render_start_chain(
         ind_ssp_index,
         _ind_scheme_prefix,
     )
@@ -1212,7 +1170,7 @@ if submission_mode == "indicators":
         ind_errors = []
         if not ind_scheme_ready:
             ind_errors.append(
-                "Схема погодження неповна: для однієї з ланок не знайдено користувача"
+                "Для вибраного ССП не визначено координатора"
             )
 
         ind_real_rows = editor_real_rows(ind_edited)
@@ -1364,8 +1322,8 @@ st.markdown(
                 <div class="instruction-item">1. Позначте у першій колонці таблиці «Подати» заходи, за якими подається інформація</div>
                 <div class="instruction-item">2. Внесіть фактичні звітні відомості (показники, стан виконання, короткий опис прогресу та інформацію щодо ризиків)</div>
                 <div class="instruction-item">3. Натисніть «Подати на розгляд»</div>
-                <div class="instruction-item">4. Оберіть схему погодження відповідно до внутрішнього розподілу з випадного списку.</div>
-                <div class="instruction-item">5. Відстежуйте статус погодження — відомості проходять усі ланки обраної схеми до кінцевого погодження.</div>
+                <div class="instruction-item">4. Система автоматично направить заявку координатору відповідного ССП.</div>
+                <div class="instruction-item">5. Відстежуйте статус погодження у кабінеті «Мої заявки».</div>
             </div>
         </div>
     """,
@@ -1893,7 +1851,7 @@ def validate_submission():
     # Контактні дані підтягуються з таблиці доступів; ручну валідацію не застосовуємо.
 
     if chain_columns_exist and not measures_scheme_ready:
-        errors.append("Схема погодження неповна: для однієї з ланок не знайдено користувача")
+        errors.append("Для вибраного ССП не визначено координатора")
 
     if real_edited_df.empty:
         errors.append("Позначте хоча б один захід для подання")
@@ -1984,7 +1942,7 @@ def validate_submission():
 _meas_scheme_prefix = (
     f"meas_{normalize_key(selected_ssp_index)}_{selected_year}_{selected_quarter}"
 )
-measures_scheme_name, measures_chain, measures_scheme_ready = render_scheme_picker(
+measures_scheme_name, measures_chain, measures_scheme_ready = render_start_chain(
     selected_ssp_index,
     _meas_scheme_prefix,
 )

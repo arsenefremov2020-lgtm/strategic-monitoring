@@ -273,28 +273,26 @@ def display_text(value, fallback="—"):
 
 def status_badge_class(status):
     status = clean(status)
-    if status == "Погоджено":
+    if status == schemes.APPROVED_STATUS:
         return "badge-green"
-    if status == "Повернуто на доопрацювання":
-        return "badge-red"
-    if status == "Очікує: Керівник ССП":
-        return "badge-blue"
-    if status == "Очікує погодження":
+    if status in schemes.ALL_RETURNED_STATUSES:
         return "badge-yellow"
+    if status in schemes.ALL_WAITING_STATUSES:
+        return "badge-blue"
     return "badge-gray"
 
 
 ACTIVE_APPROVAL_STATUSES = list(dict.fromkeys([
     *schemes.ALL_WAITING_STATUSES,
-    "Повернуто на доопрацювання",
+    *schemes.ALL_RETURNED_STATUSES,
 ]))
 
 APPROVAL_FILTER_OPTIONS = [
     "Активні до розгляду",
     "Усі",
     *schemes.ALL_WAITING_STATUSES,
-    "Повернуто на доопрацювання",
-    "Погоджено",
+    *schemes.ALL_RETURNED_STATUSES,
+    schemes.APPROVED_STATUS,
 ]
 
 
@@ -587,7 +585,7 @@ if search.strip():
 
 if not filtered.empty:
     filtered["_returned_rank"] = (
-        filtered["approval_status"].astype(str) != "Повернуто на доопрацювання"
+        ~filtered["approval_status"].astype(str).isin(schemes.ALL_RETURNED_STATUSES)
     ).astype(int)
     filtered["_submitted_sort"] = pd.to_datetime(filtered["submitted_at"], errors="coerce")
     filtered = (
@@ -619,8 +617,8 @@ if filtered.empty:
 total = len(filtered)
 _approval_series = filtered["approval_status"].fillna("").astype(str).str.strip()
 _waiting_statuses = set(schemes.ALL_WAITING_STATUSES)
-_returned_mask = _approval_series.eq("Повернуто на доопрацювання")
-_approved_mask = _approval_series.eq("Погоджено")
+_returned_mask = _approval_series.isin(schemes.ALL_RETURNED_STATUSES)
+_approved_mask = _approval_series.eq(schemes.APPROVED_STATUS)
 _waiting_mask = _approval_series.isin(_waiting_statuses)
 # Невідомий або новий статус не губиться з математичного підсумку: доки він
 # не є «Повернуто» чи «Погоджено», відносимо його до укрупненої «На розгляді».
@@ -846,10 +844,10 @@ def _render_holder_strip():
         _days = max(0, (_now - _last_ts.to_pydatetime()).days)
         _days_txt = f" · на цьому кроці {_days} дн."
 
-    if approval == "Погоджено":
+    if approval == schemes.APPROVED_STATUS:
         _holder = "Погодження завершено"
         _action = ("✅ Дій від вас не потрібно", "#E4F5EC", "#1E9E57", "#0C713A")
-    elif approval == "Повернуто на доопрацювання":
+    elif approval in schemes.ALL_RETURNED_STATUSES:
         _holder = "Заявка у вас (повернута на доопрацювання)"
         _action = (
             "✍️ Потребує вашої дії — виправте дані та подайте повторно",
@@ -1167,7 +1165,7 @@ with st.expander("Історія версій заявки", expanded=False):
 # RESUBMIT AFTER RETURN
 # ============================================================
 
-if approval == "Повернуто на доопрацювання":
+if approval in schemes.ALL_RETURNED_STATUSES:
     st.markdown(
         '<div class="myreq-section-header"><div class="myreq-section-title">'
         'Редагування та повторне подання</div></div>',
@@ -1311,7 +1309,7 @@ if approval == "Повернуто на доопрацювання":
                 result = resubmit_request(
                     request_id=int(selected_id),
                     expected_updated_at=clean(selected_row.get("updated_at")),
-                    expected_status="Повернуто на доопрацювання",
+                    expected_status=approval,
                     expected_chain_stage=int(_request_stage_idx),
                     target_chain_stage=0,
                     payload=update_payload,

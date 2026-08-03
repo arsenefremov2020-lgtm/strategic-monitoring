@@ -24,7 +24,6 @@ from core.versioning import coordinator_stage_index
 from core.transitions import (
     TransitionRejected,
     approve_request_step,
-    resubmit_head_edit_to_final_coordinator,
     resubmit_request,
     return_request as atomic_return_request,
 )
@@ -524,7 +523,7 @@ def _request_is_my_turn(row):
             or (not stage_email and stage.get("role") == my_role)
         )
 
-    return approval_status == "Очікує: Керівник ССП" and my_role == ROLE_SSP_HEAD
+    return approval_status == schemes.STATUS_MANAGER_REVIEW and my_role == ROLE_SSP_HEAD
 
 
 def _build_strat_lookup(frame):
@@ -617,30 +616,23 @@ def _request_table_rows(frame, strat_lookup, initial_submitters):
 
 def status_badge_class(status):
     status = clean(status)
-    if status == "Погоджено":
+    if status == schemes.APPROVED_STATUS:
         return "badge-green"
-    if status == "Повернуто на доопрацювання":
-        return "badge-red"
-    if status == "Очікує: Керівник ССП":
-        return "badge-purple"
-    if status == "Очікує: Керівник управління":
-        return "badge-blue"
-    if status == "Очікує: Заступник керівника ССП":
-        return "badge-blue"
-    if status == "Очікує погодження":
+    if status in schemes.ALL_RETURNED_STATUSES:
         return "badge-yellow"
+    if status == schemes.STATUS_MANAGER_REVIEW:
+        return "badge-purple"
+    if status in schemes.ALL_WAITING_STATUSES:
+        return "badge-blue"
     return "badge-gray"
 
 
 APPROVAL_FILTER_OPTIONS = [
     "Активні до розгляду",
     "Усі",
-    "Очікує погодження",
-    "Очікує: Керівник управління",
-    "Очікує: Заступник керівника ССП",
-    "Очікує: Керівник ССП",
-    "Повернуто на доопрацювання",
-    "Погоджено",
+    *schemes.ALL_WAITING_STATUSES,
+    *schemes.ALL_RETURNED_STATUSES,
+    schemes.APPROVED_STATUS,
 ]
 
 
@@ -982,10 +974,10 @@ if filtered.empty:
 # ============================================================
 
 total = len(filtered)
-to_sign = len(filtered[filtered["approval_status"] == "Очікує: Керівник ССП"])
-approved = len(filtered[filtered["approval_status"] == "Погоджено"])
-waiting = len(filtered[filtered["approval_status"] == "Очікує погодження"])
-returned = len(filtered[filtered["approval_status"] == "Повернуто на доопрацювання"])
+to_sign = len(filtered[filtered["approval_status"] == schemes.STATUS_MANAGER_REVIEW])
+approved = len(filtered[filtered["approval_status"] == schemes.APPROVED_STATUS])
+waiting = len(filtered[filtered["approval_status"] == schemes.STATUS_COORDINATOR_REVIEW])
+returned = len(filtered[filtered["approval_status"].isin(schemes.ALL_RETURNED_STATUSES)])
 
 m1, m2, m3, m4, m5 = st.columns(5)
 m1.metric("Усього відомостей", total)
@@ -1338,9 +1330,9 @@ else:
         else:
             _targets = [
                 {"key": "submitter", "label": "Подавачу (відповідальній особі ССП)",
-                 "status": "Повернуто на доопрацювання", "new_stage": 0},
+                 "status": schemes.STATUS_RETURNED_BY_MANAGER, "new_stage": 0},
                 {"key": "legacy_admin", "label": "Координатору",
-                 "status": "Очікує погодження", "new_stage": 0},
+                 "status": schemes.STATUS_COORDINATOR_REVIEW, "new_stage": 0},
             ]
         _target_labels = [target["label"] for target in _targets]
         _picked_target = None
@@ -1354,12 +1346,9 @@ else:
             )
             _picked_target = _targets[_target_labels.index(_picked_target_label)]
 
-        # Якщо після поточної ланки маршрут не визначено, ця ланка може завершити
-        # погодження або призначити дозволену вищу ланку. Транзакційна механіка
-        # лишається тією самою, що була до візуальної стандартизації.
+        # Формування верхньої частини динамічного маршруту реалізується
+        # окремо у Частині 2. У цій частині нові ланки тут не додаються.
         _my_next_role_options = []
-        if decision == _approve_option and _chain and not _next_after_me:
-            _my_next_role_options = schemes.next_stage_role_options(_my_role)
 
         _my_chosen_next_role = None
         _my_chosen_next_person = None
@@ -1699,30 +1688,6 @@ else:
 
                     _cab_chain_for_edit = _chain
                     _cab_target_stage = _cab_coord_idx
-                    _cab_head_edit_scheme_label = clean(selected_row.get("scheme_label"))
-                    if _my_role == ROLE_SSP_HEAD:
-                        _cab_ssp_numbers = re.findall(
-                            r"\d+", clean(selected_row.get("department"))
-                        )
-                        _cab_ssp_index = (
-                            _cab_ssp_numbers[0]
-                            if _cab_ssp_numbers
-                            else clean(current_user.get("ssp_index"))
-                        )
-                        _cab_chain_for_edit, _cab_target_stage = (
-                            schemes.append_final_coordinator_after_head_edit(
-                                _chain, _cab_ssp_index
-                            )
-                        )
-                        if _cab_chain_for_edit is None or _cab_target_stage is None:
-                            cab_edit_errors.append(
-                                "Для цього ССП не визначено координатора, якого можна "
-                                "додати фінальною ланкою після редагування керівником ССП."
-                            )
-                        else:
-                            _cab_head_edit_scheme_label = schemes.scheme_label_for_chain(
-                                _cab_chain_for_edit
-                            )
                     if has_value(cab_new_value):
                         cab_value_ok, cab_value_error = validate_fact_value_for_target(
                             cab_new_value,
@@ -1757,44 +1722,23 @@ else:
                             "submitted_at": datetime.now(timezone.utc).isoformat(),
                             "log_comment": (
                                 f"Відредаговано ланкою «{_stage_label}»; "
-                                + (
-                                    "координатора додано фінальною ланкою погодження."
-                                    if _my_role == ROLE_SSP_HEAD
-                                    else "надіслано координатору повторно."
-                                )
+                                "надіслано на наявну ланку координатора повторно."
                             ),
                         })
                         try:
-                            if _my_role == ROLE_SSP_HEAD:
-                                result = resubmit_head_edit_to_final_coordinator(
-                                    request_id=int(selected_id),
-                                    expected_updated_at=clean(selected_row.get("updated_at")),
-                                    expected_status=approval,
-                                    expected_chain_stage=int(_stage_idx),
-                                    existing_coordinator_stage=int(_cab_coord_idx),
-                                    final_coordinator_stage=int(_cab_target_stage),
-                                    approval_chain=schemes.chain_to_json(_cab_chain_for_edit),
-                                    scheme_label=_cab_head_edit_scheme_label,
-                                    payload=_cab_update,
-                                    action=f"Редагування ланкою «{_stage_label}»",
-                                    user=current_user,
-                                    created_by_before=f"{role_label} / до редагування",
-                                    created_by_after=f"{role_label} / редагування",
-                                )
-                            else:
-                                result = resubmit_request(
-                                    request_id=int(selected_id),
-                                    expected_updated_at=clean(selected_row.get("updated_at")),
-                                    expected_status=approval,
-                                    expected_chain_stage=int(_stage_idx),
-                                    target_chain_stage=int(_cab_target_stage),
-                                    payload=_cab_update,
-                                    mode="stage_edit",
-                                    action=f"Редагування ланкою «{_stage_label}»",
-                                    user=current_user,
-                                    created_by_before=f"{role_label} / до редагування",
-                                    created_by_after=f"{role_label} / редагування",
-                                )
+                            result = resubmit_request(
+                                request_id=int(selected_id),
+                                expected_updated_at=clean(selected_row.get("updated_at")),
+                                expected_status=approval,
+                                expected_chain_stage=int(_stage_idx),
+                                target_chain_stage=int(_cab_target_stage),
+                                payload=_cab_update,
+                                mode="stage_edit",
+                                action=f"Редагування ланкою «{_stage_label}»",
+                                user=current_user,
+                                created_by_before=f"{role_label} / до редагування",
+                                created_by_after=f"{role_label} / редагування",
+                            )
 
                             if _cab_chain_for_edit:
                                 _cab_coord_stage = _cab_chain_for_edit[_cab_target_stage]
@@ -1840,7 +1784,7 @@ else:
                 "Не вдалося підтвердити актуальний стан заявки в базі. "
                 "Кнопки рішення вимкнено; оновіть сторінку й повторіть перевірку."
             )
-        elif approval == "Погоджено":
+        elif approval == schemes.APPROVED_STATUS:
             st.info("Заявку вже опрацьовано й погоджено. Додаткові дії не потрібні.")
         elif approval in _waiting_statuses:
             if _chain:
@@ -1850,7 +1794,7 @@ else:
                 )
             else:
                 st.info("Заявка вже не перебуває на вашому етапі погодження.")
-        elif approval == "Повернуто на доопрацювання":
+        elif approval in schemes.ALL_RETURNED_STATUSES:
             st.info("Заявку вже повернуто на доопрацювання. Дії цієї ланки не потрібні.")
         else:
             st.info("Заявку вже опрацьовано; для поточного стану дій цієї ланки немає.")

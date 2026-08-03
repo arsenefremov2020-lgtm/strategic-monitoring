@@ -34,6 +34,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core.data_types import normalise_closeout_frame, normalise_monitoring_frame  # noqa: E402
+from core import approval_schemes as schemes  # noqa: E402
 from core.db import fetch_all  # noqa: E402
 from core.emails import send_email  # noqa: E402
 from core.timeutils import now_kyiv  # noqa: E402
@@ -132,7 +133,6 @@ def load_users() -> list[dict]:
         })
 
     for sheet, role in (("Керівники ССП", "ssp_head"), ("Відповідальні за ССП", "ssp"),
-                        ("Керівники управлінь", "unit_head"),
                         ("Заступники керівників ССП", "ssp_deputy")):
         for _, row in read_sheet(sheet).iterrows():
             email = clean(row.get("email")).lower()
@@ -323,22 +323,13 @@ def build_log_maps(logs: pd.DataFrame):
             stage_since.setdefault(rid, ts)
         if ns == "Погоджено":
             approved[rid] = ts
-        elif ns == "Повернуто на доопрацювання":
+        elif ns in set(schemes.ALL_RETURNED_STATUSES):
             returned[rid] = ts
     return last_change, approved, returned, stage_since
 
 
 def _parse_chain(value) -> list[dict]:
-    if isinstance(value, list):
-        return [item for item in value if isinstance(item, dict)]
-    raw = clean(value)
-    if not raw:
-        return []
-    try:
-        data = json.loads(raw)
-        return [item for item in data if isinstance(item, dict)] if isinstance(data, list) else []
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return []
+    return schemes.parse_chain(value)
 
 
 def digest_slot(today: datetime, *, force_run: bool = False) -> str | None:
@@ -353,10 +344,7 @@ def digest_slot(today: datetime, *, force_run: bool = False) -> str | None:
 
 
 def _stage_index(value) -> int:
-    try:
-        return max(int(float(clean(value) or 0)), 0)
-    except (TypeError, ValueError, OverflowError):
-        return 0
+    return schemes.parse_stage(value)
 
 
 def _current_stage(row) -> dict:
@@ -390,21 +378,16 @@ def _stage_matches_user(stage: dict, user: dict) -> bool:
 
 def _request_waits_for_user(row, user: dict) -> bool:
     status = clean(row.get("approval_status"))
-    if not status.startswith("Очікує"):
+    expected_statuses = {
+        "admin": {schemes.STATUS_COORDINATOR_REVIEW},
+        "super_admin": {schemes.STATUS_SUPERADMIN_REVIEW},
+        "ssp_head": {schemes.STATUS_MANAGER_REVIEW},
+        "ssp_deputy": {schemes.STATUS_MANAGER_REVIEW},
+    }.get(clean(user.get("role")), set())
+    if status not in expected_statuses:
         return False
-
     current = _current_stage(row)
-    if current:
-        return _stage_matches_user(current, user)
-
-    # Legacy fallback for records without approval_chain.
-    legacy_status = {
-        "admin": "Очікує погодження",
-        "unit_head": "Очікує: Керівник управління",
-        "ssp_deputy": "Очікує: Заступник керівника ССП",
-        "ssp_head": "Очікує: Керівник ССП",
-    }.get(clean(user.get("role")))
-    return bool(legacy_status and status == legacy_status)
+    return bool(current and _stage_matches_user(current, user))
 
 
 def _route_matches_superadmin(route: dict, superadmin: dict) -> bool:
@@ -450,7 +433,7 @@ def _current_admin_email(row, admin_users: list[dict]) -> str:
         if email:
             return email
 
-    if clean(row.get("approval_status")) != "Очікує погодження":
+    if clean(row.get("approval_status")) != schemes.STATUS_COORDINATOR_REVIEW:
         return ""
     indexes = _department_indexes(row)
     matches = []
@@ -486,7 +469,7 @@ def build_superadmin_stuck_map(
         current = _current_stage(row)
         if current and clean(current.get("role")) != "admin":
             continue
-        if not current and clean(row.get("approval_status")) != "Очікує погодження":
+        if not current and clean(row.get("approval_status")) != schemes.STATUS_COORDINATOR_REVIEW:
             continue
 
         admin_email = _current_admin_email(row, admins)
@@ -634,13 +617,13 @@ def main() -> int:
 
         if role == "ssp" and not my_requests.empty:
             returned = my_requests[
-                my_requests["approval_status"].astype(str) == "Повернуто на доопрацювання"
+                my_requests["approval_status"].astype(str).isin(schemes.ALL_RETURNED_STATUSES)
             ]
             if not returned.empty:
                 items = []
                 for _, row in returned.head(20).iterrows():
                     comment = clean(row.get("admin_comment"))
-                    comment_part = f" Коментар координатора: «{comment[:160]}»" if comment else ""
+                    comment_part = f" Коментар до повернення: «{comment[:160]}»" if comment else ""
                     items.append(li(
                         f"Захід <b>{clean(row.get('strat_code'))}</b> "
                         f"({clean(row.get('quarter'))} кв. {clean(row.get('year'))}) — "
@@ -652,8 +635,25 @@ def main() -> int:
                     accent="#b91c1c",
                 ))
 
+        if role == "ssp" and not my_requests.empty:
+            manager_selection = my_requests[
+                my_requests["approval_status"].astype(str)
+                == schemes.STATUS_WAITING_MANAGER_SELECTION
+            ]
+            if not manager_selection.empty:
+                sections.append(block(
+                    f"👤 Потрібно обрати керівника: {len(manager_selection)}",
+                    [li(
+                        f"Заявка №{clean(row.get('id'))}: захід "
+                        f"<b>{clean(row.get('strat_code'))}</b> "
+                        f"({clean(row.get('quarter'))} кв. {clean(row.get('year'))}) — "
+                        "перевірте дані та направте керівнику ССП або заступнику."
+                    ) for _, row in manager_selection.head(20).iterrows()],
+                    accent="#b45309",
+                ))
+
         # ---------- Ланки вертикалі: повний зріз заявок на їхній ланці ----------
-        if role in {"ssp_head", "unit_head", "ssp_deputy"} and not my_requests.empty:
+        if role in {"ssp_head", "ssp_deputy"} and not my_requests.empty:
             mask = my_requests.apply(lambda row: _request_waits_for_user(row, user), axis=1)
             waiting = my_requests[mask]
             if not waiting.empty:
@@ -698,7 +698,7 @@ def main() -> int:
                 ))
 
             returned = my_requests[
-                my_requests["approval_status"].astype(str) == "Повернуто на доопрацювання"
+                my_requests["approval_status"].astype(str).isin(schemes.ALL_RETURNED_STATUSES)
             ]
             if not returned.empty:
                 items = []
@@ -783,7 +783,6 @@ def main() -> int:
         role_label = {
             "ssp": "відповідальної особи ССП",
             "ssp_head": "керівника ССП",
-            "unit_head": "керівника управління",
             "ssp_deputy": "заступника керівника ССП",
             "admin": "координатора",
             "super_admin": "супер-адміністратора",

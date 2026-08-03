@@ -43,42 +43,55 @@ def main() -> int:
     )
 
     six_days_ago = (datetime.now(timezone.utc) - timedelta(days=6, hours=2)).isoformat()
-    requests = pd.DataFrame([
-        {
-            "id": 101,
-            "strat_code": "1.2.3.",
-            "year": "2026",
-            "quarter": "II",
-            "approval_status": "Очікує: Керівник управління",
-            "approval_chain": (
-                '[{"role":"unit_head","label":"Керівник управління",'
-                '"email":"current@example.com"},'
-                '{"role":"ssp_head","label":"Керівник ССП",'
-                '"email":"last@example.com"}]'
-            ),
-            "chain_stage": 0,
-            "submitted_at": six_days_ago,
-            "_stage_since": six_days_ago,
-        }
-    ])
-    users = [
-        {"email": "current@example.com", "role": "unit_head"},
-        {"email": "last@example.com", "role": "ssp_head"},
-        {"email": "super@example.com", "role": "super_admin"},
-    ]
-    escalations = module.build_escalations(requests, users)
-    check(set(escalations) == {"current@example.com", "last@example.com", "super@example.com"},
-          "Ескалацію отримують поточна ланка, остання ланка і супер-адмін")
-    check(escalations["current@example.com"][0]["days"] > 5,
-          "До ескалації потрапляє заявка, що очікує понад 5 днів")
+    coordinator_request = pd.Series({
+        "id": 101,
+        "approval_status": "На розгляді координатора",
+        "approval_chain": (
+            '[{"role":"admin","label":"Координатор",'
+            '"email":"coord@example.com"}]'
+        ),
+        "chain_stage": 0,
+        "_stage_since": six_days_ago,
+    })
+    coordinator = {"email": "coord@example.com", "role": "admin"}
+    manager = {"email": "head@example.com", "role": "ssp_head"}
+    check(
+        module._request_waits_for_user(coordinator_request, coordinator),
+        "Координатор отримує заявку лише на своїй поточній ланці",
+    )
+    check(
+        not module._request_waits_for_user(coordinator_request, manager),
+        "Керівник не отримує заявку до вибору керівницької ланки",
+    )
+
+    manager_request = pd.Series({
+        "id": 102,
+        "approval_status": "На розгляді керівника",
+        "approval_chain": (
+            '[{"role":"admin","label":"Координатор",'
+            '"email":"coord@example.com"},'
+            '{"role":"ssp_head","label":"Керівник ССП",'
+            '"email":"head@example.com"}]'
+        ),
+        "chain_stage": 1,
+        "_stage_since": six_days_ago,
+    })
+    check(
+        module._request_waits_for_user(manager_request, manager),
+        "Керівник отримує заявку, коли він є поточною ланкою",
+    )
+    check(
+        not module._request_waits_for_user(manager_request, coordinator),
+        "Координатор не отримує заявку, яка вже перейшла керівнику",
+    )
 
     keepalive = (ROOT / ".github" / "workflows" / "keepalive.yml").read_text(encoding="utf-8")
     check("|| true" not in keepalive, "Keepalive не приховує помилки")
     check("--fail" in keepalive and "3" in keepalive, "Keepalive має fail і три спроби")
 
     workflow = (ROOT / ".github" / "workflows" / "notifications.yml").read_text(encoding="utf-8")
-    check('30 5 * * 1-5' in workflow and '30 6 * * 1-5' in workflow,
-          "Workflow має два сезонні UTC-розклади")
+    check('30 5 * * 1-5' in workflow and '30 13 * * 1-5' in workflow,
+          "Workflow має ранковий і вечірній UTC-розклади")
 
     migration = (ROOT / "migrations" / "014_stage5_administration_notifications.sql").read_text(encoding="utf-8")
     check("uq_closeout_requests_active_period" in migration,

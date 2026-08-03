@@ -73,7 +73,7 @@ def _synthetic_requests() -> pd.DataFrame:
                 "year": 2026,
                 "quarter": 1,
                 "responsible_person": "Тестова особа 2",
-                "approval_status": "Очікує: Керівник ССП",
+                "approval_status": "На розгляді керівника",
                 "submitted_at": "2026-07-02T08:00:00Z",
                 "chain_stage": 1,
                 "approval_chain": (
@@ -97,8 +97,8 @@ def _synthetic_logs() -> pd.DataFrame:
                 "request_id": 1,
                 "changed_at": "2026-07-01T09:00:00Z",
                 "action": "Погодження координатором",
-                "old_status": "Очікує погодження",
-                "new_status": "Очікує: Керівник ССП",
+                "old_status": "На розгляді координатора",
+                "new_status": "На розгляді керівника",
                 "actor_role": "admin",
                 "actor_name": "Координатор",
                 "changed_by": "Адміністратор · Координатор",
@@ -108,8 +108,8 @@ def _synthetic_logs() -> pd.DataFrame:
                 "request_id": 1,
                 "changed_at": "2026-07-02T09:00:00Z",
                 "action": "Повернення на доопрацювання",
-                "old_status": "Очікує: Керівник ССП",
-                "new_status": "Повернуто на доопрацювання",
+                "old_status": "На розгляді керівника",
+                "new_status": "Повернуто на доопрацювання керівником",
                 "actor_role": "ssp_head",
                 "actor_name": "Керівник",
                 "changed_by": "Керівник ССП · Керівник",
@@ -119,8 +119,8 @@ def _synthetic_logs() -> pd.DataFrame:
                 "request_id": 1,
                 "changed_at": "2026-07-03T09:00:00Z",
                 "action": "Повторне подання",
-                "old_status": "Повернуто на доопрацювання",
-                "new_status": "Очікує погодження",
+                "old_status": "Повернуто на доопрацювання керівником",
+                "new_status": "На розгляді координатора",
                 "actor_role": "ssp",
                 "actor_name": "Подавач",
                 "changed_by": "ССП · Подавач",
@@ -130,8 +130,8 @@ def _synthetic_logs() -> pd.DataFrame:
                 "request_id": 1,
                 "changed_at": "2026-07-03T10:00:00Z",
                 "action": "Погодження координатором",
-                "old_status": "Очікує погодження",
-                "new_status": "Очікує: Керівник ССП",
+                "old_status": "На розгляді координатора",
+                "new_status": "На розгляді керівника",
                 "actor_role": "admin",
                 "actor_name": "Координатор",
                 "changed_by": "Адміністратор · Координатор",
@@ -140,8 +140,8 @@ def _synthetic_logs() -> pd.DataFrame:
             {
                 "request_id": 1,
                 "changed_at": "2026-07-04T10:00:00Z",
-                "action": "Погодження ланкою",
-                "old_status": "Очікує: Керівник ССП",
+                "action": "Погодження керівником",
+                "old_status": "На розгляді керівника",
                 "new_status": "Погоджено",
                 "actor_role": "ssp_head",
                 "actor_name": "Керівник",
@@ -152,8 +152,8 @@ def _synthetic_logs() -> pd.DataFrame:
                 "request_id": 2,
                 "changed_at": "2026-07-02T10:00:00Z",
                 "action": "Погодження координатором",
-                "old_status": "Очікує погодження",
-                "new_status": "Очікує: Керівник ССП",
+                "old_status": "На розгляді координатора",
+                "new_status": "На розгляді керівника",
                 "actor_role": "admin",
                 "actor_name": "Координатор",
                 "changed_by": "Адміністратор · Координатор",
@@ -179,6 +179,7 @@ def test_approval_speed() -> None:
     assert result["completed_requests"] == 1
     assert result["average_total_days"] == 3.08
     assert len(result["hanging"]) == 1
+    assert result["hanging"].iloc[0]["Поточна ланка"] == "Керівник ССП"
 
 
 def test_human_versions() -> None:
@@ -188,7 +189,7 @@ def test_human_versions() -> None:
                 "version_number": 1,
                 "created_at": "2026-07-01T08:00:00Z",
                 "created_by": "A",
-                "approval_status": "Очікує погодження",
+                "approval_status": "На розгляді координатора",
                 "status": "Не виконано",
                 "numeric_value": 1,
                 "progress_text": "a",

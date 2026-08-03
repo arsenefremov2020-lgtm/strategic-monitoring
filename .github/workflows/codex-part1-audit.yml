@@ -1,9 +1,9 @@
 name: Codex Part 1 repository audit
 
 on:
-  push:
+  pull_request:
     branches:
-      - codex/dynamic-approval-part1-audit-20260803
+      - main
   workflow_dispatch:
 
 permissions:

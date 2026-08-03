@@ -45,34 +45,28 @@ jobs:
           echo "Застосунок не відповів після трьох спроб." >&2
           exit 1
 
-  codex-audit:
+  codex-snapshot:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build audit report
+      - name: Prepare source snapshot
         shell: bash
         run: |
-          mkdir -p audit
-          {
-            echo '=== OLD APPROVAL SYMBOL REFERENCES ==='
-            grep -RInE 'APPROVAL_SCHEMES|DEFAULT_SCHEME|SUBMITTER_SELF_APPROVAL_SCHEME|scheme_options_for_|scheme_name_for_roles|roles_with_recorded_decisions|coordinator_scheme_tail_roles|append_final_coordinator_after_head_edit|next_stage_role_options|ROLE_RANK|_approval_role_rank|_VERTICAL_APPROVAL_ROLES|build_chain\(' . --exclude-dir=.git --exclude=codex-part1-audit.yml || true
-            echo
-            echo '=== OBSOLETE RPC REFERENCES ==='
-            grep -RIn 'transition_resubmit_head_edit_final_coordinator\|resubmit_head_edit_to_final_coordinator' . --exclude-dir=.git --exclude=codex-part1-audit.yml || true
-            echo
-            echo '=== RESUBMIT RPC DEFINITIONS/USES ==='
-            grep -RIn 'transition_resubmit_request\|p_mode\|stage_edit' . --exclude-dir=.git --exclude=codex-part1-audit.yml || true
-            echo
-            echo '=== APPROVAL CONSTRAINT DEFINITIONS ==='
-            grep -RIn 'chk_approval_status\|approval_status.*CHECK' . --exclude-dir=.git --exclude=codex-part1-audit.yml || true
-          } > audit/audit.txt
-          grep -RIl 'transition_resubmit_request' . --exclude-dir=.git --exclude=codex-part1-audit.yml | while read -r f; do
-            mkdir -p "audit/files/$(dirname "$f")"
-            cp "$f" "audit/files/$f"
-          done
+          mkdir -p snapshot/core snapshot/config snapshot/pages snapshot/migrations
+          cp core/approval_schemes.py snapshot/core/
+          cp core/statuses.py snapshot/core/
+          cp core/transitions.py snapshot/core/
+          cp core/data_types.py snapshot/core/
+          cp config/roles.py snapshot/config/
+          cp 'pages/1_Моніторинг_виконання.py' snapshot/pages/
+          cp 'pages/1_Мій_кабінет.py' snapshot/pages/
+          cp 'pages/3_Адміністрування.py' snapshot/pages/
+          cp 'pages/3_Мої_заявки.py' snapshot/pages/
+          cp migrations/012_atomic_transitions.sql snapshot/migrations/
+          cp migrations/018_head_edit_final_coordinator.sql snapshot/migrations/
       - uses: actions/upload-artifact@v4
         with:
-          name: codex-part1-audit
-          path: audit
+          name: codex-part1-source-snapshot
+          path: snapshot
           if-no-files-found: error

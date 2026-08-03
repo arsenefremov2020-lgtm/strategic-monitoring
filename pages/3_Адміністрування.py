@@ -43,9 +43,10 @@ from core.validation import (
     status_value_conflict,
     validate_fact_value_for_target,
 )
-from config.roles import ROLE_SUPER_ADMIN
+from config.roles import ROLE_ADMIN, ROLE_SUPER_ADMIN
 from core.access import filter_actions_for_user
 from core.superadmin_routing import (
+    assigned_superadmins_for_admin,
     is_superadmin_assigned_to_admin,
     resolve_manual_closeout_route,
     senior_superadmin_for,
@@ -1919,7 +1920,6 @@ def _render_request_detail_cards(
     npa_raw = clean(record.get("npa_link"))
     req_chain = schemes.parse_chain(record.get("approval_chain"))
     req_stage = schemes.parse_stage(record.get("chain_stage"))
-    req_scheme_label = clean(record.get("scheme_label"))
     req_kind = clean(record.get("object_kind")) or "measure"
     req_dept_nums = re.findall(r"\d+", clean(record.get("department")))
     req_dept_idx = req_dept_nums[0] if req_dept_nums else ""
@@ -1934,24 +1934,26 @@ def _render_request_detail_cards(
     else:
         npa_links_html = "—"
 
-    route_nodes = [
-        '<div class="admin-route-node">'
-        '<span class="admin-route-role">Подавач</span>'
-        f'{_esc(person_name if person_name != "—" else person_email)}'
-        '</div>'
-    ]
-    current_route_stage = schemes.current_stage(req_chain, req_stage) if req_chain else None
-    for stage_index, stage in enumerate(req_chain):
-        stage_label = clean(stage.get("label")) or schemes.STAGE_LABELS.get(clean(stage.get("role")), "Ланка")
-        stage_person = clean(stage.get("name")) or clean(stage.get("email")) or "—"
-        current_class = " current" if current_route_stage is not None and stage_index == req_stage else ""
-        route_nodes.append(
-            f'<div class="admin-route-node{current_class}">'
-            f'<span class="admin-route-role">{_esc(stage_label)}</span>'
-            f'{_esc(stage_person)}</div>'
-        )
+    route_nodes = []
+    if req_chain:
+        try:
+            route_logs = load_logs(int(float(clean(record.get("id")))), record)
+        except Exception:
+            route_logs = pd.DataFrame()
+        for route_step in schemes.approval_scheme_steps(
+            req_chain,
+            req_stage,
+            approval_status,
+            route_logs,
+        ):
+            current_class = " current" if route_step["current"] else ""
+            route_nodes.append(
+                f'<div class="admin-route-node{current_class}">'
+                f'<span class="admin-route-role">Крок {route_step["number"]}</span>'
+                f'{_esc(route_step["text"])}</div>'
+            )
     route_html = '<span class="admin-route-arrow">→</span>'.join(route_nodes)
-    route_caption = _esc(req_scheme_label) if req_scheme_label else "Маршрут погодження"
+    route_caption = "Фактичні кроки заявки"
     nature_html = _request_nature_html(
         record, req_chain, req_stage, correction_mode=correction_mode,
     )
@@ -4054,17 +4056,24 @@ else:
             filtered = filtered[filtered["quarter"].astype(str) == str(selected_quarter)]
 
         if selected_approval_status == "Активні до розгляду":
+            _active_for_role = (
+                [schemes.STATUS_SUPERADMIN_REVIEW]
+                if _is_superadmin_current
+                else [schemes.STATUS_COORDINATOR_REVIEW, schemes.STATUS_WAITING_MANAGER_SELECTION]
+            )
             filtered = filtered[
-                filtered["approval_status"].astype(str)
-                == schemes.STATUS_COORDINATOR_REVIEW
+                filtered["approval_status"].astype(str).isin(_active_for_role)
             ]
         elif selected_approval_status != "Усі":
             filtered = filtered[filtered["approval_status"].astype(str) == str(selected_approval_status)]
 
         if quick_filter == "Тільки очікують":
-            filtered = filtered[
-                filtered["approval_status"] == schemes.STATUS_COORDINATOR_REVIEW
-            ]
+            _waiting_for_role = (
+                [schemes.STATUS_SUPERADMIN_REVIEW]
+                if _is_superadmin_current
+                else [schemes.STATUS_COORDINATOR_REVIEW, schemes.STATUS_WAITING_MANAGER_SELECTION]
+            )
+            filtered = filtered[filtered["approval_status"].isin(_waiting_for_role)]
         elif quick_filter == "Повернуті":
             filtered = filtered[
                 filtered["approval_status"].isin(schemes.ALL_RETURNED_STATUSES)
@@ -4111,22 +4120,23 @@ _me_role = clean(current_user.get("role"))
 
 def _request_is_actionable_by_me(row) -> bool:
     ap = clean(row.get("approval_status"))
-    if _me_role == "admin" and ap != schemes.STATUS_COORDINATOR_REVIEW:
-        return False
-    if _me_role == "super_admin" and ap != schemes.STATUS_SUPERADMIN_REVIEW:
-        return False
     ch = schemes.parse_chain(row.get("approval_chain"))
     stg = schemes.parse_stage(row.get("chain_stage"))
-    if not ch:
-        # застарілі заявки без ланцюга — на розгляді координатора
-        return ap == schemes.STATUS_COORDINATOR_REVIEW and _me_role == "admin"
-    cur = schemes.current_stage(ch, stg)
-    if cur is None:
-        return False
     if _me_role == "super_admin":
-        return _stage_matches_current_superadmin(cur, current_user)
+        if ap != schemes.STATUS_SUPERADMIN_REVIEW or not ch:
+            return False
+        return _stage_matches_current_superadmin(schemes.current_stage(ch, stg), current_user)
     if _me_role == "admin":
-        return clean(cur.get("role")) == schemes.ROLE_ADMIN
+        if not ch:
+            return ap == schemes.STATUS_COORDINATOR_REVIEW
+        coordinator = schemes.current_stage(ch, schemes.coordinator_stage_index(ch))
+        same_coordinator = clean((coordinator or {}).get("email")).lower() == clean(current_user.get("email")).lower()
+        if ap == schemes.STATUS_WAITING_MANAGER_SELECTION:
+            return same_coordinator
+        if ap != schemes.STATUS_COORDINATOR_REVIEW:
+            return False
+        current = schemes.current_stage(ch, stg)
+        return same_coordinator and clean((current or {}).get("role")) == ROLE_ADMIN
     return False
 
 queue_df = filtered[filtered.apply(_request_is_actionable_by_me, axis=1)].copy()
@@ -4268,19 +4278,29 @@ if _is_conflict and _req_kind != "indicator":
     with _cfb1:
         if st.button("✅ Дані збігаються — погодити заявку", key=f"conflict_ok_{selected_id}", use_container_width=True):
             try:
+                _conflict_next_status, _conflict_next_stage = schemes.status_after_regulator(
+                    _req_chain, _req_stage,
+                )
                 approve_request_step(
                     request_id=int(selected_id),
                     expected_status=approval_status,
                     expected_chain_stage=int(_req_stage),
-                    new_status=schemes.STATUS_WAITING_MANAGER_SELECTION,
-                    new_chain_stage=int(_req_stage) + 1,
+                    new_status=_conflict_next_status,
+                    new_chain_stage=int(_conflict_next_stage),
                     approval_chain=(schemes.chain_to_json(_req_chain) if _req_chain else None),
                     comment="Погоджено: дані заявки збігаються з ручним закриттям заходу.",
                     action="Погодження заявки (збіг із ручним закриттям)",
                     user=current_user,
                     created_by="Координатор / погодження збігу з ручним закриттям",
                 )
-                st.success("Заявку погоджено координатором; вона очікує вибору керівника.")
+                st.success(
+                    "Заявку погоджено координатором; "
+                    + (
+                        "її передано раніше обраному керівнику."
+                        if _conflict_next_status == schemes.STATUS_MANAGER_REVIEW
+                        else "вона очікує вибору керівника."
+                    )
+                )
                 monitoring_data.invalidate_monitoring_cache()
                 st.rerun()
             except TransitionRejected as exc:
@@ -4328,404 +4348,539 @@ if _is_conflict and _req_kind != "indicator":
 # ланцюга (chain_stage) — дійсно "admin". В іншому разі — лише
 # інформаційний перегляд, без можливості щось змінити.
 
-_is_admin_turn = (not _req_chain) or schemes.is_stage_role(_req_chain, _req_stage, schemes.ROLE_ADMIN)
 _current_waiting_stage = schemes.current_stage(_req_chain, _req_stage) if _req_chain else None
-
-# ТЗ Адм.1 / Заг.5: ланка «Супер-адмін» у схемі. Діяти може лише той
-# супер-адмін, якому заявку направлено (email ланки), — інші супер-адміни
-# бачать усе, але не втручаються. Якщо він сумнівається — ескалує вищому
-# (Пастушина → Делюсто; Канєвська → Перун).
 _my_email_norm = clean(current_user.get("email")).lower()
-_is_super_turn = bool(
-    _req_chain
+_current_role = clean(current_user.get("role"))
+_decision_logs = load_logs(selected_id, selected_row)
+_latest_route_transition = None
+if _decision_logs is not None and not _decision_logs.empty and "new_status" in _decision_logs.columns:
+    _route_transitions = _decision_logs[
+        _decision_logs["new_status"].fillna("").astype(str).isin(schemes.ALL_APPROVAL_STATUSES)
+    ]
+    if not _route_transitions.empty:
+        _latest_route_transition = _route_transitions.iloc[-1]
+_latest_transition_by_me = bool(
+    _latest_route_transition is not None
+    and clean(_latest_route_transition.get("new_status"))
+        == schemes.STATUS_WAITING_MANAGER_SELECTION
+    and clean(_latest_route_transition.get("actor_role")) == ROLE_ADMIN
+    and clean(_latest_route_transition.get("actor_email")).lower() == _my_email_norm
+)
+_is_admin_turn = bool(
+    _current_role == ROLE_ADMIN
+    and approval_status == schemes.STATUS_COORDINATOR_REVIEW
     and _current_waiting_stage is not None
-    and clean(current_user.get("role")) == "super_admin"
+    and clean(_current_waiting_stage.get("role")) == ROLE_ADMIN
+    and clean(_current_waiting_stage.get("email")).lower() == _my_email_norm
+)
+_is_waiting_manager_edit = bool(
+    _current_role == ROLE_ADMIN
+    and approval_status == schemes.STATUS_WAITING_MANAGER_SELECTION
+    and _req_chain
+    and clean(_req_chain[schemes.coordinator_stage_index(_req_chain)].get("email")).lower()
+        == _my_email_norm
+    and _latest_transition_by_me
+)
+_is_super_turn = bool(
+    _current_role == ROLE_SUPER_ADMIN
+    and approval_status == schemes.STATUS_SUPERADMIN_REVIEW
+    and _current_waiting_stage is not None
     and _stage_matches_current_superadmin(_current_waiting_stage, current_user)
 )
 
-if _is_super_turn and not schemes.is_final_locked(selected_row):
+
+def _route_person(route: dict | None) -> dict | None:
+    """Перетворює наявний маршрут супер-адміна на конкретного користувача."""
+    route = route or {}
+    email = clean(route.get("email")).lower()
+    name = clean(route.get("name"))
+    if email:
+        return {"email": email, "name": name or email}
+    name_tokens = {token for token in re.findall(r"[a-zа-яіїєґ]+", name.casefold()) if len(token) > 2}
+    for candidate in schemes.stage_candidates(ROLE_SUPER_ADMIN, str(_req_dept_idx)):
+        candidate_name = clean(candidate.get("name")).casefold()
+        if name_tokens and any(token in candidate_name for token in name_tokens):
+            return candidate
+    return None
+
+
+def _render_regulator_edit_fields(prefix: str) -> dict:
+    status_options = list(SUBMISSION_STATUS_OPTIONS)
+    current_status = clean(selected_row.get("status"))
+    status_index = status_options.index(current_status) if current_status in status_options else 0
+    return {
+        "status": st.selectbox(
+            "Статус виконання",
+            status_options,
+            index=status_index,
+            key=f"{prefix}_status_{selected_id}",
+        ),
+        "numeric_value": st.text_input(
+            "Фактичне значення",
+            value=_fact_for_request(selected_row).replace("—", ""),
+            key=f"{prefix}_value_{selected_id}",
+        ),
+        "progress_text": st.text_area(
+            "Опис прогресу",
+            value=clean(selected_row.get("progress_text")),
+            height=120,
+            key=f"{prefix}_progress_{selected_id}",
+        ),
+        "risks": st.text_area(
+            "Ризики / проблеми / відхилення",
+            value=clean(selected_row.get("risks")),
+            height=100,
+            key=f"{prefix}_risks_{selected_id}",
+        ),
+        "npa_link": st.text_area(
+            "Посилання на НПА",
+            value=clean(selected_row.get("npa_link")),
+            height=80,
+            key=f"{prefix}_npa_{selected_id}",
+        ),
+    }
+
+
+def _regulator_edit_errors(values: dict) -> list[str]:
+    errors = []
+    if not clean(values.get("numeric_value")):
+        errors.append("Заповніть фактичне значення.")
+    if not clean(values.get("progress_text")):
+        errors.append("Заповніть опис прогресу.")
+    try:
+        edit_year = int(float(clean(selected_row.get("year"))))
+    except (TypeError, ValueError):
+        edit_year = None
+    future_targets = (
+        [_strat_record.get(f"target_{year}", "") for year in range(edit_year + 1, 2035)]
+        if edit_year is not None else []
+    )
+    if clean(values.get("numeric_value")):
+        value_ok, value_error = validate_fact_value_for_target(
+            values.get("numeric_value"), _unit, target_year_val, future_targets,
+        )
+        if not value_ok:
+            errors.append(value_error)
+    conflict_error = status_value_conflict(
+        values.get("status"), values.get("numeric_value"), target_year_val,
+        _unit, selected_code, future_targets,
+    )
+    if conflict_error:
+        errors.append(conflict_error)
+    return list(dict.fromkeys(error for error in errors if error))
+
+
+def _edit_payload(values: dict, comment: str, actor_label: str) -> dict:
+    return prepare_monitoring_payload({
+        **values,
+        "admin_comment": clean(comment),
+        "submitted_at": datetime.now(timezone.utc).isoformat(),
+        "log_comment": (
+            f"{actor_label} відредагував дані; редагування прирівняно до погодження."
+        ),
+    })
+
+
+def _notify_next_status(status: str, stage_index: int, chain: list[dict], actor_label: str) -> None:
+    if status == schemes.STATUS_WAITING_MANAGER_SELECTION:
+        notify_events.notify_manager_selection_required(
+            clean(selected_row.get("email", "")),
+            clean(selected_row.get("responsible_person", "")),
+            selected_code,
+            _req_year,
+            _req_quarter,
+            by_label=actor_label,
+            kind=_req_kind or "measure",
+        )
+        return
+    next_stage = schemes.current_stage(chain, stage_index)
+    if next_stage:
+        notify_events.notify_stage_assigned(
+            next_stage.get("email", ""),
+            next_stage.get("name", ""),
+            next_stage.get("label", ""),
+            selected_code,
+            _req_year,
+            _req_quarter,
+            submitter=clean(selected_row.get("responsible_person", "")),
+            kind=_req_kind or "measure",
+        )
+
+
+def _finish_notice(text: str) -> None:
+    st.session_state["adm_last_decision_notice"] = (
+        f"{text} Якщо в черзі є ще заявки — систему щойно переключило "
+        "на наступну заявку. Перегляньте її дані з початку."
+    )
+    monitoring_data.invalidate_monitoring_cache()
+    st.rerun()
+
+
+# Координатор може швидко виправити власну щойно погоджену заявку,
+# доки подавач не додав керівницьку ланку.
+if _is_waiting_manager_edit and not schemes.is_final_locked(selected_row):
     st.markdown(
-        '<div class="card">'
-        '<div class="card-title">Рішення супер-адміна</div>'
-        '<div class="card-subtitle">Заявку направлено вам координатором, '
-        'який мав сумніви. Погодьте остаточно, ескалуйте вищому '
-        'супер-адміну або поверніть на доопрацювання.</div>',
+        '<div class="card decision-card">'
+        '<div class="card-title">Редагування координатором</div>'
+        '<div class="card-subtitle">Заявка вже погоджена координатором, але ще не направлена керівнику. '
+        'Після редагування вона лишиться у стані «Очікує вибору керівника».</div>',
         unsafe_allow_html=True,
     )
-    _sa_senior = senior_superadmin_for(_my_email_norm)
-    _sa_options = ["Погодити остаточно"]
-    if _sa_senior and clean(_sa_senior.get("email")).lower() not in ("", _my_email_norm):
-        _sa_options.append(f"Передати вищому супер-адміну — {_sa_senior['name']}")
-    _sa_options.append("Повернути на доопрацювання")
-    _sa_decision = st.radio(
-        "Оберіть рішення", _sa_options, horizontal=True,
-        key=f"sa_decision_{selected_id}",
+    _waiting_edit_values = _render_regulator_edit_fields("waiting_manager_edit")
+    _waiting_edit_comment = st.text_area(
+        "Коментар (необов’язково)",
+        height=90,
+        key=f"waiting_manager_edit_comment_{selected_id}",
     )
-    _sa_targets = schemes.return_targets(_req_chain, _req_stage)
-    _sa_target_labels = [t["label"] for t in _sa_targets]
-    _sa_return_label = st.selectbox(
-        "Кому повернути (якщо обрано повернення)", _sa_target_labels,
-        key=f"sa_return_target_{selected_id}",
-    )
-    _sa_comment = st.text_area(
-        "Коментар (обов'язковий при поверненні)", height=80,
-        key=f"sa_comment_{selected_id}",
-    )
-    if st.button("Підтвердити рішення супер-адміна", type="primary",
-                 use_container_width=True, key=f"sa_confirm_{selected_id}"):
-        _sa_new_status, _sa_extra, _sa_action, _sa_notify = None, {}, "", None
-        _sa_blocked = False
-        if _sa_decision == "Погодити остаточно":
-            _sa_new_status, _sa_new_stage = schemes.finalize_here(_req_stage)
-            _sa_extra["chain_stage"] = int(_sa_new_stage)
-            _sa_action = "Погодження супер-адміном (остаточно)"
-            _sa_notify = ("approved",)
-        elif _sa_decision.startswith("Передати вищому"):
-            _sa_new_chain, _sa_new_status, _sa_new_stage = schemes.advance_with_new_stage(
-                _req_chain, _req_stage, ROLE_SUPER_ADMIN, str(_req_dept_idx),
-                {"email": _sa_senior["email"], "name": _sa_senior["name"]},
-            )
-            if _sa_new_chain is None:
-                st.error("Не вдалося визначити вищого супер-адміна.")
-                _sa_blocked = True
-            else:
-                _sa_extra["approval_chain"] = schemes.chain_to_json(_sa_new_chain)
-                _sa_extra["chain_stage"] = int(_sa_new_stage)
-                _sa_action = f"Ескалація вищому супер-адміну: {_sa_senior['name']}"
-                _sa_notify = ("stage", _sa_new_chain[_sa_new_stage])
-        elif _sa_decision == "Повернути на доопрацювання":
-            if not clean(_sa_comment):
-                st.error("Для повернення обов'язково вкажіть коментар.")
-                _sa_blocked = True
-            else:
-                _sa_picked = _sa_targets[_sa_target_labels.index(_sa_return_label)]
-                _sa_new_status = _sa_picked["status"]
-                _sa_extra["chain_stage"] = int(_sa_picked["new_stage"])
-                _sa_action = f"Повернення супер-адміном: {_sa_picked['label']}"
-                _sa_notify = ("returned", _sa_picked)
-        if not _sa_blocked:
+    if st.button(
+        "Зберегти зміни",
+        use_container_width=True,
+        key=f"waiting_manager_edit_apply_{selected_id}",
+    ):
+        _waiting_errors = _regulator_edit_errors(_waiting_edit_values)
+        if _waiting_errors:
+            for error in _waiting_errors:
+                st.error(error)
+        else:
             try:
-                _sa_comment_value = clean(_sa_comment) or clean(selected_row.get("admin_comment", ""))
-                _sa_target_stage = int(_sa_extra.get("chain_stage", _req_stage))
-                if _sa_decision == "Повернути на доопрацювання":
-                    atomic_return_request(
-                        request_id=int(selected_id),
-                        expected_status=approval_status,
-                        expected_chain_stage=int(_req_stage),
-                        new_status=_sa_new_status,
-                        new_chain_stage=_sa_target_stage,
-                        comment=_sa_comment_value,
-                        action=_sa_action,
-                        user=current_user,
-                        created_by="Супер-адмін / повернення",
-                    )
-                else:
-                    approve_request_step(
-                        request_id=int(selected_id),
-                        expected_status=approval_status,
-                        expected_chain_stage=int(_req_stage),
-                        new_status=_sa_new_status,
-                        new_chain_stage=_sa_target_stage,
-                        approval_chain=_sa_extra.get("approval_chain"),
-                        comment=_sa_comment_value,
-                        action=_sa_action,
-                        user=current_user,
-                        created_by="Супер-адмін / рішення",
-                    )
-                try:
-                    if _sa_notify and _sa_notify[0] == "approved":
-                        notify_events.notify_approved(
-                            clean(selected_row.get("email", "")),
-                            clean(selected_row.get("responsible_person", "")),
-                            selected_code, _req_year, _req_quarter,
-                            kind=_req_kind or "measure",
-                        )
-                    elif _sa_notify and _sa_notify[0] == "stage" and _sa_notify[1]:
-                        _nx = _sa_notify[1]
-                        notify_events.notify_stage_assigned(
-                            _nx.get("email", ""), _nx.get("name", ""),
-                            _nx.get("label", ""), selected_code,
-                            _req_year, _req_quarter,
-                            submitter=clean(selected_row.get("responsible_person", "")),
-                            kind=_req_kind or "measure",
-                        )
-                    elif _sa_notify and _sa_notify[0] == "returned":
-                        notify_events.notify_returned(
-                            clean(selected_row.get("email", "")),
-                            clean(selected_row.get("responsible_person", "")),
-                            selected_code, _req_year, _req_quarter,
-                            by_label="Супер-адмін", comment=clean(_sa_comment),
-                            kind=_req_kind or "measure",
-                        )
-                except Exception as notify_exc:
-                    show_warning(
-                        "Рішення збережено, але миттєве email-сповіщення не відправлено.",
-                        notify_exc,
-                        "Email після рішення супер-адміна",
-                    )
-                st.session_state["superadmin_request_decision_notice"] = (
-                    "Рішення супер-адміна зафіксовано. "
-                    f"Заявка ID {int(selected_id)} успішно опрацьована."
+                coordinator_index = schemes.coordinator_stage_index(_req_chain)
+                resubmit_request(
+                    request_id=int(selected_id),
+                    expected_updated_at=clean(selected_row.get("updated_at")),
+                    expected_status=approval_status,
+                    expected_chain_stage=int(_req_stage),
+                    target_chain_stage=int(coordinator_index),
+                    payload=_edit_payload(_waiting_edit_values, _waiting_edit_comment, "Координатор"),
+                    mode="stage_edit",
+                    action="Редагування координатором до вибору керівника",
+                    user=current_user,
+                    created_by_before="Координатор / до редагування",
+                    created_by_after="Координатор / відредаговані дані",
                 )
-                monitoring_data.invalidate_monitoring_cache()
-                st.rerun()
+                next_status, next_stage = schemes.status_after_regulator(
+                    _req_chain, coordinator_index,
+                )
+                approve_request_step(
+                    request_id=int(selected_id),
+                    expected_status=schemes.STATUS_COORDINATOR_REVIEW,
+                    expected_chain_stage=int(coordinator_index),
+                    new_status=next_status,
+                    new_chain_stage=int(next_stage),
+                    approval_chain=None,
+                    comment=clean(_waiting_edit_comment),
+                    action="Підтвердження координатором після швидкого редагування",
+                    user=current_user,
+                    created_by="Координатор / підтвердження редагування",
+                )
+                _finish_notice("✅ Дані відредаговано. Заявка й надалі очікує вибору керівника.")
             except TransitionRejected as exc:
                 st.error(exc.message)
             except Exception as exc:
-                show_incident(exc, context="Атомарне рішення супер-адміна")
+                show_incident(exc, context="Швидке редагування координатором")
     st.markdown('</div>', unsafe_allow_html=True)
 
-_show_admin_decision_panel = bool(
-    not _is_superadmin_current
-    and _is_admin_turn
-    and approval_status == schemes.STATUS_COORDINATOR_REVIEW
-    and not schemes.is_final_locked(selected_row)
-)
 
-if _show_admin_decision_panel:
+if _is_admin_turn and not schemes.is_final_locked(selected_row):
     st.markdown(
-        '<div class="card decision-card">'
-        '<div class="card-title">Рішення адміністратора</div>',
+        '<div class="card decision-card"><div class="card-title">Рішення адміністратора</div>'
+        '<div class="decision-guidance">'
+        '<p>Погодження або редагування продовжує фактичний маршрут: до вже обраного керівника '
+        'або до вибору керівника під час першого проходу.</p>'
+        '<p>Супер-адміна можна додати після координатора як додаткову регулюючу ланку.</p>'
+        '<p>Повернення подавачу потребує обов’язкового коментаря.</p></div>',
         unsafe_allow_html=True,
     )
-
-    st.markdown(
-        """
-        <div class="decision-guidance">
-            <p>Погодження переводить заявку у стан «Очікує вибору керівника».</p>
-            <p>Редагування даних прирівнюється до погодження і після збереження переводить заявку у той самий стан.</p>
-            <p>Повернення на доопрацювання потребує обов’язкового коментаря.</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.markdown(
-        '<div class="admin-control-label">Оберіть рішення</div>',
-        unsafe_allow_html=True,
-    )
-    decision = st.radio(
+    _admin_decision = st.radio(
         "Оберіть рішення",
-        ["Погодити", "Відредагувати дані", "Повернути на доопрацювання"],
+        ["Погодити", "Відредагувати дані", "Додати супер-адміна після себе", "Повернути на доопрацювання"],
         horizontal=True,
         key=f"decision_radio_{selected_id}",
-        label_visibility="collapsed",
     )
-
-    _edit_status = clean(selected_row.get("status"))
-    _edit_value = _fact_for_request(selected_row).replace("—", "")
-    _edit_progress = clean(selected_row.get("progress_text"))
-    _edit_risks = clean(selected_row.get("risks"))
-    _edit_npa = clean(selected_row.get("npa_link"))
-
-    if decision == "Відредагувати дані":
-        _edit_status_options = list(SUBMISSION_STATUS_OPTIONS)
-        _edit_status_index = (
-            _edit_status_options.index(_edit_status)
-            if _edit_status in _edit_status_options else 0
-        )
-        _edit_status = st.selectbox(
-            "Статус виконання",
-            _edit_status_options,
-            index=_edit_status_index,
-            key=f"admin_edit_status_{selected_id}",
-        )
-        _edit_value = st.text_input(
-            "Фактичне значення",
-            value=_edit_value,
-            key=f"admin_edit_value_{selected_id}",
-        )
-        _edit_progress = st.text_area(
-            "Опис прогресу",
-            value=_edit_progress,
-            height=120,
-            key=f"admin_edit_progress_{selected_id}",
-        )
-        _edit_risks = st.text_area(
-            "Ризики / проблеми / відхилення",
-            value=_edit_risks,
-            height=100,
-            key=f"admin_edit_risks_{selected_id}",
-        )
-        _edit_npa = st.text_area(
-            "Посилання на НПА",
-            value=_edit_npa,
-            height=80,
-            key=f"admin_edit_npa_{selected_id}",
-        )
-
-    if decision == "Повернути на доопрацювання":
-        _decision_hint = "↩ Заявку буде повернуто подавачу на доопрацювання."
-    elif decision == "Відредагувати дані":
-        _decision_hint = "🖊 Дані буде збережено, а заявку переведено у стан «Очікує вибору керівника»."
-    else:
-        _decision_hint = "✅ Заявку буде переведено у стан «Очікує вибору керівника»."
-    st.markdown(
-        f'<div class="decision-box">{_decision_hint}</div>',
-        unsafe_allow_html=True,
+    _admin_edit_values = (
+        _render_regulator_edit_fields("admin_edit")
+        if _admin_decision == "Відредагувати дані" else None
     )
-
-    st.markdown(
-        '<div class="comment-header">✏ Коментар адміністратора</div>',
-        unsafe_allow_html=True,
-    )
-    admin_comment = st.text_area(
-        "Введіть коментар або обґрунтування рішення",
-        value="",
-        height=130,
+    _assigned_route = (assigned_superadmins_for_admin(current_user) or [None])[0]
+    _assigned_person = _route_person(_assigned_route)
+    if _admin_decision == "Додати супер-адміна після себе":
+        if _assigned_person:
+            st.caption(
+                f"Буде додано: {clean(_assigned_person.get('name'))} "
+                f"({clean(_assigned_person.get('email'))})."
+            )
+        else:
+            st.error("У наявній маршрутизації не знайдено супер-адміна з активним email.")
+    _admin_comment = st.text_area(
+        "Коментар адміністратора",
+        height=110,
         placeholder=(
             "Обов’язково опишіть, що саме потрібно доопрацювати."
-            if decision == "Повернути на доопрацювання"
+            if _admin_decision == "Повернути на доопрацювання"
             else "Коментар необов’язковий."
         ),
         key=f"admin_comment_form_{selected_id}",
-        label_visibility="collapsed",
     )
-
-    confirm_decision = st.button(
-        "Застосувати рішення",
-        use_container_width=True,
-        key=f"admin_apply_decision_{selected_id}",
-    )
-
-    if confirm_decision:
-        _decision_errors = []
-        if decision == "Повернути на доопрацювання" and not clean(admin_comment):
-            _decision_errors.append(
-                "Для повернення на доопрацювання обов’язково вкажіть коментар."
-            )
-
-        if decision == "Відредагувати дані":
-            if not clean(_edit_value):
-                _decision_errors.append("Заповніть фактичне значення.")
-            if not clean(_edit_progress):
-                _decision_errors.append("Заповніть опис прогресу.")
-
-            try:
-                _edit_year = int(float(clean(selected_row.get("year"))))
-            except (TypeError, ValueError):
-                _edit_year = None
-            _edit_future_targets = (
-                [
-                    _strat_record.get(f"target_{year}", "")
-                    for year in range(_edit_year + 1, 2035)
-                ]
-                if _edit_year is not None else []
-            )
-            if clean(_edit_value):
-                _value_ok, _value_error = validate_fact_value_for_target(
-                    _edit_value,
-                    _unit,
-                    target_year_val,
-                    _edit_future_targets,
-                )
-                if not _value_ok:
-                    _decision_errors.append(_value_error)
-            _status_error = status_value_conflict(
-                _edit_status,
-                _edit_value,
-                target_year_val,
-                _unit,
-                selected_code,
-                _edit_future_targets,
-            )
-            if _status_error:
-                _decision_errors.append(_status_error)
-
-        if _decision_errors:
-            for _decision_error in dict.fromkeys(_decision_errors):
-                st.error(_decision_error)
+    if st.button("Застосувати рішення", use_container_width=True, key=f"admin_apply_decision_{selected_id}"):
+        errors = []
+        if _admin_decision == "Повернути на доопрацювання" and not clean(_admin_comment):
+            errors.append("Для повернення на доопрацювання обов’язково вкажіть коментар.")
+        if _admin_decision == "Відредагувати дані":
+            errors.extend(_regulator_edit_errors(_admin_edit_values))
+        if _admin_decision == "Додати супер-адміна після себе" and not _assigned_person:
+            errors.append("Неможливо визначити супер-адміна з активним email.")
+        if errors:
+            for error in dict.fromkeys(errors):
+                st.error(error)
         else:
             try:
-                if decision == "Повернути на доопрацювання":
+                if _admin_decision == "Повернути на доопрацювання":
                     atomic_return_request(
                         request_id=int(selected_id),
                         expected_status=approval_status,
                         expected_chain_stage=int(_req_stage),
                         new_status=schemes.STATUS_RETURNED_BY_COORDINATOR,
                         new_chain_stage=0,
-                        comment=clean(admin_comment),
+                        comment=clean(_admin_comment),
                         action="Повернення координатором на доопрацювання",
                         user=current_user,
                         created_by="Координатор / повернення",
                     )
-                    success_text = "↩ Заявку повернуто подавачу на доопрацювання."
                     try:
                         notify_events.notify_returned(
                             clean(selected_row.get("email", "")),
                             clean(selected_row.get("responsible_person", "")),
-                            selected_code,
-                            _req_year,
-                            _req_quarter,
-                            by_label="Координатор",
-                            comment=clean(admin_comment),
+                            selected_code, _req_year, _req_quarter,
+                            by_label="Координатор", comment=clean(_admin_comment),
                             kind=_req_kind or "measure",
                         )
                     except Exception as notify_exc:
-                        show_warning(
-                            "Заявку повернуто, але миттєве email-сповіщення не відправлено.",
-                            notify_exc,
-                            "Email після повернення координатором",
+                        show_warning("Заявку повернуто, але email не відправлено.", notify_exc, "Email повернення")
+                    _finish_notice("↩ Заявку повернуто подавачу на доопрацювання.")
+                elif _admin_decision == "Додати супер-адміна після себе":
+                    new_chain, super_index = schemes.insert_superadmin_after(
+                        _req_chain, _req_stage, _assigned_person,
+                    )
+                    if new_chain is None:
+                        st.error("Не вдалося додати супер-адміна до маршруту.")
+                    else:
+                        approve_request_step(
+                            request_id=int(selected_id),
+                            expected_status=approval_status,
+                            expected_chain_stage=int(_req_stage),
+                            new_status=schemes.STATUS_SUPERADMIN_REVIEW,
+                            new_chain_stage=int(super_index),
+                            approval_chain=schemes.chain_to_json(new_chain),
+                            comment=clean(_admin_comment),
+                            action=f"Додано супер-адміна після координатора: {_assigned_person['name']}",
+                            user=current_user,
+                            created_by="Координатор / додавання супер-адміна",
                         )
-                elif decision == "Відредагувати дані":
-                    _edit_payload = prepare_monitoring_payload({
-                        "status": _edit_status,
-                        "numeric_value": _edit_value,
-                        "progress_text": _edit_progress,
-                        "risks": _edit_risks,
-                        "npa_link": _edit_npa,
-                        "admin_comment": clean(admin_comment),
-                        "submitted_at": datetime.now(timezone.utc).isoformat(),
-                        "log_comment": (
-                            "Координатор відредагував дані; редагування прирівняно "
-                            "до погодження."
-                        ),
-                    })
-                    resubmit_request(
-                        request_id=int(selected_id),
-                        expected_updated_at=clean(selected_row.get("updated_at")),
-                        expected_status=approval_status,
-                        expected_chain_stage=int(_req_stage),
-                        target_chain_stage=int(_req_stage) + 1,
-                        payload=_edit_payload,
-                        mode="stage_edit",
-                        action="Редагування координатором (прирівняно до погодження)",
-                        user=current_user,
-                        created_by_before="Координатор / до редагування",
-                        created_by_after="Координатор / відредаговані дані",
-                        draft_email="",
-                        draft_key="",
-                    )
-                    success_text = (
-                        "✅ Дані відредаговано. Заявка очікує вибору керівника."
-                    )
+                        try:
+                            notify_events.notify_included_in_chain(
+                                _assigned_person.get("email", ""), _assigned_person.get("name", ""),
+                                schemes.STAGE_LABELS[ROLE_SUPER_ADMIN], "Координатор",
+                                selected_code, _req_year, _req_quarter, kind=_req_kind or "measure",
+                            )
+                            _notify_next_status(schemes.STATUS_SUPERADMIN_REVIEW, super_index, new_chain, "Координатор")
+                        except Exception as notify_exc:
+                            show_warning("Супер-адміна додано, але email не відправлено.", notify_exc, "Email супер-адміну")
+                        _finish_notice("✅ Заявку передано супер-адміну.")
                 else:
+                    if _admin_decision == "Відредагувати дані":
+                        resubmit_request(
+                            request_id=int(selected_id),
+                            expected_updated_at=clean(selected_row.get("updated_at")),
+                            expected_status=approval_status,
+                            expected_chain_stage=int(_req_stage),
+                            target_chain_stage=int(_req_stage),
+                            payload=_edit_payload(_admin_edit_values, _admin_comment, "Координатор"),
+                            mode="stage_edit",
+                            action="Редагування координатором (прирівняно до погодження)",
+                            user=current_user,
+                            created_by_before="Координатор / до редагування",
+                            created_by_after="Координатор / відредаговані дані",
+                        )
+                    next_status, next_stage = schemes.status_after_regulator(_req_chain, _req_stage)
                     approve_request_step(
                         request_id=int(selected_id),
-                        expected_status=approval_status,
+                        expected_status=schemes.STATUS_COORDINATOR_REVIEW,
                         expected_chain_stage=int(_req_stage),
-                        new_status=schemes.STATUS_WAITING_MANAGER_SELECTION,
-                        new_chain_stage=int(_req_stage) + 1,
+                        new_status=next_status,
+                        new_chain_stage=int(next_stage),
                         approval_chain=None,
-                        comment=clean(admin_comment),
-                        action="Погодження координатором",
+                        comment=clean(_admin_comment),
+                        action=(
+                            "Погодження координатором після редагування"
+                            if _admin_decision == "Відредагувати дані"
+                            else "Погодження координатором"
+                        ),
                         user=current_user,
                         created_by="Координатор / погодження",
                     )
-                    success_text = "✅ Заявка погоджена координатором і очікує вибору керівника."
-
-                st.session_state["adm_last_decision_notice"] = (
-                    f"{success_text} Якщо в черзі є ще заявки — систему щойно "
-                    "переключило на наступну заявку. Перегляньте її дані з початку."
-                )
-                monitoring_data.invalidate_monitoring_cache()
-                st.rerun()
+                    try:
+                        _notify_next_status(next_status, next_stage, _req_chain, "Координатор")
+                    except Exception as notify_exc:
+                        show_warning("Рішення збережено, але email не відправлено.", notify_exc, "Email після координатора")
+                    if next_status == schemes.STATUS_MANAGER_REVIEW:
+                        _finish_notice("✅ Заявку передано раніше обраному керівнику.")
+                    else:
+                        _finish_notice("✅ Заявка погоджена координатором і очікує вибору керівника.")
             except TransitionRejected as exc:
                 st.error(exc.message)
             except Exception as exc:
                 show_incident(exc, context="Атомарне рішення координатора")
-
     st.markdown('</div>', unsafe_allow_html=True)
+
+
+if _is_super_turn and not schemes.is_final_locked(selected_row):
+    st.markdown(
+        '<div class="card"><div class="card-title">Рішення супер-адміна</div>'
+        '<div class="card-subtitle">Доступні ті самі дії, що й координатору. '
+        'Після завершення заявка переходить до вже обраного керівника або до вибору керівника.</div>',
+        unsafe_allow_html=True,
+    )
+    _senior_route = senior_superadmin_for(_my_email_norm)
+    _senior_person = _route_person(_senior_route)
+    _super_options = ["Погодити", "Відредагувати дані"]
+    if _senior_person and clean(_senior_person.get("email")).lower() != _my_email_norm:
+        _super_options.append("Додати вищого супер-адміна після себе")
+    _super_options.append("Повернути на доопрацювання")
+    _super_decision = st.radio(
+        "Оберіть рішення супер-адміна",
+        _super_options,
+        horizontal=True,
+        key=f"sa_decision_{selected_id}",
+    )
+    _super_edit_values = (
+        _render_regulator_edit_fields("super_edit")
+        if _super_decision == "Відредагувати дані" else None
+    )
+    if _super_decision == "Додати вищого супер-адміна після себе":
+        st.caption(f"Буде додано: {_senior_person['name']} ({_senior_person['email']}).")
+    _super_comment = st.text_area(
+        "Коментар супер-адміна",
+        height=100,
+        placeholder=(
+            "Обов’язково опишіть, що саме потрібно доопрацювати."
+            if _super_decision == "Повернути на доопрацювання"
+            else "Коментар необов’язковий."
+        ),
+        key=f"sa_comment_{selected_id}",
+    )
+    if st.button(
+        "Підтвердити рішення супер-адміна",
+        type="primary",
+        use_container_width=True,
+        key=f"sa_confirm_{selected_id}",
+    ):
+        errors = []
+        if _super_decision == "Повернути на доопрацювання" and not clean(_super_comment):
+            errors.append("Для повернення обов’язково вкажіть коментар.")
+        if _super_decision == "Відредагувати дані":
+            errors.extend(_regulator_edit_errors(_super_edit_values))
+        if errors:
+            for error in dict.fromkeys(errors):
+                st.error(error)
+        else:
+            try:
+                if _super_decision == "Повернути на доопрацювання":
+                    atomic_return_request(
+                        request_id=int(selected_id),
+                        expected_status=approval_status,
+                        expected_chain_stage=int(_req_stage),
+                        new_status=schemes.STATUS_RETURNED_BY_SUPERADMIN,
+                        new_chain_stage=0,
+                        comment=clean(_super_comment),
+                        action="Повернення супер-адміном подавачу на доопрацювання",
+                        user=current_user,
+                        created_by="Супер-адмін / повернення",
+                    )
+                    try:
+                        notify_events.notify_returned(
+                            clean(selected_row.get("email", "")),
+                            clean(selected_row.get("responsible_person", "")),
+                            selected_code, _req_year, _req_quarter,
+                            by_label="Супер-адмін", comment=clean(_super_comment),
+                            kind=_req_kind or "measure",
+                        )
+                    except Exception as notify_exc:
+                        show_warning("Заявку повернуто, але email не відправлено.", notify_exc, "Email повернення супер-адміном")
+                    _finish_notice("↩ Заявку повернуто подавачу на доопрацювання.")
+                elif _super_decision == "Додати вищого супер-адміна після себе":
+                    new_chain, senior_index = schemes.insert_superadmin_after(
+                        _req_chain, _req_stage, _senior_person,
+                    )
+                    if new_chain is None:
+                        st.error("Не вдалося додати вищого супер-адміна до маршруту.")
+                    else:
+                        approve_request_step(
+                            request_id=int(selected_id),
+                            expected_status=approval_status,
+                            expected_chain_stage=int(_req_stage),
+                            new_status=schemes.STATUS_SUPERADMIN_REVIEW,
+                            new_chain_stage=int(senior_index),
+                            approval_chain=schemes.chain_to_json(new_chain),
+                            comment=clean(_super_comment),
+                            action=f"Ескалація вищому супер-адміну: {_senior_person['name']}",
+                            user=current_user,
+                            created_by="Супер-адмін / ескалація",
+                        )
+                        try:
+                            notify_events.notify_included_in_chain(
+                                _senior_person.get("email", ""), _senior_person.get("name", ""),
+                                schemes.STAGE_LABELS[ROLE_SUPER_ADMIN], "Супер-адмін",
+                                selected_code, _req_year, _req_quarter, kind=_req_kind or "measure",
+                            )
+                            _notify_next_status(schemes.STATUS_SUPERADMIN_REVIEW, senior_index, new_chain, "Супер-адмін")
+                        except Exception as notify_exc:
+                            show_warning("Вищого супер-адміна додано, але email не відправлено.", notify_exc, "Email ескалації")
+                        _finish_notice("✅ Заявку передано вищому супер-адміну.")
+                else:
+                    if _super_decision == "Відредагувати дані":
+                        resubmit_request(
+                            request_id=int(selected_id),
+                            expected_updated_at=clean(selected_row.get("updated_at")),
+                            expected_status=approval_status,
+                            expected_chain_stage=int(_req_stage),
+                            target_chain_stage=int(_req_stage),
+                            payload=_edit_payload(_super_edit_values, _super_comment, "Супер-адмін"),
+                            mode="stage_edit",
+                            action="Редагування супер-адміном (прирівняно до погодження)",
+                            user=current_user,
+                            created_by_before="Супер-адмін / до редагування",
+                            created_by_after="Супер-адмін / відредаговані дані",
+                        )
+                    next_status, next_stage = schemes.status_after_regulator(_req_chain, _req_stage)
+                    approve_request_step(
+                        request_id=int(selected_id),
+                        expected_status=schemes.STATUS_SUPERADMIN_REVIEW,
+                        expected_chain_stage=int(_req_stage),
+                        new_status=next_status,
+                        new_chain_stage=int(next_stage),
+                        approval_chain=None,
+                        comment=clean(_super_comment),
+                        action=(
+                            "Погодження супер-адміном після редагування"
+                            if _super_decision == "Відредагувати дані"
+                            else "Погодження супер-адміном"
+                        ),
+                        user=current_user,
+                        created_by="Супер-адмін / погодження",
+                    )
+                    try:
+                        _notify_next_status(next_status, next_stage, _req_chain, "Супер-адмін")
+                    except Exception as notify_exc:
+                        show_warning("Рішення збережено, але email не відправлено.", notify_exc, "Email після супер-адміна")
+                    if next_status == schemes.STATUS_MANAGER_REVIEW:
+                        _finish_notice("✅ Заявку передано раніше обраному керівнику.")
+                    else:
+                        _finish_notice("✅ Заявка очікує вибору керівника.")
+            except TransitionRejected as exc:
+                st.error(exc.message)
+            except Exception as exc:
+                show_incident(exc, context="Атомарне рішення супер-адміна")
+    st.markdown('</div>', unsafe_allow_html=True)
+
 
 if st.session_state.get("adm_last_decision_notice"):
     st.success(st.session_state["adm_last_decision_notice"])
@@ -4735,7 +4890,7 @@ if st.session_state.get("adm_last_decision_notice"):
 
 
 
-logs_df = load_logs(selected_id, selected_row)
+logs_df = _decision_logs
 
 if logs_df.empty:
     st.info("Історії змін для цієї заявки поки що немає.")

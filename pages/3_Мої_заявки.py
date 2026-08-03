@@ -19,6 +19,7 @@ from core.statuses import SUBMISSION_STATUS_OPTIONS
 from core import approval_schemes as schemes
 from core.transitions import (
     TransitionRejected,
+    approve_request_step,
     resubmit_request,
     withdraw_request as atomic_withdraw_request,
 )
@@ -816,14 +817,24 @@ _request_stage_idx = schemes.parse_stage(selected_row.get("chain_stage"))
 logs_df = load_logs(selected_id)
 
 if _chain:
-    _scheme_lbl = clean(selected_row.get("scheme_label"))
+    _scheme_steps = schemes.approval_scheme_steps(
+        _chain,
+        _request_stage_idx,
+        approval,
+        logs_df,
+    )
+    _scheme_steps_html = "<br>".join(
+        (
+            f"<b>{step['number']}. {escape(step['text'])}</b>"
+            if step["current"]
+            else f"{step['number']}. {escape(step['text'])}"
+        )
+        for step in _scheme_steps
+    )
     st.markdown(f"""
     <div class="myreq-scheme-box">
-        <div class="myreq-scheme-title">Схема погодження{(" · " + escape(_scheme_lbl)) if _scheme_lbl else ""}</div>
-        <div class="myreq-scheme-text">
-            {escape(schemes.chain_route_text(_chain))}<br>
-            <b>{escape(schemes.chain_progress_text(_chain, _request_stage_idx, approval))}</b>
-        </div>
+        <div class="myreq-scheme-title">Схема погодження</div>
+        <div class="myreq-scheme-text">{_scheme_steps_html}</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -853,6 +864,12 @@ def _render_holder_strip():
             "✍️ Потребує вашої дії — виправте дані та подайте повторно",
             "#FDF3D8", "#FF7A45", "#8A6400",
         )
+    elif approval == schemes.STATUS_WAITING_MANAGER_SELECTION:
+        _holder = "Заявка у вас — очікує вибору керівника"
+        _action = (
+            "✍️ Потребує вашої дії — оберіть керівника й направте заявку",
+            "#FDF3D8", "#F4B400", "#8A6400",
+        )
     elif _chain:
         _st = schemes.current_stage(_chain, _request_stage_idx)
         _holder = (
@@ -878,6 +895,109 @@ def _render_holder_strip():
 
 
 _render_holder_strip()
+
+
+# ============================================================
+# ВИБІР ЗАВЕРШАЛЬНОЇ КЕРІВНИЦЬКОЇ ЛАНКИ
+# ============================================================
+
+if (
+    _chain
+    and approval == schemes.STATUS_WAITING_MANAGER_SELECTION
+    and not schemes.is_final_locked(selected_row)
+):
+    st.markdown(
+        '<div class="step-box"><b>Направити на погодження керівнику</b><br>'
+        '<span style="color:#61708A;">Оберіть керівника ССП або заступника керівника ССП. '
+        'Керівницька ланка стане останньою у маршруті.</span></div>',
+        unsafe_allow_html=True,
+    )
+    _ssp_numbers = re.findall(r"\d+", clean(selected_row.get("department")))
+    _manager_ssp_index = _ssp_numbers[0] if _ssp_numbers else clean(current_user.get("ssp_index"))
+    _manager_options = []
+    for _manager_role in schemes.MANAGER_ROLES:
+        for _manager_candidate in schemes.stage_candidates(_manager_role, _manager_ssp_index):
+            _manager_options.append({
+                "role": _manager_role,
+                "person": _manager_candidate,
+                "label": (
+                    f"{schemes.STAGE_LABELS[_manager_role]} — "
+                    f"{schemes.candidate_label(_manager_candidate)}"
+                ),
+            })
+
+    if not _manager_options:
+        st.error(
+            "Для цього ССП не знайдено активного керівника ССП або заступника. "
+            "Зверніться до адміністратора доступів."
+        )
+    else:
+        _manager_labels = [option["label"] for option in _manager_options]
+        _manager_choice_label = st.selectbox(
+            "Керівна ланка",
+            _manager_labels,
+            key=f"manager_choice_{selected_id}",
+        )
+        _manager_choice = _manager_options[_manager_labels.index(_manager_choice_label)]
+        _send_manager = st.button(
+            "Направити на погодження керівнику",
+            use_container_width=True,
+            key=f"send_manager_{selected_id}",
+        )
+        if _send_manager:
+            _manager_chain = schemes.append_manager_stage(
+                _chain,
+                _manager_choice["role"],
+                _manager_ssp_index,
+                _manager_choice["person"],
+            )
+            if _manager_chain is None:
+                st.error("Не вдалося додати керівницьку ланку до маршруту.")
+            else:
+                _manager_stage_index = schemes.manager_stage_index(_manager_chain)
+                try:
+                    approve_request_step(
+                        request_id=int(selected_id),
+                        expected_status=approval,
+                        expected_chain_stage=int(_request_stage_idx),
+                        new_status=schemes.STATUS_MANAGER_REVIEW,
+                        new_chain_stage=int(_manager_stage_index),
+                        approval_chain=schemes.chain_to_json(_manager_chain),
+                        comment=(
+                            f"Подавач обрав ланку «{schemes.STAGE_LABELS[_manager_choice['role']]}»: "
+                            f"{_manager_choice['person']['name']}"
+                        ),
+                        action=(
+                            f"Вибір ролі керівника: {schemes.STAGE_LABELS[_manager_choice['role']]} — "
+                            f"{_manager_choice['person']['name']}"
+                        ),
+                        user=current_user,
+                        created_by="ССП / вибір керівника",
+                    )
+                    try:
+                        notify_events.notify_stage_assigned(
+                            _manager_choice["person"].get("email", ""),
+                            _manager_choice["person"].get("name", ""),
+                            schemes.STAGE_LABELS[_manager_choice["role"]],
+                            code,
+                            clean(selected_row.get("year")),
+                            clean(selected_row.get("quarter")),
+                            submitter=clean(selected_row.get("responsible_person")),
+                            kind=clean(selected_row.get("object_kind")) or "measure",
+                        )
+                    except Exception as notify_exc:
+                        show_warning(
+                            "Заявку направлено керівнику, але миттєве email-сповіщення не відправлено.",
+                            notify_exc,
+                            "Email після вибору керівника",
+                        )
+                    monitoring_data.invalidate_monitoring_cache()
+                    st.success("Заявку направлено обраному керівнику.")
+                    st.rerun()
+                except TransitionRejected as exc:
+                    st.error(exc.message)
+                except Exception as exc:
+                    show_incident(exc, context="Направлення заявки обраному керівнику")
 
 
 # ============================================================

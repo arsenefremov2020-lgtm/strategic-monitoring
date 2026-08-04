@@ -1116,11 +1116,11 @@ def plan_fact_percent(actual, target):
     actual_text = normalize_text(actual)
     target_text = normalize_text(target)
     if actual_num is not None and target_num is not None and target_num != 0:
-        return round(min((actual_num / target_num) * 100, 150), 2)
-    if target_text in ["так", "yes"] or actual_text in ["так", "ні", "yes", "no"]:
+        return round(min((actual_num / target_num) * 100, 100), 2)
+    if target_text in ["так", "yes"] or actual_text in ["так", "нi", "yes", "no"]:
         if actual_text in ["так", "yes"]:
             return 100
-        if actual_text in ["ні", "no"]:
+        if actual_text in ["нi", "no"]:
             return 0
     return None
 
@@ -1588,8 +1588,18 @@ def dashboard_conclusion(completion, risk_share, coverage):
     )
 
 
-def deviation_for_period(completion):
-    return round(completion - 100, 2)
+def expected_completion_for_quarter(quarter_num):
+    """Calendar progress expected by the end of the selected quarter."""
+    try:
+        quarter_num = int(quarter_num)
+    except (TypeError, ValueError):
+        quarter_num = 4
+    return round(QUARTER_FRACTIONS.get(quarter_num, 1.0) * 100, 2)
+
+
+def deviation_for_period(completion, quarter_num):
+    expected = expected_completion_for_quarter(quarter_num)
+    return round(float(completion or 0) - expected, 2)
 
 
 def gauge_chart(value, title):
@@ -1672,13 +1682,28 @@ def render_insight(text, kind="default"):
     st.markdown(f'<div class="{css_class}">{text}</div>', unsafe_allow_html=True)
 
 
-def render_indicator_bar(label, value, max_val=100, color="#005BBB"):
-    pct = min(max(value / max_val * 100, 0), 100)
+def render_indicator_bar(
+    label,
+    value,
+    max_val=100,
+    color="#005BBB",
+    *,
+    display_value=None,
+    subtitle="",
+):
+    pct = min(max(float(value) / max_val * 100, 0), 100) if max_val else 0
+    rendered_value = display_value
+    if rendered_value is None:
+        rendered_value = f"{value}{'%' if max_val == 100 else ''}"
+    subtitle_html = (
+        f'<div style="font-size:10px;font-weight:500;color:#8A96A8;margin-top:1px;">{subtitle}</div>'
+        if subtitle else ""
+    )
     st.markdown(f"""
     <div class="indicator-row">
         <div class="indicator-label">
-            <span>{label}</span>
-            <span style="color:{color};font-weight:800;">{value}{'%' if max_val == 100 else ''}</span>
+            <div>{label}{subtitle_html}</div>
+            <span style="color:{color};font-weight:800;white-space:nowrap;">{rendered_value}</span>
         </div>
         <div class="indicator-bar-bg">
             <div class="indicator-bar-fill" style="width:{pct}%;background:{color};"></div>
@@ -1960,6 +1985,96 @@ def calc_risk_share(active):
     return round(risk_count / len(assessed) * 100, 2)
 
 
+def calc_low_risk_share(active):
+    """Share of assessed measures with high probability of annual achievement."""
+    assessed = risk_assessment_subset(active)
+    if assessed.empty:
+        return 0
+    low_risk_count = len(assessed[assessed["auto_risk"] == "Низький ризик"])
+    return round(low_risk_count / len(assessed) * 100, 2)
+
+
+def build_goal_progress(active):
+    """Aggregate goal achievement through tasks, not directly through measures.
+
+    Measure score is the raw dashboard performance percentage. Excluded statuses
+    have no score. Task score is the mean of its scored measures; goal score is
+    the mean of its scored tasks, so tasks have equal weight within a goal.
+    """
+    columns = [
+        "goal_code", "strategic_goal", "Активних_заходів", "Виконання",
+        "Покриття", "Ризикових", "Середній_ризик", "Покриття_%",
+    ]
+    if active is None or active.empty:
+        return pd.DataFrame(columns=columns)
+
+    data = active.copy()
+    for column in [
+        "code", "goal_code", "task_code", "strategic_goal", "performance_score",
+        "status", "status_display", "auto_risk", "risk_score",
+    ]:
+        if column not in data.columns:
+            data[column] = ""
+
+    data["_goal_measure_score"] = pd.to_numeric(
+        data["performance_score"], errors="coerce"
+    ).clip(lower=0, upper=100)
+    eligible = ~data["status_display"].isin(["Не настав час", "Втратило актуальність"])
+    if "included_in_assessment" in data.columns:
+        eligible &= data["included_in_assessment"].fillna(False).astype(bool)
+
+    def _valid_hierarchy(row):
+        measure_code = clean(row.get("code", ""))
+        task_code = clean(row.get("task_code", ""))
+        goal_code = clean(row.get("goal_code", ""))
+        return bool(
+            measure_code and task_code and goal_code
+            and measure_code.startswith(task_code)
+            and task_code.startswith(goal_code)
+        )
+
+    hierarchy_valid = data.apply(_valid_hierarchy, axis=1)
+    data.loc[~(eligible & hierarchy_valid), "_goal_measure_score"] = pd.NA
+
+    summary = (
+        data
+        .groupby(["goal_code", "strategic_goal"], dropna=False)
+        .agg(
+            Активних_заходів=("code", "count"),
+            Покриття=("status", lambda x: (x != "Не подано").sum()),
+            Ризикових=("auto_risk", lambda x: x.isin(RISKY_LEVELS).sum()),
+            Середній_ризик=("risk_score", "mean"),
+        )
+        .reset_index()
+    )
+
+    task_scores = (
+        data
+        .groupby(["goal_code", "strategic_goal", "task_code"], dropna=False)["_goal_measure_score"]
+        .mean()
+        .dropna()
+        .reset_index(name="_task_score")
+    )
+    goal_scores = (
+        task_scores
+        .groupby(["goal_code", "strategic_goal"], dropna=False)["_task_score"]
+        .mean()
+        .reset_index(name="Виконання")
+    )
+
+    result = summary.merge(
+        goal_scores,
+        on=["goal_code", "strategic_goal"],
+        how="left",
+    )
+    result["Виконання"] = pd.to_numeric(result["Виконання"], errors="coerce").round(2)
+    result["Покриття_%"] = (
+        result["Покриття"] / result["Активних_заходів"] * 100
+    ).round(2)
+    result["Середній_ризик"] = result["Середній_ризик"].fillna(0).round(2)
+    return result[columns]
+
+
 def is_failed_for_weight(row):
     if not row.get("included_in_assessment", True):
         return False
@@ -2100,6 +2215,25 @@ def _period_number_to_text(period_num):
     return f"{quarter} квартал {year} року"
 
 
+def resolve_snapshot_period_number(active_period_rows, years, quarters):
+    selected_periods = sorted({
+        core_period_number(year, quarter)
+        for year in years
+        for quarter in quarters
+    })
+    if not selected_periods:
+        return None
+
+    snapshot_period = selected_periods[-1]
+    if not active_period_rows.empty and "has_monitoring_data" in active_period_rows.columns:
+        periods_with_data = active_period_rows.loc[
+            active_period_rows["has_monitoring_data"].fillna(False), "period_number"
+        ]
+        if not periods_with_data.empty:
+            snapshot_period = int(periods_with_data.max())
+    return int(snapshot_period)
+
+
 def build_period_context(active_period_rows, years, quarters):
     selected_periods = sorted({
         core_period_number(year, quarter)
@@ -2109,14 +2243,7 @@ def build_period_context(active_period_rows, years, quarters):
     if not selected_periods:
         return "Зріз за обраним періодом", "Динаміка за обраним періодом"
 
-    snapshot_period = selected_periods[-1]
-    if not active_period_rows.empty and "has_monitoring_data" in active_period_rows.columns:
-        periods_with_data = active_period_rows.loc[
-            active_period_rows["has_monitoring_data"].fillna(False), "period_number"
-        ]
-        if not periods_with_data.empty:
-            snapshot_period = int(periods_with_data.max())
-
+    snapshot_period = resolve_snapshot_period_number(active_period_rows, years, quarters)
     first_period = selected_periods[0]
     last_period = selected_periods[-1]
     snapshot_label = f"Зріз станом на {_period_number_to_text(snapshot_period)}"
@@ -2604,6 +2731,13 @@ snapshot_label, dynamics_label = build_period_context(
     years_for_calc,
     quarters_for_calc,
 )
+snapshot_period_number = resolve_snapshot_period_number(
+    active_period_rows,
+    years_for_calc,
+    quarters_for_calc,
+)
+snapshot_quarter_num = int(snapshot_period_number) % 10 if snapshot_period_number else 4
+expected_period_completion = expected_completion_for_quarter(snapshot_quarter_num)
 active = collapse_to_latest_measure_rows(active_period_rows)
 
 if active.empty:
@@ -2620,12 +2754,13 @@ total_active = len(active)
 submitted_count = calc_submitted(active)
 coverage = calc_coverage(active)
 completion = mean_completion(active)
-deviation_current = deviation_for_period(completion)
+deviation_current = deviation_for_period(completion, snapshot_quarter_num)
 
 risk_assessed = risk_assessment_subset(active)
 risk_count = len(risk_assessed[risk_assessed["auto_risk"].isin(RISKY_LEVELS)])
 critical_count = len(risk_assessed[risk_assessed["auto_risk"] == "Критичний ризик"])
 risk_share = calc_risk_share(active)
+low_risk_share = calc_low_risk_share(active)
 without_data = len(active[active["status"] == "Не подано"])
 
 completed_count = len(active[active["status_display"] == "Виконано"])
@@ -2646,22 +2781,8 @@ badge_css = {"risk-high": "badge-red", "risk-medium": "badge-yellow", "risk-low"
 block_css = {"risk-high": "conclusion-risk-high", "risk-medium": "conclusion-risk-medium", "risk-low": "conclusion-risk-low"}
 
 
-# goal_progress — обчислюється тут, бо використовується в presentation_mode нижче
-goal_progress = (
-    active
-    .groupby(["goal_code", "strategic_goal"])
-    .agg(
-        Активних_заходів=("code", "count"),
-        Виконання=("performance_score", "mean"),
-        Покриття=("status", lambda x: (x != "Не подано").sum()),
-        Ризикових=("auto_risk", lambda x: x.isin(RISKY_LEVELS).sum()),
-        Середній_ризик=("risk_score", "mean")
-    )
-    .reset_index()
-)
-goal_progress["Виконання"] = goal_progress["Виконання"].fillna(0).round(2)
-goal_progress["Покриття_%"] = (goal_progress["Покриття"] / goal_progress["Активних_заходів"] * 100).round(2)
-goal_progress["Середній_ризик"] = goal_progress["Середній_ризик"].fillna(0).round(2)
+# goal_progress — дворівнева агрегація: захід → завдання → стратегічна ціль.
+goal_progress = build_goal_progress(active)
 
 # ============================================================
 # PRESENTATION MODE — PowerPoint-style slides
@@ -2749,13 +2870,20 @@ if presentation_mode:
         gp_sorted["_goal_sort"] = gp_sorted["goal_code"].apply(code_sort_key)
         gp_sorted = gp_sorted.sort_values("_goal_sort")
         for _, gr in gp_sorted.iterrows():
-            pct = min(max(float(gr["Виконання"]), 0), 100)
-            if pct >= 70:
-                bar_color = "#118847"
-            elif pct >= 35:
-                bar_color = "#FF7A45"
+            raw_pct = pd.to_numeric(pd.Series([gr["Виконання"]]), errors="coerce").iloc[0]
+            if pd.isna(raw_pct):
+                pct = 0.0
+                pct_label = "н/д"
+                bar_color = "#8A96A8"
             else:
-                bar_color = "#DC4A4A"
+                pct = min(max(float(raw_pct), 0), 100)
+                pct_label = f"{pct:.0f}%"
+                if pct >= 70:
+                    bar_color = "#118847"
+                elif pct >= 35:
+                    bar_color = "#FF7A45"
+                else:
+                    bar_color = "#DC4A4A"
             short_name = str(gr["strategic_goal"])[:45] + ("…" if len(str(gr["strategic_goal"])) > 45 else "")
             goal_rows_html += f"""
             <div class="pres-goal-row">
@@ -2764,7 +2892,7 @@ if presentation_mode:
                 <div class="pres-goal-bar-bg">
                     <div class="pres-goal-bar-fill" style="width:{pct}%;background:{bar_color};"></div>
                 </div>
-                <div class="pres-goal-pct">{pct:.0f}%</div>
+                <div class="pres-goal-pct">{pct_label}</div>
             </div>"""
 
     # risk counts for slide
@@ -3104,7 +3232,7 @@ if presentation_mode:
             <div class="pres-metric-rows" style="max-width:680px;margin-top:40px;">
                 {pres_bar('Виконання СП', completion, '#005BBB')}
                 {pres_bar('Покриття моніторингом', coverage, '#00A8A8')}
-                {pres_bar('Частка без ризику', round(100 - risk_share, 1), '#118847')}
+                {pres_bar('Частка без ризику', round(low_risk_share, 1), '#118847')}
             </div>
         </div>
 
@@ -3450,9 +3578,27 @@ with ind_col2:
     st.markdown('<div class="chart-wrap" style="height:100%;padding-top:20px;">', unsafe_allow_html=True)
     render_indicator_bar("Виконання СП", completion, 100, "#005BBB")
     render_indicator_bar("Покриття моніторингом", coverage, 100, "#00A8A8")
-    dev_display = round(100 + deviation_current, 1)
-    render_indicator_bar("Відхилення за звітний період", round(100 + deviation_current, 1), 100, "#FF7A45")
-    render_indicator_bar("Частка заходів без ризику", round(100 - risk_share, 1), 100, "#118847")
+    deviation_direction = "Відставання" if deviation_current < 0 else "Випередження"
+    if abs(deviation_current) < 0.005:
+        deviation_direction = "Відповідає плановому темпу"
+    render_indicator_bar(
+        "Відхилення за звітний період",
+        completion,
+        100,
+        "#FF7A45",
+        display_value=f"{deviation_current:+.1f} в.п.",
+        subtitle=(
+            f"{deviation_direction} від планового темпу; "
+            f"очікуваний рівень — {expected_period_completion:.0f}%"
+        ),
+    )
+    render_indicator_bar(
+        "Частка заходів без ризику",
+        round(low_risk_share, 1),
+        100,
+        "#118847",
+        subtitle="Заходи низького ризику — висока вірогідність досягнення",
+    )
     st.markdown("</div>", unsafe_allow_html=True)
 
 st.markdown("</div>", unsafe_allow_html=True)
@@ -3466,21 +3612,7 @@ status_counts = active.groupby("status_display").size().reset_index(name="Кіл
 risk_counts = risk_assessed.groupby("auto_risk").size().reset_index(name="Кількість")
 traffic_counts = active.groupby("traffic_light").size().reset_index(name="Кількість")
 
-goal_progress = (
-    active
-    .groupby(["goal_code", "strategic_goal"])
-    .agg(
-        Активних_заходів=("code", "count"),
-        Виконання=("performance_score", "mean"),
-        Покриття=("status", lambda x: (x != "Не подано").sum()),
-        Ризикових=("auto_risk", lambda x: x.isin(RISKY_LEVELS).sum()),
-        Середній_ризик=("risk_score", "mean")
-    )
-    .reset_index()
-)
-goal_progress["Виконання"] = goal_progress["Виконання"].fillna(0).round(2)
-goal_progress["Покриття_%"] = (goal_progress["Покриття"] / goal_progress["Активних_заходів"] * 100).round(2)
-goal_progress["Середній_ризик"] = goal_progress["Середній_ризик"].fillna(0).round(2)
+goal_progress = build_goal_progress(active)
 
 dep_active = explode_departments(active)
 dep_progress = (
@@ -3566,7 +3698,7 @@ if view_mode in ["Усі візуалізації", "Стратегічні ці
             x="Виконання",
             y="label",
             orientation="h",
-            text=goal_sorted["Виконання"].apply(lambda x: f"{x:.2f}%"),
+            text=goal_sorted["Виконання"].apply(lambda x: "н/д" if pd.isna(x) else f"{x:.2f}%"),
             hover_data={"Активних_заходів": True, "Покриття_%": True, "Ризикових": True},
             color="Виконання",
             color_continuous_scale=["#DC4A4A", "#FDF3D8", "#118847"],
@@ -3908,11 +4040,12 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
         temp = active_period_rows[active_period_rows["period_number"] == period_num].copy()
 
         if temp.empty:
-            value, cov, dev = 0, 0, -100
+            value, cov = 0, 0
+            dev = deviation_for_period(value, quarter_to_number(q))
         else:
             value = mean_completion(temp)
             cov = calc_coverage(temp)
-            dev = deviation_for_period(value)
+            dev = deviation_for_period(value, quarter_to_number(q))
 
         trend_rows.append({
             "Період": f"{y} {q}",
@@ -3957,11 +4090,13 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
     )
 
     _wf_has_data = (not goal_progress.empty) and bool(
-        (goal_progress["Виконання"].fillna(0) > 0).any()
+        goal_progress["Виконання"].notna().any()
     )
     if _wf_has_data:
-        wf_df = goal_progress.copy()
-        wf_df["Відхилення"] = (wf_df["Виконання"] - 100).round(2)
+        wf_df = goal_progress.dropna(subset=["Виконання"]).copy()
+        wf_df["Відхилення"] = (
+            wf_df["Виконання"] - expected_period_completion
+        ).round(2)
         wf_df["label"] = wf_df["goal_code"].astype(str) + " " + wf_df["strategic_goal"].astype(str).str[:30]
         wf_df = wf_df.sort_values("Відхилення", ascending=True)
 
@@ -4520,7 +4655,7 @@ if not presentation_mode:
 
         <strong>Виконання СП</strong> рахується як середня оцінка виконання активних заходів:
         <ul>
-            <li>якщо є планове та фактичне значення — використовується співвідношення факт / план;</li>
+            <li>якщо є планове та фактичне значення — використовується співвідношення факт / план зі стелею 100%;</li>
             <li>якщо план / факт не можна порахувати числово — використовується статус виконання;</li>
             <li>«Виконано» = 100%; «Частково виконано» = 75%; «Не виконано» = 0% —
                 єдина шкала моделі «Оцінка МіО» (Excel «РВ (Заходи)»);</li>
@@ -4537,7 +4672,13 @@ if not presentation_mode:
         <strong>Traffic light:</strong>
         🟢 100%+ — у графіку | 🟡 75–99% — часткове | 🔴 &lt;75% — відставання | ⚪ не оцінюється.<br><br>
 
-        <strong>Відхилення за звітний період</strong> = середній відсоток виконання мінус 100%.
+        <strong>Досягнення стратегічної цілі</strong> рахується у два рівні:
+        спочатку середнє відсотків виконання заходів у кожному завданні, потім середнє
+        балів завдань у межах цілі. «Не настав час» та «Втратило актуальність» не мають
+        числового бала і не входять до усереднення.<br><br>
+
+        <strong>Відхилення за звітний період</strong> = середній відсоток виконання мінус
+        очікуваний календарний рівень кварталу: 25% / 50% / 75% / 100%.
         </div>
         """, unsafe_allow_html=True)
 

@@ -13,6 +13,8 @@ from core.strategic_data import load_strat_matrix as core_load_strat_matrix
 from core import monitoring_data
 from core import statuses as core_statuses
 from core.periods import quarter_key as core_quarter_key
+from core.periods import parse_period as core_parse_period
+from core.periods import period_number as core_period_number
 from core import operational
 from core.closeouts import load_manual_closeouts
 from core.exports import render_png_download, build_presentation_pdf
@@ -972,25 +974,8 @@ def to_number(value):
 
 
 def parse_period(value):
-    text = str(value).lower().strip()
-    if text in ["", "nan", "none", "н.д.", "нд"]:
-        return None
-    q = None
-    year = None
-    if "1 квартал" in text or "i квартал" in text or " і квартал" in text:
-        q = 1
-    elif "2 квартал" in text or "ii квартал" in text or " іі квартал" in text:
-        q = 2
-    elif "3 квартал" in text or "iii квартал" in text or " ііі квартал" in text:
-        q = 3
-    elif "4 квартал" in text or "iv квартал" in text:
-        q = 4
-    year_match = re.search(r"20\d{2}", text)
-    if year_match:
-        year = int(year_match.group())
-    if year and q:
-        return year * 10 + q
-    return None
+    """Єдиний строгий розбір періоду через core.periods."""
+    return core_parse_period(value)
 
 
 def quarter_to_number(q):
@@ -1201,9 +1186,6 @@ def risk_score_calc(row, selected_quarter_num, selected_period_num):
         elif display_status == "Частково виконано":
             score += 25
             reasons.append("захід позначено як частково виконаний")
-        elif display_status == "Виконується":
-            score += 30
-            reasons.append("захід перебуває у виконанні")
         elif display_status == "Не виконано":
             score += 45
             reasons.append("захід не виконано або відсутнє підтвердження виконання")
@@ -1359,92 +1341,100 @@ def prepare_period_data(strat_df, requests_df, year, quarter, department="Усі
     measures["end_num"] = measures["end_period"].apply(parse_period)
 
     selected_q_num = quarter_to_number(quarter)
-    selected_period_num = int(year) * 10 + selected_q_num
+    selected_period_num = core_period_number(year, quarter)
     period_locked = is_period_locked(year, quarter)
 
     measures["period_state"] = measures.apply(
-        lambda r: get_period_state(r.get("start_num"), r.get("end_num"), selected_period_num),
-        axis=1
+        lambda row: get_period_state(row.get("start_num"), row.get("end_num"), selected_period_num),
+        axis=1,
     )
 
-    # Включаємо до вибірки також заходи, строк яких ще не настав.
-    # Вони відображаються в окремому KPI і не впливають на оцінку виконання.
-    active = measures[
-        measures["period_state"].isin(["active", "not_started", "unknown_period"])
-    ].copy()
+    # До квартальної вибірки входять лише заходи, строк виконання яких
+    # охоплює саме цей звітний період. Невизначені та майбутні періоди
+    # не перетворюються на штучний статус «Не настав час».
+    active = measures[measures["period_state"] == "active"].copy()
 
     if department != "Усі":
         active = active[active["department"].astype(str) == str(department)]
 
-    if requests_df.empty:
-        requests_df = pd.DataFrame(columns=[
-            "year", "quarter", "strat_code", "status", "numeric_value",
-            "risks", "progress_text", "approval_status", "submitted_at"
-        ])
-
+    requests = requests_df.copy() if isinstance(requests_df, pd.DataFrame) else pd.DataFrame()
     required_cols = [
-        "year", "quarter", "strat_code", "status", "numeric_value",
-        "risks", "progress_text", "approval_status", "submitted_at"
+        "id", "year", "quarter", "strat_code", "status", "numeric_value",
+        "risks", "progress_text", "approval_status", "submitted_at",
     ]
-    for col in required_cols:
-        if col not in requests_df.columns:
-            requests_df[col] = ""
+    for column in required_cols:
+        if column not in requests.columns:
+            requests[column] = ""
 
-    approved_requests = requests_df[requests_df["approval_status"].astype(str) == "Погоджено"].copy()
+    approved_requests = requests[
+        requests["approval_status"].astype(str).str.strip() == operational.CONFIRMED_STATUS
+    ].copy()
 
+    period_request_columns = [
+        "strat_code", "status", "numeric_value", "risks", "progress_text",
+        "submitted_at", "id",
+    ]
     if approved_requests.empty:
-        period_requests = pd.DataFrame(columns=[
-            "strat_code", "status", "numeric_value", "risks", "progress_text", "submitted_at"
-        ])
+        period_requests = pd.DataFrame(columns=period_request_columns)
     else:
-        quarter_num = str(quarter_to_number(quarter))
-        quarter_roman = quarter_to_roman(quarter)
-
+        selected_year = int(year)
+        selected_quarter = core_quarter_key(quarter)
+        request_years = pd.to_numeric(approved_requests["year"], errors="coerce")
+        request_quarters = approved_requests["quarter"].apply(core_quarter_key)
         period_requests = approved_requests[
-            (approved_requests["year"].astype(str) == str(year)) &
-            (
-                (approved_requests["quarter"].astype(str) == str(quarter)) |
-                (approved_requests["quarter"].astype(str) == quarter_num) |
-                (approved_requests["quarter"].astype(str) == quarter_roman)
-            )
+            (request_years == selected_year) & (request_quarters == selected_quarter)
         ].copy()
 
         if not period_requests.empty:
+            period_requests["_submitted_sort"] = pd.to_datetime(
+                period_requests["submitted_at"], errors="coerce", utc=True
+            )
+            period_requests["_id_sort"] = pd.to_numeric(
+                period_requests["id"], errors="coerce"
+            ).fillna(-1)
             period_requests = (
                 period_requests
-                .sort_values("submitted_at")
-                .groupby("strat_code")
+                .sort_values(["strat_code", "_submitted_sort", "_id_sort"], na_position="first")
+                .groupby("strat_code", as_index=False, sort=False)
                 .tail(1)
+                .drop(columns=["_submitted_sort", "_id_sort"])
             )
 
+    period_requests = period_requests.rename(columns={
+        "submitted_at": "request_submitted_at",
+        "id": "request_id",
+    })
     active = active.merge(
-        period_requests[["strat_code", "status", "numeric_value", "risks", "progress_text"]],
+        period_requests[[
+            "strat_code", "status", "numeric_value", "risks", "progress_text",
+            "request_submitted_at", "request_id",
+        ]],
         left_on="code",
         right_on="strat_code",
-        how="left"
+        how="left",
     )
 
+    active["has_monitoring_data"] = active["strat_code"].notna()
     active["status"] = active["status"].fillna("Не подано")
-    active.loc[active["period_state"] == "not_started", "status"] = "Не настав час"
     if period_locked:
         active["status"] = "Не настав час"
     active["numeric_value"] = active["numeric_value"].fillna("")
     active["risks"] = active["risks"].fillna("")
     active["progress_text"] = active["progress_text"].fillna("")
+    active["request_submitted_at"] = active["request_submitted_at"].fillna("")
+    active["request_id"] = active["request_id"].fillna("")
     active["selected_target"] = active[f"target_{year}"] if f"target_{year}" in active.columns else ""
 
     active["status_display"] = active["status"].apply(status_display)
-    active.loc[active["period_state"] == "not_started", "status_display"] = "Не настав час"
     active["status_score"] = active["status"].apply(status_score)
     active["plan_fact_percent"] = active.apply(
-        lambda r: plan_fact_percent(r["numeric_value"], r["selected_target"]), axis=1
+        lambda row: plan_fact_percent(row["numeric_value"], row["selected_target"]), axis=1
     )
     active["is_quantitative_pf"] = active.apply(is_quantitative_plan_fact, axis=1)
     active["performance_score"] = active.apply(
-        lambda r: r["plan_fact_percent"] if pd.notna(r["plan_fact_percent"]) else r["status_score"],
-        axis=1
+        lambda row: row["plan_fact_percent"] if pd.notna(row["plan_fact_percent"]) else row["status_score"],
+        axis=1,
     )
-    active.loc[active["period_state"] == "not_started", ["status_score", "performance_score"]] = None
     if period_locked:
         active[["status_score", "performance_score"]] = None
     active["included_in_assessment"] = ~active["status_display"].isin([
@@ -1452,10 +1442,10 @@ def prepare_period_data(strat_df, requests_df, year, quarter, department="Усі
     ])
 
     risk_results = active.apply(
-        lambda r: risk_score_calc(r, selected_q_num, selected_period_num), axis=1
+        lambda row: risk_score_calc(row, selected_q_num, selected_period_num), axis=1
     )
-    active["risk_score"] = [x[0] for x in risk_results]
-    active["risk_reason"] = [x[1] for x in risk_results]
+    active["risk_score"] = [result[0] for result in risk_results]
+    active["risk_reason"] = [result[1] for result in risk_results]
     active["auto_risk"] = active["risk_score"].apply(risk_level_from_score)
     active.loc[~active["included_in_assessment"], "auto_risk"] = "Не оцінюється"
 
@@ -1464,54 +1454,85 @@ def prepare_period_data(strat_df, requests_df, year, quarter, department="Усі
 
     active["period_year"] = int(year)
     active["period_quarter"] = quarter_to_roman(quarter)
+    active["period_number"] = selected_period_num
     active["period_label"] = active["period_year"].astype(str) + " " + active["period_quarter"].astype(str)
 
-    # Заступник Міністра визначається не з Excel-колонки, а за головним Індексом ССП.
     active = add_deputy_by_ssp_column(active)
-
     return active
 
 
 def build_period_data(strat_df, requests_df, years, quarters):
     frames = []
-    for year in years:
-        for quarter in quarters:
-            temp = prepare_period_data(strat_df, requests_df, year, quarter, "Усі")
-            if not temp.empty:
-                frames.append(temp)
+    selected_periods = sorted(
+        {(int(year), quarter_to_roman(quarter)) for year in years for quarter in quarters},
+        key=lambda item: core_period_number(item[0], item[1]),
+    )
+    for year, quarter in selected_periods:
+        period_frame = prepare_period_data(strat_df, requests_df, year, quarter, "Усі")
+        if not period_frame.empty:
+            frames.append(period_frame)
     if not frames:
         return pd.DataFrame()
-    return pd.concat(frames, ignore_index=True)
+    return pd.concat(frames, ignore_index=True, sort=False)
 
 
 def apply_dashboard_filters(active, department_indices, goals, tasks, measures, product_types, deputies, statuses, sources, financing_types=None, kpkvk_codes=None):
+    """Apply every selected criterion cumulatively and preserve an empty schema."""
     data = active.copy()
+    if data.empty:
+        return data
+
     if department_indices:
-        data = data[data.apply(lambda row: department_matches_indices(row, department_indices), axis=1)]
+        mask = data.apply(lambda row: department_matches_indices(row, department_indices), axis=1)
+        data = data.loc[mask.astype(bool)].copy()
+        if data.empty:
+            return data
     if goals:
-        data = data[data["goal_code"].isin(goals)]
+        data = data[data["goal_code"].isin(goals)].copy()
+        if data.empty:
+            return data
     if tasks:
-        data = data[data["task_code"].isin(tasks)]
+        data = data[data["task_code"].isin(tasks)].copy()
+        if data.empty:
+            return data
     if measures:
-        data = data[data["code"].isin(measures)]
+        data = data[data["code"].isin(measures)].copy()
+        if data.empty:
+            return data
     if product_types:
-        data = data[data["product_type"].isin(product_types)]
+        data = data[data["product_type"].isin(product_types)].copy()
+        if data.empty:
+            return data
     if deputies:
-        data = data[data.apply(lambda row: deputy_matches(row, deputies), axis=1)]
+        mask = data.apply(lambda row: deputy_matches(row, deputies), axis=1)
+        data = data.loc[mask.astype(bool)].copy()
+        if data.empty:
+            return data
     if statuses:
-        data = data[data["status_display"].isin(statuses)]
+        data = data[data["status_display"].isin(statuses)].copy()
+        if data.empty:
+            return data
     if sources:
-        data = data[data["source_national"].apply(lambda v: match_source(v, sources))]
+        mask = data["source_national"].apply(lambda value: match_source(value, sources))
+        data = data.loc[mask.astype(bool)].copy()
+        if data.empty:
+            return data
     if financing_types:
-        # financing_types — список: залишаємо рядки, де хоча б один тип збігається
+        selected_financing = set(financing_types)
+
         def _ft_match(row):
             row_types = row.get("financing_types", [])
             if not isinstance(row_types, list):
                 row_types = []
-            return bool(set(row_types) & set(financing_types))
-        data = data[data.apply(_ft_match, axis=1)]
+            return bool(set(row_types) & selected_financing)
+
+        mask = data.apply(_ft_match, axis=1)
+        data = data.loc[mask.astype(bool)].copy()
+        if data.empty:
+            return data
     if kpkvk_codes:
-        data = data[data["budget_kpkvk"].isin(kpkvk_codes)]
+        data = data[data["budget_kpkvk"].isin(kpkvk_codes)].copy()
+
     return data.copy()
 
 
@@ -1616,21 +1637,104 @@ def style_rank_table(row, total_rows):
 
 
 def collapse_to_latest_measure_rows(df):
+    """Return one row per measure for the multi-period current snapshot.
+
+    The population is taken from the latest period with the maximum number of
+    active measures in the selected range. Each measure then receives its latest
+    available submitted value in the range; if it has no submission, its latest
+    active-period row is retained as «Не подано».
+    """
     if df.empty:
         return df
+
     data = df.copy()
-    data["_period_sort"] = (
-        data["period_year"].astype(int) * 10
-        + data["period_quarter"].apply(quarter_to_number)
+    if "period_number" not in data.columns:
+        data["period_number"] = data.apply(
+            lambda row: core_period_number(row.get("period_year"), row.get("period_quarter")),
+            axis=1,
+        )
+    if "has_monitoring_data" not in data.columns:
+        data["has_monitoring_data"] = data.get("status", "").astype(str) != "Не подано"
+
+    period_counts = data.groupby("period_number")["code"].nunique()
+    maximum_count = int(period_counts.max()) if not period_counts.empty else 0
+    if maximum_count <= 0:
+        return data.iloc[0:0].copy()
+
+    population_period = int(period_counts[period_counts == maximum_count].index.max())
+    population_codes = set(
+        data.loc[data["period_number"] == population_period, "code"].astype(str)
     )
-    data = (
-        data
-        .sort_values(["code", "_period_sort"])
-        .groupby("code", as_index=False)
+    candidates = data[data["code"].astype(str).isin(population_codes)].copy()
+
+    with_data = candidates[candidates["has_monitoring_data"].fillna(False)].copy()
+    if not with_data.empty:
+        with_data["_request_dt_sort"] = pd.to_datetime(
+            with_data.get("request_submitted_at", ""), errors="coerce", utc=True
+        )
+        with_data["_request_id_sort"] = pd.to_numeric(
+            with_data.get("request_id", ""), errors="coerce"
+        ).fillna(-1)
+        latest_with_data = (
+            with_data
+            .sort_values(
+                ["code", "period_number", "_request_dt_sort", "_request_id_sort"],
+                na_position="first",
+            )
+            .groupby("code", as_index=False, sort=False)
+            .tail(1)
+            .drop(columns=["_request_dt_sort", "_request_id_sort"])
+        )
+    else:
+        latest_with_data = with_data
+
+    selected_codes = set(latest_with_data["code"].astype(str)) if not latest_with_data.empty else set()
+    without_data = candidates[~candidates["code"].astype(str).isin(selected_codes)].copy()
+    latest_without_data = (
+        without_data
+        .sort_values(["code", "period_number"])
+        .groupby("code", as_index=False, sort=False)
         .tail(1)
-        .drop(columns=["_period_sort"])
+        if not without_data.empty
+        else without_data
     )
-    return data
+
+    result = pd.concat([latest_with_data, latest_without_data], ignore_index=True, sort=False)
+    result["_code_sort"] = result["code"].map(code_sort_key)
+    return result.sort_values("_code_sort").drop(columns="_code_sort").reset_index(drop=True)
+
+
+def _period_number_to_text(period_num):
+    year = int(period_num) // 10
+    quarter = {1: "I", 2: "II", 3: "III", 4: "IV"}.get(int(period_num) % 10, "I")
+    return f"{quarter} квартал {year} року"
+
+
+def build_period_context(active_period_rows, years, quarters):
+    selected_periods = sorted({
+        core_period_number(year, quarter)
+        for year in years
+        for quarter in quarters
+    })
+    if not selected_periods:
+        return "Зріз за обраним періодом", "Динаміка за обраним періодом"
+
+    snapshot_period = selected_periods[-1]
+    if not active_period_rows.empty and "has_monitoring_data" in active_period_rows.columns:
+        periods_with_data = active_period_rows.loc[
+            active_period_rows["has_monitoring_data"].fillna(False), "period_number"
+        ]
+        if not periods_with_data.empty:
+            snapshot_period = int(periods_with_data.max())
+
+    first_period = selected_periods[0]
+    last_period = selected_periods[-1]
+    snapshot_label = f"Зріз станом на {_period_number_to_text(snapshot_period)}"
+    dynamics_label = (
+        f"Динаміка {_period_number_to_text(first_period)}"
+        f"→{_period_number_to_text(last_period)}"
+    )
+    return snapshot_label, dynamics_label
 
 
 # ─── Plotly theme helper ───────────────────────────────────────────────────────
@@ -1741,12 +1845,10 @@ requests_df = filter_requests_for_user(
 )
 
 # ============================================================
-# ДЖЕРЕЛО ДАНИХ: ПІДТВЕРДЖЕНІ / ОПЕРАТИВНА ОЦІНКА (правка №6)
+# ДЖЕРЕЛО ДАНИХ: ПІДТВЕРДЖЕНІ / ОПЕРАТИВНА ОЦІНКА
 # ============================================================
-# Оперативний режим підмішує подання, які координатор уже пропустив далі
-# по схемі погодження; ті з них, де подане значення ≥ річного цільового
-# орієнтира, авто-зараховуються як «Виконано» (⚡). Пріоритет — індивідуально
-# по кожному заходу: якщо є підтверджений запис за період, береться він.
+# В обох режимах використовуються однакові актуальні подані значення та
+# реальний статус виконання. Відмінність лише у пройденій стадії погодження.
 
 _ds_col1, _ds_col2 = st.columns([1.6, 3])
 with _ds_col1:
@@ -1758,21 +1860,23 @@ with _ds_col1:
         help=operational.MODE_HELP,
     )
 
-_target_map = operational.build_target_map(strat_df)
-auto_completed_list = []
 if data_source_mode == operational.MODE_OPERATIONAL and not requests_df.empty:
-    requests_df, auto_completed_list = operational.apply_operational_mode(requests_df, _target_map)
+    _approval_logs = operational.load_monitoring_logs()
+    requests_df, _ = operational.apply_operational_mode(
+        requests_df,
+        logs_df=_approval_logs,
+    )
 
 with _ds_col2:
     if data_source_mode == operational.MODE_OPERATIONAL:
         _op_count = int(requests_df["_operational"].sum()) if "_operational" in requests_df.columns else 0
         st.caption(
-            f"⚡ Оперативний режим: додатково враховано {_op_count} подань(ня) на етапах "
-            f"після координатора, з них авто-зараховано як виконані: {len(auto_completed_list)}. "
-            f"Офіційні (підтверджені) значення мають пріоритет по кожному заходу."
+            f"⚡ Оперативний режим: додатково враховано {_op_count} актуальних подань, "
+            "щодо яких журнал дій підтверджує проходження ланки координатора. "
+            "Подані значення і статуси виконання не змінюються."
         )
     else:
-        st.caption("✅ Розрахунок лише за заявками, що пройшли всі етапи схеми погодження.")
+        st.caption("✅ Розрахунок лише за заявками, остаточно погодженими останньою ланкою.")
 
 # Ручні закриття (підтверджені супер-адміном) — офіційні, враховуються
 # в ОБОХ режимах: для періодів без подання створюється запис «Виконано».
@@ -1847,10 +1951,7 @@ product_type_options = unique_clean_values(measures_all["product_type"])
 deputy_options = unique_clean_values(measures_all["deputy_minister_by_ssp"])
 source_options = get_source_options()
 
-status_options = [
-    "Виконано", "Частково виконано", "Не виконано",
-    "Не настав час", "Втратило актуальність", "Виконується"
-]
+status_options = list(core_statuses.MODEL_STATUSES)
 
 
 # ============================================================
@@ -2074,7 +2175,7 @@ quarters_for_calc = selected_quarters if selected_quarters else quarters_options
 active_raw = build_period_data(strat_df, requests_df, years_for_calc, quarters_for_calc)
 
 if active_raw.empty:
-    st.warning("Для обраного періоду активних заходів не знайдено.")
+    st.warning("Немає заходів, що відповідають усім обраним параметрам відбору.")
     render_footer()
     st.stop()
 
@@ -2090,24 +2191,34 @@ if is_scope_lockable_user(current_user) and not is_scope_override_active("Dashbo
 active = apply_dashboard_filters(
     active_raw,
     selected_department_indices,
-    selected_goals if "dash_goals" in st.session_state else [],
-    selected_tasks if "dash_tasks" in st.session_state else [],
-    selected_measures if "dash_measures" in st.session_state else [],
-    selected_product_types if "dash_product_types" in st.session_state else [],
-    selected_deputies if "dash_deputies" in st.session_state else [],
-    selected_statuses if "dash_statuses" in st.session_state else [],
-    selected_sources if "dash_sources" in st.session_state else [],
-    selected_financing if "dash_financing" in st.session_state else [],
-    selected_kpkvk if "dash_kpkvk" in st.session_state else [],
+    selected_goals,
+    selected_tasks,
+    selected_measures,
+    selected_product_types,
+    selected_deputies,
+    selected_statuses,
+    selected_sources,
+    selected_financing,
+    selected_kpkvk,
 )
 
 if active.empty:
-    st.warning("За обраними параметрами відбору даних не знайдено.")
+    st.warning("Немає заходів, що відповідають усім обраним параметрам відбору.")
     render_footer()
     st.stop()
 
 active_period_rows = active.copy()
-active = collapse_to_latest_measure_rows(active)
+snapshot_label, dynamics_label = build_period_context(
+    active_period_rows,
+    years_for_calc,
+    quarters_for_calc,
+)
+active = collapse_to_latest_measure_rows(active_period_rows)
+
+if active.empty:
+    st.warning("Немає заходів, що відповідають усім обраним параметрам відбору.")
+    render_footer()
+    st.stop()
 
 
 # ============================================================
@@ -2129,22 +2240,14 @@ completed_count = len(active[active["status_display"] == "Виконано"])
 partly_count = len(active[active["status_display"] == "Частково виконано"])
 not_done_count = len(active[active["status_display"] == "Не виконано"])
 obsolete_count = len(active[active["status_display"] == "Втратило актуальність"])
-not_time_count = len(active[(active["status_display"] == "Не настав час") | (active.get("period_state", "") == "not_started")])
-in_progress_count = len(active[active["status_display"] == "Виконується"])
+not_time_count = len(active[active["status_display"] == "Не настав час"])
 
 approved_requests_count = submitted_count
-review_count = 0
 not_counted_count = len(active[active["status"] == "Не подано"])
 
 conclusion_title, conclusion_text, conclusion_badge = dashboard_conclusion(completion, risk_share, coverage)
 
-period_year_label = (
-    ", ".join([f"{y} рік" for y in selected_years]) if selected_years else "усі роки"
-)
-period_quarter_label = (
-    ", ".join([f"{q} квартал" for q in selected_quarters]) if selected_quarters else "усі квартали"
-)
-period_label = f"{period_year_label} | {period_quarter_label}"
+period_label = snapshot_label
 
 # Conclusion badge mapping
 badge_css = {"risk-high": "badge-red", "risk-medium": "badge-yellow", "risk-low": "badge-green"}
@@ -2188,16 +2291,17 @@ if presentation_mode:
                     _pdf_kpis = [
                         ("Всього активних заходів", str(total_active)),
                         ("Виконано", str(completed_count)),
-                        ("Виконується", str(in_progress_count)),
+                        ("Частково виконано", str(partly_count)),
                         ("Не виконано", str(not_done_count)),
+                        ("Не настав час", str(not_time_count)),
+                        ("Втратило актуальність", str(obsolete_count)),
                         ("Виконання СП, %", f"{completion}%"),
                         ("Покриття моніторингом, %", f"{coverage}%"),
                         ("Частка ризикових, %", f"{risk_share}%"),
-                        ("⚡ Авто-зараховано", str(len(auto_completed_list))),
                     ]
                     _st_fig = _pdf_px.bar(
-                        x=["Виконано", "Частково", "Виконується", "Не виконано", "Не настав час"],
-                        y=[completed_count, partly_count, in_progress_count, not_done_count, not_time_count],
+                        x=["Виконано", "Частково виконано", "Не виконано", "Не настав час", "Втратило актуальність"],
+                        y=[completed_count, partly_count, not_done_count, not_time_count, obsolete_count],
                         color_discrete_sequence=["#005BBB"],
                         title="",
                     )
@@ -2220,9 +2324,6 @@ if presentation_mode:
                         _ins.append(f"ССП із найвищою концентрацією: {_r['ssp_department']} — "
                                     f"{int(_r['Невиконаних'])} із {int(_r['Активних_заходів'])} "
                                     f"(вага {_r['Вага_невиконання']}%)")
-                    if auto_completed_list:
-                        _ins.append(f"⚡ Авто-зараховано системою: {len(auto_completed_list)} захід(ів) "
-                                    f"(значення ≥ річного орієнтира, очікують фінального підтвердження)")
                     if manual_closeout_rows:
                         _ins.append(f"🔒 Ручних закриттів враховано: {manual_closeout_rows}")
                     _ins.append(f"Джерело даних: {data_source_mode}")
@@ -2593,11 +2694,6 @@ if presentation_mode:
                     <div class="pres-kpi-value">{not_done_count}</div>
                     <div class="pres-kpi-sub">{pct_value(not_done_count, total_active)}</div>
                 </div>
-                <div class="pres-kpi-card blue">
-                    <div class="pres-kpi-label">Виконується</div>
-                    <div class="pres-kpi-value">{in_progress_count}</div>
-                    <div class="pres-kpi-sub">{pct_value(in_progress_count, total_active)}</div>
-                </div>
                 <div class="pres-kpi-card gray">
                     <div class="pres-kpi-label">Не настав час</div>
                     <div class="pres-kpi-value">{not_time_count}</div>
@@ -2706,6 +2802,7 @@ if presentation_mode:
 
 st.markdown('<div class="section-card">', unsafe_allow_html=True)
 st.markdown('<div class="section-title">Прогрес виконання: висновок системи</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="section-subtitle">{snapshot_label}</div>', unsafe_allow_html=True)
 
 st.markdown(f"""
 <div class="conclusion-block {block_css[conclusion_badge]}">
@@ -2725,33 +2822,25 @@ _main_kpi_items = [
     {"key": "all", "title": "Заходів", "count": total_active, "percent": "100.0%", "color": "kpi-blue"},
     {"key": "completed", "title": "Виконано", "count": completed_count, "percent": pct_value(completed_count, total_active), "color": "kpi-green"},
     {"key": "approved", "title": "Погоджено", "count": approved_requests_count, "percent": pct_value(approved_requests_count, total_active), "color": "kpi-green"},
-    {"key": "review", "title": "На розгляді", "count": review_count, "percent": pct_value(review_count, total_active), "color": "kpi-yellow"},
     {"key": "not_counted", "title": "Не враховано", "count": not_counted_count, "percent": pct_value(not_counted_count, total_active), "color": "kpi-red"},
     {"key": "not_done", "title": "Не виконано", "count": not_done_count, "percent": pct_value(not_done_count, total_active), "color": "kpi-red"},
     {"key": "obsolete", "title": "Втратило актуальність", "count": obsolete_count, "percent": pct_value(obsolete_count, total_active), "color": "kpi-gray"},
     {"key": "not_time", "title": "Не настав час", "count": not_time_count, "percent": pct_value(not_time_count, total_active), "color": "kpi-gray"},
     {"key": "partly", "title": "Частково виконано", "count": partly_count, "percent": pct_value(partly_count, total_active), "color": "kpi-yellow"},
-    {"key": "in_progress", "title": "Виконується", "count": in_progress_count, "percent": pct_value(in_progress_count, total_active), "color": "kpi-blue"},
 ]
 _selected_kpi = render_kpi_grid(_main_kpi_items, interactive=True, query_key="kpi")
 
-_period_state_series = (
-    active["period_state"]
-    if "period_state" in active.columns
-    else pd.Series([""] * len(active), index=active.index)
-)
 _kpi_detail_frames = {
     "all": active.copy(),
     "completed": active[active["status_display"] == "Виконано"].copy(),
     "approved": active[active["status"] != "Не подано"].copy(),
-    "review": active.iloc[0:0].copy(),
     "not_counted": active[active["status"] == "Не подано"].copy(),
     "not_done": active[active["status_display"] == "Не виконано"].copy(),
     "obsolete": active[active["status_display"] == "Втратило актуальність"].copy(),
-    "not_time": active[(active["status_display"] == "Не настав час") | (_period_state_series == "not_started")].copy(),
+    "not_time": active[active["status_display"] == "Не настав час"].copy(),
     "partly": active[active["status_display"] == "Частково виконано"].copy(),
-    "in_progress": active[active["status_display"] == "Виконується"].copy(),
 }
+
 
 if _selected_kpi in _kpi_detail_frames:
     _selected_item = next(item for item in _main_kpi_items if item["key"] == _selected_kpi)
@@ -2871,24 +2960,6 @@ if not presentation_mode:
         "і не впливає на розрахункові оцінки методики."
     )
 
-    # ── ⚡ Деталізація авто-зарахованих (правка №6) ──────────
-    if auto_completed_list:
-        with st.expander(f"⚡ Авто-зараховані системою заходи: {len(auto_completed_list)} — деталі"):
-            st.caption(
-                "Заходи, за якими подане значення відповідає річному цільовому орієнтиру або "
-                "краще, але заявка ще перебуває на етапі схеми погодження після координатора. "
-                "У режимі «Оперативна оцінка» вони рахуються як виконані; після фінального "
-                "підтвердження система або нічого не змінить, або перерахує за підтвердженими даними."
-            )
-            st.dataframe(
-                pd.DataFrame(auto_completed_list).rename(columns={
-                    "code": "Код заходу", "year": "Рік", "quarter": "Квартал",
-                    "value": "Подане значення", "target": "Річний орієнтир",
-                    "approval_status": "Поточний етап погодження",
-                }),
-                use_container_width=True, hide_index=True,
-            )
-
     st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -2964,6 +3035,7 @@ st.markdown("</div>", unsafe_allow_html=True)
 
 st.markdown('<div class="section-card">', unsafe_allow_html=True)
 st.markdown('<div class="section-title">Показники виконання стратегічного плану</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="section-subtitle">{snapshot_label}</div>', unsafe_allow_html=True)
 
 ind_col1, ind_col2 = st.columns([1, 1.3])
 
@@ -3423,41 +3495,33 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
 
 if not presentation_mode and view_mode in ["Усі візуалізації", "Динаміка"]:
     st.markdown('<div class="section-title">Динаміка виконання</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="section-subtitle">{dynamics_label}</div>', unsafe_allow_html=True)
 
     trend_rows = []
 
-    for y in years_for_calc:
-        for q in quarters_for_calc:
-            temp_raw = build_period_data(strat_df, requests_df, [y], [q])
-            temp = apply_dashboard_filters(
-                temp_raw,
-                selected_department_indices,
-                selected_goals if "dash_goals" in st.session_state else [],
-                selected_tasks if "dash_tasks" in st.session_state else [],
-                selected_measures if "dash_measures" in st.session_state else [],
-                selected_product_types if "dash_product_types" in st.session_state else [],
-                selected_deputies if "dash_deputies" in st.session_state else [],
-                selected_statuses if "dash_statuses" in st.session_state else [],
-                selected_sources if "dash_sources" in st.session_state else [],
-                selected_financing if "dash_financing" in st.session_state else [],
-                selected_kpkvk if "dash_kpkvk" in st.session_state else [],
-            )
+    selected_period_pairs = sorted(
+        {(int(year), quarter_to_roman(quarter)) for year in years_for_calc for quarter in quarters_for_calc},
+        key=lambda item: core_period_number(item[0], item[1]),
+    )
+    for y, q in selected_period_pairs:
+        period_num = core_period_number(y, q)
+        temp = active_period_rows[active_period_rows["period_number"] == period_num].copy()
 
-            if temp.empty:
-                value, cov, dev = 0, 0, -100
-            else:
-                value = mean_completion(temp)
-                cov = calc_coverage(temp)
-                dev = deviation_for_period(value)
+        if temp.empty:
+            value, cov, dev = 0, 0, -100
+        else:
+            value = mean_completion(temp)
+            cov = calc_coverage(temp)
+            dev = deviation_for_period(value)
 
-            trend_rows.append({
-                "Період": f"{y} {q}",
-                "Рік": y,
-                "Квартал": q,
-                "Виконання": value,
-                "Покриття": cov,
-                "Відхилення за звітний період": dev
-            })
+        trend_rows.append({
+            "Період": f"{y} {q}",
+            "Рік": y,
+            "Квартал": q,
+            "Виконання": value,
+            "Покриття": cov,
+            "Відхилення за звітний період": dev,
+        })
 
     trend_df = pd.DataFrame(trend_rows)
 
@@ -3487,7 +3551,10 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
     # ── WATERFALL: внесок кожної стратегічної цілі у відхилення ──
     st.markdown("<hr class='vis-separator'>", unsafe_allow_html=True)
     st.markdown('<div class="section-title" style="margin-top:0;">Водоспад відхилень за стратегічними цілями</div>', unsafe_allow_html=True)
-    st.markdown('<div class="section-subtitle">Внесок кожної стратегічної цілі у загальне відхилення від планового рівня виконання</div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="section-subtitle">{snapshot_label} · Внесок кожної стратегічної цілі у загальне відхилення від планового рівня виконання</div>',
+        unsafe_allow_html=True,
+    )
 
     _wf_has_data = (not goal_progress.empty) and bool(
         (goal_progress["Виконання"].fillna(0) > 0).any()
@@ -3531,6 +3598,7 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
 
 if not presentation_mode and view_mode in ["Усі візуалізації", "Heatmap"]:
     st.markdown('<div class="section-title">Heatmap: самостійний структурний підрозділ × квартал</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="section-subtitle">{dynamics_label}</div>', unsafe_allow_html=True)
 
     heat_rows = []
 
@@ -3540,15 +3608,15 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "H
             temp = apply_dashboard_filters(
                 temp_raw,
                 selected_department_indices,
-                selected_goals if "dash_goals" in st.session_state else [],
-                selected_tasks if "dash_tasks" in st.session_state else [],
-                selected_measures if "dash_measures" in st.session_state else [],
-                selected_product_types if "dash_product_types" in st.session_state else [],
-                selected_deputies if "dash_deputies" in st.session_state else [],
-                selected_statuses if "dash_statuses" in st.session_state else [],
-                selected_sources if "dash_sources" in st.session_state else [],
-                selected_financing if "dash_financing" in st.session_state else [],
-                selected_kpkvk if "dash_kpkvk" in st.session_state else [],
+                selected_goals,
+                selected_tasks,
+                selected_measures,
+                selected_product_types,
+                selected_deputies,
+                selected_statuses,
+                selected_sources,
+                selected_financing,
+                selected_kpkvk,
             )
 
             if temp.empty:
@@ -3608,7 +3676,10 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "H
 
 if not presentation_mode and view_mode in ["Усі візуалізації", "Динаміка"]:
     st.markdown('<div class="section-title">Таймлайн дедлайнів</div>', unsafe_allow_html=True)
-    st.markdown('<div class="section-subtitle">Кількість заходів із дедлайном у кожному кварталі · розбивка за статусом виконання</div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="section-subtitle">{snapshot_label} · Кількість заходів із дедлайном у кожному кварталі · розбивка за статусом виконання</div>',
+        unsafe_allow_html=True,
+    )
 
     timeline_data = active.copy()
     timeline_data["end_num"] = timeline_data["end_period"].apply(parse_period)
@@ -3624,14 +3695,8 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
         timeline_data["deadline_label"] = timeline_data["end_num"].apply(end_num_to_label)
 
         def _tl_status(row):
-            s = row.get("status_display", "")
-            if s == "Виконано":
-                return "Виконано"
-            if s in ["Частково виконано", "Виконується"]:
-                return "В процесі"
-            if row.get("status", "") == "Не подано":
-                return "Без даних"
-            return "Не виконано / ризик"
+            status = clean(row.get("status_display", ""))
+            return status if status in core_statuses.MODEL_STATUSES else core_statuses.ST_NOTDONE
 
         timeline_data["tl_status"] = timeline_data.apply(_tl_status, axis=1)
 
@@ -3645,9 +3710,10 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
 
         tl_color_map = {
             "Виконано": "#118847",
-            "В процесі": "#FF7A45",
-            "Без даних": "#8A96A8",
-            "Не виконано / ризик": "#DC4A4A"
+            "Частково виконано": "#FF7A45",
+            "Не виконано": "#DC4A4A",
+            "Не настав час": "#8A96A8",
+            "Втратило актуальність": "#8A96A8",
         }
 
         fig_tl2 = px.bar(
@@ -3703,7 +3769,7 @@ if not presentation_mode:
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">💰 Фінансування заходів</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="section-subtitle">Структура джерел фінансування активних заходів за обраними фільтрами</div>',
+        f'<div class="section-subtitle">{snapshot_label} · Структура джерел фінансування активних заходів за обраними фільтрами</div>',
         unsafe_allow_html=True
     )
 
@@ -3837,7 +3903,7 @@ if not presentation_mode:
                 ["Статус виконання", "Тип фінансування"]
             ).size().reset_index(name="Кількість")
 
-            status_order = ["Виконано", "Частково виконано", "Виконується", "Не виконано",
+            status_order = ["Виконано", "Частково виконано", "Не виконано",
                             "Не настав час", "Втратило актуальність"]
             fin_order = ["Державний бюджет", "МТД / кошти партнерів", "Небюджетні / інші", "Без фінансування"]
 

@@ -17,7 +17,7 @@ from core.periods import parse_period as core_parse_period
 from core.periods import period_number as core_period_number
 from core import operational
 from core.closeouts import load_manual_closeouts
-from core.exports import render_png_download, build_presentation_pdf
+from core.exports import build_presentation_pdf
 from core.errors import log_cosmetic_error, show_incident
 from core.periods import get_period_state
 from core.filters import get_source_options, match_source
@@ -167,82 +167,45 @@ div[data-testid="stMarkdownContainer"] .section-card:empty {
     margin: 0 0 14px 0;
 }
 
-/* ── Filter panel ── */
-.filter-panel {
-    background: #EAF1FF;
-    border: 1px solid #BFD3F2;
-    border-radius: 12px;
-    padding: clamp(14px, 2vw, 20px) clamp(14px, 2vw, 22px);
-    margin-bottom: 20px;
-    box-shadow: 0 2px 10px rgba(0,91,187,0.06);
+/* ── Dashboard filter form ── */
+/* Поля, підписи та кнопки використовують єдиний системний шаблон
+   з assets/app.css. Тут залишається лише компактне оформлення
+   expander додаткових параметрів, ідентичне сторінці «Головна». */
+.st-key-dashboard_additional_parameters div[data-testid="stExpander"] {
+    border: 1px solid #DCE4F0 !important;
+    border-radius: 10px !important;
+    margin: 8px 0 14px 0 !important;
+    background: #FFFFFF !important;
+    overflow: hidden;
 }
 
-.filter-header {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 14px;
-}
-
-.filter-title {
-    font-size: clamp(14px, 1.3vw, 17px);
-    font-weight: 800;
-    color: #032A63;
-}
-
-.filter-hint {
-    font-size: clamp(10px, 0.9vw, 12px);
-    color: #61708A;
-    background: #EAF1FF;
-    border-radius: 6px;
-    padding: 3px 8px;
-}
-
-.filter-group-label {
-    font-size: clamp(10px, 0.85vw, 11.5px);
-    font-weight: 700;
-    color: #61708A;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    margin: 10px 0 6px 2px;
-}
-
-/* ── Streamlit widget overrides ── */
-div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div,
-div[data-testid="stSelectbox"] div[data-baseweb="select"] > div {
-    background-color: #ffffff !important;
-    border: 1.5px solid #BFD3F2 !important;
-    border-radius: 8px !important;
+.st-key-dashboard_additional_parameters div[data-testid="stExpander"] > details > summary {
+    background: #F7F9FC !important;
+    color: #132238 !important;
+    border-radius: 9px !important;
+    padding: 9px 12px !important;
     min-height: 38px !important;
-    font-size: clamp(11px, 1vw, 13px) !important;
-}
-
-div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div:focus-within,
-div[data-testid="stSelectbox"] div[data-baseweb="select"] > div:focus-within {
-    border-color: #005BBB !important;
-    box-shadow: 0 0 0 3px rgba(0,91,187,0.12) !important;
-}
-
-div[data-testid="stMultiSelect"] label,
-div[data-testid="stSelectbox"] label {
     font-weight: 700 !important;
-    color: #032A63 !important;
-    font-size: clamp(11px, 0.95vw, 13px) !important;
+    box-shadow: none !important;
 }
 
-/* toggle */
-div[data-testid="stToggle"] label {
-    font-weight: 700 !important;
-    color: #032A63 !important;
-    font-size: clamp(11px, 0.95vw, 13px) !important;
+.st-key-dashboard_additional_parameters div[data-testid="stExpander"] > details > summary:hover {
+    background: #EEF3F9 !important;
 }
 
-/* Reset button */
-[data-testid="stMain"] div[data-testid="stButton"] button {
-    border-radius: 8px !important;
+.st-key-dashboard_additional_parameters div[data-testid="stExpander"] > details > summary p {
+    color: #132238 !important;
+    font-size: 14px !important;
     font-weight: 700 !important;
-    font-size: clamp(11px, 0.95vw, 13px) !important;
-    padding: 6px 14px !important;
+}
+
+.st-key-dashboard_additional_parameters div[data-testid="stExpander"] > details > summary svg {
+    color: #61708A !important;
+    fill: #61708A !important;
+}
+
+.dashboard-filter-subtitle {
+    margin-top: 0 !important;
 }
 
 /* ── Conclusion block ── */
@@ -1712,17 +1675,6 @@ def render_indicator_bar(
     """, unsafe_allow_html=True)
 
 
-def reset_filters():
-    keys = [
-        "dash_years", "dash_quarters", "dash_department_indices",
-        "dash_goals", "dash_tasks", "dash_measures",
-        "dash_product_types", "dash_deputies", "dash_statuses",
-        "dash_financing", "dash_kpkvk", "dash_sources",
-        "dash_view_mode", "dash_presentation_mode"
-    ]
-    for key in keys:
-        if key in st.session_state:
-            del st.session_state[key]
 
 
 # ============================================================
@@ -2278,6 +2230,51 @@ CHART_LAYOUT = dict(
     font=dict(family="Helvetica Neue, Arial, sans-serif", size=12, color="#61708A")
 )
 
+PLOTLY_CONFIG = {
+    "displayModeBar": True,
+    "displaylogo": False,
+    "toImageButtonOptions": {
+        "format": "png",
+        "scale": 2,
+    },
+}
+
+
+def render_no_chart_data():
+    st.info("Немає даних для цього графіка за обраними параметрами.")
+
+
+def _plotly_figure_has_data(fig):
+    """Не дозволяє Plotly створювати порожній білий блок."""
+
+    def _has_numeric_value(value):
+        if isinstance(value, (list, tuple)):
+            return any(_has_numeric_value(item) for item in value)
+        if hasattr(value, "tolist") and not isinstance(value, (str, bytes)):
+            return _has_numeric_value(value.tolist())
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return False
+        return not pd.isna(number)
+
+    for trace in fig.data:
+        if _has_numeric_value(getattr(trace, "value", None)):
+            return True
+        for attribute in ("x", "y", "values", "z", "r", "theta"):
+            if _has_numeric_value(getattr(trace, attribute, None)):
+                return True
+    return False
+
+
+def render_plotly_chart(fig, **kwargs):
+    """Рендерить непорожній Plotly із штатною кнопкою збереження PNG."""
+    if not _plotly_figure_has_data(fig):
+        render_no_chart_data()
+        return False
+    st.plotly_chart(fig, config=PLOTLY_CONFIG, **kwargs)
+    return True
+
 
 def apply_safe_plotly_layout(fig, has_legend=True):
     """Ставить легенду в безпечне положення, що не накладається на сам графік."""
@@ -2375,7 +2372,6 @@ with _ds_col1:
         operational.MODE_OPTIONS,
         horizontal=True,
         key="dash_data_source_mode",
-        help=operational.MODE_HELP,
     )
 
 if data_source_mode == operational.MODE_OPERATIONAL and not requests_df.empty:
@@ -2476,59 +2472,119 @@ status_options = list(core_statuses.MODEL_STATUSES)
 # FILTERS PANEL
 # ============================================================
 
-with st.container():
-    st.markdown("""
-    <div class="filter-panel">
-        <div class="filter-header">
-            <span class="filter-title">🔍 Параметри відбору</span>
-            <span class="filter-hint">Оберіть необхідні параметри: період, індекс ССП та режим перегляду даних</span>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+_dash_defaults = {
+    "years": [], "quarters": [], "department_indices": [], "view_mode": "Усі візуалізації",
+    "goals": [], "tasks": [], "measures": [], "product_types": [], "deputies": [],
+    "statuses": [], "financing": [], "kpkvk": [], "sources": [],
+}
+if "dash_filters_applied_v19" not in st.session_state:
+    st.session_state["dash_filters_applied_v19"] = _dash_defaults.copy()
 
-    # Рядок 1: Ключові фільтри + режим
-    fa, fb, fc, fd, fe = st.columns([1, 1, 2, 1.5, 1])
+_dashboard_widget_defaults = {
+    "dash_years": [],
+    "dash_quarters": [],
+    "dash_department_indices": [],
+    "dash_view_mode": "Усі візуалізації",
+    "dash_presentation_mode": False,
+    "dash_goals": [],
+    "dash_tasks": [],
+    "dash_measures": [],
+    "dash_product_types": [],
+    "dash_deputies": [],
+    "dash_statuses": [],
+    "dash_financing": [],
+    "dash_kpkvk": [],
+    "dash_sources": [],
+}
+for _widget_key, _widget_default in _dashboard_widget_defaults.items():
+    st.session_state.setdefault(_widget_key, _widget_default)
+
+
+def _apply_dashboard_filters_v19():
+    st.session_state["dash_filters_applied_v19"] = {
+        "years": list(st.session_state.get("dash_years", []) or []),
+        "quarters": list(st.session_state.get("dash_quarters", []) or []),
+        "department_indices": list(st.session_state.get("dash_department_indices", []) or []),
+        "view_mode": st.session_state.get("dash_view_mode", "Усі візуалізації"),
+        "goals": list(st.session_state.get("dash_goals", []) or []),
+        "tasks": list(st.session_state.get("dash_tasks", []) or []),
+        "measures": list(st.session_state.get("dash_measures", []) or []),
+        "product_types": list(st.session_state.get("dash_product_types", []) or []),
+        "deputies": list(st.session_state.get("dash_deputies", []) or []),
+        "statuses": list(st.session_state.get("dash_statuses", []) or []),
+        "financing": list(st.session_state.get("dash_financing", []) or []),
+        "kpkvk": list(st.session_state.get("dash_kpkvk", []) or []),
+        "sources": list(st.session_state.get("dash_sources", []) or []),
+    }
+
+
+def _reset_dashboard_filters_v19():
+    st.session_state["dash_filters_applied_v19"] = _dash_defaults.copy()
+    for _widget_key, _widget_default in _dashboard_widget_defaults.items():
+        st.session_state[_widget_key] = (
+            list(_widget_default) if isinstance(_widget_default, list) else _widget_default
+        )
+
+
+with st.form("dashboard_filters_form_v19"):
+    st.markdown('<div class="filter-title">Параметри відбору</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="filter-subtitle dashboard-filter-subtitle">Основні параметри</div>',
+        unsafe_allow_html=True,
+    )
+
+    fa, fb, fc, fd, fe = st.columns([0.8, 0.8, 1.8, 1.4, 1.0])
 
     with fa:
-        selected_years = st.multiselect(
-            "📅 Рік",
+        st.markdown('<div class="filter-field-label">Рік</div>', unsafe_allow_html=True)
+        st.multiselect(
+            "Рік",
             years_options,
-            default=[],
             key="dash_years",
-            placeholder="Усі роки"
+            placeholder="Усі роки",
+            label_visibility="collapsed",
         )
 
     with fb:
-        selected_quarters = st.multiselect(
-            "🗓 Квартал",
+        st.markdown('<div class="filter-field-label">Квартал</div>', unsafe_allow_html=True)
+        st.multiselect(
+            "Квартал",
             quarters_options,
-            default=[],
             key="dash_quarters",
-            placeholder="Усі квартали"
+            placeholder="Усі квартали",
+            label_visibility="collapsed",
         )
 
     with fc:
+        st.markdown(
+            '<div class="filter-field-label">Індекс самостійного структурного підрозділу</div>',
+            unsafe_allow_html=True,
+        )
         if is_scope_lockable_user(current_user) and not is_scope_override_active("Dashboard"):
             _own_dash_ssp = get_user_ssp_index(current_user) or "—"
             st.markdown(
-                "<div style='font-size:13px;font-weight:700;margin-bottom:4px;'>"
-                "🏢 Індекс самостійного структурного підрозділу</div>"
-                f"<div style='background:#F7F9FC;border:1px solid #DCE4F0;border-radius:10px;"
-                f"padding:9px 12px;font-weight:800;'>Ваш ССП: №{_own_dash_ssp}</div>",
+                "<div style='min-height:43px;background:#EAF1FF;border:1px solid #BFD3F2;"
+                "border-radius:10px;padding:10px 12px;font-weight:800;color:#132238;"
+                "box-shadow:inset 0 1px 2px rgba(15,23,42,0.08);'>"
+                f"Ваш ССП: №{_own_dash_ssp}</div>",
                 unsafe_allow_html=True,
             )
-            selected_department_indices = []  # реальне звуження нижче, через own-index override
         else:
-            selected_department_indices = st.multiselect(
-                "🏢 Індекс самостійного струкутрного підрозділу",
+            st.multiselect(
+                "Індекс самостійного структурного підрозділу",
                 department_indices_options,
                 key="dash_department_indices",
-                placeholder="Усі підрозділи"
+                placeholder="Усі підрозділи",
+                label_visibility="collapsed",
             )
 
     with fd:
-        view_mode = st.selectbox(
-            "📊 Режим перегляду даних",
+        st.markdown(
+            '<div class="filter-field-label">Режим перегляду даних</div>',
+            unsafe_allow_html=True,
+        )
+        st.selectbox(
+            "Режим перегляду даних",
             [
                 "Усі візуалізації",
                 "Стратегічні цілі",
@@ -2539,133 +2595,147 @@ with st.container():
                 "Таблиці",
                 "Фінансування",
             ],
-            key="dash_view_mode"
+            key="dash_view_mode",
+            label_visibility="collapsed",
         )
 
     with fe:
-        presentation_mode = st.toggle(
-            "🖥 Presentation mode",
-            value=False,
+        st.markdown(
+            '<div class="filter-field-label">Режим презентації</div>',
+            unsafe_allow_html=True,
+        )
+        st.toggle(
+            "Режим презентації",
             key="dash_presentation_mode",
-            help="Спрощений вигляд: висновок, ключові індикатори та основні графіки."
+            label_visibility="collapsed",
         )
 
-    # Рядок 2: Деталізовані фільтри (у розгорнутому вигляді)
-    with st.expander("⚙️ Додаткові фільтри (ціль, завдання, захід, тип, заступник, статус, джерело)"):
-        g1, g2, g3 = st.columns(3)
-        with g1:
-            selected_goals = st.multiselect(
-                "Стратегічна ціль",
-                goal_options,
-                format_func=lambda x: f"{x} — {strip_code_from_name(x, goal_name_map.get(x, ''))}",
-                key="dash_goals"
-            )
-        with g2:
-            selected_tasks = st.multiselect(
-                "Завдання",
-                task_options,
-                format_func=lambda x: f"{x} — {strip_code_from_name(x, task_name_map.get(x, ''))}",
-                key="dash_tasks"
-            )
-        with g3:
-            selected_measures = st.multiselect(
-                "Захід",
-                measure_options,
-                format_func=lambda x: f"{x} — {strip_code_from_name(x, measure_name_map.get(x, ''))}",
-                key="dash_measures"
-            )
+    with st.container(key="dashboard_additional_parameters"):
+        with st.expander("Додаткові параметри", expanded=False):
+            g1, g2, g3 = st.columns(3)
+            with g1:
+                st.markdown(
+                    '<div class="filter-field-label">Стратегічна ціль</div>',
+                    unsafe_allow_html=True,
+                )
+                st.multiselect(
+                    "Стратегічна ціль",
+                    goal_options,
+                    format_func=lambda x: f"{x} — {strip_code_from_name(x, goal_name_map.get(x, ''))}",
+                    key="dash_goals",
+                    label_visibility="collapsed",
+                )
+            with g2:
+                st.markdown('<div class="filter-field-label">Завдання</div>', unsafe_allow_html=True)
+                st.multiselect(
+                    "Завдання",
+                    task_options,
+                    format_func=lambda x: f"{x} — {strip_code_from_name(x, task_name_map.get(x, ''))}",
+                    key="dash_tasks",
+                    label_visibility="collapsed",
+                )
+            with g3:
+                st.markdown('<div class="filter-field-label">Захід</div>', unsafe_allow_html=True)
+                st.multiselect(
+                    "Захід",
+                    measure_options,
+                    format_func=lambda x: f"{x} — {strip_code_from_name(x, measure_name_map.get(x, ''))}",
+                    key="dash_measures",
+                    label_visibility="collapsed",
+                )
 
-        h1, h2, h3 = st.columns(3)
-        with h1:
-            selected_product_types = st.multiselect(
-                "Тип продукту",
-                product_type_options,
-                key="dash_product_types"
-            )
-        with h2:
-            selected_deputies = st.multiselect(
-                "Заступник Міністра",
-                deputy_options,
-                key="dash_deputies",
-                help="Фільтр працює за відповідністю Індексу головного ССП до заступника Міністра."
-            )
-        with h3:
-            selected_statuses = st.multiselect(
-                "Статус виконання",
-                status_options,
-                key="dash_statuses"
-            )
+            h1, h2, h3 = st.columns(3)
+            with h1:
+                st.markdown('<div class="filter-field-label">Тип продукту</div>', unsafe_allow_html=True)
+                st.multiselect(
+                    "Тип продукту",
+                    product_type_options,
+                    key="dash_product_types",
+                    label_visibility="collapsed",
+                )
+            with h2:
+                st.markdown(
+                    '<div class="filter-field-label">Заступник Міністра</div>',
+                    unsafe_allow_html=True,
+                )
+                st.multiselect(
+                    "Заступник Міністра",
+                    deputy_options,
+                    key="dash_deputies",
+                    label_visibility="collapsed",
+                )
+            with h3:
+                st.markdown(
+                    '<div class="filter-field-label">Статус виконання</div>',
+                    unsafe_allow_html=True,
+                )
+                st.multiselect(
+                    "Статус виконання",
+                    status_options,
+                    key="dash_statuses",
+                    label_visibility="collapsed",
+                )
 
-        j1, j2, j3 = st.columns(3)
-        with j1:
-            selected_financing = st.multiselect(
-                "Джерело фінансування",
-                ["Державний бюджет", "МТД / кошти партнерів", "Небюджетні / інші", "Без фінансування"],
-                key="dash_financing",
-                help="Фільтрує заходи за типом джерела фінансування. Один захід може мати декілька джерел."
-            )
-        with j2:
-            kpkvk_options = sorted(
-                [v for v in measures_all["budget_kpkvk"].unique() if v],
-                key=lambda x: str(x)
-            )
-            selected_kpkvk = st.multiselect(
-                "КПКВК",
-                kpkvk_options,
-                key="dash_kpkvk",
-                help="Фільтр за кодом бюджетної програми (КПКВК). Відображаються лише заходи з наявним КПКВК."
-            )
-        with j3:
-            selected_sources = st.multiselect(
-                "Джерело даних: національний рівень",
-                source_options,
-                key="dash_sources"
-            )
+            j1, j2, j3 = st.columns(3)
+            with j1:
+                st.markdown(
+                    '<div class="filter-field-label">Джерело фінансування</div>',
+                    unsafe_allow_html=True,
+                )
+                st.multiselect(
+                    "Джерело фінансування",
+                    [
+                        "Державний бюджет",
+                        "МТД / кошти партнерів",
+                        "Небюджетні / інші",
+                        "Без фінансування",
+                    ],
+                    key="dash_financing",
+                    label_visibility="collapsed",
+                )
+            with j2:
+                kpkvk_options = sorted(
+                    [v for v in measures_all["budget_kpkvk"].unique() if v],
+                    key=lambda x: str(x),
+                )
+                st.markdown('<div class="filter-field-label">КПКВК</div>', unsafe_allow_html=True)
+                st.multiselect(
+                    "КПКВК",
+                    kpkvk_options,
+                    key="dash_kpkvk",
+                    label_visibility="collapsed",
+                )
+            with j3:
+                st.markdown(
+                    '<div class="filter-field-label">Джерело даних: національний рівень</div>',
+                    unsafe_allow_html=True,
+                )
+                st.multiselect(
+                    "Джерело даних: національний рівень",
+                    source_options,
+                    key="dash_sources",
+                    label_visibility="collapsed",
+                )
 
-        _r1, _r2 = st.columns([1, 1])
-        with _r1:
-            if st.button("↺ Скинути поля фільтрів", use_container_width=True):
-                reset_filters()
-                st.rerun()
-        with _r2:
-            render_scope_toggle("Dashboard", current_user)
+    _apply_col, _reset_col = st.columns([1, 1])
+    with _apply_col:
+        st.form_submit_button(
+            "Застосувати обрані параметри",
+            type="primary",
+            use_container_width=True,
+            on_click=_apply_dashboard_filters_v19,
+        )
+    with _reset_col:
+        st.form_submit_button(
+            "Скинути параметри",
+            use_container_width=True,
+            on_click=_reset_dashboard_filters_v19,
+        )
 
+render_scope_toggle("Dashboard", current_user)
 
-# DEMO 1.9: фільтри Dashboard застосовуються тільки після кнопки.
-_dash_defaults = {
-    "years": [], "quarters": [], "department_indices": [], "view_mode": "Усі візуалізації",
-    "goals": [], "tasks": [], "measures": [], "product_types": [], "deputies": [],
-    "statuses": [], "financing": [], "kpkvk": [], "sources": [],
-}
-if "dash_filters_applied_v19" not in st.session_state:
-    st.session_state["dash_filters_applied_v19"] = _dash_defaults.copy()
+presentation_mode = bool(st.session_state.get("dash_presentation_mode", False))
 
-_ap1, _ap2, _ap3 = st.columns([1.25, 1.0, 1.2])
-with _ap1:
-    if st.button("Застосувати обрані параметри", type="primary", use_container_width=True, key="dash_apply_filters_v19"):
-        st.session_state["dash_filters_applied_v19"] = {
-            "years": list(selected_years or []),
-            "quarters": list(selected_quarters or []),
-            "department_indices": list(selected_department_indices or []),
-            "view_mode": view_mode,
-            "goals": list(st.session_state.get("dash_goals", []) or []),
-            "tasks": list(st.session_state.get("dash_tasks", []) or []),
-            "measures": list(st.session_state.get("dash_measures", []) or []),
-            "product_types": list(st.session_state.get("dash_product_types", []) or []),
-            "deputies": list(st.session_state.get("dash_deputies", []) or []),
-            "statuses": list(st.session_state.get("dash_statuses", []) or []),
-            "financing": list(st.session_state.get("dash_financing", []) or []),
-            "kpkvk": list(st.session_state.get("dash_kpkvk", []) or []),
-            "sources": list(st.session_state.get("dash_sources", []) or []),
-        }
-        st.rerun()
-with _ap2:
-    if st.button("Скинути параметри", use_container_width=True, key="dash_reset_applied_v19"):
-        st.session_state["dash_filters_applied_v19"] = _dash_defaults.copy()
-        reset_filters()
-        st.rerun()
-with _ap3:
-    st.caption("Фільтри на Dashboard впливають на графіки тільки після натискання кнопки застосування.")
 
 _dash_applied = st.session_state.get("dash_filters_applied_v19", _dash_defaults.copy())
 selected_years = _dash_applied.get("years", [])
@@ -3492,77 +3562,16 @@ if not presentation_mode:
 
 
 # ============================================================
-# ГНУЧКИЙ РОЗРАХУНОК ВІДСОТКА ВИКОНАННЯ (правка №7)
-# ============================================================
-# Не змінює основні показники дашборда (вони — за поточною методологією),
-# а дає додатковий розріз: той самий чисельник «Виконано», але з базою
-# розрахунку на вибір. Обрана база відображається в підписі показника.
-
-st.markdown('<div class="section-card">', unsafe_allow_html=True)
-st.markdown('<div class="section-title">Гнучкий розрахунок відсотка виконання</div>', unsafe_allow_html=True)
-
-_pct_base = st.selectbox(
-    "База розрахунку (знаменник)",
-    [
-        "Поточна методологія (активні заходи періоду, без «Не настав час» і «Втратило актуальність»)",
-        "Усі заходи Стратегічного плану (за всі роки)",
-        "Усі заходи, активні в обраному періоді (включно з «Не настав час» і «Втратило актуальність»)",
-        "Усі заходи обраних СЦ (за всі роки)",
-        "Лише заходи з поданою звітністю в періоді",
-    ],
-    key="flex_pct_base",
-)
-
-_num = completed_count
-if _pct_base.startswith("Поточна методологія"):
-    _den = max(total_active - not_time_count - obsolete_count, 0)
-elif _pct_base.startswith("Усі заходи Стратегічного плану"):
-    _den = len(measures_all)
-elif _pct_base.startswith("Усі заходи, активні"):
-    _den = total_active
-elif _pct_base.startswith("Усі заходи обраних СЦ"):
-    _goal_codes = set(active["goal_code"].astype(str).unique()) if "goal_code" in active.columns else set()
-    if _goal_codes:
-        _den = int(measures_all["code"].astype(str).apply(get_goal_code).astype(str).isin(_goal_codes).sum())
-    else:
-        _den = len(measures_all)
-else:
-    _den = submitted_count
-
-_flex_pct = round(100.0 * _num / _den, 2) if _den else 0.0
-_f1, _f2 = st.columns([1, 2.2])
-with _f1:
-    _bar_w = max(0.0, min(float(_flex_pct), 100.0))
-    st.markdown(
-        f"""
-        <div style="background:#ffffff;border:1px solid #DCE4F0;border-radius:14px;
-                    padding:14px 16px;">
-          <div style="font-size:12px;font-weight:800;color:#61708A;">Виконання за обраною базою</div>
-          <div style="font-size:30px;font-weight:900;color:#032A63;line-height:1.15;">{_flex_pct}%</div>
-          <div style="font-size:11px;color:#61708A;margin-bottom:8px;">{_num} із {_den} заходів</div>
-          <div style="height:8px;background:#F7F9FC;border-radius:6px;overflow:hidden;">
-            <div style="height:8px;width:{_bar_w}%;background:#005BBB;border-radius:6px;"></div>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-with _f2:
-    st.caption(
-        f"Чисельник: заходи зі статусом «Виконано» в обраному портфелі ({_num}). "
-        f"Знаменник: {_pct_base.lower()} ({_den}). Обрана база фіксується у підписах "
-        f"та потрапляє в експортовані матеріали. Основні показники дашборда "
-        f"розраховуються за поточною методологією і не змінюються."
-    )
-st.markdown("</div>", unsafe_allow_html=True)
-
-
-# ============================================================
 # ПОКАЗНИКИ ВИКОНАННЯ СТРАТЕГІЧНОГО ПЛАНУ
 # ============================================================
 
 st.markdown('<div class="section-card">', unsafe_allow_html=True)
 st.markdown('<div class="section-title">Показники виконання стратегічного плану</div>', unsafe_allow_html=True)
+st.markdown(
+    '<div class="section-subtitle">Щоб зберегти окремий графік — наведіть на нього курсор '
+    'і натисніть значок 📷 (Download as PNG) у верхньому куті графіка.</div>',
+    unsafe_allow_html=True,
+)
 st.markdown(f'<div class="section-subtitle">{snapshot_label}</div>', unsafe_allow_html=True)
 
 ind_col1, ind_col2 = st.columns([1, 1.3])
@@ -3570,8 +3579,7 @@ ind_col1, ind_col2 = st.columns([1, 1.3])
 with ind_col1:
     st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
     fig_gauge = gauge_chart(completion, "Виконання СП")
-    st.plotly_chart(fig_gauge, use_container_width=True)
-    render_png_download(fig_gauge, "виконання_СП", "png_gauge")
+    render_plotly_chart(fig_gauge, use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
 with ind_col2:
@@ -3651,7 +3659,11 @@ if view_mode in ["Усі візуалізації", "Стратегічні ці
             values="Кількість",
             hole=0.52,
             color="traffic_light",
-            color_discrete_map=TRAFFIC_COLORS
+            color_discrete_map=TRAFFIC_COLORS,
+            labels={
+                "traffic_light": "Статус виконання",
+                "Кількість": "Кількість заходів",
+            },
         )
         fig_tl.update_traces(
             textfont_size=12,
@@ -3666,7 +3678,7 @@ if view_mode in ["Усі візуалізації", "Стратегічні ці
             showlegend=True,
         )
         apply_safe_plotly_layout(fig_tl, has_legend=True)
-        st.plotly_chart(fig_tl, use_container_width=True)
+        render_plotly_chart(fig_tl, use_container_width=True)
 
     with sc2:
         st.markdown('<div class="section-title">Виконання за стратегічними цілями</div>', unsafe_allow_html=True)
@@ -3703,6 +3715,13 @@ if view_mode in ["Усі візуалізації", "Стратегічні ці
             color="Виконання",
             color_continuous_scale=["#DC4A4A", "#FDF3D8", "#118847"],
             range_color=[0, 100],
+            labels={
+                "Виконання": "Виконання, %",
+                "label": "",
+                "Активних_заходів": "Активних заходів",
+                "Покриття_%": "Покриття, %",
+                "Ризикових": "Ризикових заходів",
+            },
         )
         fig_goals.update_traces(
             textposition="outside",
@@ -3713,12 +3732,16 @@ if view_mode in ["Усі візуалізації", "Стратегічні ці
             **CHART_LAYOUT,
             height=max(200, len(goal_sorted) * 38 + 40),
             xaxis=dict(range=[0, 115], showgrid=True, gridcolor="#F7F9FC", ticksuffix="%"),
-            yaxis=dict(showgrid=False, categoryorder="array", categoryarray=goal_sorted["label"].tolist()[::-1]),
+            yaxis=dict(
+                title=None,
+                showgrid=False,
+                categoryorder="array",
+                categoryarray=goal_sorted["label"].tolist()[::-1],
+            ),
             coloraxis_showscale=False,
             margin=dict(l=10, r=60, t=10, b=10)
         )
-        st.plotly_chart(fig_goals, use_container_width=True)
-        render_png_download(fig_goals, "прогрес_за_СЦ", "png_goals")
+        render_plotly_chart(fig_goals, use_container_width=True)
 
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -3781,6 +3804,14 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
         color="Виконання",
         color_continuous_scale=["#DC4A4A", "#FDF3D8", "#118847"],
         range_color=[0, 100],
+        labels={
+            "ssp_department": "Самостійний структурний підрозділ",
+            "Виконання": "Виконання, %",
+            "Активних_заходів": "Активних заходів",
+            "Покриття_%": "Покриття, %",
+            "Ризикових": "Ризикових заходів",
+            "Критичних": "Критичний ризик",
+        },
     )
     fig_dep.update_traces(
         textposition="outside",
@@ -3807,8 +3838,7 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
         coloraxis_showscale=False,
         margin=dict(l=10, r=10, t=30, b=100)
     )
-    st.plotly_chart(fig_dep, use_container_width=True)
-    render_png_download(fig_dep, "виконання_за_ССП", "png_dep")
+    render_plotly_chart(fig_dep, use_container_width=True)
 
     st.markdown("<hr class='vis-separator'>", unsafe_allow_html=True)
 
@@ -3847,7 +3877,14 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
         color="Виконання",
         color_continuous_scale=["#DC4A4A", "#FDF3D8", "#118847"],
         range_color=[0, 100],
-        custom_data=["Заступник_Міністра", "Активних_заходів", "Покриття_%", "Ризикових"]
+        custom_data=["Заступник_Міністра", "Активних_заходів", "Покриття_%", "Ризикових"],
+        labels={
+            "Dep_short": "Заступник Міністра",
+            "Виконання": "Виконання, %",
+            "Активних_заходів": "Активних заходів",
+            "Покриття_%": "Покриття, %",
+            "Ризикових": "Ризикових заходів",
+        },
     )
     fig_dep2.update_traces(
         textposition="outside",
@@ -3882,7 +3919,7 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
         coloraxis_showscale=False,
         margin=dict(l=10, r=10, t=30, b=120)
     )
-    st.plotly_chart(fig_dep2, use_container_width=True)
+    render_plotly_chart(fig_dep2, use_container_width=True)
 
 
 # ============================================================
@@ -3901,7 +3938,11 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
             values="Кількість",
             hole=0.52,
             color="auto_risk",
-            color_discrete_map=RISK_COLORS
+            color_discrete_map=RISK_COLORS,
+            labels={
+                "auto_risk": "Рівень ризику",
+                "Кількість": "Кількість заходів",
+            },
         )
         fig_risk_pie.update_traces(
             textfont_size=12,
@@ -3913,8 +3954,7 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
             showlegend=True,
         )
         apply_safe_plotly_layout(fig_risk_pie, has_legend=True)
-        st.plotly_chart(fig_risk_pie, use_container_width=True)
-        render_png_download(fig_risk_pie, "розподіл_ризиків", "png_risk_pie")
+        render_plotly_chart(fig_risk_pie, use_container_width=True)
 
     with r2:
         st.markdown('<div class="section-title" style="margin-top:0;">Структура ризиків за самостійними структурними підрозділами</div>', unsafe_allow_html=True)
@@ -3934,7 +3974,8 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
             barmode="stack",
             labels={
                 "ssp_department": "Самостійний структурний підрозділ",
-                "auto_risk": "Ризик"
+                "auto_risk": "Ризик",
+                "Кількість": "Кількість заходів",
             }
         )
         fig_risk_bar.update_layout(
@@ -3950,7 +3991,7 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
             yaxis=dict(showgrid=True, gridcolor="#F7F9FC"),
         )
         apply_safe_plotly_layout(fig_risk_bar, has_legend=True)
-        st.plotly_chart(fig_risk_bar, use_container_width=True)
+        render_plotly_chart(fig_risk_bar, use_container_width=True)
 
     # ── SCATTER: Ризик × Виконання по ССП ────────────────────
     st.markdown("<hr class='vis-separator'>", unsafe_allow_html=True)
@@ -4020,7 +4061,7 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
                 font=dict(size=10, color=col), xanchor="center",
                 bgcolor="rgba(255,255,255,0.75)", borderpad=3)
 
-        st.plotly_chart(fig_scatter, use_container_width=True)
+        render_plotly_chart(fig_scatter, use_container_width=True)
     else:
         st.info("Недостатньо даних для побудови матриці.")
 # ============================================================
@@ -4067,7 +4108,12 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
             "Виконання": "#005BBB",
             "Покриття": "#00A8A8",
             "Відхилення за звітний період": "#DC4A4A"
-        }
+        },
+        labels={
+            "variable": "Показник",
+            "value": "Значення, %",
+            "Період": "Період",
+        },
     )
     fig_trend.update_traces(line_width=2.5, marker_size=7)
     fig_trend.update_layout(
@@ -4078,8 +4124,7 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
     )
     fig_trend.update_layout(legend_title_text="Показник")
     apply_safe_plotly_layout(fig_trend, has_legend=True)
-    st.plotly_chart(fig_trend, use_container_width=True)
-    render_png_download(fig_trend, "динаміка_виконання", "png_trend")
+    render_plotly_chart(fig_trend, use_container_width=True)
 
     # ── WATERFALL: внесок кожної стратегічної цілі у відхилення ──
     st.markdown("<hr class='vis-separator'>", unsafe_allow_html=True)
@@ -4125,7 +4170,7 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
             margin=dict(l=10, r=80, t=10, b=30),
             showlegend=False
         )
-        st.plotly_chart(fig_wf, use_container_width=True)
+        render_plotly_chart(fig_wf, use_container_width=True)
     else:
         st.info("Погоджених даних за обраний період ще немає — водоспад відхилень "
                 "з'явиться після перших погоджених подань.")
@@ -4183,26 +4228,28 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "H
         pivot = pivot.loc[sorted(pivot.index, key=ssp_sort_value)]
         pivot = pivot.dropna(how="all")
 
-        fig_heat = px.imshow(
-            pivot,
-            color_continuous_scale=["#FBE5E5", "#FDF3D8", "#E4F5EC"],
-            zmin=0, zmax=100,
-            aspect="auto",
-            text_auto=".0f",
-            labels=dict(x="Період", y="Підрозділ", color="Виконання, %")
-        )
-        fig_heat.update_layout(
-            **CHART_LAYOUT,
-            height=max(300, len(pivot) * 22 + 80),
-            coloraxis_colorbar=dict(title="Викон., %", ticksuffix="%"),
-            xaxis=dict(side="top", tickfont=dict(size=10)),
-            yaxis=dict(tickfont=dict(size=9)),
-            margin=dict(l=10, r=60, t=60, b=10)
-        )
-        st.plotly_chart(fig_heat, use_container_width=True)
-        render_png_download(fig_heat, "heatmap_СЦ_ССП", "png_heat")
+        if pivot.empty:
+            render_no_chart_data()
+        else:
+            fig_heat = px.imshow(
+                pivot,
+                color_continuous_scale=["#FBE5E5", "#FDF3D8", "#E4F5EC"],
+                zmin=0, zmax=100,
+                aspect="auto",
+                text_auto=".0f",
+                labels=dict(x="Період", y="Підрозділ", color="Виконання, %")
+            )
+            fig_heat.update_layout(
+                **CHART_LAYOUT,
+                height=max(300, len(pivot) * 22 + 80),
+                coloraxis_colorbar=dict(title="Викон., %", ticksuffix="%"),
+                xaxis=dict(side="top", tickfont=dict(size=10)),
+                yaxis=dict(tickfont=dict(size=9)),
+                margin=dict(l=10, r=60, t=60, b=10)
+            )
+            render_plotly_chart(fig_heat, use_container_width=True)
     else:
-        st.info("Недостатньо даних для побудови теплової карти.")
+        render_no_chart_data()
 
 
 # ============================================================
@@ -4258,7 +4305,11 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
             color="tl_status",
             color_discrete_map=tl_color_map,
             barmode="stack",
-            labels={"deadline_label": "Квартал дедлайну", "tl_status": "Статус"},
+            labels={
+                "deadline_label": "Квартал дедлайну",
+                "tl_status": "Статус",
+                "Кількість": "Кількість заходів",
+            },
             text_auto=True,
         )
         fig_tl2.update_traces(textfont_size=10, textposition="inside")
@@ -4273,7 +4324,7 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
             yaxis=dict(showgrid=True, gridcolor="#F7F9FC"),
         )
         apply_safe_plotly_layout(fig_tl2, has_legend=True)
-        st.plotly_chart(fig_tl2, use_container_width=True)
+        render_plotly_chart(fig_tl2, use_container_width=True)
     else:
         st.info("Дані про терміни виконання заходів відсутні.")
 
@@ -4350,6 +4401,10 @@ if not presentation_mode:
                 hole=0.52,
                 color="Тип",
                 color_discrete_map=FIN_COLORS,
+                labels={
+                    "Тип": "Джерело фінансування",
+                    "Кількість": "Кількість заходів",
+                },
             )
             fig_donut.update_traces(
                 textfont_size=11,
@@ -4365,7 +4420,7 @@ if not presentation_mode:
                 showlegend=True,
             )
             apply_safe_plotly_layout(fig_donut, has_legend=True)
-            st.plotly_chart(fig_donut, use_container_width=True)
+            render_plotly_chart(fig_donut, use_container_width=True)
         else:
             st.info("Даних про фінансування за обраними фільтрами немає.")
 
@@ -4411,7 +4466,7 @@ if not presentation_mode:
                     coloraxis_showscale=False,
                     margin=dict(l=10, r=10, t=40, b=40)
                 )
-                st.plotly_chart(fig_budget_bar, use_container_width=True)
+                render_plotly_chart(fig_budget_bar, use_container_width=True)
                 st.caption("* Лише заходи з наявними числовими даними про бюджет")
             else:
                 st.info("Числових даних про бюджет ДБ 2026 за обраними фільтрами немає.")
@@ -4470,7 +4525,13 @@ if not presentation_mode:
                     yaxis=dict(tickfont=dict(size=11)),
                     margin=dict(l=10, r=10, t=44, b=10)
                 )
-                st.plotly_chart(fig_heatmap_fin, use_container_width=True)
+                render_plotly_chart(fig_heatmap_fin, use_container_width=True)
+            else:
+                render_no_chart_data()
+        else:
+            render_no_chart_data()
+    else:
+        render_no_chart_data()
 
     st.markdown("<hr class='vis-separator'>", unsafe_allow_html=True)
 

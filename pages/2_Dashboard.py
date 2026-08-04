@@ -1597,6 +1597,134 @@ def gauge_chart(value, title):
     return fig
 
 
+def summary_indicators_chart(
+    completion,
+    coverage,
+    deviation,
+    low_risk_share,
+    expected_completion,
+):
+    """Render the four summary indicators as a downloadable Plotly chart."""
+    deviation_direction = "Відставання" if deviation < 0 else "Випередження"
+    if abs(float(deviation)) < 0.005:
+        deviation_direction = "Відповідає плановому темпу"
+
+    labels = [
+        "Виконання СП",
+        "Покриття моніторингом",
+        "Відхилення за звітний період",
+        "Частка заходів без ризику",
+    ]
+    subtitles = [
+        "",
+        "",
+        (
+            f"{deviation_direction} від планового темпу; "
+            f"очікуваний рівень — {expected_completion:.0f}%"
+        ),
+        "Заходи низького ризику — висока вірогідність досягнення",
+    ]
+    display_values = [
+        f"{float(completion):.1f}%",
+        f"{float(coverage):.1f}%",
+        f"{float(deviation):+.1f} в.п.",
+        f"{float(low_risk_share):.1f}%",
+    ]
+    bar_values = [
+        min(max(float(completion), 0.0), 100.0),
+        min(max(float(coverage), 0.0), 100.0),
+        min(abs(float(deviation)), 100.0),
+        min(max(float(low_risk_share), 0.0), 100.0),
+    ]
+    colors = ["#005BBB", "#00A8A8", "#FF7A45", "#118847"]
+    y_positions = [3, 2, 1, 0]
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=[100] * 4,
+        y=y_positions,
+        orientation="h",
+        width=0.16,
+        marker=dict(color="#EAF0F7"),
+        hoverinfo="skip",
+        showlegend=False,
+    ))
+    fig.add_trace(go.Bar(
+        x=bar_values,
+        y=y_positions,
+        orientation="h",
+        width=0.16,
+        marker=dict(color=colors),
+        customdata=[
+            [label, value, subtitle]
+            for label, value, subtitle in zip(labels, display_values, subtitles)
+        ],
+        hovertemplate=(
+            "<b>%{customdata[0]}</b><br>"
+            "%{customdata[1]}<br>"
+            "%{customdata[2]}<extra></extra>"
+        ),
+        showlegend=False,
+    ))
+
+    for y_pos, label, subtitle, display_value, color in zip(
+        y_positions, labels, subtitles, display_values, colors
+    ):
+        label_text = f"<b>{label}</b>"
+        if subtitle:
+            label_text += (
+                f"<br><span style='font-size:10px;color:#8A96A8'>{subtitle}</span>"
+            )
+        fig.add_annotation(
+            x=0,
+            y=y_pos + 0.30,
+            text=label_text,
+            showarrow=False,
+            xanchor="left",
+            yanchor="bottom",
+            align="left",
+            font=dict(size=12, color="#33415C"),
+        )
+        fig.add_annotation(
+            x=103,
+            y=y_pos,
+            text=f"<b>{display_value}</b>",
+            showarrow=False,
+            xanchor="left",
+            yanchor="middle",
+            font=dict(size=12, color=color),
+        )
+
+    fig.update_layout(
+        barmode="overlay",
+        height=360,
+        margin=dict(l=10, r=20, t=28, b=10),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(
+            range=[0, 118],
+            visible=False,
+            fixedrange=True,
+        ),
+        yaxis=dict(
+            range=[-0.48, 3.62],
+            visible=False,
+            fixedrange=True,
+        ),
+        bargap=0.72,
+    )
+    return fig
+
+
+def annualised_plan_tempo_percent(row):
+    """Normalise the already calculated risk tempo to the annual plan."""
+    tempo = to_number(row.get("risk_tempo", ""))
+    target = to_number(row.get("selected_target", ""))
+    if tempo is None or target is None or target <= 0:
+        return None
+    return round(float(tempo) / float(target) * 100, 4)
+
+
 def pct_value(count, total):
     if total == 0:
         return "0.0%"
@@ -3577,37 +3705,18 @@ st.markdown(f'<div class="section-subtitle">{snapshot_label}</div>', unsafe_allo
 ind_col1, ind_col2 = st.columns([1, 1.3])
 
 with ind_col1:
-    st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
     fig_gauge = gauge_chart(completion, "Виконання СП")
     render_plotly_chart(fig_gauge, use_container_width=True)
-    st.markdown("</div>", unsafe_allow_html=True)
 
 with ind_col2:
-    st.markdown('<div class="chart-wrap" style="height:100%;padding-top:20px;">', unsafe_allow_html=True)
-    render_indicator_bar("Виконання СП", completion, 100, "#005BBB")
-    render_indicator_bar("Покриття моніторингом", coverage, 100, "#00A8A8")
-    deviation_direction = "Відставання" if deviation_current < 0 else "Випередження"
-    if abs(deviation_current) < 0.005:
-        deviation_direction = "Відповідає плановому темпу"
-    render_indicator_bar(
-        "Відхилення за звітний період",
+    fig_indicators = summary_indicators_chart(
         completion,
-        100,
-        "#FF7A45",
-        display_value=f"{deviation_current:+.1f} в.п.",
-        subtitle=(
-            f"{deviation_direction} від планового темпу; "
-            f"очікуваний рівень — {expected_period_completion:.0f}%"
-        ),
+        coverage,
+        deviation_current,
+        low_risk_share,
+        expected_period_completion,
     )
-    render_indicator_bar(
-        "Частка заходів без ризику",
-        round(low_risk_share, 1),
-        100,
-        "#118847",
-        subtitle="Заходи низького ризику — висока вірогідність досягнення",
-    )
-    st.markdown("</div>", unsafe_allow_html=True)
+    render_plotly_chart(fig_indicators, use_container_width=True)
 
 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -3623,6 +3732,10 @@ traffic_counts = active.groupby("traffic_light").size().reset_index(name="Кіл
 goal_progress = build_goal_progress(active)
 
 dep_active = explode_departments(active)
+dep_active["Темп_річного_плану"] = dep_active.apply(
+    annualised_plan_tempo_percent,
+    axis=1,
+)
 dep_progress = (
     dep_active
     .groupby("ssp_department")
@@ -3632,13 +3745,17 @@ dep_progress = (
         Подано=("status", lambda x: (x != "Не подано").sum()),
         Ризикових=("auto_risk", lambda x: x.isin(RISKY_LEVELS).sum()),
         Критичних=("auto_risk", lambda x: (x == "Критичний ризик").sum()),
-        Середній_ризик=("risk_score", "mean")
+        Середній_ризик=("risk_score", "mean"),
+        Середній_темп=("Темп_річного_плану", "mean"),
     )
     .reset_index()
 )
 dep_progress["Виконання"] = dep_progress["Виконання"].fillna(0).round(2)
 dep_progress["Покриття_%"] = (dep_progress["Подано"] / dep_progress["Активних_заходів"] * 100).round(2)
 dep_progress["Середній_ризик"] = dep_progress["Середній_ризик"].fillna(0).round(2)
+dep_progress["Середній_темп"] = pd.to_numeric(
+    dep_progress["Середній_темп"], errors="coerce"
+).round(2)
 
 
 # ============================================================
@@ -3993,77 +4110,305 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
         apply_safe_plotly_layout(fig_risk_bar, has_legend=True)
         render_plotly_chart(fig_risk_bar, use_container_width=True)
 
-    # ── SCATTER: Ризик × Виконання по ССП ────────────────────
+    # ── SCATTER: Виконання × темп по ССП ─────────────────────
     st.markdown("<hr class='vis-separator'>", unsafe_allow_html=True)
-    st.markdown('<div class="section-title" style="margin-top:0;">Матриця ризик × виконання (по ССП)</div>', unsafe_allow_html=True)
-    st.markdown('<div class="section-subtitle">Розмір бульбашки — кількість заходів; червоний квадрант — низьке виконання + високий ризик</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="section-title" style="margin-top:0;">'
+        'Матриця виконання × темп (по ССП)</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="section-subtitle">'
+        'X — виконання підрозділу; Y — середній річний темп як частка річного плану '
+        '(100% відповідає плановому темпу). Розмір бульбашки — кількість заходів.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 
-    scatter_df = dep_progress[dep_progress["Активних_заходів"] >= 1].copy()
-    scatter_df["Частка_ризик"] = (scatter_df["Ризикових"] / scatter_df["Активних_заходів"] * 100).round(2)
-    scatter_df["dep_short"] = scatter_df["ssp_department"].str[:18]
+    scatter_df = dep_progress[
+        (dep_progress["Активних_заходів"] >= 1)
+        & dep_progress["Середній_темп"].notna()
+    ].copy()
+    scatter_df["dep_short"] = scatter_df["ssp_department"].astype(str).apply(
+        lambda value: value if len(value) <= 24 else value[:23] + "…"
+    )
 
     if not scatter_df.empty:
-        fig_scatter = go.Figure()
-        # Квадранти фону
-        fig_scatter.add_shape(type="rect", x0=0, x1=50, y0=50, y1=100,
-            fillcolor="rgba(220,38,38,0.06)", line_width=0, layer="below")
-        fig_scatter.add_shape(type="rect", x0=50, x1=100, y0=0, y1=50,
-            fillcolor="rgba(217,119,6,0.05)", line_width=0, layer="below")
-        fig_scatter.add_shape(type="rect", x0=50, x1=100, y0=50, y1=100,
-            fillcolor="rgba(22,163,74,0.05)", line_width=0, layer="below")
-        # Лінії розподілу
-        fig_scatter.add_shape(type="line", x0=50, x1=50, y0=0, y1=100,
-            line=dict(color="#DCE4F0", dash="dot", width=1))
-        fig_scatter.add_shape(type="line", x0=0, x1=100, y0=50, y1=50,
-            line=dict(color="#DCE4F0", dash="dot", width=1))
+        performance_threshold = float(expected_period_completion)
+        tempo_threshold = 100.0
+        x_axis_min, x_axis_max = 0.0, 105.0
 
+        tempo_min = min(
+            float(scatter_df["Середній_темп"].min()),
+            tempo_threshold,
+        )
+        tempo_max = max(
+            float(scatter_df["Середній_темп"].max()),
+            tempo_threshold,
+        )
+        tempo_span = max(tempo_max - tempo_min, 50.0)
+        tempo_padding = max(10.0, tempo_span * 0.12)
+        y_axis_min = min(0.0, tempo_min - tempo_padding)
+        y_axis_max = max(200.0, tempo_max + tempo_padding)
+
+        # Невелике детерміноване зміщення застосовується лише для візуального
+        # розведення однакових/майже однакових координат. У hover залишаються
+        # точні розрахункові значення виконання та темпу.
+        scatter_df["plot_x"] = scatter_df["Виконання"].astype(float)
+        scatter_df["plot_y"] = scatter_df["Середній_темп"].astype(float)
+        scatter_df["_x_cluster"] = (scatter_df["Виконання"] / 2).round()
+        scatter_df["_y_cluster"] = (scatter_df["Середній_темп"] / 5).round()
+        jitter_offsets = [
+            (0.0, 0.0),
+            (-1.0, 1.0),
+            (1.0, -1.0),
+            (-1.0, -1.0),
+            (1.0, 1.0),
+            (0.0, 2.0),
+            (0.0, -2.0),
+            (-2.0, 0.0),
+            (2.0, 0.0),
+        ]
+        y_jitter_unit = max((y_axis_max - y_axis_min) * 0.012, 2.0)
+        for group_indices in scatter_df.groupby(
+            ["_x_cluster", "_y_cluster"],
+            dropna=False,
+        ).groups.values():
+            group_indices = list(group_indices)
+            if len(group_indices) <= 1:
+                continue
+            for position, row_index in enumerate(group_indices):
+                x_offset, y_offset = jitter_offsets[position % len(jitter_offsets)]
+                multiplier = 1 + position // len(jitter_offsets)
+                scatter_df.at[row_index, "plot_x"] = min(
+                    max(
+                        float(scatter_df.at[row_index, "Виконання"])
+                        + x_offset * multiplier,
+                        x_axis_min,
+                    ),
+                    100.0,
+                )
+                scatter_df.at[row_index, "plot_y"] = (
+                    float(scatter_df.at[row_index, "Середній_темп"])
+                    + y_offset * y_jitter_unit * multiplier
+                )
+
+        point_colors = []
         for _, row in scatter_df.iterrows():
-            pct_risk = row["Частка_ризик"]
-            perf = row["Виконання"]
-            cnt = row["Активних_заходів"]
-            if pct_risk >= 50 and perf < 50:
-                color = "#DC4A4A"
-            elif pct_risk < 50 and perf >= 50:
-                color = "#118847"
+            high_completion = float(row["Виконання"]) >= performance_threshold
+            high_tempo = float(row["Середній_темп"]) >= tempo_threshold
+            if high_completion and high_tempo:
+                point_colors.append("#118847")
+            elif high_completion:
+                point_colors.append("#F4B400")
+            elif high_tempo:
+                point_colors.append("#00A8A8")
             else:
-                color = "#FF7A45"
-            fig_scatter.add_trace(go.Scatter(
-                x=[perf], y=[pct_risk],
-                mode="markers+text",
-                marker=dict(size=max(10, min(cnt * 3, 50)), color=color, opacity=0.75,
-                            line=dict(color="white", width=1.5)),
-                text=[row["dep_short"]],
-                textposition="top center",
-                textfont=dict(size=9, color="#61708A"),
-                hovertemplate=(
-                    f"<b>{row['ssp_department']}</b><br>"
-                    f"Виконання: {perf:.2f}%<br>"
-                    f"Частка ризикових: {pct_risk:.2f}%<br>"
-                    f"Активних заходів: {cnt}<extra></extra>"
-                ),
-                showlegend=False
-            ))
+                point_colors.append("#DC4A4A")
+
+        fig_scatter = go.Figure()
+
+        # Чотири змістовні квадранти.
+        for x0, x1, y0, y1, fill in [
+            (
+                x_axis_min,
+                performance_threshold,
+                tempo_threshold,
+                y_axis_max,
+                "rgba(0,168,168,0.065)",
+            ),
+            (
+                performance_threshold,
+                x_axis_max,
+                tempo_threshold,
+                y_axis_max,
+                "rgba(17,136,71,0.065)",
+            ),
+            (
+                performance_threshold,
+                x_axis_max,
+                y_axis_min,
+                tempo_threshold,
+                "rgba(244,180,0,0.065)",
+            ),
+            (
+                x_axis_min,
+                performance_threshold,
+                y_axis_min,
+                tempo_threshold,
+                "rgba(220,74,74,0.075)",
+            ),
+        ]:
+            fig_scatter.add_shape(
+                type="rect",
+                x0=x0,
+                x1=x1,
+                y0=y0,
+                y1=y1,
+                fillcolor=fill,
+                line_width=0,
+                layer="below",
+            )
+
+        fig_scatter.add_shape(
+            type="line",
+            x0=performance_threshold,
+            x1=performance_threshold,
+            y0=y_axis_min,
+            y1=y_axis_max,
+            line=dict(color="#AAB6C8", dash="dot", width=1.2),
+        )
+        fig_scatter.add_shape(
+            type="line",
+            x0=x_axis_min,
+            x1=x_axis_max,
+            y0=tempo_threshold,
+            y1=tempo_threshold,
+            line=dict(color="#AAB6C8", dash="dot", width=1.2),
+        )
+
+        text_positions = [
+            "top center",
+            "bottom center",
+            "middle right",
+            "middle left",
+        ]
+        fig_scatter.add_trace(go.Scatter(
+            x=scatter_df["plot_x"],
+            y=scatter_df["plot_y"],
+            mode="markers+text",
+            marker=dict(
+                size=[
+                    max(14, min(16 + float(count) ** 0.5 * 5, 50))
+                    for count in scatter_df["Активних_заходів"]
+                ],
+                color=point_colors,
+                opacity=0.78,
+                line=dict(color="white", width=1.5),
+            ),
+            text=scatter_df["dep_short"],
+            textposition=[
+                text_positions[index % len(text_positions)]
+                for index in range(len(scatter_df))
+            ],
+            textfont=dict(size=9, color="#61708A"),
+            customdata=[
+                [
+                    row["ssp_department"],
+                    float(row["Виконання"]),
+                    float(row["Середній_темп"]),
+                    int(row["Активних_заходів"]),
+                ]
+                for _, row in scatter_df.iterrows()
+            ],
+            hovertemplate=(
+                "<b>%{customdata[0]}</b><br>"
+                "Виконання: %{customdata[1]:.2f}%<br>"
+                "Середній річний темп: %{customdata[2]:+.2f}% плану<br>"
+                "Активних заходів: %{customdata[3]}<extra></extra>"
+            ),
+            cliponaxis=False,
+            showlegend=False,
+        ))
+
+        left_center = performance_threshold / 2
+        right_center = performance_threshold + (
+            x_axis_max - performance_threshold
+        ) / 2
+        lower_center = y_axis_min + (tempo_threshold - y_axis_min) / 2
+        upper_center = tempo_threshold + (y_axis_max - tempo_threshold) / 2
+        quadrant_labels = [
+            (
+                "Наздоганяють",
+                left_center,
+                upper_center,
+                "#007C82",
+            ),
+            (
+                "Лідери, що<br>прискорюються",
+                right_center,
+                upper_center,
+                "#118847",
+            ),
+            (
+                "Досягли,<br>темп сповільнився",
+                right_center,
+                lower_center,
+                "#B77900",
+            ),
+            (
+                "Критична зона:<br>відстають і не прискорюються",
+                left_center,
+                lower_center,
+                "#B83232",
+            ),
+        ]
+        for label, x_pos, y_pos, color in quadrant_labels:
+            fig_scatter.add_annotation(
+                x=x_pos,
+                y=y_pos,
+                text=f"<b>{label}</b>",
+                showarrow=False,
+                font=dict(size=10, color=color),
+                xanchor="center",
+                yanchor="middle",
+                align="center",
+                bgcolor="rgba(255,255,255,0.78)",
+                borderpad=4,
+            )
+
+        fig_scatter.add_annotation(
+            x=performance_threshold,
+            y=y_axis_max,
+            text=f"Очікуване виконання: {performance_threshold:.0f}%",
+            showarrow=False,
+            xanchor="left",
+            yanchor="top",
+            font=dict(size=9, color="#61708A"),
+            bgcolor="rgba(255,255,255,0.82)",
+            borderpad=3,
+        )
+        fig_scatter.add_annotation(
+            x=x_axis_max,
+            y=tempo_threshold,
+            text="Плановий річний темп: 100%",
+            showarrow=False,
+            xanchor="right",
+            yanchor="bottom",
+            font=dict(size=9, color="#61708A"),
+            bgcolor="rgba(255,255,255,0.82)",
+            borderpad=3,
+        )
 
         fig_scatter.update_layout(
             **CHART_LAYOUT,
-            height=420,
-            xaxis=dict(title="Виконання, %", range=[-10, 115], showgrid=True, gridcolor="#F7F9FC", ticksuffix="%"),
-            yaxis=dict(title="Частка ризикових заходів, %", range=[-10, 112], showgrid=True, gridcolor="#F7F9FC", ticksuffix="%"),
-            margin=dict(l=60, r=20, t=20, b=60)
+            height=560,
+            showlegend=False,
+            hovermode="closest",
+            xaxis=dict(
+                title="Виконання підрозділу, %",
+                range=[x_axis_min, x_axis_max],
+                showgrid=True,
+                gridcolor="#F7F9FC",
+                ticksuffix="%",
+                zeroline=False,
+            ),
+            yaxis=dict(
+                title="Середній річний темп, % плану",
+                range=[y_axis_min, y_axis_max],
+                showgrid=True,
+                gridcolor="#F7F9FC",
+                ticksuffix="%",
+                zeroline=False,
+            ),
+            margin=dict(l=75, r=35, t=30, b=70),
         )
-        # Підписи квадрантів
-        for txt, x, y, col in [
-            ("🔴 Критична зона", 25, 95, "#DC4A4A"),
-            ("🟡 Увага", 75, 25, "#FF7A45"),
-            ("🟢 Норма", 75, 95, "#118847"),
-        ]:
-            fig_scatter.add_annotation(x=x, y=y, text=txt, showarrow=False,
-                font=dict(size=10, color=col), xanchor="center",
-                bgcolor="rgba(255,255,255,0.75)", borderpad=3)
-
         render_plotly_chart(fig_scatter, use_container_width=True)
     else:
-        st.info("Недостатньо даних для побудови матриці.")
+        st.info(
+            "Немає числових даних про темп виконання для побудови матриці "
+            "за обраними параметрами."
+        )
 # ============================================================
 
 if not presentation_mode and view_mode in ["Усі візуалізації", "Динаміка"]:
@@ -4080,7 +4425,12 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
         period_num = core_period_number(y, q)
         temp = active_period_rows[active_period_rows["period_number"] == period_num].copy()
 
-        if temp.empty:
+        monitoring_was_not_conducted = (
+            int(y) == 2026 and quarter_to_number(q) in (1, 2)
+        )
+        if monitoring_was_not_conducted:
+            value, cov, dev = 0, 0, 0
+        elif temp.empty:
             value, cov = 0, 0
             dev = deviation_for_period(value, quarter_to_number(q))
         else:
@@ -4125,6 +4475,14 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
     fig_trend.update_layout(legend_title_text="Показник")
     apply_safe_plotly_layout(fig_trend, has_legend=True)
     render_plotly_chart(fig_trend, use_container_width=True)
+    if any(
+        int(year) == 2026 and quarter_to_number(quarter) in (1, 2)
+        for year, quarter in selected_period_pairs
+    ):
+        st.caption(
+            "За I та II квартали 2026 року моніторинг не проводився, "
+            "тому значення за ці періоди не враховуються."
+        )
 
     # ── WATERFALL: внесок кожної стратегічної цілі у відхилення ──
     st.markdown("<hr class='vis-separator'>", unsafe_allow_html=True)

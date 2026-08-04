@@ -1141,64 +1141,439 @@ def traffic_light(score):
     return "🔴 Відстає"
 
 
+QUARTER_FRACTIONS = {1: 0.25, 2: 0.50, 3: 0.75, 4: 1.00}
+RISKY_LEVELS = ("Критичний ризик", "Високий ризик", "Середній ризик")
+RISK_RESULT_COLUMNS = [
+    "risk_score",
+    "risk_probability",
+    "risk_reason",
+    "auto_risk",
+    "included_in_risk_assessment",
+    "risk_current_fact",
+    "risk_previous_fact",
+    "risk_current_quarter",
+    "risk_previous_quarter",
+    "risk_current_quarter_fraction",
+    "risk_previous_quarter_fraction",
+    "risk_forecast_year",
+    "risk_tempo",
+]
+
+
+def _format_risk_number(value):
+    if value is None or pd.isna(value):
+        return "н/д"
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return clean(value) or "н/д"
+    if abs(number - round(number)) < 1e-9:
+        return str(int(round(number)))
+    return f"{number:.2f}".rstrip("0").rstrip(".").replace(".", ",")
+
+
+def _format_probability(value):
+    if value is None or pd.isna(value):
+        return "н/д"
+    number = float(value)
+    if abs(number - round(number)) < 1e-9:
+        return f"{int(round(number))}%"
+    return f"{number:.1f}%".replace(".", ",")
+
+
+def _risk_quarter_text(quarter_num):
+    roman = {1: "I", 2: "II", 3: "III", 4: "IV"}.get(int(quarter_num or 0), "")
+    return f"{roman} квартал" if roman else "невизначений квартал"
+
+
+def _normalise_yes_no(value):
+    text = clean(value).casefold().replace("’", "'")
+    if text in {"так", "yes", "true", "да"}:
+        return "так"
+    if text in {"ні", "нi", "no", "false", "нет"}:
+        return "ні"
+    return None
+
+
+def _clamp_probability(value):
+    try:
+        return min(max(float(value), 0.0), 100.0)
+    except (TypeError, ValueError):
+        return None
+
+
+def risk_level_from_probability(probability):
+    if probability is None or pd.isna(probability):
+        return "Не оцінюється"
+    probability = float(probability)
+    if probability > 85:
+        return "Низький ризик"
+    if probability >= 51:
+        return "Середній ризик"
+    if probability >= 20:
+        return "Високий ризик"
+    return "Критичний ризик"
+
+
 def risk_level_from_score(score):
+    """Backward-compatible mapping: greater score still means worse risk."""
     if score is None or pd.isna(score):
         return "Не оцінюється"
-    if score >= 70:
-        return "Критичний ризик"
-    if score >= 35:
-        return "Середній ризик"
-    return "Низький ризик"
+    return risk_level_from_probability(100 - float(score))
 
 
-def risk_score_calc(row, selected_quarter_num, selected_period_num):
-    status = clean(row.get("status", "Не подано"))
-    display_status = status_display(status)
-    actual = row.get("numeric_value", "")
-    target = row.get("selected_target", "")
-    end_num = row.get("end_num", None)
-    score = 0
-    reasons = []
+def build_risk_observation_map(approved_requests, year, selected_quarter_num):
+    """Return latest effective submission per measure and quarter for risk forecast.
 
-    if display_status in ["Не настав час", "Втратило актуальність"]:
-        return 0, "захід не включається до ризикової оцінки за поточним статусом"
+    The source frame has already been reduced to confirmed rows or to the
+    operational overlay, so the history automatically follows the selected data
+    source. Dashboard filters are intentionally not involved here.
+    """
+    if approved_requests is None or approved_requests.empty:
+        return {}
 
-    pf = plan_fact_percent(actual, target)
+    history = approved_requests.copy()
+    for column in ["id", "year", "quarter", "strat_code", "status", "numeric_value", "submitted_at"]:
+        if column not in history.columns:
+            history[column] = ""
 
-    if status == "Не подано":
-        score += 45
-        reasons.append("за активним заходом не подано моніторингові дані")
+    history["_risk_year"] = pd.to_numeric(history["year"], errors="coerce")
+    history["_risk_quarter_key"] = history["quarter"].apply(core_quarter_key)
+    history["_risk_quarter_num"] = history["_risk_quarter_key"].map({
+        "I": 1, "II": 2, "III": 3, "IV": 4
+    })
+    history["_risk_code"] = history["strat_code"].apply(clean)
+    history = history[
+        (history["_risk_year"] == int(year))
+        & history["_risk_quarter_num"].notna()
+        & (history["_risk_quarter_num"] <= int(selected_quarter_num))
+        & (history["_risk_code"] != "")
+    ].copy()
+    if history.empty:
+        return {}
 
-    if pf is not None:
-        if pf >= 100:
-            score += 0
-            reasons.append("фактичне значення досягло або перевищило планове")
-        elif pf >= 75:
-            score += 25
-            reasons.append("фактичне значення становить від 75% до 99% плану")
-        else:
-            score += 45
-            reasons.append("значне відставання фактичного значення від планового")
+    history["_risk_submitted_sort"] = pd.to_datetime(
+        history["submitted_at"], errors="coerce", utc=True
+    )
+    history["_risk_id_sort"] = pd.to_numeric(history["id"], errors="coerce").fillna(-1)
+    history = (
+        history
+        .sort_values(
+            ["_risk_code", "_risk_quarter_num", "_risk_submitted_sort", "_risk_id_sort"],
+            na_position="first",
+        )
+        .groupby(["_risk_code", "_risk_quarter_num"], as_index=False, sort=False)
+        .tail(1)
+        .sort_values(["_risk_code", "_risk_quarter_num"])
+    )
+
+    result = {}
+    for code, rows in history.groupby("_risk_code", sort=False):
+        result[code] = [
+            {
+                "quarter_num": int(record["_risk_quarter_num"]),
+                "quarter_fraction": QUARTER_FRACTIONS[int(record["_risk_quarter_num"])],
+                "fact": record.get("numeric_value", ""),
+                "status": record.get("status", ""),
+            }
+            for _, record in rows.iterrows()
+        ]
+    return result
+
+
+def _risk_result(
+    probability,
+    reason,
+    *,
+    included=True,
+    current_fact=None,
+    previous_fact=None,
+    current_quarter=None,
+    previous_quarter=None,
+    forecast_year=None,
+    tempo=None,
+):
+    probability = _clamp_probability(probability)
+    if probability is None:
+        risk_score = 0.0
+        auto_risk = "Не оцінюється"
     else:
-        if display_status == "Виконано":
-            score += 0
-            reasons.append("захід позначено як виконаний")
-        elif display_status == "Частково виконано":
-            score += 25
-            reasons.append("захід позначено як частково виконаний")
-        elif display_status == "Не виконано":
-            score += 45
-            reasons.append("захід не виконано або відсутнє підтвердження виконання")
+        risk_score = round(100.0 - probability, 2)
+        auto_risk = risk_level_from_probability(probability)
+    if not included:
+        auto_risk = "Не оцінюється"
 
-    if pd.notna(end_num) and end_num < selected_period_num and display_status != "Виконано":
-        score += 45
-        reasons.append("строк виконання минув, захід не виконано")
+    current_fraction = QUARTER_FRACTIONS.get(int(current_quarter or 0))
+    previous_fraction = QUARTER_FRACTIONS.get(int(previous_quarter or 0))
+    return {
+        "risk_score": risk_score,
+        "risk_probability": round(probability, 2) if probability is not None else None,
+        "risk_reason": reason,
+        "auto_risk": auto_risk,
+        "included_in_risk_assessment": bool(included),
+        "risk_current_fact": current_fact,
+        "risk_previous_fact": previous_fact,
+        "risk_current_quarter": int(current_quarter) if current_quarter else None,
+        "risk_previous_quarter": int(previous_quarter) if previous_quarter else None,
+        "risk_current_quarter_fraction": current_fraction,
+        "risk_previous_quarter_fraction": previous_fraction,
+        "risk_forecast_year": round(float(forecast_year), 4) if forecast_year is not None else None,
+        "risk_tempo": round(float(tempo), 4) if tempo is not None else None,
+    }
 
-    score = min(score, 100)
-    if not reasons:
-        reasons.append("критичних відхилень не виявлено")
 
-    return score, "; ".join(reasons)
+def _forecast_gap_text(forecast_year, target):
+    gap = max(float(target) - float(forecast_year), 0.0)
+    if gap <= 1e-9:
+        return "прогнозованого відставання від річного плану немає"
+    gap_pct = min(gap / float(target) * 100, 100) if float(target) > 0 else 0
+    return (
+        f"прогнозоване відставання від річного плану — "
+        f"{_format_risk_number(gap)} ({_format_probability(gap_pct)})"
+    )
+
+
+def risk_score_calc(row, selected_quarter_num, observations=None):
+    """Forecast probability of reaching the annual plan from cumulative facts."""
+    observations = list(observations or [])
+    selected_quarter_num = int(selected_quarter_num)
+    current_display_status = status_display(row.get("status", "Не подано"))
+
+    if selected_quarter_num == 4:
+        return _risk_result(
+            None,
+            "IV квартал є фактичним річним результатом; прогнозна оцінка ризику не розраховується.",
+            included=False,
+        )
+
+    if current_display_status in ["Не настав час", "Втратило актуальність"]:
+        return _risk_result(
+            None,
+            f"Захід не включається до ризикової оцінки: статус «{current_display_status}».",
+            included=False,
+        )
+
+    if observations:
+        latest_submitted_status = status_display(observations[-1].get("status", ""))
+        if latest_submitted_status in ["Не настав час", "Втратило актуальність"]:
+            return _risk_result(
+                None,
+                f"Захід не включається до ризикової оцінки: останній поданий статус «{latest_submitted_status}».",
+                included=False,
+            )
+
+    target = row.get("selected_target", "")
+    target_num = to_number(target)
+
+    if target_num is not None:
+        numeric_observations = []
+        for observation in observations:
+            fact_num = to_number(observation.get("fact", ""))
+            if fact_num is None:
+                continue
+            numeric_observations.append({**observation, "fact_num": fact_num})
+
+        if not numeric_observations:
+            return _risk_result(
+                20,
+                "Прогнозована вірогідність — 20%; дані не подано: немає придатного "
+                "числового фактичного значення за квартали поточного року, тому темп і "
+                "відставання від річного плану не можуть бути розраховані.",
+                included=True,
+            )
+
+        current = numeric_observations[-1]
+        previous = numeric_observations[-2] if len(numeric_observations) >= 2 else None
+        fact_n = float(current["fact_num"])
+        q_n = int(current["quarter_num"])
+        q_n_fraction = float(current["quarter_fraction"])
+        fact_p = float(previous["fact_num"]) if previous is not None else None
+        q_p = int(previous["quarter_num"]) if previous is not None else None
+        latest_fact_status = status_display(current.get("status", ""))
+
+        if target_num == 0:
+            if fact_n == 0 and latest_fact_status == "Виконано":
+                return _risk_result(
+                    100,
+                    "Річний план досягнуто: фактичне значення дорівнює нульовому плану, "
+                    "статус «Виконано»; прогнозний ризик не розраховується.",
+                    included=False,
+                    current_fact=fact_n,
+                    previous_fact=fact_p,
+                    current_quarter=q_n,
+                    previous_quarter=q_p,
+                    forecast_year=fact_n,
+                )
+            return _risk_result(
+                20,
+                "Прогнозована вірогідність — 20%; річний план дорівнює нулю, тому "
+                "співвідношення прогнозу до плану не може бути коректно розраховане.",
+                included=True,
+                current_fact=fact_n,
+                previous_fact=fact_p,
+                current_quarter=q_n,
+                previous_quarter=q_p,
+            )
+
+        if target_num < 0:
+            return _risk_result(
+                20,
+                "Прогнозована вірогідність — 20%; від'ємне річне планове значення не "
+                "підтримується методикою прямої екстраполяції факт / план.",
+                included=True,
+                current_fact=fact_n,
+                previous_fact=fact_p,
+                current_quarter=q_n,
+                previous_quarter=q_p,
+            )
+
+        if fact_n >= target_num and latest_fact_status == "Виконано":
+            return _risk_result(
+                100,
+                f"Річний план досягнуто: факт {_format_risk_number(fact_n)} за плану "
+                f"{_format_risk_number(target_num)}, статус «Виконано»; прогнозний ризик "
+                "не розраховується.",
+                included=False,
+                current_fact=fact_n,
+                previous_fact=fact_p,
+                current_quarter=q_n,
+                previous_quarter=q_p,
+                forecast_year=fact_n,
+            )
+
+        if previous is not None:
+            q_p_fraction = float(previous["quarter_fraction"])
+            period_fraction = q_n_fraction - q_p_fraction
+            growth = fact_n - fact_p
+            if period_fraction <= 0:
+                previous = None
+            elif growth <= 0:
+                forecast_year = fact_n + (growth / period_fraction) * (1 - q_n_fraction)
+                movement = "не змінився" if abs(growth) < 1e-9 else "зменшився"
+                reason = (
+                    "Прогнозована вірогідність — 0%; кумулятивний факт "
+                    f"{movement}: з {_format_risk_number(fact_p)} у {_risk_quarter_text(q_p)} "
+                    f"до {_format_risk_number(fact_n)} у {_risk_quarter_text(q_n)} "
+                    f"({ _format_risk_number(growth) }); за нульової або від'ємної динаміки "
+                    "річний план недосяжний без зміни темпу; "
+                    f"поточне відставання від плану — "
+                    f"{_format_risk_number(max(target_num - fact_n, 0))}."
+                )
+                return _risk_result(
+                    0,
+                    reason,
+                    included=True,
+                    current_fact=fact_n,
+                    previous_fact=fact_p,
+                    current_quarter=q_n,
+                    previous_quarter=q_p,
+                    forecast_year=forecast_year,
+                    tempo=growth / period_fraction,
+                )
+
+        if previous is not None:
+            q_p_fraction = float(previous["quarter_fraction"])
+            period_fraction = q_n_fraction - q_p_fraction
+            growth = fact_n - fact_p
+            tempo = growth / period_fraction
+            forecast_year = fact_n + tempo * (1 - q_n_fraction)
+            probability_raw = forecast_year / target_num * 100
+            probability = _clamp_probability(probability_raw)
+            reason = (
+                f"Прогнозована вірогідність — {_format_probability(probability)}; "
+                f"кумулятивний факт зріс з {_format_risk_number(fact_p)} у "
+                f"{_risk_quarter_text(q_p)} до {_format_risk_number(fact_n)} у "
+                f"{_risk_quarter_text(q_n)} (+{_format_risk_number(growth)}); "
+                f"розрахунковий річний темп — {_format_risk_number(tempo)}, прогноз на "
+                f"кінець року — {_format_risk_number(forecast_year)} за плану "
+                f"{_format_risk_number(target_num)}; {_forecast_gap_text(forecast_year, target_num)}."
+            )
+            return _risk_result(
+                probability,
+                reason,
+                included=True,
+                current_fact=fact_n,
+                previous_fact=fact_p,
+                current_quarter=q_n,
+                previous_quarter=q_p,
+                forecast_year=forecast_year,
+                tempo=tempo,
+            )
+
+        tempo = fact_n / q_n_fraction
+        forecast_year = fact_n / q_n_fraction
+        probability_raw = forecast_year / target_num * 100
+        probability = _clamp_probability(probability_raw)
+        reason = (
+            f"Прогнозована вірогідність — {_format_probability(probability)}; доступне "
+            f"одне кумулятивне значення: {_format_risk_number(fact_n)} у "
+            f"{_risk_quarter_text(q_n)} ({_format_probability(q_n_fraction * 100)} року); "
+            f"середній темп від початку року — {_format_risk_number(tempo)}, прогноз на "
+            f"кінець року — {_format_risk_number(forecast_year)} за плану "
+            f"{_format_risk_number(target_num)}; {_forecast_gap_text(forecast_year, target_num)}."
+        )
+        return _risk_result(
+            probability,
+            reason,
+            included=True,
+            current_fact=fact_n,
+            current_quarter=q_n,
+            forecast_year=forecast_year,
+            tempo=tempo,
+        )
+
+    yes_no_observations = []
+    for observation in observations:
+        yes_no_value = _normalise_yes_no(observation.get("fact", ""))
+        if yes_no_value is None:
+            continue
+        yes_no_observations.append({**observation, "yes_no_value": yes_no_value})
+
+    if not yes_no_observations:
+        return _risk_result(
+            20,
+            "Прогнозована вірогідність — 20%; дані не подано: немає фактичного "
+            "значення «так/ні» за квартали поточного року; позитивна динаміка до "
+            "річного результату не підтверджена.",
+            included=True,
+        )
+
+    current = yes_no_observations[-1]
+    previous = yes_no_observations[-2] if len(yes_no_observations) >= 2 else None
+    current_value = current["yes_no_value"]
+    current_quarter = int(current["quarter_num"])
+    previous_value = previous["yes_no_value"] if previous is not None else None
+    previous_quarter = int(previous["quarter_num"]) if previous is not None else None
+
+    if current_value == "так":
+        return _risk_result(
+            100,
+            f"Річний результат досягнуто: останнє кумулятивне значення «так» за "
+            f"{_risk_quarter_text(current_quarter)}; прогнозний ризик не розраховується.",
+            included=False,
+            current_fact="так",
+            previous_fact=previous_value,
+            current_quarter=current_quarter,
+            previous_quarter=previous_quarter,
+        )
+
+    dynamics_text = ""
+    if previous is not None:
+        dynamics_text = (
+            f"; динаміка з {_risk_quarter_text(previous_quarter)} до "
+            f"{_risk_quarter_text(current_quarter)} не змінила результат «ні»"
+        )
+    return _risk_result(
+        20,
+        f"Прогнозована вірогідність — 20%; останнє кумулятивне значення «ні» за "
+        f"{_risk_quarter_text(current_quarter)}{dynamics_text}; для досягнення річного "
+        "результату потрібне суттєве прискорення.",
+        included=True,
+        current_fact="ні",
+        previous_fact=previous_value,
+        current_quarter=current_quarter,
+        previous_quarter=previous_quarter,
+    )
 
 
 def dashboard_conclusion(completion, risk_share, coverage):
@@ -1369,6 +1744,9 @@ def prepare_period_data(strat_df, requests_df, year, quarter, department="Усі
     approved_requests = requests[
         requests["approval_status"].astype(str).str.strip() == operational.CONFIRMED_STATUS
     ].copy()
+    risk_observation_map = build_risk_observation_map(
+        approved_requests, year, selected_q_num
+    )
 
     period_request_columns = [
         "strat_code", "status", "numeric_value", "risks", "progress_text",
@@ -1441,13 +1819,16 @@ def prepare_period_data(strat_df, requests_df, year, quarter, department="Усі
         "Не настав час", "Втратило актуальність"
     ])
 
-    risk_results = active.apply(
-        lambda row: risk_score_calc(row, selected_q_num, selected_period_num), axis=1
-    )
-    active["risk_score"] = [result[0] for result in risk_results]
-    active["risk_reason"] = [result[1] for result in risk_results]
-    active["auto_risk"] = active["risk_score"].apply(risk_level_from_score)
-    active.loc[~active["included_in_assessment"], "auto_risk"] = "Не оцінюється"
+    risk_results = [
+        risk_score_calc(
+            row,
+            selected_q_num,
+            risk_observation_map.get(clean(row.get("code", "")), []),
+        )
+        for _, row in active.iterrows()
+    ]
+    for column in RISK_RESULT_COLUMNS:
+        active[column] = [result[column] for result in risk_results]
 
     active["traffic_light"] = active["performance_score"].apply(traffic_light)
     active.loc[~active["included_in_assessment"], "traffic_light"] = "⚪ Не оцінюється"
@@ -1542,6 +1923,15 @@ def assessment_subset(active):
     return active[active["included_in_assessment"] == True].copy()
 
 
+def risk_assessment_subset(active):
+    if active.empty:
+        return active
+    assessed = assessment_subset(active)
+    if "included_in_risk_assessment" not in assessed.columns:
+        return assessed
+    return assessed[assessed["included_in_risk_assessment"] == True].copy()
+
+
 def mean_completion(active):
     assessed = assessment_subset(active)
     if assessed.empty:
@@ -1563,10 +1953,10 @@ def calc_submitted(active):
 
 
 def calc_risk_share(active):
-    assessed = assessment_subset(active)
+    assessed = risk_assessment_subset(active)
     if assessed.empty:
         return 0
-    risk_count = len(assessed[assessed["auto_risk"].isin(["Критичний ризик", "Середній ризик"])])
+    risk_count = len(assessed[assessed["auto_risk"].isin(RISKY_LEVELS)])
     return round(risk_count / len(assessed) * 100, 2)
 
 
@@ -1742,6 +2132,7 @@ CHART_COLORS = ["#005BBB", "#00A8A8", "#4D8DFF", "#FF7A45", "#1E9E57", "#F4B400"
 
 RISK_COLORS = {
     "Критичний ризик": "#FF7A45",
+    "Високий ризик": "#FF7A45",
     "Середній ризик": "#F4B400",
     "Низький ризик": "#1E9E57",
     "Не оцінюється": "#8A96A8"
@@ -2231,8 +2622,9 @@ coverage = calc_coverage(active)
 completion = mean_completion(active)
 deviation_current = deviation_for_period(completion)
 
-risk_count = len(assessment_subset(active)[assessment_subset(active)["auto_risk"].isin(["Критичний ризик", "Середній ризик"])])
-critical_count = len(assessment_subset(active)[assessment_subset(active)["auto_risk"] == "Критичний ризик"])
+risk_assessed = risk_assessment_subset(active)
+risk_count = len(risk_assessed[risk_assessed["auto_risk"].isin(RISKY_LEVELS)])
+critical_count = len(risk_assessed[risk_assessed["auto_risk"] == "Критичний ризик"])
 risk_share = calc_risk_share(active)
 without_data = len(active[active["status"] == "Не подано"])
 
@@ -2262,7 +2654,7 @@ goal_progress = (
         Активних_заходів=("code", "count"),
         Виконання=("performance_score", "mean"),
         Покриття=("status", lambda x: (x != "Не подано").sum()),
-        Ризикових=("auto_risk", lambda x: x.isin(["Критичний ризик", "Середній ризик"]).sum()),
+        Ризикових=("auto_risk", lambda x: x.isin(RISKY_LEVELS).sum()),
         Середній_ризик=("risk_score", "mean")
     )
     .reset_index()
@@ -2376,8 +2768,11 @@ if presentation_mode:
             </div>"""
 
     # risk counts for slide
-    risk_map = active.groupby("auto_risk").size().to_dict()
-    count_high = risk_map.get("Критичний ризик", 0)
+    risk_map = risk_assessed.groupby("auto_risk").size().to_dict()
+    count_high = (
+        risk_map.get("Критичний ризик", 0)
+        + risk_map.get("Високий ризик", 0)
+    )
     count_medium = risk_map.get("Середній ризик", 0)
     count_low = risk_map.get("Низький ризик", 0)
 
@@ -2462,14 +2857,19 @@ if presentation_mode:
     # ── топ-5 проблемних заходів для слайду 6 ─────────────────
     top5_html = ""
     top5_data = active[
-        (active["auto_risk"].isin(["Критичний ризик", "Середній ризик"]) |
+        (active["auto_risk"].isin(RISKY_LEVELS) |
          (active["status"] == "Не подано")) &
-        (active["included_in_assessment"] == True)
+        (active["included_in_risk_assessment"] == True)
     ].copy()
     top5_data = top5_data.sort_values("risk_score", ascending=False).head(5)
 
     for _, tr in top5_data.iterrows():
-        risk_color = "#DC4A4A" if tr["auto_risk"] == "Критичний ризик" else "#F4B400"
+        if tr["auto_risk"] == "Критичний ризик":
+            risk_color = "#DC4A4A"
+        elif tr["auto_risk"] == "Високий ризик":
+            risk_color = "#FF7A45"
+        else:
+            risk_color = "#F4B400"
         dep_short = str(tr.get("department", ""))[:12]
         name_short = str(tr.get("name", ""))[:70] + ("…" if len(str(tr.get("name", ""))) > 70 else "")
         top5_html += (
@@ -2728,7 +3128,7 @@ if presentation_mode:
 
             <div class="pres-risk-grid">
                 <div class="pres-risk-card high">
-                    <div class="pres-risk-label">🔴 Критичний ризик</div>
+                    <div class="pres-risk-label">🔴 Критичний / високий ризик</div>
                     <div class="pres-risk-val">{count_high}</div>
                     <div class="pres-risk-sub">{pct_value(count_high, total_active)} від усіх заходів</div>
                 </div>
@@ -3063,7 +3463,7 @@ st.markdown("</div>", unsafe_allow_html=True)
 # ============================================================
 
 status_counts = active.groupby("status_display").size().reset_index(name="Кількість")
-risk_counts = active.groupby("auto_risk").size().reset_index(name="Кількість")
+risk_counts = risk_assessed.groupby("auto_risk").size().reset_index(name="Кількість")
 traffic_counts = active.groupby("traffic_light").size().reset_index(name="Кількість")
 
 goal_progress = (
@@ -3073,7 +3473,7 @@ goal_progress = (
         Активних_заходів=("code", "count"),
         Виконання=("performance_score", "mean"),
         Покриття=("status", lambda x: (x != "Не подано").sum()),
-        Ризикових=("auto_risk", lambda x: x.isin(["Критичний ризик", "Середній ризик"]).sum()),
+        Ризикових=("auto_risk", lambda x: x.isin(RISKY_LEVELS).sum()),
         Середній_ризик=("risk_score", "mean")
     )
     .reset_index()
@@ -3090,7 +3490,7 @@ dep_progress = (
         Активних_заходів=("code", "count"),
         Виконання=("performance_score", "mean"),
         Подано=("status", lambda x: (x != "Не подано").sum()),
-        Ризикових=("auto_risk", lambda x: x.isin(["Критичний ризик", "Середній ризик"]).sum()),
+        Ризикових=("auto_risk", lambda x: x.isin(RISKY_LEVELS).sum()),
         Критичних=("auto_risk", lambda x: (x == "Критичний ризик").sum()),
         Середній_ризик=("risk_score", "mean")
     )
@@ -3294,7 +3694,7 @@ if not presentation_mode and view_mode in ["Усі візуалізації", "�
             Активних_заходів=("code", "count"),
             Виконання=("performance_score", "mean"),
             Покриття=("status", lambda x: (x != "Не подано").sum()),
-            Ризикових=("auto_risk", lambda x: x.isin(["Критичний ризик", "Середній ризик"]).sum())
+            Ризикових=("auto_risk", lambda x: x.isin(RISKY_LEVELS).sum())
         )
         .reset_index()
         .rename(columns={"deputy_minister_by_ssp": "Заступник_Міністра"})
@@ -4026,11 +4426,11 @@ if not presentation_mode:
 
     risk_table = active[
         (
-            active["auto_risk"].isin(["Критичний ризик", "Середній ризик"]) |
+            active["auto_risk"].isin(RISKY_LEVELS) |
             (active["status"] == "Не подано") |
             (active["performance_score"].fillna(0) < 75)
         )
-        & (active["included_in_assessment"] == True)
+        & (active["included_in_risk_assessment"] == True)
     ].copy()
 
     if risk_table.empty:
@@ -4128,8 +4528,11 @@ if not presentation_mode:
             <li>«Не настав час» та «Втратило актуальність» не включаються до оцінки ризику.</li>
         </ul>
 
-        <strong>Risk score</strong> визначається автоматично на основі стану виконання:
-        відсутність погоджених даних, відставання від плану, прострочення строку, проблемний статус.<br><br>
+        <strong>Risk score</strong> = 100% мінус прогнозована вірогідність досягнення річного плану.
+        Для числових заходів прогноз використовує останній приріст між двома доступними
+        кумулятивними квартальними значеннями, а за наявності одного значення — середній темп
+        від початку року. Для «так/ні» значення «так» означає досягнення, «ні» — низьку
+        вірогідність. Для IV кварталу прогнозний ризик не розраховується.<br><br>
 
         <strong>Traffic light:</strong>
         🟢 100%+ — у графіку | 🟡 75–99% — часткове | 🔴 &lt;75% — відставання | ⚪ не оцінюється.<br><br>

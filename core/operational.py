@@ -1,311 +1,304 @@
 # core/operational.py
 
-"""
-Два паралельні процеси оцінки виконання (правка №6).
+"""Data-source modes for monitoring analytics.
 
-ПІДТВЕРДЖЕНІ дані — офіційний процес: у розрахунок ідуть лише заявки зі
-статусом «Погоджено» (як було завжди).
+Both modes use the submitted statistical value and the submitted execution
+status without recalculation or automatic status substitution. Quarterly values
+are cumulative year-to-date values and are therefore consumed exactly as stored.
 
-ОПЕРАТИВНА ОЦІНКА — паралельний процес: для заходів, за якими ще НЕМАЄ
-підтвердженого запису за період, використовується подання, яке
-координатор уже пропустив далі по схемі погодження (тобто перебуває на
-етапі ПІСЛЯ ланки координатора). Якщо подане значення відповідає річному
-цільовому орієнтиру або краще — захід автоматично вважається ВИКОНАНИМ
-(⚡ авто-зараховано), не чекаючи фінального підтвердження.
-
-Правила (за специфікацією замовника):
-- квартальні значення НЕ накопичуються: порівнюється саме подане значення
-  «станом на квартал» із річним цільовим орієнтиром;
-- «Повернуто на доопрацювання» та «Очікує погодження» (ще у координатора
-  або до нього) — НЕ враховуються в оперативній оцінці;
-- пріоритет індивідуально по кожному заходу: є підтверджений запис —
-  береться він; немає — береться оперативний;
-- якщо після підтвердження дані змінилися — система просто перерахує
-  (оперативний запис заміниться підтвердженим).
+Confirmed data includes only requests finally approved by the last link of the
+approval chain. Operational data additionally includes the current contents of
+requests for which the audit log proves that the coordinator previously passed
+the request to a later link. That historical fact remains valid even when the
+request was subsequently returned for revision.
 """
 
 from __future__ import annotations
 
-import re
-
 import pandas as pd
+import streamlit as st
 
-from core.approval_schemes import parse_chain, parse_stage
+from config.roles import ROLE_ADMIN
+from core.approval_schemes import (
+    APPROVED_STATUS,
+    STATUS_COORDINATOR_REVIEW,
+    STATUS_MANAGER_REVIEW,
+    STATUS_SUPERADMIN_REVIEW,
+    STATUS_WAITING_MANAGER_SELECTION,
+)
+from core.db import fetch_all
+from core.errors import show_warning
+from core.periods import quarter_key
 
-CONFIRMED_STATUS = "Погоджено"
-
-# Успадкований статус «після координатора»
-LEGACY_PAST_ADMIN_STATUSES = {"Очікує: Керівник ССП"}
-
-# Статуси, які точно НЕ пройшли координатора / вибули з процесу
-NOT_PAST_ADMIN_STATUSES = {"Очікує погодження", "Повернуто на доопрацювання", ""}
-
-AUTO_DONE_STATUS = "Виконано"
+CONFIRMED_STATUS = APPROVED_STATUS
 
 MODE_CONFIRMED = "✅ Підтверджені дані"
 MODE_OPERATIONAL = "⚡ Оперативна оцінка"
 MODE_OPTIONS = [MODE_CONFIRMED, MODE_OPERATIONAL]
 
 MODE_HELP = (
-    "«Підтверджені дані» — лише заявки, що пройшли ВСІ етапи схеми погодження "
-    "(офіційний процес). «Оперативна оцінка» — додатково враховує подання, які "
-    "координатор уже пропустив далі по схемі: якщо значення відповідає річному "
-    "цільовому орієнтиру або краще, захід автоматично зараховується як виконаний "
-    "(позначка ⚡), не чекаючи фінального підтвердження. Для кожного заходу пріоритет "
-    "мають підтверджені дані."
+    "«Підтверджені дані» — лише заявки, закриті останньою ланкою погодження. "
+    "«Оперативна оцінка» — також заявки, щодо яких журнал дій підтверджує, що "
+    "координатор уже передавав їх далі. В обох режимах використовуються однакові "
+    "актуальні подані значення та реальний поданий статус виконання."
 )
 
+_FORWARD_AFTER_COORDINATOR_STATUSES = {
+    STATUS_WAITING_MANAGER_SELECTION,
+    STATUS_SUPERADMIN_REVIEW,
+    STATUS_MANAGER_REVIEW,
+    APPROVED_STATUS,
+}
 
-# ------------------------------------------------------------
-# Розбір значень і порівняння з річним орієнтиром
-# ------------------------------------------------------------
-
-_YES_WORDS = {"так", "виконано", "прийнято", "ухвалено", "yes", "done", "+"}
+_LOG_COLUMNS = [
+    "id",
+    "request_id",
+    "action",
+    "old_status",
+    "new_status",
+    "changed_at",
+    "actor_role",
+    "related_table",
+]
 
 
 def _clean(value) -> str:
-    if value is None or (isinstance(value, float) and pd.isna(value)):
+    if value is None:
         return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
     text = str(value).strip()
     return "" if text.lower() in ("nan", "none", "null") else text
 
 
-def parse_number(value) -> float | None:
-    """Витягує число з тексту: '85,5 %' → 85.5, '1 250' → 1250."""
+def _request_id(value) -> int | None:
     text = _clean(value)
     if not text:
         return None
-    normalized = text.replace("\u00a0", " ").replace(" ", "").replace(",", ".")
-    match = re.search(r"-?\d+(?:\.\d+)?", normalized)
-    if not match:
-        return None
     try:
-        return float(match.group(0))
-    except ValueError:
+        return int(float(text))
+    except (TypeError, ValueError):
         return None
 
 
-def target_met(fact_value, target_value) -> bool:
-    """
-    True, якщо подане значення відповідає річному орієнтиру або краще.
-
-    - Числа: факт ≥ план (стандартна логіка «більше — краще», як у
-      співвідношенні Факт/План аркуша М_заходи).
-    - «Так/Ні»-індикатори: факт містить стверджувальне слово, якщо план
-      теж «так» або план нечисловий.
-    - Якщо орієнтир порожній — авто-зарахування неможливе (повертає False).
-    """
-    target_text = _clean(target_value).lower()
-    fact_text = _clean(fact_value).lower()
-
-    if not target_text or not fact_text:
-        return False
-
-    fact_num = parse_number(fact_value)
-    target_num = parse_number(target_value)
-
-    if fact_num is not None and target_num is not None:
-        return fact_num >= target_num
-
-    # Нечислові («так», «прийнято НПА» тощо)
-    return any(word in fact_text for word in _YES_WORDS)
+def _ensure_log_columns(logs_df: pd.DataFrame | None) -> pd.DataFrame:
+    data = logs_df.copy() if isinstance(logs_df, pd.DataFrame) else pd.DataFrame()
+    for column in _LOG_COLUMNS:
+        if column not in data.columns:
+            data[column] = ""
+    return data
 
 
-# ------------------------------------------------------------
-# «Після координатора?»
-# ------------------------------------------------------------
-
-def is_past_admin(record) -> bool:
-    """
-    True, якщо заявка вже пройшла ланку координатора і перебуває на
-    наступному етапі схеми погодження (але ще не «Погоджено»).
-    """
-    status = _clean(record.get("approval_status") if hasattr(record, "get") else "")
-
-    if status == CONFIRMED_STATUS:
-        return False  # це вже підтверджений запис, не «оперативний»
-    if status in NOT_PAST_ADMIN_STATUSES:
-        return False
-
-    chain = parse_chain(record.get("approval_chain")) if hasattr(record, "get") else []
-    if chain:
-        stage_idx = parse_stage(record.get("chain_stage"))
-        admin_positions = [i for i, stg in enumerate(chain) if stg.get("role") == "admin"]
-        if not admin_positions:
-            return False
-        return stage_idx > admin_positions[0]
-
-    # Успадковані заявки без ланцюга
-    return status in LEGACY_PAST_ADMIN_STATUSES
-
-
-# ------------------------------------------------------------
-# Оперативний індекс подань
-# ------------------------------------------------------------
-
-def _quarter_key(value) -> str:
-    text = _clean(value).upper().replace("КВАРТАЛ", "").replace("КВ.", "").strip()
-    mapping = {"1": "I", "2": "II", "3": "III", "4": "IV",
-               "I": "I", "ІІ": "II", "II": "II", "III": "III", "IV": "IV"}
-    if text in mapping:
-        return mapping[text]
-    m = re.search(r"[1-4]", text)
-    return {"1": "I", "2": "II", "3": "III", "4": "IV"}.get(m.group(0), text) if m else text
-
-
-def build_operational_overlay(monitoring_df: pd.DataFrame,
-                              target_by_code_year=None) -> dict:
-    """
-    Будує «оперативний шар» поверх підтверджених даних.
-
-    Повертає dict: (strat_code, year, quarter) → {
-        "record": рядок подання (Series/dict),
-        "auto_completed": bool,   # значення ≥ річного орієнтира → ⚡ Виконано
-        "status_override": str|None,  # 'Виконано' для авто-зарахованих
-    }
-    Містить ЛИШЕ записи «після координатора» для періодів, де НЕМАЄ
-    підтвердженого запису. target_by_code_year: (code, year) → план року.
-    """
-    overlay: dict = {}
-    if monitoring_df is None or monitoring_df.empty:
-        return overlay
-
-    df = monitoring_df.copy()
-    for col in ["approval_status", "strat_code", "year", "quarter",
-                "numeric_value", "status", "submitted_at",
-                "approval_chain", "chain_stage", "object_kind"]:
-        if col not in df.columns:
-            df[col] = ""
-
-    if "object_kind" in df.columns:
-        df = df[df["object_kind"].fillna("measure").astype(str) != "indicator"]
-
-    df["_dt"] = pd.to_datetime(df["submitted_at"], errors="coerce")
-    df = df.sort_values("_dt")
-
-    confirmed_keys = set()
-    for _, rec in df[df["approval_status"].astype(str).str.strip() == CONFIRMED_STATUS].iterrows():
-        confirmed_keys.add((
-            _clean(rec.get("strat_code")), _clean(rec.get("year")),
-            _quarter_key(rec.get("quarter")),
-        ))
-
-    for _, rec in df.iterrows():
-        if not is_past_admin(rec):
-            continue
-        key = (
-            _clean(rec.get("strat_code")), _clean(rec.get("year")),
-            _quarter_key(rec.get("quarter")),
+@st.cache_data(ttl=300, show_spinner=False)
+def load_monitoring_logs() -> pd.DataFrame:
+    """Read the approval audit trail used by the operational data mode."""
+    try:
+        rows = fetch_all("monitoring_logs", "*", order=("id", False))
+        return _ensure_log_columns(pd.DataFrame(rows))
+    except Exception as exc:
+        show_warning(
+            "Не вдалося прочитати журнал погодження; оперативна оцінка може бути неповною.",
+            exc,
+            "Читання monitoring_logs для оперативної оцінки",
         )
-        if key in confirmed_keys:
-            continue  # пріоритет підтверджених — індивідуально по заходу
+        return _ensure_log_columns(pd.DataFrame())
 
-        target_value = ""
-        if target_by_code_year is not None:
-            target_value = target_by_code_year.get((key[0], key[1]), "")
 
-        auto_done = target_met(rec.get("numeric_value"), target_value)
+def coordinator_passed_request_ids(logs_df: pd.DataFrame | None) -> set[int]:
+    """Return request IDs that the coordinator demonstrably passed onward.
 
-        overlay[key] = {
-            "record": rec,
-            "auto_completed": auto_done,
-            "status_override": AUTO_DONE_STATUS if auto_done else None,
+    The decision is based on an audit transition from the coordinator-review
+    state to a later state. The current request status is deliberately ignored.
+    """
+    logs = _ensure_log_columns(logs_df)
+    if logs.empty:
+        return set()
+
+    passed: set[int] = set()
+    for _, row in logs.iterrows():
+        request_id = _request_id(row.get("request_id"))
+        if request_id is None:
+            continue
+
+        related_table = _clean(row.get("related_table"))
+        if related_table and related_table != "monitoring_requests":
+            continue
+
+        old_status = _clean(row.get("old_status"))
+        new_status = _clean(row.get("new_status"))
+        if old_status != STATUS_COORDINATOR_REVIEW:
+            continue
+        if new_status not in _FORWARD_AFTER_COORDINATOR_STATUSES:
+            continue
+
+        actor_role = _clean(row.get("actor_role"))
+        action = _clean(row.get("action")).casefold()
+        actor_is_coordinator = actor_role == ROLE_ADMIN
+        action_is_coordinator = "координатор" in action and "повернен" not in action
+        if actor_is_coordinator or action_is_coordinator:
+            passed.add(request_id)
+
+    return passed
+
+
+def _year_key(value) -> str:
+    text = _clean(value)
+    if not text:
+        return ""
+    try:
+        return str(int(float(text)))
+    except (TypeError, ValueError):
+        return text
+
+
+def _period_key(record) -> tuple[str, str, str]:
+    return (
+        _clean(record.get("strat_code")),
+        _year_key(record.get("year")),
+        quarter_key(record.get("quarter")),
+    )
+
+
+def _latest_effective_rows(
+    monitoring_df: pd.DataFrame,
+    passed_request_ids: set[int],
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    data = monitoring_df.copy()
+    for column in [
+        "id",
+        "approval_status",
+        "strat_code",
+        "year",
+        "quarter",
+        "submitted_at",
+        "object_kind",
+    ]:
+        if column not in data.columns:
+            data[column] = ""
+
+    measure_mask = data["object_kind"].fillna("measure").astype(str).str.strip().str.lower() != "indicator"
+    request_ids = data["id"].apply(_request_id)
+    confirmed_mask = data["approval_status"].astype(str).str.strip() == CONFIRMED_STATUS
+    passed_mask = request_ids.isin(passed_request_ids)
+    eligible_mask = measure_mask & (confirmed_mask | passed_mask)
+
+    eligible = data[eligible_mask].copy()
+    if eligible.empty:
+        return data, eligible
+
+    eligible["_period_code"] = eligible.apply(_period_key, axis=1)
+    eligible["_sort_dt"] = pd.to_datetime(eligible["submitted_at"], errors="coerce", utc=True)
+    eligible["_sort_id"] = eligible["id"].apply(lambda value: _request_id(value) or -1)
+    eligible = (
+        eligible
+        .sort_values(["_period_code", "_sort_dt", "_sort_id"], na_position="first")
+        .groupby("_period_code", as_index=False, sort=False)
+        .tail(1)
+        .drop(columns=["_period_code", "_sort_dt", "_sort_id"])
+    )
+
+    non_eligible = data[~eligible_mask].copy()
+    return non_eligible, eligible
+
+
+def build_operational_overlay(
+    monitoring_df: pd.DataFrame,
+    target_by_code_year=None,
+    *,
+    logs_df: pd.DataFrame | None = None,
+) -> dict:
+    """Build an operational overlay without changing submitted statistics.
+
+    ``target_by_code_year`` is accepted only for backward compatibility and is
+    intentionally ignored: annual targets no longer alter execution statuses.
+    """
+    if monitoring_df is None or monitoring_df.empty:
+        return {}
+
+    logs = load_monitoring_logs() if logs_df is None else logs_df
+    passed_ids = coordinator_passed_request_ids(logs)
+    _, effective = _latest_effective_rows(monitoring_df, passed_ids)
+    overlay: dict = {}
+
+    for _, record in effective.iterrows():
+        if _clean(record.get("approval_status")) == CONFIRMED_STATUS:
+            continue
+        overlay[_period_key(record)] = {
+            "record": record,
+            "auto_completed": False,
+            "status_override": None,
         }
-
     return overlay
 
 
-def apply_operational_mode(monitoring_df: pd.DataFrame,
-                           target_by_code_year=None) -> tuple[pd.DataFrame, list[dict]]:
-    """
-    Повертає (df_оперативний, перелік_авто_зарахованих) для сторінок, які
-    працюють через фільтр approval_status == 'Погоджено':
+def apply_operational_mode(
+    monitoring_df: pd.DataFrame,
+    target_by_code_year=None,
+    *,
+    logs_df: pd.DataFrame | None = None,
+) -> tuple[pd.DataFrame, list[dict]]:
+    """Expose final and coordinator-passed requests through one downstream filter.
 
-    df_оперативний — копія monitoring_df, у якій записи «після координатора»
-    (для періодів без підтвердженого запису) отримують approval_status =
-    'Погоджено', а авто-зараховані — ще й status = 'Виконано'. Кожен такий
-    запис маркується колонкою _operational=True / _auto_completed=True.
-
-    Перелік авто-зарахованих: [{code, year, quarter, value, target, stage}].
+    For compatibility with existing pages, effective operational rows are marked
+    with ``approval_status='Погоджено'``. Their submitted execution status and
+    values remain untouched. The second return value is retained for the old API
+    and is always empty because automatic completion no longer exists.
     """
     if monitoring_df is None or monitoring_df.empty:
-        return monitoring_df, []
+        empty = monitoring_df.copy() if hasattr(monitoring_df, "copy") else pd.DataFrame()
+        if isinstance(empty, pd.DataFrame):
+            empty["_operational"] = False
+            empty["_auto_completed"] = False
+        return empty, []
 
-    df = monitoring_df.copy()
-    df["_operational"] = False
-    df["_auto_completed"] = False
+    logs = load_monitoring_logs() if logs_df is None else logs_df
+    passed_ids = coordinator_passed_request_ids(logs)
+    non_eligible, effective = _latest_effective_rows(monitoring_df, passed_ids)
 
-    overlay = build_operational_overlay(df, target_by_code_year)
-    auto_list: list[dict] = []
+    if effective.empty:
+        result = monitoring_df.copy()
+        result["_operational"] = False
+        result["_auto_completed"] = False
+        return result, []
 
-    if not overlay:
-        return df, auto_list
+    effective = effective.copy()
+    original_approval = effective["approval_status"].astype(str).str.strip()
+    effective["_source_approval_status"] = effective["approval_status"]
+    effective["_operational"] = original_approval != CONFIRMED_STATUS
+    effective["_auto_completed"] = False
+    effective.loc[effective["_operational"], "approval_status"] = CONFIRMED_STATUS
 
-    for col in ["approval_status", "status", "strat_code", "year", "quarter"]:
-        if col not in df.columns:
-            df[col] = ""
+    non_eligible = non_eligible.copy()
+    non_eligible["_source_approval_status"] = non_eligible.get("approval_status", "")
+    non_eligible["_operational"] = False
+    non_eligible["_auto_completed"] = False
 
-    for idx in df.index:
-        rec = df.loc[idx]
-        key = (
-            _clean(rec.get("strat_code")), _clean(rec.get("year")),
-            _quarter_key(rec.get("quarter")),
-        )
-        item = overlay.get(key)
-        if item is None:
-            continue
-        # Порівнюємо саме той запис (останній «після координатора» за ключем)
-        if item["record"].name != idx:
-            continue
-
-        df.at[idx, "approval_status"] = CONFIRMED_STATUS
-        df.at[idx, "_operational"] = True
-        if item["auto_completed"]:
-            df.at[idx, "status"] = AUTO_DONE_STATUS
-            df.at[idx, "_auto_completed"] = True
-            target_value = ""
-            if target_by_code_year is not None:
-                target_value = target_by_code_year.get((key[0], key[1]), "")
-            auto_list.append({
-                "code": key[0], "year": key[1], "quarter": key[2],
-                "value": _clean(rec.get("numeric_value")),
-                "target": _clean(target_value),
-                "approval_status": _clean(monitoring_df.loc[idx].get("approval_status")),
-            })
-
-    return df, auto_list
+    result = pd.concat([non_eligible, effective], ignore_index=True, sort=False)
+    return result, []
 
 
 def build_target_map(strat_df: pd.DataFrame) -> dict:
-    """(code, year) → річний цільовий орієнтир зі стратегічної матриці."""
+    """Backward-compatible target map; operational mode no longer consumes it."""
     result = {}
-    if strat_df is None or strat_df.empty:
+    if strat_df is None or strat_df.empty or "code" not in strat_df.columns:
         return result
-    year_cols = {c: c.replace("target_", "") for c in strat_df.columns if str(c).startswith("target_")}
-    if "code" not in strat_df.columns:
-        return result
+    year_cols = {
+        column: str(column).replace("target_", "")
+        for column in strat_df.columns
+        if str(column).startswith("target_")
+    }
     for _, row in strat_df.iterrows():
         code = _clean(row.get("code"))
         if not code:
             continue
-        for col, year in year_cols.items():
-            result[(code, year)] = _clean(row.get(col))
+        for column, year in year_cols.items():
+            result[(code, year)] = _clean(row.get(column))
     return result
 
 
 def auto_completed_caption(auto_list: list[dict]) -> str:
-    """Готовий детальний текст «З них N заходів зараховано автоматично…»."""
-    if not auto_list:
-        return ""
-    n = len(auto_list)
-    examples = "; ".join(
-        f"{a['code']} ({a['quarter']} кв. {a['year']}: подано {a['value']} при плані {a['target']}, "
-        f"етап погодження: «{a['approval_status']}»)"
-        for a in auto_list[:5]
-    )
-    more = f" та ще {n - 5}" if n > 5 else ""
-    return (
-        f"⚡ З них {n} захід(ів) зараховано системою автоматично: подане значення "
-        f"відповідає річному цільовому орієнтиру або краще, але заявка ще перебуває "
-        f"на етапі погодження після координатора. Деталі: {examples}{more}."
-    )
+    """Compatibility helper retained after removal of automatic completion."""
+    return ""

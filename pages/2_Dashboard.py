@@ -38,12 +38,6 @@ current_user = page_setup("Dashboard", page_name="Dashboard")
 render_auto_refresh_notice("Dashboard", minutes=5)
 supabase = get_supabase_client()
 
-# Єдиний стандарт відображення таблиць дашборду: фіксована видима
-# висота компонента та невеликий зовнішній контейнер без розтягування сторінки.
-DASHBOARD_TABLE_VISIBLE_HEIGHT_PX = 420
-DASHBOARD_TABLE_CONTAINER_HEIGHT_PX = 450
-DASHBOARD_TABLE_HEADER_WRAP_WIDTH = 18
-
 # ============================================================
 # STYLE
 # ============================================================
@@ -395,38 +389,37 @@ div[data-testid="stMarkdownContainer"] .section-card:empty {
     margin-bottom: 6px;
 }
 
-/* ── Dashboard tables ── */
-div[data-testid="stDataFrame"] {
-    border-radius: 10px;
-    overflow: hidden;
-    border: 1px solid #DCE4F0 !important;
-    box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04);
-}
-
-/* Повна багаторядкова шапка без обрізання назв колонок. */
-div[data-testid="stDataFrame"] div[role="columnheader"] {
-    min-height: 78px !important;
-    height: 78px !important;
-    background: #EAF1FF !important;
-    border-bottom: 1px solid #DCE4F0 !important;
-    color: #132238 !important;
-    font-weight: 900 !important;
-    line-height: 1.2 !important;
+/* ── Dashboard tables: єдиний HTML-стандарт системи ── */
+.dashboard-html-table-wrap .myreq-html-table th,
+.dashboard-html-table-wrap .myreq-html-table td {
     white-space: normal !important;
     overflow: visible !important;
+    text-overflow: clip !important;
+    overflow-wrap: anywhere !important;
+    word-break: normal !important;
+    height: auto !important;
+    line-height: 1.35 !important;
 }
 
-div[data-testid="stDataFrame"] div[role="columnheader"] div,
-div[data-testid="stDataFrame"] div[role="columnheader"] span,
-div[data-testid="stDataFrame"] div[role="columnheader"] p {
-    white-space: pre-line !important;
-    word-break: normal !important;
-    overflow-wrap: anywhere !important;
-    text-align: center !important;
-    line-height: 1.2 !important;
-    max-height: none !important;
-    overflow: visible !important;
-    text-overflow: clip !important;
+.dashboard-html-table-wrap .myreq-html-table th,
+.dashboard-html-table-wrap .myreq-html-table td {
+    vertical-align: middle;
+}
+
+.dashboard-html-table-wrap .dashboard-rank-green td {
+    background: #E4F5EC !important;
+    color: #0C713A !important;
+    font-weight: 800;
+}
+
+.dashboard-html-table-wrap .dashboard-rank-yellow td {
+    background: #FDF3D8 !important;
+    color: #7A5A00 !important;
+}
+
+.dashboard-html-table-wrap .dashboard-rank-red td {
+    background: #FBE5E5 !important;
+    color: #B42318 !important;
 }
 
 /* ── Methodology ── */
@@ -2247,93 +2240,78 @@ def explode_departments(active):
     return pd.DataFrame(rows)
 
 
-def style_rank_table(row, total_rows):
-    place = row["Місце"]
+def _dashboard_rank_row_class(row, total_rows):
+    """CSS-клас кольорової групи рядка рейтингу ССП."""
+    place = int(row.get("Місце", 0) or 0)
     if place <= 3:
-        return ["background-color: #E4F5EC; color: #0C713A; font-weight: 800; text-align: center"] * len(row)
-    if place <= 10:
-        return ["background-color: #FDF3D8; color: #7A5A00; text-align: center"] * len(row)
+        return "dashboard-rank-green"
     if place > max(total_rows - 7, 10):
-        return ["background-color: #FBE5E5; color: #DC4A4A; text-align: center"] * len(row)
-    return ["background-color: #F7F9FC; color: #61708A; text-align: center"] * len(row)
+        return "dashboard-rank-red"
+    return "dashboard-rank-yellow"
 
 
-def _wrap_dashboard_column_label(label, width=DASHBOARD_TABLE_HEADER_WRAP_WIDTH):
-    """Повертає повний підпис колонки з явними переносами для шапки."""
-    text = str(label or "")
-    words = text.split()
-    if not words:
-        return text
-
-    lines = []
-    current = ""
-    for word in words:
-        candidate = f"{current} {word}".strip()
-        if current and len(candidate) > width:
-            lines.append(current)
-            current = word
-        else:
-            current = candidate
-    if current:
-        lines.append(current)
-    return "\n".join(lines)
+def _dashboard_html_cell(value, formatter=None):
+    """Безпечне повне HTML-представлення значення комірки."""
+    if formatter is not None:
+        try:
+            value = formatter(value)
+        except Exception as exc:
+            log_cosmetic_error("Форматування значення таблиці Dashboard", exc)
+    text = clean(value)
+    return escape(text).replace("\n", "<br>") if text else "—"
 
 
-def _dashboard_table_column_width(column_name):
-    """Єдина ширина колонок відповідно до змісту, без зміни даних."""
-    name = str(column_name)
-    very_wide = {
-        "Захід", "Індикатор", "Причина ризику", "Опис прогресу",
-        "Самостійний структурний підрозділ",
-    }
-    wide = {
-        "Головний ССП", "Джерело даних", "Інше джерело",
-        "Статус виконання", "Тип продукту",
-    }
-    narrow = {
-        "Місце", "Код", "КПКВК", "Заходів", "Період",
-        "Початок", "Кінець", "Ризикових", "Критичних",
-    }
-    if name in very_wide:
-        return 330
-    if name in wide:
-        return 210
-    if name in narrow:
-        return 105
-    if any(token in name for token in ("значення", "Бюджет", "ДБ ", "Інше 20", "Оцінка", "Покриття", "Виконання", "Risk score", "Traffic light")):
-        return 150
-    return 145
-
-
-def _dashboard_table_column_config(table_data):
-    """Будує повні багаторядкові заголовки для read-only таблиць."""
+def render_dashboard_table(
+    table_data,
+    *,
+    hide_index=True,
+    empty_message="Записів немає.",
+    formatters=None,
+    row_class_fn=None,
+):
+    """Рендерить DataFrame як системну HTML-таблицю зі скролами й повним текстом."""
     source = getattr(table_data, "data", table_data)
     if not isinstance(source, pd.DataFrame):
-        return {}
+        source = pd.DataFrame(source)
+    if source.empty:
+        st.info(empty_message)
+        return
 
-    config = {}
-    for column in source.columns:
-        label = _wrap_dashboard_column_label(column)
-        width = _dashboard_table_column_width(column)
-        if pd.api.types.is_numeric_dtype(source[column]):
-            config[column] = st.column_config.NumberColumn(label, width=width)
-        else:
-            config[column] = st.column_config.TextColumn(label, width=width)
-    return config
+    formatters = formatters or {}
+    headers = list(source.columns)
+    header_cells = []
+    if not hide_index:
+        header_cells.append("<th></th>")
+    header_cells.extend(f"<th>{escape(str(column))}</th>" for column in headers)
 
+    body_rows = []
+    total_rows = len(source)
+    for index_value, row in source.iterrows():
+        row_class = ""
+        if row_class_fn is not None:
+            try:
+                row_class = clean(row_class_fn(row, total_rows))
+            except Exception as exc:
+                log_cosmetic_error("Визначення стилю рядка таблиці Dashboard", exc)
+        class_attr = f' class="{escape(row_class)}"' if row_class else ""
+        cells = []
+        if not hide_index:
+            cells.append(f"<td>{_dashboard_html_cell(index_value)}</td>")
+        for column in headers:
+            cells.append(
+                f"<td>{_dashboard_html_cell(row.get(column), formatters.get(column))}</td>"
+            )
+        body_rows.append(f"<tr{class_attr}>{''.join(cells)}</tr>")
 
-def render_dashboard_table(table_data, *, hide_index=True, key=None):
-    """Рендерить таблицю в єдиному контейнері з внутрішньою прокруткою."""
-    with st.container(height=DASHBOARD_TABLE_CONTAINER_HEIGHT_PX, border=False):
-        st.dataframe(
-            table_data,
-            use_container_width=True,
-            hide_index=hide_index,
-            height=DASHBOARD_TABLE_VISIBLE_HEIGHT_PX,
-            row_height=52,
-            column_config=_dashboard_table_column_config(table_data),
-            key=key,
-        )
+    html = (
+        '<div class="dashboard-html-table-wrap">'
+        '<div class="myreq-table-scroll">'
+        '<table class="myreq-html-table">'
+        f"<thead><tr>{''.join(header_cells)}</tr></thead>"
+        f"<tbody>{''.join(body_rows)}</tbody>"
+        "</table></div></div>"
+    )
+    st.markdown(html, unsafe_allow_html=True)
 
 
 def collapse_to_latest_measure_rows(df):
@@ -4583,29 +4561,18 @@ if breakdown_context is not None:
             "Активних_заходів": "Активних заходів"
         })
 
-        styled_rank = (
-            rank_display.style
-            .format({"Виконання": "{:.2f}", "Покриття, %": "{:.2f}"})
-            .apply(lambda row: style_rank_table(row, len(rank_display)), axis=1)
-            .set_properties(**{"text-align": "center"})
-            .set_table_styles([{
-                "selector": "th",
-                "props": [
-                    ("text-align", "center"), ("background-color", "#EAF1FF"),
-                    ("color", "#132238"), ("font-weight", "900"), ("border", "1px solid #DCE4F0")
-                ]
-            }])
-        )
-
         render_dashboard_table(
-            styled_rank,
+            rank_display,
             hide_index=True,
-            key="dashboard_ssp_ranking_table",
+            formatters={
+                "Виконання": lambda value: f"{float(value):.2f}",
+                "Покриття, %": lambda value: f"{float(value):.2f}",
+            },
+            row_class_fn=_dashboard_rank_row_class,
         )
         st.caption(
-            "Таблиця інтерактивна: натисніть назву колонки, щоб змінити сортування "
-            "за зростанням або спаданням. Кольори рядків: зелений — перші три місця; "
-            "жовтий — 4–10 місця; червоний — нижня група рейтингу; решта — нейтральне тло."
+            "Кольори рядків: зелений — перші три місця; жовтий — середня група; "
+            "червоний — нижня група рейтингу."
         )
 
         st.markdown("<hr class='vis-separator'>", unsafe_allow_html=True)
@@ -5631,12 +5598,10 @@ if breakdown_context is not None:
                     "Бюджет 2027 (млрд грн)", "Бюджет 2028 (млрд грн)",
                 ]],
                 hide_index=False,
-                key="dashboard_top_kpkvk_table",
             )
             st.caption(
-                "Таблиця інтерактивна: натисніть назву колонки, щоб змінити сортування "
-                "за зростанням або спаданням. Суми — лише заходи з наявними числовими "
-                "даними; «—» означає відсутність числових даних."
+                "Суми — лише заходи з наявними числовими даними; «—» означає "
+                "відсутність числових даних."
             )
 
         st.markdown("</div>", unsafe_allow_html=True)
@@ -5679,7 +5644,6 @@ if breakdown_context is not None:
         render_dashboard_table(
             fin_full,
             hide_index=True,
-            key="dashboard_financial_data_table",
         )
         st.caption("Числові суми бюджету наявні лише для частини заходів. «—» — дані не вказані.")
         st.markdown("</div>", unsafe_allow_html=True)
@@ -5725,7 +5689,6 @@ if breakdown_context is not None:
                         "Причина ризику", "Опис прогресу",
                     ]],
                     hide_index=True,
-                    key="dashboard_problem_measures_table",
                 )
 
 # Повна таблиця активних заходів.
@@ -5764,7 +5727,6 @@ if breakdown_context is not None:
                 "Оцінка виконання, %", "Traffic light", "Ризик", "Risk score", "Причина ризику"
             ]],
             hide_index=True,
-            key="dashboard_full_active_measures_table",
         )
 
         st.markdown("</div>", unsafe_allow_html=True)

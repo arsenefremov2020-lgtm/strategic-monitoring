@@ -3185,16 +3185,214 @@ def _render_section_summary(title, text, *, badge="", metrics=None, tone="neutra
         f'<div class="section-summary-metrics">{metrics_html}</div>'
         if metrics_html else ""
     )
-    st.markdown(
-        f'''<div class="section-summary section-summary-{tone}">
-            <div class="section-summary-head">
-                <div class="section-summary-title">{safe_title}</div>
-                {badge_html}
-            </div>
-            <div class="section-summary-text">{safe_text}</div>
-            {metrics_block}
-        </div>''',
-        unsafe_allow_html=True,
+    summary_html = (
+        f'<div class="section-summary section-summary-{tone}">'
+        f'<div class="section-summary-head">'
+        f'<div class="section-summary-title">{safe_title}</div>'
+        f'{badge_html}'
+        f'</div>'
+        f'<div class="section-summary-text">{safe_text}</div>'
+        f'{metrics_block}'
+        f'</div>'
+    )
+    st.markdown(summary_html, unsafe_allow_html=True)
+
+
+def _critical_probability_groups(data, group_cols):
+    """Rank groups whose mean forecast probability is below the critical threshold."""
+    columns = list(group_cols) + [
+        "Прогнозована_вірогідність",
+        "Оцінюваних_заходів",
+        "Середній_темп",
+    ]
+    if data is None or data.empty:
+        return pd.DataFrame(columns=columns)
+
+    assessed = data.copy()
+    for column in ["included_in_risk_assessment", "risk_probability"]:
+        if column not in assessed.columns:
+            return pd.DataFrame(columns=columns)
+
+    assessed = assessed[
+        assessed["included_in_risk_assessment"].fillna(False).astype(bool)
+    ].copy()
+    assessed["_forecast_probability"] = pd.to_numeric(
+        assessed["risk_probability"], errors="coerce"
+    )
+    assessed = assessed.dropna(subset=["_forecast_probability"])
+    if assessed.empty:
+        return pd.DataFrame(columns=columns)
+
+    assessed["_annual_tempo"] = assessed.apply(
+        annualised_plan_tempo_percent,
+        axis=1,
+    )
+    grouped = (
+        assessed
+        .groupby(group_cols, dropna=False)
+        .agg(
+            Прогнозована_вірогідність=("_forecast_probability", "mean"),
+            Оцінюваних_заходів=("code", "nunique"),
+            Середній_темп=("_annual_tempo", "mean"),
+        )
+        .reset_index()
+    )
+    grouped = grouped[grouped["Прогнозована_вірогідність"] < 20].copy()
+    if grouped.empty:
+        return pd.DataFrame(columns=columns)
+
+    grouped["Прогнозована_вірогідність"] = grouped[
+        "Прогнозована_вірогідність"
+    ].round(2)
+    grouped["Середній_темп"] = pd.to_numeric(
+        grouped["Середній_темп"], errors="coerce"
+    ).round(2)
+    return grouped.sort_values(
+        ["Прогнозована_вірогідність", "Оцінюваних_заходів"],
+        ascending=[True, False],
+    )
+
+
+def _missing_data_by_department(active):
+    """Return departments ranked by the number of measures without submitted data."""
+    columns = ["ssp_department", "Заходів_без_даних"]
+    if active is None or active.empty:
+        return pd.DataFrame(columns=columns)
+
+    departments = explode_departments(active)
+    if departments.empty or "status" not in departments.columns:
+        return pd.DataFrame(columns=columns)
+
+    missing = departments[departments["status"] == "Не подано"].copy()
+    if missing.empty:
+        return pd.DataFrame(columns=columns)
+
+    return (
+        missing
+        .drop_duplicates(subset=["ssp_department", "code"])
+        .groupby("ssp_department", dropna=False)["code"]
+        .nunique()
+        .reset_index(name="Заходів_без_даних")
+        .sort_values(
+            ["Заходів_без_даних", "ssp_department"],
+            ascending=[False, True],
+        )
+    )
+
+
+def _fact_completion_score(actual, target):
+    score = plan_fact_percent(actual, target)
+    if score is not None and not pd.isna(score):
+        return float(score)
+    yes_no = _normalise_yes_no(actual)
+    if yes_no == "так":
+        return 100.0
+    if yes_no == "ні":
+        return 0.0
+    return None
+
+
+def _goal_quarter_drop_signals(active, minimum_drop=10.0):
+    """Find material goal-level drops between consecutive submitted quarters."""
+    columns = [
+        "goal_code",
+        "strategic_goal",
+        "Попереднє_виконання",
+        "Поточне_виконання",
+        "Падіння_вп",
+    ]
+    if active is None or active.empty:
+        return pd.DataFrame(columns=columns)
+
+    required = {
+        "risk_current_fact",
+        "risk_previous_fact",
+        "risk_current_quarter",
+        "risk_previous_quarter",
+        "selected_target",
+        "period_quarter",
+    }
+    if not required.issubset(active.columns):
+        return pd.DataFrame(columns=columns)
+
+    comparable = active.copy()
+    comparable["_current_quarter"] = pd.to_numeric(
+        comparable["risk_current_quarter"], errors="coerce"
+    )
+    comparable["_previous_quarter"] = pd.to_numeric(
+        comparable["risk_previous_quarter"], errors="coerce"
+    )
+    comparable["_selected_quarter"] = comparable["period_quarter"].apply(
+        quarter_to_number
+    )
+    comparable = comparable[
+        comparable["_current_quarter"].notna()
+        & comparable["_previous_quarter"].notna()
+        & (comparable["_current_quarter"] == comparable["_selected_quarter"])
+        & (
+            comparable["_current_quarter"]
+            - comparable["_previous_quarter"]
+            == 1
+        )
+    ].copy()
+    if comparable.empty:
+        return pd.DataFrame(columns=columns)
+
+    comparable["_current_score"] = comparable.apply(
+        lambda row: _fact_completion_score(
+            row.get("risk_current_fact", ""),
+            row.get("selected_target", ""),
+        ),
+        axis=1,
+    )
+    comparable["_previous_score"] = comparable.apply(
+        lambda row: _fact_completion_score(
+            row.get("risk_previous_fact", ""),
+            row.get("selected_target", ""),
+        ),
+        axis=1,
+    )
+    comparable = comparable.dropna(
+        subset=["_current_score", "_previous_score"]
+    )
+    if comparable.empty:
+        return pd.DataFrame(columns=columns)
+
+    current_data = comparable.copy()
+    current_data["performance_score"] = current_data["_current_score"]
+    previous_data = comparable.copy()
+    previous_data["performance_score"] = previous_data["_previous_score"]
+
+    current_goals = build_goal_progress(current_data)[
+        ["goal_code", "strategic_goal", "Виконання"]
+    ].rename(columns={"Виконання": "Поточне_виконання"})
+    previous_goals = build_goal_progress(previous_data)[
+        ["goal_code", "strategic_goal", "Виконання"]
+    ].rename(columns={"Виконання": "Попереднє_виконання"})
+    comparison = current_goals.merge(
+        previous_goals,
+        on=["goal_code", "strategic_goal"],
+        how="inner",
+    )
+    comparison = comparison.dropna(
+        subset=["Поточне_виконання", "Попереднє_виконання"]
+    )
+    if comparison.empty:
+        return pd.DataFrame(columns=columns)
+
+    comparison["Падіння_вп"] = (
+        comparison["Попереднє_виконання"]
+        - comparison["Поточне_виконання"]
+    ).round(2)
+    comparison = comparison[
+        comparison["Падіння_вп"] >= float(minimum_drop)
+    ].copy()
+    if comparison.empty:
+        return pd.DataFrame(columns=columns)
+
+    return comparison[columns].sort_values(
+        "Падіння_вп",
+        ascending=False,
     )
 
 
@@ -3986,95 +4184,93 @@ if snapshot_context is not None:
 
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
         st.markdown('<div class="section-title">Автоматичні інсайти</div>', unsafe_allow_html=True)
-        st.markdown('<div class="section-subtitle">Система автоматично виявляє відхилення та концентрації ризиків</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-subtitle">Пріоритетні загрози річному плану, прогалини даних та аномалії динаміки</div>', unsafe_allow_html=True)
 
-        goal_failure = weighted_failure_group(active, ["goal_code", "strategic_goal"])
-        dep_exploded_for_insights = explode_departments(active)
-        dep_failure = weighted_failure_group(dep_exploded_for_insights, ["ssp_department"])
+        insight_count = 0
 
-        if without_data > 0:
-            render_insight(f"⚠️ {without_data} активних заходів не мають поданого погодженого моніторингу.", "warn")
-        if critical_count > 0:
-            render_insight(f"🔴 {critical_count} заходів мають критичний ризик недосягнення.", "danger")
-        if not goal_failure.empty:
-            row = goal_failure.iloc[0]
-            render_insight(
-                f"📉 Найбільша концентрація невиконаних заходів у СЦ {row['goal_code']} — "
-                f"{int(row['Невиконаних'])} із {int(row['Активних_заходів'])}; "
-                f"вага в обраному портфелі — {row['Вага_невиконання']}%.",
-                "warn"
-            )
-        if not dep_failure.empty:
-            row = dep_failure.iloc[0]
-            render_insight(
-                f"🏢 Самостійний структурний підрозділ із найвищою концентрацією невиконання: "
-                f"{row['ssp_department']} — {int(row['Невиконаних'])} із {int(row['Активних_заходів'])}; "
-                f"вага в обраному портфелі — {row['Вага_невиконання']}%.",
-                "info"
-            )
-        render_insight(f"📌 Відхилення за звітний період: {deviation_current} в.п. від планового рівня.")
-
-        # ── Інтегральна вага портфеля (правка №8) ────────────────
-        # Об'єднує три виміри частки невиконаних заходів групи в портфелі:
-        # за кількістю, за бюджетом (ДБ-2026, млрд грн) та за належністю до
-        # ППДУ-2026. Інтегральна вага = середнє доступних часток.
-        def _integral_weight(failed_subset, failed_all):
-            try:
-                if failed_all is None or failed_all.empty or failed_subset.empty:
-                    return None
-                parts = {}
-                parts["кількість"] = 100.0 * len(failed_subset) / len(failed_all)
-                if "budget_2026" in failed_all.columns:
-                    _tb = pd.to_numeric(failed_all["budget_2026"], errors="coerce").fillna(0).sum()
-                    if _tb > 0:
-                        _sb = pd.to_numeric(failed_subset["budget_2026"], errors="coerce").fillna(0).sum()
-                        parts["бюджет ДБ-2026"] = 100.0 * _sb / _tb
-                if "source_national" in failed_all.columns:
-                    _ppdu_all = failed_all["source_national"].astype(str).str.contains(
-                        "План пріоритетних дій Уряду на 2026", na=False).sum()
-                    if _ppdu_all > 0:
-                        _ppdu_sub = failed_subset["source_national"].astype(str).str.contains(
-                            "План пріоритетних дій Уряду на 2026", na=False).sum()
-                        parts["ППДУ-2026"] = 100.0 * _ppdu_sub / _ppdu_all
-                integral = sum(parts.values()) / len(parts)
-                detail = ", ".join(f"{k}: {v:.2f}%" for k, v in parts.items())
-                return integral, detail
-            except Exception:
-                return None
-
-        _failed_all = active[active["status_display"] == "Не виконано"]
-        if not goal_failure.empty and not _failed_all.empty:
-            _top_goal = goal_failure.iloc[0]
-            _gw = _integral_weight(
-                _failed_all[_failed_all["goal_code"].astype(str) == str(_top_goal["goal_code"])],
-                _failed_all,
-            )
-            if _gw:
-                render_insight(
-                    f"⚖️ Інтегральна вага невиконання СЦ {_top_goal['goal_code']} у портфелі — "
-                    f"{_gw[0]:.2f}% (складові: {_gw[1]}).",
-                    "warn",
-                )
-        if not dep_failure.empty and not _failed_all.empty:
-            _top_dep = dep_failure.iloc[0]
-            _failed_dep_all = explode_departments(_failed_all)
-            _dw = _integral_weight(
-                _failed_dep_all[_failed_dep_all["ssp_department"].astype(str) == str(_top_dep["ssp_department"])],
-                _failed_dep_all,
-            )
-            if _dw:
-                render_insight(
-                    f"⚖️ Інтегральна вага невиконання {_top_dep['ssp_department']} у портфелі — "
-                    f"{_dw[0]:.2f}% (складові: {_dw[1]}).",
-                    "info",
-                )
-        st.caption(
-            "Методологія інтегральної ваги: середнє арифметичне доступних часток групи серед "
-            "усіх невиконаних заходів обраного портфеля — (1) за кількістю заходів; (2) за обсягом "
-            "затвердженого фінансування ДБ-2026, млрд грн; (3) за належністю до ППДУ-2026. "
-            "Складова пропускається, якщо для неї немає даних. Показник є додатковою інформацією "
-            "і не впливає на розрахункові оцінки методики."
+        goal_threats = _critical_probability_groups(
+            active,
+            ["goal_code", "strategic_goal"],
         )
+        for _, row in goal_threats.head(3).iterrows():
+            goal_code = escape(clean(row.get("goal_code", "")) or "Без коду")
+            probability = _format_summary_number(
+                row.get("Прогнозована_вірогідність"),
+            )
+            tempo = pd.to_numeric(
+                pd.Series([row.get("Середній_темп")]),
+                errors="coerce",
+            ).iloc[0]
+            tempo_text = (
+                f"; середній темп — {_format_summary_number(tempo)}% річного плану"
+                if pd.notna(tempo)
+                else ""
+            )
+            render_insight(
+                f"🔴 Ціль {goal_code} під загрозою зриву річного плану — "
+                f"середня прогнозована вірогідність досягнення {probability}%, "
+                f"нижча за критичний поріг 20%{tempo_text}.",
+                "danger",
+            )
+            insight_count += 1
+
+        department_threats = _critical_probability_groups(
+            explode_departments(active),
+            ["ssp_department"],
+        )
+        for _, row in department_threats.head(3).iterrows():
+            department = escape(
+                clean(row.get("ssp_department", "")) or "Не визначено"
+            )
+            probability = _format_summary_number(
+                row.get("Прогнозована_вірогідність"),
+            )
+            tempo = pd.to_numeric(
+                pd.Series([row.get("Середній_темп")]),
+                errors="coerce",
+            ).iloc[0]
+            tempo_text = (
+                f"; середній темп — {_format_summary_number(tempo)}% річного плану"
+                if pd.notna(tempo)
+                else ""
+            )
+            render_insight(
+                f"🔴 Підрозділ {department} під загрозою зриву річного плану — "
+                f"середня прогнозована вірогідність досягнення {probability}%, "
+                f"нижча за критичний поріг 20%{tempo_text}.",
+                "danger",
+            )
+            insight_count += 1
+
+        missing_departments = _missing_data_by_department(active)
+        for _, row in missing_departments.head(3).iterrows():
+            department = escape(
+                clean(row.get("ssp_department", "")) or "Не визначено"
+            )
+            missing_count = int(row.get("Заходів_без_даних", 0) or 0)
+            render_insight(
+                f"⚠️ Підрозділ {department} не подав дані по "
+                f"{missing_count} заходах.",
+                "warn",
+            )
+            insight_count += 1
+
+        goal_drops = _goal_quarter_drop_signals(active)
+        for _, row in goal_drops.head(3).iterrows():
+            goal_code = escape(clean(row.get("goal_code", "")) or "Без коду")
+            drop = _format_summary_number(row.get("Падіння_вп"))
+            render_insight(
+                f"📉 Різке зниження: виконання цілі {goal_code} впало на "
+                f"{drop} в.п. проти попереднього кварталу.",
+                "warn",
+            )
+            insight_count += 1
+
+        if insight_count == 0:
+            render_insight(
+                "Критичних сигналів, що потребують негайної уваги, не виявлено.",
+                "info",
+            )
 
         st.markdown("</div>", unsafe_allow_html=True)
 

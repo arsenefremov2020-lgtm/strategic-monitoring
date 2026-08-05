@@ -31,6 +31,7 @@ from core.access import (
 from core.ui import render_scope_toggle, render_auto_refresh_notice
 from core.stage4 import render_measure_rows_with_card_links
 from datetime import datetime
+from html import escape
 import re
 
 current_user = page_setup("Dashboard", page_name="Dashboard")
@@ -208,69 +209,71 @@ div[data-testid="stMarkdownContainer"] .section-card:empty {
     margin-top: 0 !important;
 }
 
-/* ── Conclusion block ── */
-.conclusion-block {
+/* ── Compact section summaries ── */
+.section-summary {
+    background: #F8FAFD;
+    border: 1px solid #DCE4F0;
+    border-left: 4px solid #BFD3F2;
     border-radius: 10px;
-    padding: clamp(12px, 1.5vw, 18px) clamp(14px, 2vw, 22px);
-    margin: 8px 0 14px 0;
+    padding: 12px 16px;
+    margin: 8px 0 18px 0;
+    min-height: 84px;
+    box-shadow: 0 1px 5px rgba(15, 35, 65, 0.035);
+}
+
+.section-summary-risk-high { border-left-color: #DC4A4A; }
+.section-summary-risk-medium { border-left-color: #F4B400; }
+.section-summary-risk-low { border-left-color: #118847; }
+.section-summary-neutral { border-left-color: #4D8DFF; }
+
+.section-summary-head {
     display: flex;
-    flex-wrap: wrap;
     align-items: center;
-    gap: 12px;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 6px;
 }
 
-.conclusion-risk-high {
-    background: #FBE5E5;
-    border-left: 5px solid #DC4A4A;
-    border: 1px solid #DC4A4A;
-    border-left: 5px solid #DC4A4A;
-}
-
-.conclusion-risk-medium {
-    background: #FDF3D8;
-    border: 1px solid #F4B400;
-    border-left: 5px solid #FF7A45;
-}
-
-.conclusion-risk-low {
-    background: #E4F5EC;
-    border: 1px solid #1E9E57;
-    border-left: 5px solid #118847;
-}
-
-.conclusion-badge {
-    font-size: clamp(13px, 1.2vw, 16px);
+.section-summary-title {
+    font-size: clamp(13px, 1.1vw, 15px);
     font-weight: 900;
-    padding: 6px 14px;
-    border-radius: 8px;
+    color: #032A63;
+    line-height: 1.25;
+}
+
+.section-summary-badge {
+    background: #FFFFFF;
+    border: 1px solid #DCE4F0;
+    border-radius: 999px;
+    padding: 3px 9px;
+    font-size: clamp(10px, 0.85vw, 12px);
+    font-weight: 800;
+    color: #44546A;
     white-space: nowrap;
 }
 
-.badge-red { background: #DC4A4A; color: #fff; }
-.badge-yellow { background: #FF7A45; color: #fff; }
-.badge-green { background: #118847; color: #fff; }
+.section-summary-text {
+    font-size: clamp(11px, 0.95vw, 13px);
+    color: #61708A;
+    line-height: 1.5;
+}
 
-.conclusion-meta {
+.section-summary-metrics {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: 7px;
+    margin-top: 8px;
 }
 
-.meta-chip {
-    background: rgba(255,255,255,0.7);
-    border: 1px solid rgba(0,0,0,0.1);
-    border-radius: 20px;
-    padding: 4px 11px;
-    font-size: clamp(10px, 0.9vw, 12px);
-    font-weight: 600;
-    color: #61708A;
-}
-
-.conclusion-text {
-    font-size: clamp(12px, 1vw, 14px);
-    color: #61708A;
-    margin-top: 6px;
-    width: 100%;
+.section-summary-chip {
+    background: #FFFFFF;
+    border: 1px solid #DCE4F0;
+    border-radius: 999px;
+    padding: 3px 9px;
+    font-size: clamp(10px, 0.85vw, 12px);
+    font-weight: 700;
+    color: #44546A;
+    white-space: nowrap;
 }
 
 /* ── KPI status grid ── */
@@ -3147,16 +3150,147 @@ def _activate_dashboard_context(context):
         globals().update(context)
 
 
-badge_css = {
-    "risk-high": "badge-red",
-    "risk-medium": "badge-yellow",
-    "risk-low": "badge-green",
-}
-block_css = {
-    "risk-high": "conclusion-risk-high",
-    "risk-medium": "conclusion-risk-medium",
-    "risk-low": "conclusion-risk-low",
-}
+def _format_summary_number(value, digits=1):
+    number = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+    if pd.isna(number):
+        return "н/д"
+    rounded = round(float(number), digits)
+    if digits == 0:
+        return str(int(round(rounded)))
+    text = f"{rounded:.{digits}f}"
+    return text.rstrip("0").rstrip(".").replace("-", "−")
+
+
+def _short_summary_label(value, limit=88):
+    text = re.sub(r"\s+", " ", "" if value is None else str(value)).strip()
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit - 1].rstrip()}…"
+
+
+def _render_section_summary(title, text, *, badge="", metrics=None, tone="neutral"):
+    metrics = metrics or []
+    safe_title = escape(str(title))
+    safe_text = escape(str(text))
+    safe_badge = escape(str(badge)) if badge else ""
+    badge_html = (
+        f'<span class="section-summary-badge">{safe_badge}</span>'
+        if safe_badge else ""
+    )
+    metrics_html = "".join(
+        f'<span class="section-summary-chip">{escape(str(item))}</span>'
+        for item in metrics
+    )
+    metrics_block = (
+        f'<div class="section-summary-metrics">{metrics_html}</div>'
+        if metrics_html else ""
+    )
+    st.markdown(
+        f'''<div class="section-summary section-summary-{tone}">
+            <div class="section-summary-head">
+                <div class="section-summary-title">{safe_title}</div>
+                {badge_html}
+            </div>
+            <div class="section-summary-text">{safe_text}</div>
+            {metrics_block}
+        </div>''',
+        unsafe_allow_html=True,
+    )
+
+
+def _build_dynamics_trend_df(active_rows, selected_years_for_calc, selected_quarters_for_calc):
+    trend_rows = []
+    selected_period_pairs = sorted(
+        {
+            (int(year), quarter_to_roman(quarter))
+            for year in selected_years_for_calc
+            for quarter in selected_quarters_for_calc
+        },
+        key=lambda item: core_period_number(item[0], item[1]),
+    )
+
+    for year, quarter in selected_period_pairs:
+        period_num = core_period_number(year, quarter)
+        period_rows = active_rows[active_rows["period_number"] == period_num].copy()
+        monitoring_was_not_conducted = (
+            int(year) == 2026 and quarter_to_number(quarter) in (1, 2)
+        )
+        has_submitted_data = (
+            not period_rows.empty
+            and "status" in period_rows.columns
+            and bool((period_rows["status"] != "Не подано").any())
+        )
+        has_data = has_submitted_data and not monitoring_was_not_conducted
+
+        if monitoring_was_not_conducted:
+            value, coverage_value, deviation_value = 0, 0, 0
+        elif period_rows.empty:
+            value, coverage_value = 0, 0
+            deviation_value = deviation_for_period(value, quarter_to_number(quarter))
+        else:
+            value = mean_completion(period_rows)
+            coverage_value = calc_coverage(period_rows)
+            deviation_value = deviation_for_period(value, quarter_to_number(quarter))
+
+        trend_rows.append({
+            "Період": f"{year} {quarter}",
+            "Рік": int(year),
+            "Квартал": quarter,
+            "Номер_кварталу": quarter_to_number(quarter),
+            "Частка_року": quarter_to_number(quarter) / 4,
+            "Виконання": value,
+            "Покриття": coverage_value,
+            "Відхилення за звітний період": deviation_value,
+            "Є_дані": has_data,
+            "Моніторинг_не_проводився": monitoring_was_not_conducted,
+        })
+
+    return pd.DataFrame(trend_rows), selected_period_pairs
+
+
+def _dynamics_summary_text(trend_df, selected_period_pairs):
+    if len(selected_period_pairs) < 2:
+        return "Для оцінки динаміки оберіть щонайменше два квартали."
+    if trend_df.empty or "Є_дані" not in trend_df.columns:
+        return "Для оцінки динаміки потрібні дані щонайменше за два квартали."
+
+    data_periods = trend_df[trend_df["Є_дані"] == True].copy()
+    if len(data_periods) < 2:
+        return "Для оцінки динаміки потрібні дані щонайменше за два квартали."
+
+    data_periods = data_periods.sort_values(["Рік", "Номер_кварталу"])
+    latest = data_periods.iloc[-1]
+    previous = data_periods.iloc[-2]
+    latest_value = float(latest["Виконання"])
+    previous_value = float(previous["Виконання"])
+    delta = latest_value - previous_value
+
+    if delta > 0.05:
+        direction_text = f"Виконання зросло на {_format_summary_number(abs(delta))} в.п. проти попереднього кварталу."
+    elif delta < -0.05:
+        direction_text = f"Виконання знизилося на {_format_summary_number(abs(delta))} в.п. проти попереднього кварталу."
+    else:
+        direction_text = "Виконання не змінилося проти попереднього кварталу."
+
+    same_year = int(latest["Рік"]) == int(previous["Рік"])
+    latest_share = float(latest["Частка_року"])
+    previous_share = float(previous["Частка_року"])
+
+    if same_year and latest_share > previous_share:
+        observed_tempo = delta / (latest_share - previous_share)
+        forecast_year = latest_value + observed_tempo * max(1 - latest_share, 0)
+        tempo_is_sufficient = forecast_year >= 100
+    else:
+        expected_level = latest_share * 100
+        tempo_is_sufficient = latest_value >= expected_level
+
+    tempo_text = (
+        "За поточної динаміки темп достатній для виходу на річний план."
+        if tempo_is_sufficient
+        else "Темп нижчий за потрібний для виходу на річний план."
+    )
+    return f"{direction_text} {tempo_text}"
+
 
 _snapshot_description = (
     "Знімок стану на один обраний квартал. Показує загальний рівень виконання, "
@@ -3793,23 +3927,18 @@ if presentation_mode:
 if snapshot_context is not None:
     _activate_dashboard_context(snapshot_context)
     with snapshot_content:
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">Прогрес виконання: висновок системи</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="section-subtitle">{snapshot_label}</div>', unsafe_allow_html=True)
-
-        st.markdown(f"""
-        <div class="conclusion-block {block_css[conclusion_badge]}">
-            <span class="conclusion-badge {badge_css[conclusion_badge]}">{conclusion_title}</span>
-            <div class="conclusion-meta">
-                <span class="meta-chip">📅 {period_label}</span>
-                <span class="meta-chip">📌 {total_active} активних заходів</span>
-                <span class="meta-chip">📉 Відхилення: {deviation_current} в.п.</span>
-                <span class="meta-chip">📊 Виконання: {completion}%</span>
-                <span class="meta-chip">📋 Покриття: {coverage}%</span>
-            </div>
-            <div class="conclusion-text">{conclusion_text}</div>
-        </div>
-        """, unsafe_allow_html=True)
+        _render_section_summary(
+            "Стан зараз",
+            conclusion_text,
+            badge=conclusion_title,
+            metrics=[
+                f"Виконання: {_format_summary_number(completion)}%",
+                f"Покриття: {_format_summary_number(coverage)}%",
+                f"Відхилення: {_format_summary_number(deviation_current)} в.п.",
+                f"Активних заходів: {total_active}",
+            ],
+            tone=conclusion_badge,
+        )
 
         _main_kpi_items = [
             {"key": "all", "title": "Заходів", "count": total_active, "percent": "100.0%", "color": "kpi-blue"},
@@ -4020,6 +4149,48 @@ if snapshot_context is not None:
 if breakdown_context is not None:
     _activate_dashboard_context(breakdown_context)
     with breakdown_content:
+        _breakdown_goal_failure = weighted_failure_group(
+            active,
+            ["goal_code", "strategic_goal"],
+        )
+        _breakdown_department_failure = weighted_failure_group(
+            explode_departments(active),
+            ["ssp_department"],
+        )
+        if not _breakdown_goal_failure.empty:
+            _breakdown_goal_failure = _breakdown_goal_failure[
+                _breakdown_goal_failure["Невиконаних"] > 0
+            ]
+        if not _breakdown_department_failure.empty:
+            _breakdown_department_failure = _breakdown_department_failure[
+                _breakdown_department_failure["Невиконаних"] > 0
+            ]
+
+        if (
+            not _breakdown_goal_failure.empty
+            and not _breakdown_department_failure.empty
+        ):
+            _top_goal_failure = _breakdown_goal_failure.iloc[0]
+            _top_department_failure = _breakdown_department_failure.iloc[0]
+            _breakdown_summary = (
+                f"Найбільша концентрація невиконання — стратегічна ціль "
+                f"{_top_goal_failure['goal_code']} «{_short_summary_label(_top_goal_failure['strategic_goal'])}» "
+                f"та підрозділ «{_short_summary_label(_top_department_failure['ssp_department'])}». "
+                f"У відповідних розрізах на них припадає найбільша вага "
+                f"невиконаних заходів: {_format_summary_number(_top_goal_failure['Вага_невиконання'])}% "
+                f"і {_format_summary_number(_top_department_failure['Вага_невиконання'])}%."
+            )
+        else:
+            _breakdown_summary = (
+                "Суттєвої концентрації невиконання за обраний період не виявлено."
+            )
+
+        _render_section_summary(
+            "Де зосереджено невиконання",
+            _breakdown_summary,
+            tone="neutral",
+        )
+
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
         st.markdown('<div class="section-title">Виконання за стратегічними цілями</div>', unsafe_allow_html=True)
         st.markdown('<div class="section-subtitle">Відсоток виконання по кожній стратегічній цілі</div>', unsafe_allow_html=True)
@@ -4649,42 +4820,19 @@ if snapshot_context is not None:
 if dynamics_context is not None:
     _activate_dashboard_context(dynamics_context)
     with dynamics_content:
+        trend_df, selected_period_pairs = _build_dynamics_trend_df(
+            active_period_rows,
+            years_for_calc,
+            quarters_for_calc,
+        )
+        _render_section_summary(
+            "Куди рухаємось",
+            _dynamics_summary_text(trend_df, selected_period_pairs),
+            tone="neutral",
+        )
+
         st.markdown('<div class="section-title">Динаміка виконання</div>', unsafe_allow_html=True)
         st.markdown(f'<div class="section-subtitle">{dynamics_label}</div>', unsafe_allow_html=True)
-
-        trend_rows = []
-
-        selected_period_pairs = sorted(
-            {(int(year), quarter_to_roman(quarter)) for year in years_for_calc for quarter in quarters_for_calc},
-            key=lambda item: core_period_number(item[0], item[1]),
-        )
-        for y, q in selected_period_pairs:
-            period_num = core_period_number(y, q)
-            temp = active_period_rows[active_period_rows["period_number"] == period_num].copy()
-
-            monitoring_was_not_conducted = (
-                int(y) == 2026 and quarter_to_number(q) in (1, 2)
-            )
-            if monitoring_was_not_conducted:
-                value, cov, dev = 0, 0, 0
-            elif temp.empty:
-                value, cov = 0, 0
-                dev = deviation_for_period(value, quarter_to_number(q))
-            else:
-                value = mean_completion(temp)
-                cov = calc_coverage(temp)
-                dev = deviation_for_period(value, quarter_to_number(q))
-
-            trend_rows.append({
-                "Період": f"{y} {q}",
-                "Рік": y,
-                "Квартал": q,
-                "Виконання": value,
-                "Покриття": cov,
-                "Відхилення за звітний період": dev,
-            })
-
-        trend_df = pd.DataFrame(trend_rows)
 
         fig_trend = px.line(
             trend_df,

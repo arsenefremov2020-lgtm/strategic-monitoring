@@ -37,6 +37,13 @@ import re
 current_user = page_setup("Dashboard", page_name="Dashboard")
 render_auto_refresh_notice("Dashboard", minutes=5)
 supabase = get_supabase_client()
+
+# Єдиний стандарт відображення таблиць дашборду: фіксована видима
+# висота компонента та невеликий зовнішній контейнер без розтягування сторінки.
+DASHBOARD_TABLE_VISIBLE_HEIGHT_PX = 420
+DASHBOARD_TABLE_CONTAINER_HEIGHT_PX = 450
+DASHBOARD_TABLE_HEADER_WRAP_WIDTH = 18
+
 # ============================================================
 # STYLE
 # ============================================================
@@ -388,11 +395,38 @@ div[data-testid="stMarkdownContainer"] .section-card:empty {
     margin-bottom: 6px;
 }
 
-/* ── Rank table ── */
+/* ── Dashboard tables ── */
 div[data-testid="stDataFrame"] {
     border-radius: 10px;
     overflow: hidden;
     border: 1px solid #DCE4F0 !important;
+    box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04);
+}
+
+/* Повна багаторядкова шапка без обрізання назв колонок. */
+div[data-testid="stDataFrame"] div[role="columnheader"] {
+    min-height: 78px !important;
+    height: 78px !important;
+    background: #EAF1FF !important;
+    border-bottom: 1px solid #DCE4F0 !important;
+    color: #132238 !important;
+    font-weight: 900 !important;
+    line-height: 1.2 !important;
+    white-space: normal !important;
+    overflow: visible !important;
+}
+
+div[data-testid="stDataFrame"] div[role="columnheader"] div,
+div[data-testid="stDataFrame"] div[role="columnheader"] span,
+div[data-testid="stDataFrame"] div[role="columnheader"] p {
+    white-space: pre-line !important;
+    word-break: normal !important;
+    overflow-wrap: anywhere !important;
+    text-align: center !important;
+    line-height: 1.2 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
 }
 
 /* ── Methodology ── */
@@ -2218,10 +2252,88 @@ def style_rank_table(row, total_rows):
     if place <= 3:
         return ["background-color: #E4F5EC; color: #0C713A; font-weight: 800; text-align: center"] * len(row)
     if place <= 10:
-        return ["background-color: #EAF1FF; color: #032A63; text-align: center"] * len(row)
+        return ["background-color: #FDF3D8; color: #7A5A00; text-align: center"] * len(row)
     if place > max(total_rows - 7, 10):
         return ["background-color: #FBE5E5; color: #DC4A4A; text-align: center"] * len(row)
     return ["background-color: #F7F9FC; color: #61708A; text-align: center"] * len(row)
+
+
+def _wrap_dashboard_column_label(label, width=DASHBOARD_TABLE_HEADER_WRAP_WIDTH):
+    """Повертає повний підпис колонки з явними переносами для шапки."""
+    text = str(label or "")
+    words = text.split()
+    if not words:
+        return text
+
+    lines = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if current and len(candidate) > width:
+            lines.append(current)
+            current = word
+        else:
+            current = candidate
+    if current:
+        lines.append(current)
+    return "\n".join(lines)
+
+
+def _dashboard_table_column_width(column_name):
+    """Єдина ширина колонок відповідно до змісту, без зміни даних."""
+    name = str(column_name)
+    very_wide = {
+        "Захід", "Індикатор", "Причина ризику", "Опис прогресу",
+        "Самостійний структурний підрозділ",
+    }
+    wide = {
+        "Головний ССП", "Джерело даних", "Інше джерело",
+        "Статус виконання", "Тип продукту",
+    }
+    narrow = {
+        "Місце", "Код", "КПКВК", "Заходів", "Період",
+        "Початок", "Кінець", "Ризикових", "Критичних",
+    }
+    if name in very_wide:
+        return 330
+    if name in wide:
+        return 210
+    if name in narrow:
+        return 105
+    if any(token in name for token in ("значення", "Бюджет", "ДБ ", "Інше 20", "Оцінка", "Покриття", "Виконання", "Risk score", "Traffic light")):
+        return 150
+    return 145
+
+
+def _dashboard_table_column_config(table_data):
+    """Будує повні багаторядкові заголовки для read-only таблиць."""
+    source = getattr(table_data, "data", table_data)
+    if not isinstance(source, pd.DataFrame):
+        return {}
+
+    config = {}
+    for column in source.columns:
+        label = _wrap_dashboard_column_label(column)
+        width = _dashboard_table_column_width(column)
+        if pd.api.types.is_numeric_dtype(source[column]):
+            config[column] = st.column_config.NumberColumn(label, width=width)
+        else:
+            config[column] = st.column_config.TextColumn(label, width=width)
+    return config
+
+
+def render_dashboard_table(table_data, *, hide_index=True, key=None):
+    """Рендерить таблицю в єдиному контейнері з внутрішньою прокруткою."""
+    with st.container(height=DASHBOARD_TABLE_CONTAINER_HEIGHT_PX, border=False):
+        st.dataframe(
+            table_data,
+            use_container_width=True,
+            hide_index=hide_index,
+            height=DASHBOARD_TABLE_VISIBLE_HEIGHT_PX,
+            row_height=52,
+            column_config=_dashboard_table_column_config(table_data),
+            key=key,
+        )
 
 
 def collapse_to_latest_measure_rows(df):
@@ -4485,7 +4597,16 @@ if breakdown_context is not None:
             }])
         )
 
-        st.dataframe(styled_rank, use_container_width=True, hide_index=True)
+        render_dashboard_table(
+            styled_rank,
+            hide_index=True,
+            key="dashboard_ssp_ranking_table",
+        )
+        st.caption(
+            "Таблиця інтерактивна: натисніть назву колонки, щоб змінити сортування "
+            "за зростанням або спаданням. Кольори рядків: зелений — перші три місця; "
+            "жовтий — 4–10 місця; червоний — нижня група рейтингу; решта — нейтральне тло."
+        )
 
         st.markdown("<hr class='vis-separator'>", unsafe_allow_html=True)
 
@@ -5504,13 +5625,19 @@ if breakdown_context is not None:
 
             st.markdown('<div class="section-title" style="margin-top:0;">Топ КПКВК за кількістю заходів</div>',
                         unsafe_allow_html=True)
-            st.dataframe(
-                kpkvk_display[["КПКВК", "Заходів", "Бюджет 2026 (млрд грн)",
-                                "Бюджет 2027 (млрд грн)", "Бюджет 2028 (млрд грн)"]],
-                use_container_width=True,
-                hide_index=False
+            render_dashboard_table(
+                kpkvk_display[[
+                    "КПКВК", "Заходів", "Бюджет 2026 (млрд грн)",
+                    "Бюджет 2027 (млрд грн)", "Бюджет 2028 (млрд грн)",
+                ]],
+                hide_index=False,
+                key="dashboard_top_kpkvk_table",
             )
-            st.caption("Суми — лише заходи з наявними числовими даними. «—» означає відсутність числових даних.")
+            st.caption(
+                "Таблиця інтерактивна: натисніть назву колонки, щоб змінити сортування "
+                "за зростанням або спаданням. Суми — лише заходи з наявними числовими "
+                "даними; «—» означає відсутність числових даних."
+            )
 
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -5549,7 +5676,11 @@ if breakdown_context is not None:
                     lambda v: f"{v:.3f}" if pd.notna(v) else "—"
                 )
 
-        st.dataframe(fin_full, use_container_width=True, hide_index=True)
+        render_dashboard_table(
+            fin_full,
+            hide_index=True,
+            key="dashboard_financial_data_table",
+        )
         st.caption("Числові суми бюджету наявні лише для частини заходів. «—» — дані не вказані.")
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -5557,48 +5688,45 @@ if breakdown_context is not None:
 if breakdown_context is not None:
     _activate_dashboard_context(breakdown_context)
     with breakdown_content:
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">Проблемні заходи</div>', unsafe_allow_html=True)
+        with st.expander("Проблемні заходи", expanded=False):
+            risk_table = active[
+                (
+                    active["auto_risk"].isin(RISKY_LEVELS) |
+                    (active["status"] == "Не подано") |
+                    (active["performance_score"].fillna(0) < 75)
+                )
+                & (active["included_in_risk_assessment"] == True)
+            ].copy()
 
-        risk_table = active[
-            (
-                active["auto_risk"].isin(RISKY_LEVELS) |
-                (active["status"] == "Не подано") |
-                (active["performance_score"].fillna(0) < 75)
-            )
-            & (active["included_in_risk_assessment"] == True)
-        ].copy()
+            if risk_table.empty:
+                st.success("Ризикових заходів за обраний період не виявлено.")
+            else:
+                risk_table = risk_table.rename(columns={
+                    "code": "Код",
+                    "name": "Захід",
+                    "indicator": "Індикатор",
+                    "department": "Головний ССП",
+                    "status_display": "Статус виконання",
+                    "selected_target": "Планове значення",
+                    "numeric_value": "Фактичне значення",
+                    "auto_risk": "Рівень ризику",
+                    "risk_score": "Risk score",
+                    "traffic_light": "Traffic light",
+                    "risk_reason": "Причина ризику",
+                    "progress_text": "Опис прогресу",
+                    "period_label": "Період"
+                })
 
-        if risk_table.empty:
-            st.success("Ризикових заходів за обраний період не виявлено.")
-        else:
-            risk_table = risk_table.rename(columns={
-                "code": "Код",
-                "name": "Захід",
-                "indicator": "Індикатор",
-                "department": "Головний ССП",
-                "status_display": "Статус виконання",
-                "selected_target": "Планове значення",
-                "numeric_value": "Фактичне значення",
-                "auto_risk": "Рівень ризику",
-                "risk_score": "Risk score",
-                "traffic_light": "Traffic light",
-                "risk_reason": "Причина ризику",
-                "progress_text": "Опис прогресу",
-                "period_label": "Період"
-            })
-
-            st.dataframe(
-                risk_table[[
-                    "Період", "Код", "Захід", "Індикатор", "Головний ССП",
-                    "Статус виконання", "Планове значення", "Фактичне значення",
-                    "Traffic light", "Рівень ризику", "Risk score", "Причина ризику", "Опис прогресу"
-                ]],
-                use_container_width=True,
-                hide_index=True
-            )
-
-        st.markdown("</div>", unsafe_allow_html=True)
+                render_dashboard_table(
+                    risk_table[[
+                        "Період", "Код", "Захід", "Індикатор", "Головний ССП",
+                        "Статус виконання", "Планове значення", "Фактичне значення",
+                        "Traffic light", "Рівень ризику", "Risk score",
+                        "Причина ризику", "Опис прогресу",
+                    ]],
+                    hide_index=True,
+                    key="dashboard_problem_measures_table",
+                )
 
 # Повна таблиця активних заходів.
 if breakdown_context is not None:
@@ -5628,15 +5756,15 @@ if breakdown_context is not None:
             "risk_reason": "Причина ризику"
         })
 
-        st.dataframe(
+        render_dashboard_table(
             full[[
                 "Період", "Код", "Захід", "Індикатор", "Одиниця виміру", "Тип продукту",
                 "Головний ССП", "Джерело даних", "Початок", "Кінець",
                 "Планове значення", "Фактичне значення", "Статус виконання",
                 "Оцінка виконання, %", "Traffic light", "Ризик", "Risk score", "Причина ризику"
             ]],
-            use_container_width=True,
-            hide_index=True
+            hide_index=True,
+            key="dashboard_full_active_measures_table",
         )
 
         st.markdown("</div>", unsafe_allow_html=True)

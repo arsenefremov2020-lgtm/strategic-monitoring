@@ -389,35 +389,19 @@ div[data-testid="stMarkdownContainer"] .section-card:empty {
     margin-bottom: 6px;
 }
 
-/* ── Dashboard tables: єдиний HTML-стандарт системи ── */
-.dashboard-html-table-wrap .myreq-html-table th,
-.dashboard-html-table-wrap .myreq-html-table td {
-    white-space: normal !important;
-    overflow: visible !important;
-    text-overflow: clip !important;
-    overflow-wrap: anywhere !important;
-    word-break: normal !important;
-    height: auto !important;
-    line-height: 1.35 !important;
-}
-
-.dashboard-html-table-wrap .myreq-html-table th,
-.dashboard-html-table-wrap .myreq-html-table td {
-    vertical-align: middle;
-}
-
-.dashboard-html-table-wrap .dashboard-rank-green td {
+/* ── Rank table row colors; cell behavior comes only from assets/app.css ── */
+.dashboard-rank-green td {
     background: #E4F5EC !important;
     color: #0C713A !important;
     font-weight: 800;
 }
 
-.dashboard-html-table-wrap .dashboard-rank-yellow td {
+.dashboard-rank-yellow td {
     background: #FDF3D8 !important;
     color: #7A5A00 !important;
 }
 
-.dashboard-html-table-wrap .dashboard-rank-red td {
+.dashboard-rank-red td {
     background: #FBE5E5 !important;
     color: #B42318 !important;
 }
@@ -2269,7 +2253,7 @@ def render_dashboard_table(
     formatters=None,
     row_class_fn=None,
 ):
-    """Рендерить DataFrame як системну HTML-таблицю зі скролами й повним текстом."""
+    """Рендерить таблицю точним HTML-шаблоном сторінки «Адміністрування»."""
     source = getattr(table_data, "data", table_data)
     if not isinstance(source, pd.DataFrame):
         source = pd.DataFrame(source)
@@ -2304,12 +2288,10 @@ def render_dashboard_table(
         body_rows.append(f"<tr{class_attr}>{''.join(cells)}</tr>")
 
     html = (
-        '<div class="dashboard-html-table-wrap">'
-        '<div class="myreq-table-scroll">'
-        '<table class="myreq-html-table">'
+        '<div class="myreq-table-scroll"><table class="myreq-html-table">'
         f"<thead><tr>{''.join(header_cells)}</tr></thead>"
         f"<tbody>{''.join(body_rows)}</tbody>"
-        "</table></div></div>"
+        "</table></div>"
     )
     st.markdown(html, unsafe_allow_html=True)
 

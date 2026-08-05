@@ -6,7 +6,6 @@ import re
 from typing import Any, Iterable
 
 from core.errors import log_cosmetic_error
-from core.operational import target_met
 
 YES_VALUES = {"так", "yes", "true", "1", "+"}
 NO_VALUES = {"ні", "нi", "no", "false", "0", "-"}
@@ -363,7 +362,7 @@ def status_value_conflict(
     if not numeric_comparable and not yes_no_comparable:
         return ""
 
-    reached = target_met(value_text, effective_target)
+    reached = value_reaches_target(value_text,effective_target,unit,)
     code_label = f"У заході {code}: " if code else ""
     target_note = (
         f" (для орієнтира «х» використано наступний орієнтир «{effective_target}»)"

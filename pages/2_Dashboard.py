@@ -2224,10 +2224,11 @@ def style_rank_table(row, total_rows):
 def collapse_to_latest_measure_rows(df):
     """Return one row per measure for the multi-period current snapshot.
 
-    The population is taken from the latest period with the maximum number of
-    active measures in the selected range. Each measure then receives its latest
-    available submitted value in the range; if it has no submission, its latest
-    active-period row is retained as «Не подано».
+    The population includes every unique measure present after all selected
+    period and dashboard filters have been applied — that is, every measure
+    active in at least one selected period. Each measure then receives its latest
+    available submitted value in the range; if it has no submission anywhere in
+    the range, its latest active-period row is retained as «Не подано».
     """
     if df.empty:
         return df
@@ -2241,15 +2242,10 @@ def collapse_to_latest_measure_rows(df):
     if "has_monitoring_data" not in data.columns:
         data["has_monitoring_data"] = data.get("status", "").astype(str) != "Не подано"
 
-    period_counts = data.groupby("period_number")["code"].nunique()
-    maximum_count = int(period_counts.max()) if not period_counts.empty else 0
-    if maximum_count <= 0:
+    population_codes = set(data["code"].dropna().astype(str))
+    if not population_codes:
         return data.iloc[0:0].copy()
 
-    population_period = int(period_counts[period_counts == maximum_count].index.max())
-    population_codes = set(
-        data.loc[data["period_number"] == population_period, "code"].astype(str)
-    )
     candidates = data[data["code"].astype(str).isin(population_codes)].copy()
 
     with_data = candidates[candidates["has_monitoring_data"].fillna(False)].copy()

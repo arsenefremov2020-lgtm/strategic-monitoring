@@ -34,7 +34,7 @@ from core.validation import (
     status_value_conflict,
     validate_fact_value,
     validate_fact_value_for_target,
-)
+    )
 from core.errors import show_incident, show_warning
 from core import periods as core_periods
 from core.submission_ui import render_submission_notice, set_submission_notice

@@ -21,7 +21,7 @@ GROUP_PASTUSHYNA_EMAILS = {
 
 GROUP_KANIEVSKA_EMAILS = {
     "t.kovalchuk1979@gmail.com",      # Ковальчук
-    "arsen.efremov.2020@gmail.com",   # Єфремов
+    "arsen.efremov.2021@gmail.com",   # Єфремов
     "chemodanovayuliya123@gmail.com", # Чемоданова
 }
 

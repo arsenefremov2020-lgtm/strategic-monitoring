@@ -16,6 +16,7 @@ from core.periods import quarter_key as core_quarter_key
 from core.periods import parse_period as core_parse_period
 from core.periods import period_number as core_period_number
 from core import operational
+from core import finance as core_finance
 from core.closeouts import load_manual_closeouts
 from core.exports import build_presentation_pdf
 from core.errors import log_cosmetic_error, show_incident
@@ -3222,6 +3223,196 @@ def _activate_dashboard_context(context):
         globals().update(context)
 
 
+def _finance_selected_year(years):
+    """Останній обраний рік є однозначним роком фінансових сум."""
+    parsed = []
+    for value in years or []:
+        try:
+            parsed.append(int(value))
+        except (TypeError, ValueError):
+            continue
+    return max(parsed) if parsed else 2026
+
+
+def _finance_numeric(value):
+    number = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+    if pd.isna(number):
+        return None
+    return float(number)
+
+
+def _finance_amount_text(value, digits=6):
+    """Форматує суму лише після підсумовування, не округлюючи джерельні дані."""
+    number = _finance_numeric(value)
+    if number is None:
+        return "—"
+    text = f"{number:.{digits}f}".rstrip("0").rstrip(".")
+    return text.replace("-", "−")
+
+
+def _finance_types_for_values(has_state_budget, other_source):
+    types = []
+    if has_state_budget:
+        types.append("Державний бюджет")
+    source_text = clean(other_source).lower()
+    if source_text:
+        if any(keyword in source_text for keyword in ["мтд", "мбрр", "партнер", "eu ", "єс ", "iprsa"]):
+            types.append("МТД / кошти партнерів")
+        elif any(keyword in source_text for keyword in ["фонд", "страхування", "небюджет"]):
+            types.append("Небюджетні / інші")
+        else:
+            types.append("МТД / кошти партнерів")
+    if not types:
+        types.append("Без фінансування")
+    return types
+
+
+def _finance_annual_score_map(period_rows, year):
+    """Річний бал для фінансів: факт/план IV кварталу у шкалі МіО 0–1+."""
+    if period_rows is None or period_rows.empty:
+        return {}
+    rows = period_rows.copy()
+    if not {"period_year", "period_quarter", "code"}.issubset(rows.columns):
+        return {}
+    rows = rows[
+        (pd.to_numeric(rows["period_year"], errors="coerce") == int(year))
+        & (rows["period_quarter"].apply(quarter_to_roman) == "IV")
+    ].copy()
+    if rows.empty:
+        return {}
+
+    rows = rows.sort_values(
+        [column for column in ["code", "period_number", "request_submitted_at", "request_id"] if column in rows.columns]
+    ).drop_duplicates(subset=["code"], keep="last")
+
+    result = {}
+    for _, row in rows.iterrows():
+        code = clean(row.get("code", ""))
+        if not code:
+            continue
+        display_status = clean(row.get("status_display", ""))
+        if display_status == "Втратило актуальність":
+            result[code] = "в/а"
+            continue
+        if display_status == "Не настав час" or clean(row.get("status", "")) == "Не подано":
+            result[code] = "х"
+            continue
+
+        actual = clean(row.get("numeric_value", ""))
+        target = clean(row.get("selected_target", ""))
+        unit = clean(row.get("unit", "")).lower()
+        if not actual or not target or target.lower() == "х":
+            result[code] = "х"
+            continue
+        if "так/ні" in unit or ("так" in unit and "ні" in unit):
+            result[code] = 1.0 if actual.lower() == target.lower() == "так" else 0.0
+            continue
+        actual_number = to_number(actual)
+        target_number = to_number(target)
+        if actual_number is None or target_number in (None, 0):
+            result[code] = "х"
+            continue
+        result[code] = float(actual_number) / float(target_number)
+    return result
+
+
+def _prepare_dashboard_finance_measures(active_rows, period_rows, year):
+    """Один фінансовий рядок на захід за обраним роком."""
+    if active_rows is None or active_rows.empty:
+        return pd.DataFrame()
+    data = active_rows.copy()
+    if "code" not in data.columns:
+        return pd.DataFrame()
+    data = data.drop_duplicates(subset=["code"], keep="last").copy()
+
+    fin_index = core_finance.load_financing_data()
+    annual_score_by_code = _finance_annual_score_map(period_rows, year)
+    plan_column = f"budget_{int(year)}"
+
+    prepared = []
+    for _, row in data.iterrows():
+        item = row.to_dict()
+        code = clean(row.get("code", ""))
+        external = core_finance._fin_lookup(fin_index, code, year)
+
+        # Планові обсяги для Dashboard беруться виключно зі стратегічних даних.
+        # Окремий фінансовий файл є джерелом фактичного освоєння та резервних
+        # реквізитів КПКВК/іншого джерела, але не підміняє план секції.
+        plan_bln = _finance_numeric(row.get(plan_column)) if plan_column in data.columns else None
+        fact_bln = _finance_numeric(external.get("fact_bln"))
+        kpkvk = clean(row.get("budget_kpkvk", "")) or clean(external.get("kpkvk", ""))
+        other_source = clean(row.get("other_source", "")) or clean(external.get("other_source", ""))
+        has_state_budget = bool(kpkvk) or plan_bln is not None
+        financing_types = _finance_types_for_values(has_state_budget, other_source)
+
+        annual_score = annual_score_by_code.get(code, "х")
+        metrics = core_finance.calculate_financial_metrics(plan_bln, fact_bln, annual_score)
+
+        item.update({
+            "_finance_year": int(year),
+            "_finance_kpkvk": kpkvk,
+            "_finance_other_source": other_source,
+            "_finance_plan_bln": plan_bln,
+            "_finance_fact_bln": fact_bln,
+            "_finance_execution_pct": metrics["financial_execution_pct"],
+            "_finance_state_pct": metrics["state_execution_pct"],
+            "_finance_elasticity": metrics["elasticity"],
+            "_finance_has_state_budget": has_state_budget,
+            "_finance_types": financing_types,
+        })
+        prepared.append(item)
+    return pd.DataFrame(prepared)
+
+
+def _finance_group_rows(fin_measures, key):
+    if fin_measures is None or fin_measures.empty:
+        return pd.DataFrame()
+    if key == "state":
+        mask = fin_measures["_finance_has_state_budget"].fillna(False).astype(bool)
+    elif key == "mtd":
+        mask = fin_measures["_finance_types"].apply(
+            lambda values: isinstance(values, list) and "МТД / кошти партнерів" in values
+        )
+    elif key == "other":
+        mask = fin_measures["_finance_types"].apply(
+            lambda values: isinstance(values, list) and "Небюджетні / інші" in values
+        )
+    elif key == "none":
+        mask = fin_measures["_finance_types"].apply(
+            lambda values: isinstance(values, list) and values == ["Без фінансування"]
+        )
+    elif key == "budget":
+        mask = pd.to_numeric(fin_measures["_finance_plan_bln"], errors="coerce").notna()
+    else:
+        return fin_measures.iloc[0:0].copy()
+    return fin_measures.loc[mask].drop_duplicates(subset=["code"], keep="last").copy()
+
+
+def _finance_detail_display(rows, year):
+    if rows is None or rows.empty:
+        return pd.DataFrame()
+    display = pd.DataFrame({
+        "Код": rows.get("code", ""),
+        "Захід": rows.get("name", ""),
+        "Головний ССП": rows.get("department", ""),
+        "Статус виконання": rows.get("status_display", ""),
+        "КПКВК": rows.get("_finance_kpkvk", ""),
+        "Інше джерело": rows.get("_finance_other_source", ""),
+        f"План {year}, млрд грн": rows.get("_finance_plan_bln", pd.Series(index=rows.index, dtype=float)).apply(_finance_amount_text),
+        f"Факт {year}, млрд грн": rows.get("_finance_fact_bln", pd.Series(index=rows.index, dtype=float)).apply(_finance_amount_text),
+        "% фінансового виконання": rows.get("_finance_execution_pct", pd.Series(index=rows.index, dtype=float)).apply(
+            lambda value: f"{float(value):.2f}%" if _finance_numeric(value) is not None else "—"
+        ),
+        "Стан виконання заходу, %": rows.get("_finance_state_pct", pd.Series(index=rows.index, dtype=object)).apply(
+            lambda value: f"{float(value):.2f}%" if _finance_numeric(value) is not None else (clean(value) or "—")
+        ),
+        "Коефіцієнт еластичності": rows.get("_finance_elasticity", pd.Series(index=rows.index, dtype=float)).apply(
+            lambda value: f"{float(value):.4f}" if _finance_numeric(value) is not None else "—"
+        ),
+    })
+    return display
+
+
 def _format_summary_number(value, digits=1):
     number = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
     if pd.isna(number):
@@ -3800,14 +3991,26 @@ if presentation_mode:
         </div>"""
 
     # ── фінансові дані для слайду 7 ───────────────────────────
-    pres_fin_total = len(active)
-    pres_fin_db = int(active["has_state_budget"].sum()) if "has_state_budget" in active.columns else 0
-    pres_fin_mtd = int(active[active["financing_types"].apply(
-        lambda t: isinstance(t, list) and "МТД / кошти партнерів" in t)].shape[0])         if "financing_types" in active.columns else 0
-    pres_fin_no = int(active[active["financing_types"].apply(
-        lambda t: isinstance(t, list) and t == ["Без фінансування"])].shape[0])         if "financing_types" in active.columns else 0
-    pres_budget_sum = active["budget_2026"].sum() if "budget_2026" in active.columns else 0
-    pres_budget_str = f"{pres_budget_sum:.2f} млрд грн" if pres_budget_sum else "н/д"
+    pres_fin_year = _finance_selected_year(selected_years)
+    pres_fin_measures = _prepare_dashboard_finance_measures(
+        active,
+        active_period_rows,
+        pres_fin_year,
+    )
+    pres_fin_total = len(pres_fin_measures)
+    pres_fin_db = len(_finance_group_rows(pres_fin_measures, "state"))
+    pres_fin_mtd = len(_finance_group_rows(pres_fin_measures, "mtd"))
+    pres_fin_no = len(_finance_group_rows(pres_fin_measures, "none"))
+    pres_budget_rows = _finance_group_rows(pres_fin_measures, "budget")
+    pres_budget_values = pd.to_numeric(
+        pres_budget_rows.get("_finance_plan_bln", pd.Series(dtype=float)),
+        errors="coerce",
+    ).dropna()
+    pres_budget_sum = float(pres_budget_values.sum()) if not pres_budget_values.empty else None
+    pres_budget_str = (
+        f"{_finance_amount_text(pres_budget_sum)} млрд грн"
+        if pres_budget_sum is not None else "н/д"
+    )
 
     pres_fin_bars_html = ""
     _fin_types_slide = [
@@ -3829,20 +4032,32 @@ if presentation_mode:
         </div>"""
 
     pres_kpkvk_html = ""
-    if "budget_kpkvk" in active.columns:
-        _kp_tbl = (
-            active[active["budget_kpkvk"] != ""]
-            .groupby("budget_kpkvk")
-            .agg(_Заходів=("code", "count"), _Бюджет=("budget_2026", "sum"))
-            .reset_index()
-            .sort_values("_Заходів", ascending=False)
-            .head(6)
-        )
-        for _, _krow in _kp_tbl.iterrows():
-            _b_str = f"{_krow['_Бюджет']:.2f}" if pd.notna(_krow["_Бюджет"]) and _krow["_Бюджет"] > 0 else "—"
-            pres_kpkvk_html += (
-                f'<div style="display:flex;justify-content:space-between;align-items:center;'                f'padding:10px 0;border-bottom:1px solid rgba(255,255,255,.06);">'                f'<span style="font-size:14px;font-weight:800;color:#FFD500;">{_krow["budget_kpkvk"]}</span>'                f'<span style="font-size:12px;color:rgba(255,255,255,.5);">{int(_krow["_Заходів"])} заходів</span>'                f'<span style="font-size:12px;color:rgba(255,255,255,.7);font-weight:700;">{_b_str} млрд грн</span>'                f'</div>'
+    if not pres_fin_measures.empty:
+        _kp_source = pres_fin_measures[
+            pres_fin_measures["_finance_kpkvk"].astype(str).str.strip() != ""
+        ].copy()
+        if not _kp_source.empty:
+            _kp_tbl = (
+                _kp_source
+                .groupby("_finance_kpkvk", dropna=False)
+                .agg(
+                    _Заходів=("code", "nunique"),
+                    _Бюджет=("_finance_plan_bln", lambda values: values.dropna().sum() if values.notna().any() else None),
+                )
+                .reset_index()
+                .sort_values("_Заходів", ascending=False)
+                .head(6)
             )
+            for _, _krow in _kp_tbl.iterrows():
+                _b_str = _finance_amount_text(_krow["_Бюджет"])
+                pres_kpkvk_html += (
+                    f'<div style="display:flex;justify-content:space-between;align-items:center;'
+                    f'padding:10px 0;border-bottom:1px solid rgba(255,255,255,.06);">'
+                    f'<span style="font-size:14px;font-weight:800;color:#FFD500;">{_krow["_finance_kpkvk"]}</span>'
+                    f'<span style="font-size:12px;color:rgba(255,255,255,.5);">{int(_krow["_Заходів"])} заходів</span>'
+                    f'<span style="font-size:12px;color:rgba(255,255,255,.7);font-weight:700;">{_b_str} млрд грн</span>'
+                    f'</div>'
+                )
     if not pres_kpkvk_html:
         pres_kpkvk_html = '<div style="color:rgba(255,255,255,.3);margin-top:12px;">КПКВК не визначено</div>'
 
@@ -4172,7 +4387,7 @@ if presentation_mode:
                     <div style="font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.3);margin-bottom:20px;">Джерела фінансування</div>
                     {pres_fin_bars_html}
                     <div style="margin-top:24px;background:rgba(0,91,187,.12);border:1px solid rgba(0,91,187,.25);border-radius:12px;padding:20px 22px;">
-                        <div style="font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.3);margin-bottom:8px;">Бюджет ДБ 2026</div>
+                        <div style="font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.3);margin-bottom:8px;">Бюджет ДБ {pres_fin_year}</div>
                         <div style="font-size:36px;font-weight:900;color:#fff;line-height:1;">{pres_budget_str}</div>
                         <div style="font-size:12px;color:rgba(255,255,255,.3);margin-top:4px;">часткові дані — не всі заходи мають суми</div>
                     </div>
@@ -5346,59 +5561,127 @@ if dynamics_context is not None:
 if breakdown_context is not None:
     _activate_dashboard_context(breakdown_context)
     with breakdown_content:
-        # ── Підготовка фінансових даних ───────────────────────────────────────────
-        fin_measures = active.copy()
-
-        # KPI лічильники
+        finance_year = _finance_selected_year(breakdown_years)
+        fin_measures = _prepare_dashboard_finance_measures(
+            active,
+            active_period_rows,
+            finance_year,
+        )
         fin_total = len(fin_measures)
-        fin_db_count = int(fin_measures["has_state_budget"].sum()) if "has_state_budget" in fin_measures.columns else 0
-        fin_mtd_count = int(fin_measures[fin_measures["financing_types"].apply(
-            lambda t: isinstance(t, list) and "МТД / кошти партнерів" in t)].shape[0]) \
-            if "financing_types" in fin_measures.columns else 0
-        fin_other_count = int(fin_measures[fin_measures["financing_types"].apply(
-            lambda t: isinstance(t, list) and "Небюджетні / інші" in t)].shape[0]) \
-            if "financing_types" in fin_measures.columns else 0
-        fin_no_count = int(fin_measures[fin_measures["financing_types"].apply(
-            lambda t: isinstance(t, list) and t == ["Без фінансування"])].shape[0]) \
-            if "financing_types" in fin_measures.columns else 0
-        fin_budget_sum = fin_measures["budget_2026"].sum() if "budget_2026" in fin_measures.columns else 0
-        fin_budget_count = int(fin_measures["budget_2026"].notna().sum()) if "budget_2026" in fin_measures.columns else 0
+        fin_db_rows = _finance_group_rows(fin_measures, "state")
+        fin_mtd_rows = _finance_group_rows(fin_measures, "mtd")
+        fin_other_rows = _finance_group_rows(fin_measures, "other")
+        fin_no_rows = _finance_group_rows(fin_measures, "none")
+        fin_budget_rows = _finance_group_rows(fin_measures, "budget")
+
+        fin_db_count = len(fin_db_rows)
+        fin_mtd_count = len(fin_mtd_rows)
+        fin_other_count = len(fin_other_rows)
+        fin_no_count = len(fin_no_rows)
+        fin_budget_values = pd.to_numeric(
+            fin_budget_rows.get("_finance_plan_bln", pd.Series(dtype=float)),
+            errors="coerce",
+        ).dropna()
+        fin_budget_sum = float(fin_budget_values.sum()) if not fin_budget_values.empty else None
+        fin_budget_count = len(fin_budget_rows)
+        finance_year_note = (
+            f"Для фінансових сум використано останній обраний рік — {finance_year}."
+            if len({int(value) for value in breakdown_years}) > 1
+            else f"Фінансові суми наведено за {finance_year} рік."
+        )
 
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
         st.markdown('<div class="section-title">💰 Фінансування заходів</div>', unsafe_allow_html=True)
         st.markdown(
-            f'<div class="section-subtitle">{snapshot_label} · Структура джерел фінансування активних заходів за обраними фільтрами</div>',
-            unsafe_allow_html=True
+            f'<div class="section-subtitle">{snapshot_label} · {finance_year_note} '
+            'Планові обсяги — зі стратегічної матриці; фактичне освоєння — з єдиного фінансового модуля.</div>',
+            unsafe_allow_html=True,
         )
 
-        # ── KPI картки фінансування ───────────────────────────────────────────────
-        render_kpi_grid([
-            {"title": "Заходів з Держбюджетом", "count": fin_db_count,
-             "percent": pct_value(fin_db_count, fin_total), "color": "kpi-blue"},
-            {"title": "Заходів з МТД / партнерами", "count": fin_mtd_count,
-             "percent": pct_value(fin_mtd_count, fin_total), "color": "kpi-green"},
-            {"title": "Небюджетні / інші джерела", "count": fin_other_count,
-             "percent": pct_value(fin_other_count, fin_total), "color": "kpi-yellow"},
-            {"title": "Без фінансування", "count": fin_no_count,
-             "percent": pct_value(fin_no_count, fin_total), "color": "kpi-gray"},
-            {"title": f"Бюджет ДБ 2026 (млрд грн)*",
-             "count": f"{fin_budget_sum:.2f}" if fin_budget_sum else "—",
-             "percent": f"* {fin_budget_count} з {fin_total} заходів мають суму", "color": "kpi-blue"},
-        ])
+        finance_detail_state_key = "dashboard_finance_detail_v1"
+        st.session_state.setdefault(finance_detail_state_key, "")
+        valid_finance_details = {"state", "mtd", "other", "none", "budget"}
+        try:
+            requested_finance_detail = str(st.query_params.get("finance_kpi", "") or "")
+        except Exception:
+            requested_finance_detail = ""
+        if requested_finance_detail in valid_finance_details:
+            st.session_state[finance_detail_state_key] = requested_finance_detail
+        selected_finance_detail = st.session_state.get(finance_detail_state_key, "")
+
+        render_kpi_grid(
+            [
+                {"key": "state", "title": "Заходів з Держбюджетом", "count": fin_db_count,
+                 "percent": pct_value(fin_db_count, fin_total), "color": "kpi-blue"},
+                {"key": "mtd", "title": "Заходів з МТД / партнерами", "count": fin_mtd_count,
+                 "percent": pct_value(fin_mtd_count, fin_total), "color": "kpi-green"},
+                {"key": "other", "title": "Небюджетні / інші джерела", "count": fin_other_count,
+                 "percent": pct_value(fin_other_count, fin_total), "color": "kpi-yellow"},
+                {"key": "none", "title": "Без фінансування", "count": fin_no_count,
+                 "percent": pct_value(fin_no_count, fin_total), "color": "kpi-gray"},
+                {"key": "budget", "title": f"Бюджет ДБ {finance_year} (млрд грн)",
+                 "count": _finance_amount_text(fin_budget_sum) if fin_budget_sum is not None else "—",
+                 "percent": f"{fin_budget_count} з {fin_total} заходів мають числовий план", "color": "kpi-blue"},
+            ],
+            interactive=True,
+            query_key="finance_kpi",
+        )
+
+        if selected_finance_detail in valid_finance_details:
+            detail_labels = {
+                "state": "Заходи з державним бюджетом",
+                "mtd": "Заходи з МТД / коштами партнерів",
+                "other": "Заходи з небюджетними / іншими джерелами",
+                "none": "Заходи без визначеного фінансування",
+                "budget": f"Заходи з числовим планом державного бюджету за {finance_year} рік",
+            }
+            detail_rows = _finance_group_rows(fin_measures, selected_finance_detail)
+            st.markdown(
+                f'<div class="section-title" style="margin-top:18px;">{detail_labels[selected_finance_detail]}</div>',
+                unsafe_allow_html=True,
+            )
+            if detail_rows.empty:
+                st.info("Заходів у цій категорії за обраними параметрами немає.")
+            else:
+                render_dashboard_table(
+                    _finance_detail_display(detail_rows, finance_year),
+                    hide_index=True,
+                )
+                detail_plan_values = pd.to_numeric(
+                    detail_rows["_finance_plan_bln"], errors="coerce"
+                ).dropna()
+                detail_fact_values = pd.to_numeric(
+                    detail_rows["_finance_fact_bln"], errors="coerce"
+                ).dropna()
+                detail_plan_sum = float(detail_plan_values.sum()) if not detail_plan_values.empty else None
+                detail_fact_sum = float(detail_fact_values.sum()) if not detail_fact_values.empty else None
+                st.caption(
+                    f"Унікальних заходів: {detail_rows['code'].nunique()}. "
+                    f"Сума плану: {_finance_amount_text(detail_plan_sum)} млрд грн; "
+                    f"сума факту: {_finance_amount_text(detail_fact_sum)} млрд грн. "
+                    "Суми обчислено до форматування рядків."
+                )
+            if st.button(
+                "← Повернутися",
+                key="dashboard_finance_detail_back_v1",
+            ):
+                st.session_state[finance_detail_state_key] = ""
+                try:
+                    if "finance_kpi" in st.query_params:
+                        del st.query_params["finance_kpi"]
+                except Exception as exc:
+                    log_cosmetic_error("Скидання деталізації фінансових KPI", exc)
+                st.rerun()
 
         st.markdown('<div style="margin-top:18px;"></div>', unsafe_allow_html=True)
 
-        # ── Кільцева + Стовпчаста в одному рядку ─────────────────────────────────
         fin_col1, fin_col2 = st.columns([1, 1.5])
-
         with fin_col1:
-            # Кільцева: структура джерел (кількість заходів)
             fin_donut_data = pd.DataFrame({
                 "Тип": ["Державний бюджет", "МТД / кошти партнерів", "Небюджетні / інші", "Без фінансування"],
-                "Кількість": [fin_db_count, fin_mtd_count, fin_other_count, fin_no_count]
+                "Кількість": [fin_db_count, fin_mtd_count, fin_other_count, fin_no_count],
             })
             fin_donut_data = fin_donut_data[fin_donut_data["Кількість"] > 0]
-
             if not fin_donut_data.empty:
                 FIN_COLORS = {
                     "Державний бюджет": "#005BBB",
@@ -5413,16 +5696,13 @@ if breakdown_context is not None:
                     hole=0.52,
                     color="Тип",
                     color_discrete_map=FIN_COLORS,
-                    labels={
-                        "Тип": "Джерело фінансування",
-                        "Кількість": "Кількість заходів",
-                    },
+                    labels={"Тип": "Джерело фінансування", "Кількість": "Кількість заходів"},
                 )
                 fig_donut.update_traces(
                     textfont_size=11,
                     textposition="outside",
                     texttemplate="%{label}: %{percent:.1%}",
-                    marker=dict(line=dict(color="#ffffff", width=2))
+                    marker=dict(line=dict(color="#ffffff", width=2)),
                 )
                 fig_donut.update_layout(uniformtext_minsize=9, uniformtext_mode="hide")
                 fig_donut.update_layout(
@@ -5437,154 +5717,159 @@ if breakdown_context is not None:
                 st.info("Даних про фінансування за обраними фільтрами немає.")
 
         with fin_col2:
-            # Стовпчаста: розподіл бюджету ДБ за стратегічними цілями
-            if "goal_code" in fin_measures.columns and "budget_2026" in fin_measures.columns:
+            goal_budget_source = fin_measures[
+                pd.to_numeric(fin_measures["_finance_plan_bln"], errors="coerce") > 0
+            ].copy() if not fin_measures.empty else pd.DataFrame()
+            if not goal_budget_source.empty and "goal_code" in goal_budget_source.columns:
                 goal_budget = (
-                    fin_measures[fin_measures["budget_2026"].fillna(0) > 0]
-                    .groupby("goal_code")
+                    goal_budget_source
+                    .groupby("goal_code", dropna=False)
                     .agg(
-                        Бюджет_2026=("budget_2026", "sum"),
-                        Заходів=("code", "count")
+                        Бюджет=("_finance_plan_bln", "sum"),
+                        Заходів=("code", "nunique"),
                     )
                     .reset_index()
                 )
-                if not goal_budget.empty:
-                    goal_budget["_sort"] = goal_budget["goal_code"].apply(code_sort_key)
-                    goal_budget = goal_budget.sort_values("_sort")
-                    goal_budget["label"] = goal_budget["goal_code"].astype(str)
-
-                    fig_budget_bar = px.bar(
-                        goal_budget,
-                        x="label",
-                        y="Бюджет_2026",
-                        text=goal_budget["Бюджет_2026"].apply(lambda v: f"{v:.2f}"),
-                        hover_data={"Заходів": True},
-                        color="Бюджет_2026",
-                        color_continuous_scale=["#BFD3F2", "#005BBB"],
-                        labels={"label": "Стратегічна ціль", "Бюджет_2026": "млрд грн"},
-                    )
-                    fig_budget_bar.update_traces(
-                        textposition="outside",
-                        textfont_size=10,
-                        marker_line_width=0
-                    )
-                    fig_budget_bar.update_layout(
-                        **CHART_LAYOUT,
-                        title=dict(text="Бюджет ДБ 2026 за стратегічними цілями (млрд грн)*",
-                                   font=dict(size=14, color="#032A63"), x=0),
-                        height=300,
-                        xaxis=dict(showgrid=False, tickangle=0),
-                        yaxis=dict(showgrid=True, gridcolor="#F7F9FC", title="млрд грн"),
-                        coloraxis_showscale=False,
-                        margin=dict(l=10, r=10, t=40, b=40)
-                    )
-                    render_plotly_chart(fig_budget_bar, use_container_width=True)
-                    st.caption("* Лише заходи з наявними числовими даними про бюджет")
-                else:
-                    st.info("Числових даних про бюджет ДБ 2026 за обраними фільтрами немає.")
-            else:
-                st.info("Недостатньо даних для побудови діаграми бюджету.")
-
-        st.markdown("<hr class='vis-separator'>", unsafe_allow_html=True)
-
-        # ── Heatmap: виконання × тип фінансування ────────────────────────────────
-        if "financing_types" in fin_measures.columns and "status_display" in fin_measures.columns:
-            heat_fin_rows = []
-            for _, row in fin_measures.iterrows():
-                fts = row.get("financing_types", [])
-                if not isinstance(fts, list):
-                    fts = ["Без фінансування"]
-                for ft in fts:
-                    heat_fin_rows.append({
-                        "Статус виконання": row["status_display"],
-                        "Тип фінансування": ft,
-                    })
-            if heat_fin_rows:
-                heat_fin_df = pd.DataFrame(heat_fin_rows)
-                heat_fin_pivot = heat_fin_df.groupby(
-                    ["Статус виконання", "Тип фінансування"]
-                ).size().reset_index(name="Кількість")
-
-                status_order = ["Виконано", "Частково виконано", "Не виконано",
-                                "Не настав час", "Втратило актуальність"]
-                fin_order = ["Державний бюджет", "МТД / кошти партнерів", "Небюджетні / інші", "Без фінансування"]
-
-                pivot_tbl = heat_fin_pivot.pivot_table(
-                    index="Статус виконання", columns="Тип фінансування",
-                    values="Кількість", aggfunc="sum", fill_value=0
+                goal_budget["_sort"] = goal_budget["goal_code"].apply(code_sort_key)
+                goal_budget = goal_budget.sort_values("_sort")
+                goal_budget["label"] = goal_budget["goal_code"].astype(str)
+                fig_budget_bar = px.bar(
+                    goal_budget,
+                    x="label",
+                    y="Бюджет",
+                    text=goal_budget["Бюджет"].apply(lambda value: _finance_amount_text(value, 3)),
+                    hover_data={"Заходів": True},
+                    color="Бюджет",
+                    color_continuous_scale=["#BFD3F2", "#005BBB"],
+                    labels={"label": "Стратегічна ціль", "Бюджет": "млрд грн"},
                 )
-                # Впорядкувати рядки/стовпці
-                pivot_tbl = pivot_tbl.reindex(
-                    index=[s for s in status_order if s in pivot_tbl.index],
-                    columns=[f for f in fin_order if f in pivot_tbl.columns]
-                ).fillna(0).astype(int)
-
-                if not pivot_tbl.empty:
-                    fig_heatmap_fin = px.imshow(
-                        pivot_tbl,
-                        text_auto=True,
-                        color_continuous_scale=["#EAF1FF", "#032A63"],
-                        aspect="auto",
-                        labels=dict(x="Тип фінансування", y="Статус виконання", color="Заходів")
-                    )
-                    fig_heatmap_fin.update_layout(
-                        **CHART_LAYOUT,
-                        title=dict(text="Виконання × тип фінансування (кількість заходів)",
-                                   font=dict(size=14, color="#032A63"), x=0),
-                        height=max(220, len(pivot_tbl) * 44 + 80),
-                        coloraxis_showscale=False,
-                        xaxis=dict(side="bottom", tickfont=dict(size=11)),
-                        yaxis=dict(tickfont=dict(size=11)),
-                        margin=dict(l=10, r=10, t=44, b=10)
-                    )
-                    render_plotly_chart(fig_heatmap_fin, use_container_width=True)
-                else:
-                    render_no_chart_data()
+                fig_budget_bar.update_traces(textposition="outside", textfont_size=10, marker_line_width=0)
+                fig_budget_bar.update_layout(
+                    **CHART_LAYOUT,
+                    title=dict(
+                        text=f"Бюджет ДБ {finance_year} за стратегічними цілями (млрд грн)",
+                        font=dict(size=14, color="#032A63"),
+                        x=0,
+                    ),
+                    height=300,
+                    xaxis=dict(showgrid=False, tickangle=0),
+                    yaxis=dict(showgrid=True, gridcolor="#F7F9FC", title="млрд грн"),
+                    coloraxis_showscale=False,
+                    margin=dict(l=10, r=10, t=40, b=40),
+                )
+                render_plotly_chart(fig_budget_bar, use_container_width=True)
+                st.caption("Лише унікальні заходи з наявним числовим планом бюджету.")
             else:
-                render_no_chart_data()
-        else:
-            render_no_chart_data()
+                st.info(f"Числових даних про бюджет ДБ {finance_year} за обраними фільтрами немає.")
 
         st.markdown("<hr class='vis-separator'>", unsafe_allow_html=True)
 
-        # ── Таблиця топ-КПКВК ────────────────────────────────────────────────────
-        if "budget_kpkvk" in fin_measures.columns:
-            kpkvk_table = (
-                fin_measures[fin_measures["budget_kpkvk"] != ""]
-                .groupby("budget_kpkvk")
+        elasticity_source = fin_measures.copy()
+        if not elasticity_source.empty:
+            elasticity_source["_elasticity_num"] = pd.to_numeric(
+                elasticity_source["_finance_elasticity"], errors="coerce"
+            )
+            elasticity_source = elasticity_source.dropna(subset=["_elasticity_num"])
+        if elasticity_source.empty:
+            st.info(
+                "Дані про еластичність з'являться після внесення фактичного освоєння бюджету "
+                "(наразі відсутнє)."
+            )
+        else:
+            elasticity_by_goal = (
+                elasticity_source
+                .groupby(["goal_code", "strategic_goal"], dropna=False)
                 .agg(
-                    Заходів=("code", "count"),
-                    Бюджет_2026=("budget_2026", "sum"),
-                    Бюджет_2027=("budget_2027", "sum"),
-                    Бюджет_2028=("budget_2028", "sum"),
+                    Середній_коефіцієнт=("_elasticity_num", "mean"),
+                    Заходів=("code", "nunique"),
                 )
                 .reset_index()
-                .rename(columns={"budget_kpkvk": "КПКВК"})
             )
-            kpkvk_table = kpkvk_table.sort_values("Заходів", ascending=False).reset_index(drop=True)
+            elasticity_by_goal["_sort"] = elasticity_by_goal["goal_code"].apply(code_sort_key)
+            elasticity_by_goal = elasticity_by_goal.sort_values("_sort")
+            elasticity_by_goal["label"] = elasticity_by_goal["goal_code"].astype(str)
+            fig_elasticity = px.bar(
+                elasticity_by_goal,
+                x="label",
+                y="Середній_коефіцієнт",
+                text=elasticity_by_goal["Середній_коефіцієнт"].apply(lambda value: f"{value:.2f}"),
+                hover_data={"strategic_goal": True, "Заходів": True},
+                labels={
+                    "label": "Стратегічна ціль",
+                    "Середній_коефіцієнт": "Середній коефіцієнт еластичності",
+                    "strategic_goal": "Назва стратегічної цілі",
+                },
+                color="Середній_коефіцієнт",
+                color_continuous_scale=["#BFD3F2", "#005BBB"],
+            )
+            fig_elasticity.update_traces(textposition="outside", marker_line_width=0)
+            fig_elasticity.add_hline(
+                y=1.0,
+                line_dash="dash",
+                line_color="#F4B400",
+                annotation_text="Баланс 1,0",
+                annotation_position="top left",
+            )
+            fig_elasticity.update_layout(
+                **CHART_LAYOUT,
+                title=dict(
+                    text=f"Коефіцієнт еластичності за стратегічними цілями · {finance_year}",
+                    font=dict(size=14, color="#032A63"),
+                    x=0,
+                ),
+                height=340,
+                xaxis=dict(showgrid=False),
+                yaxis=dict(showgrid=True, gridcolor="#F7F9FC", title="Коефіцієнт"),
+                coloraxis_showscale=False,
+                margin=dict(l=10, r=10, t=50, b=40),
+            )
+            render_plotly_chart(fig_elasticity, use_container_width=True)
+            st.caption(
+                "1,0 — фінансування відповідає результату; понад 1,0 — освоєння випереджає "
+                "результат; менше 1,0 — результат випереджає витрати."
+            )
+
+        st.markdown("<hr class='vis-separator'>", unsafe_allow_html=True)
+
+        kpkvk_source = fin_measures[
+            fin_measures["_finance_kpkvk"].astype(str).str.strip() != ""
+        ].copy() if not fin_measures.empty else pd.DataFrame()
+        if not kpkvk_source.empty:
+            kpkvk_table = (
+                kpkvk_source
+                .groupby("_finance_kpkvk", dropna=False)
+                .agg(
+                    Заходів=("code", "nunique"),
+                    План=("_finance_plan_bln", lambda values: values.dropna().sum() if values.notna().any() else None),
+                    Факт=("_finance_fact_bln", lambda values: values.dropna().sum() if values.notna().any() else None),
+                )
+                .reset_index()
+                .rename(columns={"_finance_kpkvk": "КПКВК"})
+                .sort_values("Заходів", ascending=False)
+                .reset_index(drop=True)
+            )
             kpkvk_table.index = kpkvk_table.index + 1
-
-            def _fmt_budget(v):
-                return f"{v:.3f}" if pd.notna(v) and v > 0 else "—"
-
             kpkvk_display = kpkvk_table.copy()
-            kpkvk_display["Бюджет 2026 (млрд грн)"] = kpkvk_display["Бюджет_2026"].apply(_fmt_budget)
-            kpkvk_display["Бюджет 2027 (млрд грн)"] = kpkvk_display["Бюджет_2027"].apply(_fmt_budget)
-            kpkvk_display["Бюджет 2028 (млрд грн)"] = kpkvk_display["Бюджет_2028"].apply(_fmt_budget)
-
-            st.markdown('<div class="section-title" style="margin-top:0;">Топ КПКВК за кількістю заходів</div>',
-                        unsafe_allow_html=True)
+            kpkvk_display[f"План {finance_year} (млрд грн)"] = kpkvk_display["План"].apply(_finance_amount_text)
+            kpkvk_display[f"Факт {finance_year} (млрд грн)"] = kpkvk_display["Факт"].apply(_finance_amount_text)
+            st.markdown(
+                '<div class="section-title" style="margin-top:0;">Топ КПКВК за кількістю заходів</div>',
+                unsafe_allow_html=True,
+            )
             render_dashboard_table(
                 kpkvk_display[[
-                    "КПКВК", "Заходів", "Бюджет 2026 (млрд грн)",
-                    "Бюджет 2027 (млрд грн)", "Бюджет 2028 (млрд грн)",
+                    "КПКВК",
+                    "Заходів",
+                    f"План {finance_year} (млрд грн)",
+                    f"Факт {finance_year} (млрд грн)",
                 ]],
                 hide_index=False,
             )
             st.caption(
-                "Суми — лише заходи з наявними числовими даними; «—» означає "
-                "відсутність числових даних."
+                "Кожен захід у межах КПКВК враховано один раз; суми обчислено за числовими значеннями."
             )
+        else:
+            st.info("КПКВК за обраними параметрами не визначено.")
 
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -5592,42 +5877,26 @@ if breakdown_context is not None:
 if breakdown_context is not None:
     _activate_dashboard_context(breakdown_context)
     with breakdown_content:
+        finance_year = _finance_selected_year(breakdown_years)
+        fin_measures = _prepare_dashboard_finance_measures(
+            active,
+            active_period_rows,
+            finance_year,
+        )
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
         st.markdown('<div class="section-title">Таблиця заходів: фінансові дані</div>', unsafe_allow_html=True)
         st.markdown(
-            '<div class="section-subtitle">Заходи з відомостями про джерела фінансування за обраним фільтром</div>',
-            unsafe_allow_html=True
+            f'<div class="section-subtitle">Фінансові відомості за {finance_year} рік; '
+            'факт та еластичність з’являються після внесення файлу фактичного освоєння.</div>',
+            unsafe_allow_html=True,
         )
-
-        fin_table_cols = {
-            "code": "Код",
-            "name": "Захід",
-            "department": "Головний ССП",
-            "status_display": "Статус виконання",
-            "budget_kpkvk": "КПКВК",
-            "budget_2026": "ДБ 2026 (млрд грн)",
-            "budget_2027": "ДБ 2027 (млрд грн)",
-            "budget_2028": "ДБ 2028 (млрд грн)",
-            "other_source": "Інше джерело",
-            "other_2026": "Інше 2026",
-            "other_2027": "Інше 2027",
-            "other_2028": "Інше 2028",
-        }
-        available_cols = [c for c in fin_table_cols if c in active.columns]
-        fin_full = active[available_cols].rename(columns=fin_table_cols).copy()
-
-        # Форматування бюджетних стовпців
-        for col_label in ["ДБ 2026 (млрд грн)", "ДБ 2027 (млрд грн)", "ДБ 2028 (млрд грн)"]:
-            if col_label in fin_full.columns:
-                fin_full[col_label] = fin_full[col_label].apply(
-                    lambda v: f"{v:.3f}" if pd.notna(v) else "—"
-                )
-
         render_dashboard_table(
-            fin_full,
+            _finance_detail_display(fin_measures, finance_year),
             hide_index=True,
         )
-        st.caption("Числові суми бюджету наявні лише для частини заходів. «—» — дані не вказані.")
+        st.caption(
+            "План — стратегічні дані за обраний рік; факт — єдиний індекс core.finance."
+        )
         st.markdown("</div>", unsafe_allow_html=True)
 
 # Проблемні заходи.

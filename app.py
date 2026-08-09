@@ -12,6 +12,7 @@ from core.text_utils import (
 )
 from core import statuses as core_statuses
 from core.period_locks import all_periods_locked, is_period_locked
+from core.periods import quarter_to_roman
 from core.timeutils import now_kyiv
 from core import monitoring_data
 from core import exports as core_exports
@@ -737,6 +738,52 @@ def is_active_in_any_selected_year(row, selected_years):
     return False
 
 
+def is_active_in_any_selected_period(row, selected_years, selected_quarters):
+    """Перевіряє реальний перетин періоду виконання заходу з Year × Quarter.
+
+    Раніше Головна перевіряла тільки рік, тому квартальний фільтр міг змінити
+    статуси, але не сам перелік заходів. Тепер рік і квартал є одним hard-фільтром.
+    """
+    if not selected_years:
+        return True
+
+    quarter_month = {"I": 1, "II": 4, "III": 7, "IV": 10}
+    quarters = [quarter_to_roman(q) for q in (selected_quarters or ["I", "II", "III", "IV"])]
+    quarters = [q for q in quarters if q in quarter_month]
+    if not quarters:
+        quarters = ["I", "II", "III", "IV"]
+
+    def _date(value):
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            return None
+        if isinstance(value, (pd.Timestamp, datetime)):
+            return pd.Timestamp(value).normalize()
+        parsed = pd.to_datetime(raw_value(value), errors="coerce", dayfirst=True)
+        return None if pd.isna(parsed) else pd.Timestamp(parsed).normalize()
+
+    start_date = _date(row.get("measure_start_date", ""))
+    end_date = _date(row.get("measure_end_date", ""))
+
+    if start_date is not None or end_date is not None:
+        for year in [int(y) for y in selected_years]:
+            for quarter in quarters:
+                month = quarter_month[quarter]
+                period_start = pd.Timestamp(year=year, month=month, day=1)
+                if month == 10:
+                    period_end = pd.Timestamp(year=year, month=12, day=31)
+                else:
+                    period_end = pd.Timestamp(year=year, month=month + 3, day=1) - pd.Timedelta(days=1)
+                starts_before_end = start_date is None or start_date <= period_end
+                ends_after_start = end_date is None or end_date >= period_start
+                if starts_before_end and ends_after_start:
+                    return True
+        return False
+
+    # Якщо точні дати відсутні, не вигадуємо квартал: використовуємо
+    # перевірений річний fallback і вважаємо захід релевантним у межах року.
+    return is_active_in_any_selected_year(row, selected_years)
+
+
 
 def row_contains_selected_ssp(row, selected_ssp_indices):
     if not selected_ssp_indices:
@@ -824,71 +871,118 @@ def apply_measure_filters(
     selected_goal_codes,
     selected_product_types,
     selected_deputies,
-    search_query
+    search_query,
+    strat_df=None,
 ):
+    """Застосовує всі hard-фільтри одночасно, а пошук — лише всередині їх результату.
+
+    Важливо: пошук може збігтися не тільки з самим заходом, а й з його Ціллю,
+    Завданням або індикатором. Але такий збіг НІКОЛИ не повертає назад заходи,
+    які вже відсічені ССП/періодом/статусом/типом продукту/ціллю. Саме це
+    гарантує коректну роботу будь-якої комбінації фільтрів.
+    """
     filtered = measures.copy()
 
     if selected_goal_codes:
         filtered = filtered[filtered["parent_goal_code"].astype(str).str.strip().isin(selected_goal_codes)]
 
-    filtered["matches_ssp"] = filtered.apply(lambda row: row_contains_selected_ssp(row, selected_ssp_indices), axis=1)
-    filtered["matches_product_type"] = filtered.apply(lambda row: row_matches_product_type(row, selected_product_types), axis=1)
-    filtered["matches_deputy"] = filtered.apply(lambda row: row_matches_deputy(row, selected_deputies), axis=1)
-    filtered["matches_search"] = filtered.apply(lambda row: row_matches_search(row, search_query), axis=1)
-    filtered["active_in_selected_years"] = filtered.apply(lambda row: is_active_in_any_selected_year(row, selected_years), axis=1)
+    filtered["matches_ssp"] = filtered.apply(
+        lambda row: row_contains_selected_ssp(row, selected_ssp_indices), axis=1
+    )
+    filtered["matches_product_type"] = filtered.apply(
+        lambda row: row_matches_product_type(row, selected_product_types), axis=1
+    )
+    filtered["matches_deputy"] = filtered.apply(
+        lambda row: row_matches_deputy(row, selected_deputies), axis=1
+    )
+    filtered["active_in_selected_periods"] = filtered.apply(
+        lambda row: is_active_in_any_selected_period(
+            row, selected_years, selected_quarters
+        ),
+        axis=1,
+    )
 
     filtered["monitoring_status"] = filtered["code"].apply(
         lambda code: get_measure_status(monitoring_df, code, selected_years, selected_quarters)
     )
-
     filtered["has_submission"] = filtered["code"].apply(
         lambda code: has_monitoring_submission(monitoring_df, code, selected_years, selected_quarters)
     )
-
     filtered["has_approved"] = filtered["code"].apply(
         lambda code: has_approved_monitoring(monitoring_df, code, selected_years, selected_quarters)
     )
-
     filtered["has_waiting"] = filtered["code"].apply(
         lambda code: has_waiting_monitoring(monitoring_df, code, selected_years, selected_quarters)
     )
-
     filtered["has_returned"] = filtered["code"].apply(
         lambda code: has_returned_monitoring(monitoring_df, code, selected_years, selected_quarters)
     )
-
     filtered["has_not_counted"] = filtered["code"].apply(
         lambda code: has_not_counted_monitoring(monitoring_df, code, selected_years, selected_quarters)
     )
-
     filtered["execution_status"] = filtered["code"].apply(
         lambda code: get_measure_execution_status(monitoring_df, code, selected_years, selected_quarters)
     )
-
     filtered["has_risks"] = filtered["code"].apply(
         lambda code: measure_has_real_risk(monitoring_df, code, selected_years, selected_quarters)
     )
-
     filtered["matches_status_mode"] = filtered["code"].apply(
         lambda code: measure_matches_status_mode(
-            monitoring_df,
-            code,
-            selected_years,
-            selected_quarters,
-            status_mode
+            monitoring_df, code, selected_years, selected_quarters, status_mode
         )
     )
 
+    # Спочатку всі незалежні hard-фільтри. Пошук застосовується ТІЛЬКИ після них.
     filtered = filtered[
         filtered["matches_ssp"]
         & filtered["matches_product_type"]
         & filtered["matches_deputy"]
-        & filtered["matches_search"]
-        & filtered["active_in_selected_years"]
+        & filtered["active_in_selected_periods"]
         & filtered["matches_status_mode"]
-    ]
+    ].copy()
 
-    return filtered.copy()
+    query = raw_value(search_query).strip()
+    if not query or filtered.empty:
+        return filtered.copy()
+
+    direct_measure_match = filtered.apply(
+        lambda row: row_matches_search(row, query), axis=1
+    )
+
+    matched_goal_codes = set()
+    matched_task_codes = set()
+    if isinstance(strat_df, pd.DataFrame) and not strat_df.empty:
+        hierarchy = strat_df[strat_df["object_type"].isin(
+            ["goal", "goal_indicator", "task", "task_indicator"]
+        )].copy()
+        hierarchy = hierarchy[hierarchy.apply(
+            lambda row: indicator_row_matches_search(row, query), axis=1
+        )]
+
+        for _, row in hierarchy.iterrows():
+            obj_type = raw_value(row.get("object_type"))
+            code = raw_value(row.get("code"))
+            parent_goal = raw_value(row.get("parent_goal_code"))
+            parent_task = raw_value(row.get("parent_task_code"))
+            if obj_type == "goal":
+                matched_goal_codes.add(code)
+            elif obj_type == "goal_indicator":
+                matched_goal_codes.add(parent_goal or code)
+            elif obj_type == "task":
+                matched_task_codes.add(code)
+                if parent_goal:
+                    matched_goal_codes.add(parent_goal)
+            elif obj_type == "task_indicator":
+                if parent_task:
+                    matched_task_codes.add(parent_task)
+                if parent_goal:
+                    matched_goal_codes.add(parent_goal)
+
+    hierarchy_match = (
+        filtered["parent_goal_code"].astype(str).str.strip().isin(matched_goal_codes)
+        | filtered["parent_task_code"].astype(str).str.strip().isin(matched_task_codes)
+    )
+    return filtered[direct_measure_match | hierarchy_match].copy()
 
 
 def unique_measure_count(data, condition=None):
@@ -993,7 +1087,7 @@ def clean_html(html: str) -> str:
     )
 
 
-def latest_indicator_submission(code, indicator_name, fact_year):
+def latest_indicator_submission(code, indicator_name, fact_year, fact_quarters=None):
     """Останнє подання конкретного індикатора за ключем код + назва у вибраному році."""
     if indicator_monitoring_df.empty:
         return ""
@@ -1002,6 +1096,9 @@ def latest_indicator_submission(code, indicator_name, fact_year):
     data = data[data["strat_code"].astype(str).str.strip() == code_key]
     if "year" in data.columns:
         data = data[data["year"].astype(str).str.strip() == str(fact_year).strip()]
+    if fact_quarters and "quarter" in data.columns and not data.empty:
+        wanted_quarters = {quarter_to_roman(value) for value in fact_quarters}
+        data = data[data["quarter"].apply(quarter_to_roman).isin(wanted_quarters)]
     if name_key and not data.empty:
         data = data[
             data["indicator_name"].apply(
@@ -1020,58 +1117,70 @@ def latest_indicator_submission(code, indicator_name, fact_year):
     )
 
 
-def build_indicator_rows(parent_row, child_rows, selected_ssp_indices=None, search_query="", fact_year=None):
-    selected_ssp_indices = selected_ssp_indices or []
+def build_indicator_rows(parent_row, child_rows, selected_ssp_indices=None, search_query="", fact_year=None, fact_quarters=None):
+    """Готує індикатори без дублювання першого індикатора Цілі/Завдання.
 
+    Після нормалізації strategic_data перший індикатор існує як окремий
+    goal_indicator/task_indicator record. Для сумісності зі старими даними
+    структурний parent_row додається лише якщо такого індикатора серед дітей
+    справді немає.
+    """
+    selected_ssp_indices = selected_ssp_indices or []
     rows = []
+    seen_keys = set()
 
     indicator_cols = [
-        "indicator",
-        "unit",
-        "base_2021",
-        "fact_2024",
-        "fact_2025",
-        "_latest_monitoring",
-        "strategic_target_2028",
-        "strategic_target_2034",
-        "source_global",
-        "source_national",
-        "resp_main",
-        "resp_co_1",
+        "indicator", "unit", "base_2021", "fact_2024", "fact_2025",
+        "_latest_monitoring", "strategic_target_2028", "strategic_target_2034",
+        "source_global", "source_national", "resp_main", "resp_co_1",
         "deputy_minister_raw"
     ]
 
     def indicator_row_matches_filters(row):
         if selected_ssp_indices and not row_contains_selected_ssp(row, selected_ssp_indices):
             return False
-
         if raw_value(search_query) and not indicator_row_matches_search(row, search_query):
             return False
-
         return True
+
+    def identity(row):
+        return monitoring_data.indicator_identity_key(
+            row.get("code", ""), row.get("indicator", "")
+        )
 
     def add_row(row):
         if not raw_value(row.get("indicator", "")):
             return
-
         if not indicator_row_matches_filters(row):
             return
-
-        prepared_row = []
+        key = identity(row)
+        if key in seen_keys:
+            return
+        seen_keys.add(key)
 
         row_for_display = dict(row)
         row_for_display["_latest_monitoring"] = latest_indicator_submission(
-            row.get("code", ""), row.get("indicator", ""), fact_year
+            row.get("code", ""), row.get("indicator", ""), fact_year, fact_quarters
         )
-        for col in indicator_cols:
-            prepared_row.append(format_indicator_value(row_for_display.get(col, ""), col))
+        rows.append([
+            format_indicator_value(row_for_display.get(col, ""), col)
+            for col in indicator_cols
+        ])
 
-        rows.append(prepared_row)
+    # Синтетичний перший індикатор уже є серед child_rows. Якщо його немає
+    # (наприклад, старий/неперенормалізований DataFrame), parent залишається fallback.
+    child_keys = set()
+    if isinstance(child_rows, pd.DataFrame) and not child_rows.empty:
+        for _, child in child_rows.iterrows():
+            if raw_value(child.get("indicator", "")):
+                child_keys.add(identity(child))
 
-    add_row(parent_row)
+    if raw_value(parent_row.get("indicator", "")) and identity(parent_row) not in child_keys:
+        add_row(parent_row)
 
-    for _, child in child_rows.iterrows():
-        add_row(child)
+    if isinstance(child_rows, pd.DataFrame):
+        for _, child in child_rows.iterrows():
+            add_row(child)
 
     return rows
 
@@ -1755,14 +1864,85 @@ filtered_measures = apply_measure_filters(
     selected_goal_codes,
     selected_product_types,
     [],
-    search_query
+    search_query,
+    strat_df=df,
 )
 
-filtered_goal_codes = set(filtered_measures["parent_goal_code"].astype(str).str.strip()) if not filtered_measures.empty else set()
-filtered_task_codes = set(filtered_measures["parent_task_code"].astype(str).str.strip()) if not filtered_measures.empty else set()
+# Індикатори Цілей/Завдань — повноцінна частина ієрархії Головної.
+# Вони фільтруються власними релевантними параметрами (ССП, Ціль, пошук),
+# а measure-only фільтри (статус/тип продукту) не можуть самі по собі
+# «приклеїти» індикатор до ієрархії без хоча б одного відповідного заходу.
+relevant_indicators = df[df["object_type"].isin(["goal_indicator", "task_indicator"])].copy()
+if not relevant_indicators.empty:
+    relevant_indicators = relevant_indicators[
+        relevant_indicators["indicator"].astype(str).str.strip().ne("")
+    ].copy()
 
-visible_goals = goals[goals["code"].astype(str).str.strip().isin(filtered_goal_codes)].copy()
-visible_tasks = tasks_all[tasks_all["code"].astype(str).str.strip().isin(filtered_task_codes)].copy()
+    if selected_ssp_indices:
+        relevant_indicators = relevant_indicators[relevant_indicators.apply(
+            lambda row: row_contains_selected_ssp(row, selected_ssp_indices), axis=1
+        )].copy()
+
+    if selected_goal_codes:
+        relevant_indicators = relevant_indicators[
+            relevant_indicators["parent_goal_code"].astype(str).str.strip().isin(selected_goal_codes)
+        ].copy()
+
+    if raw_value(search_query):
+        relevant_indicators = relevant_indicators[relevant_indicators.apply(
+            lambda row: indicator_row_matches_search(row, search_query), axis=1
+        )].copy()
+
+measure_goal_codes = (
+    set(filtered_measures["parent_goal_code"].astype(str).str.strip())
+    if not filtered_measures.empty else set()
+)
+measure_task_codes = (
+    set(filtered_measures["parent_task_code"].astype(str).str.strip())
+    if not filtered_measures.empty else set()
+)
+
+# Якщо користувач задав фільтр, який має сенс лише для заходів, індикатор
+# показується тільки всередині тієї частини ієрархії, де після цього фільтра
+# реально залишилися заходи. Це не дозволяє жодному фільтру обходити інший.
+_measure_only_filter_active = bool(selected_product_types) or (
+    selected_status_mode != "Усі заходи стратегічного плану"
+)
+if _measure_only_filter_active and not relevant_indicators.empty:
+    relevant_indicators = relevant_indicators[relevant_indicators.apply(
+        lambda row: (
+            (raw_value(row.get("object_type")) == "goal_indicator"
+             and raw_value(row.get("parent_goal_code")) in measure_goal_codes)
+            or
+            (raw_value(row.get("object_type")) == "task_indicator"
+             and raw_value(row.get("parent_task_code")) in measure_task_codes)
+        ),
+        axis=1,
+    )].copy()
+
+indicator_goal_codes = (
+    set(relevant_indicators["parent_goal_code"].astype(str).str.strip())
+    if not relevant_indicators.empty else set()
+)
+indicator_task_codes = (
+    set(
+        relevant_indicators.loc[
+            relevant_indicators["object_type"] == "task_indicator",
+            "parent_task_code",
+        ].astype(str).str.strip()
+    )
+    if not relevant_indicators.empty else set()
+)
+
+filtered_goal_codes = {code for code in (measure_goal_codes | indicator_goal_codes) if code}
+filtered_task_codes = {code for code in (measure_task_codes | indicator_task_codes) if code}
+
+visible_goals = goals[
+    goals["code"].astype(str).str.strip().isin(filtered_goal_codes)
+].copy()
+visible_tasks = tasks_all[
+    tasks_all["code"].astype(str).str.strip().isin(filtered_task_codes)
+].copy()
 
 done_count, completion_percent = calculate_completion(filtered_measures, selected_years, selected_quarters)
 
@@ -1810,125 +1990,139 @@ st.subheader("Відомості для моніторингу")
 st.markdown(
     """
     <div class="note-box">
-        Фільтрація застосовується до всієї ієрархії Стратегічного плану: стратегічна ціль → завдання → захід.<br>
-        Стратегічні цілі та завдання без відповідних заходів не відображаються.<br>
-        Відсоток виконання розраховується за відібраними заходами.
+        Усі обрані параметри застосовуються одночасно до всієї ієрархії Стратегічного плану: стратегічна ціль → завдання → захід.<br>
+        Цілі та завдання відображаються, якщо за поточними параметрами для них є релевантні заходи або індикатори Цілей/Завдань.<br>
+        Відсоток виконання розраховується лише за відібраними заходами; індикатори показуються окремими блоками всередині відповідної Цілі/Завдання.
     </div>
     """,
     unsafe_allow_html=True
 )
 
-if filtered_measures.empty:
+if filtered_measures.empty and relevant_indicators.empty:
     st.warning("За обраними параметрами відбору відомостей не знайдено.")
     render_footer()
     st.stop()
 
-if len(filtered_goal_codes) == 1:
-    st.markdown(
-        '<div class="section-title">Заходи (плоский перелік — звужено до однієї стратегічної цілі)</div>',
-        unsafe_allow_html=True
-    )
-    render_measure_table(
-        filtered_measures,
-        monitoring_df,
-        quarter_data,
-        selected_years,
+# Завжди зберігаємо затверджене ієрархічне відображення через сині expander-блоки.
+# Навіть якщо після фільтрів залишилася лише одна Ціль, плоский режим НЕ вмикається:
+# інакше зникають блоки індикаторів та кнопки «Розгорнути/Згорнути».
+for _, goal in visible_goals.iterrows():
+    goal_code = raw_value(goal["code"])
+    goal_name = strip_leading_code(goal["name"], goal_code)
+
+    goal_filtered_measures = filtered_measures[
+        filtered_measures["parent_goal_code"].astype(str).str.strip() == goal_code
+    ].copy() if not filtered_measures.empty else pd.DataFrame(columns=filtered_measures.columns)
+
+    goal_indicator_children = relevant_indicators[
+        (relevant_indicators["object_type"] == "goal_indicator")
+        & (relevant_indicators["parent_goal_code"].astype(str).str.strip() == goal_code)
+        & (relevant_indicators["parent_task_code"].astype(str).str.strip() == "")
+    ].copy() if not relevant_indicators.empty else pd.DataFrame()
+
+    goal_indicators = build_indicator_rows(
+        goal,
+        goal_indicator_children,
+        selected_ssp_indices,
+        search_query,
+        indicator_fact_year,
         selected_quarters,
-        show_context_codes=True
     )
-else:
-    for _, goal in visible_goals.iterrows():
-        goal_code = raw_value(goal["code"])
-        goal_name = strip_leading_code(goal["name"], goal_code)
 
-        goal_filtered_measures = filtered_measures[
-            filtered_measures["parent_goal_code"].astype(str).str.strip() == goal_code
-        ].copy()
-
-        goal_indicator_children = df[
-            (df["object_type"] == "goal_indicator")
-            & (df["parent_goal_code"].astype(str).str.strip() == goal_code)
-            & (df["parent_task_code"].astype(str).str.strip() == "")
-        ].copy()
-
-        goal_indicators = build_indicator_rows(
-            goal,
-            goal_indicator_children,
-            selected_ssp_indices,
-            search_query,
-            indicator_fact_year,
+    goal_task_codes = (
+        set(goal_filtered_measures["parent_task_code"].astype(str).str.strip())
+        if not goal_filtered_measures.empty else set()
+    )
+    goal_indicator_task_codes = (
+        set(
+            relevant_indicators.loc[
+                (relevant_indicators["object_type"] == "task_indicator")
+                & (relevant_indicators["parent_goal_code"].astype(str).str.strip() == goal_code),
+                "parent_task_code",
+            ].astype(str).str.strip()
         )
+        if not relevant_indicators.empty else set()
+    )
+    goal_task_codes = {code for code in (goal_task_codes | goal_indicator_task_codes) if code}
+    tasks = tasks_all[
+        tasks_all["code"].astype(str).str.strip().isin(goal_task_codes)
+    ].copy()
 
-        if goal_filtered_measures.empty and not goal_indicators:
-            continue
+    if goal_filtered_measures.empty and not goal_indicators and tasks.empty:
+        continue
 
-        goal_task_codes = set(goal_filtered_measures["parent_task_code"].astype(str).str.strip()) if not goal_filtered_measures.empty else set()
-        tasks = tasks_all[tasks_all["code"].astype(str).str.strip().isin(goal_task_codes)].copy()
+    goal_done, goal_percent = calculate_completion(
+        goal_filtered_measures, selected_years, selected_quarters
+    )
+    goal_percent_label = f"{goal_percent}%" if not goal_filtered_measures.empty else "н/д"
 
-        goal_done, goal_percent = calculate_completion(goal_filtered_measures, selected_years, selected_quarters)
+    goal_label = (
+        f"{goal_code} {goal_name} | "
+        f"Завдань — {len(tasks)} | "
+        f"Заходів — {len(goal_filtered_measures)} | "
+        f"Виконання — {goal_percent_label}"
+    )
 
-        goal_label = (
-            f"{goal_code} {goal_name} | "
-            f"Завдань — {len(tasks)} | "
-            f"Заходів — {len(goal_filtered_measures)} | "
-            f"Виконання — {goal_percent}%"
-        )
-
-        with st.expander(goal_label, expanded=st.session_state.expand_all_goals):
+    with st.expander(goal_label, expanded=st.session_state.expand_all_goals):
+        if not goal_filtered_measures.empty:
             st.progress(min(goal_percent / 100, 1.0))
 
-            if goal_indicators:
-                st.markdown(
-                    '<div class="section-title">Індикатори досягнення стратегічної цілі</div>',
-                    unsafe_allow_html=True
-                )
-                render_indicator_table(goal_indicators, indicator_fact_year)
+        if goal_indicators:
+            st.markdown(
+                '<div class="section-title">Індикатори досягнення стратегічної цілі</div>',
+                unsafe_allow_html=True
+            )
+            render_indicator_table(goal_indicators, indicator_fact_year)
 
-            for _, task in tasks.iterrows():
-                task_code = raw_value(task["code"])
-                task_name = strip_leading_code(task["name"], task_code)
+        for _, task in tasks.iterrows():
+            task_code = raw_value(task["code"])
+            task_name = strip_leading_code(task["name"], task_code)
 
-                task_measures = goal_filtered_measures[
-                    goal_filtered_measures["parent_task_code"].astype(str).str.strip() == task_code
-                ].copy()
+            task_measures = goal_filtered_measures[
+                goal_filtered_measures["parent_task_code"].astype(str).str.strip() == task_code
+            ].copy() if not goal_filtered_measures.empty else pd.DataFrame(columns=filtered_measures.columns)
 
-                task_indicator_children = df[
-                    (df["object_type"] == "task_indicator")
-                    & (df["parent_task_code"].astype(str) == task_code)
-                ].copy()
+            task_indicator_children = relevant_indicators[
+                (relevant_indicators["object_type"] == "task_indicator")
+                & (relevant_indicators["parent_task_code"].astype(str).str.strip() == task_code)
+            ].copy() if not relevant_indicators.empty else pd.DataFrame()
 
-                task_indicators = build_indicator_rows(
-                    task,
-                    task_indicator_children,
-                    selected_ssp_indices,
-                    search_query,
-                    indicator_fact_year,
-                )
+            task_indicators = build_indicator_rows(
+                task,
+                task_indicator_children,
+                selected_ssp_indices,
+                search_query,
+                indicator_fact_year,
+                selected_quarters,
+            )
 
-                if task_measures.empty and not task_indicators:
-                    continue
+            if task_measures.empty and not task_indicators:
+                continue
 
-                task_done, task_percent = calculate_completion(task_measures, selected_years, selected_quarters)
+            task_done, task_percent = calculate_completion(
+                task_measures, selected_years, selected_quarters
+            )
+            task_percent_label = f"{task_percent}%" if not task_measures.empty else "н/д"
 
-                task_label = (
-                    f"{task_code} {task_name} | "
-                    f"Заходів — {len(task_measures)} | "
-                    f"Виконання — {task_percent}%"
-                )
+            task_label = (
+                f"{task_code} {task_name} | "
+                f"Заходів — {len(task_measures)} | "
+                f"Виконання — {task_percent_label}"
+            )
 
-                with st.expander(task_label, expanded=st.session_state.expand_all_goals):
-                    if task_indicators:
-                        st.markdown(
-                            '<div class="section-title">Індикатори досягнення завдання</div>',
-                            unsafe_allow_html=True
-                        )
-                        render_indicator_table(task_indicators, indicator_fact_year)
+            with st.expander(task_label, expanded=st.session_state.expand_all_goals):
+                if task_indicators:
+                    st.markdown(
+                        '<div class="section-title">Індикатори досягнення завдання</div>',
+                        unsafe_allow_html=True
+                    )
+                    render_indicator_table(task_indicators, indicator_fact_year)
 
+                if not task_measures.empty:
                     st.markdown(
                         '<div class="section-title">Заходи</div>',
                         unsafe_allow_html=True
                     )
-
                     render_measure_table(
                         task_measures,
                         monitoring_df,

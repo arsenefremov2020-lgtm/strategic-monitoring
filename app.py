@@ -21,7 +21,7 @@ from core.access import (
     is_scope_override_active,
     get_user_ssp_index,
 )
-from core.ui import render_scope_toggle, render_auto_refresh_notice
+from core.ui import render_scope_toggle
 from config.roles import ROLE_SSP, ROLE_SSP_HEAD, ROLE_UNIT_HEAD, ROLE_SSP_DEPUTY
 
 current_user = page_setup("Стратегічний план", page_name="app")
@@ -323,12 +323,6 @@ div[data-testid="stExpander"] div[data-testid="stExpander"] > details > summary 
     margin-top: 0 !important;
 }
 
-
-/* На головній приховуємо лише технічний iframe автооновлення,
-   щоб він не створював зайвий вертикальний проміжок під блакитним повідомленням. */
-.st-key-main_auto_refresh_notice [data-testid="stElementContainer"]:has(iframe) {
-    display: none !important;
-}
 
 .section-title {
     font-size: 16px;
@@ -637,7 +631,7 @@ def load_monitoring():
 
 
 
-from core.closeouts import load_manual_closeouts
+from core.closeouts import load_manual_closeouts, append_confirmed_closeout_facts
 
 
 # ------------------------------------------------------------
@@ -668,6 +662,29 @@ def has_returned_monitoring(monitoring_df, code, selected_years, selected_quarte
 
 def has_not_counted_monitoring(monitoring_df, code, selected_years, selected_quarters):
     return get_measure_status(monitoring_df, code, selected_years, selected_quarters) == "Не враховано"
+
+
+def get_measure_execution_status(monitoring_df, code, selected_years, selected_quarters):
+    """Latest approved execution status, kept separate from approval workflow status."""
+    records = get_measure_records(monitoring_df, code, selected_years, selected_quarters)
+    if records.empty or "status" not in records.columns:
+        return ""
+    if "approval_status" in records.columns:
+        records = records[records["approval_status"].astype(str).str.strip() == "Погоджено"].copy()
+    if records.empty:
+        return ""
+    sort_cols = [c for c in ["updated_at", "submitted_at", "id"] if c in records.columns]
+    if sort_cols:
+        records = records.sort_values(sort_cols, ascending=[False] * len(sort_cols), na_position="last")
+    return raw_value(records.iloc[0].get("status", ""))
+
+
+def measure_has_real_risk(monitoring_df, code, selected_years, selected_quarters):
+    records = get_measure_records(monitoring_df, code, selected_years, selected_quarters)
+    if records.empty or "risks" not in records.columns:
+        return False
+    empty_markers = {"", "—", "-", "немає", "відсутні", "відсутній", "не виявлено"}
+    return any(raw_value(value).strip().casefold() not in empty_markers for value in records["risks"].tolist())
 
 
 
@@ -844,7 +861,13 @@ def apply_measure_filters(
         lambda code: has_not_counted_monitoring(monitoring_df, code, selected_years, selected_quarters)
     )
 
-    filtered["has_risks"] = filtered["has_not_counted"]
+    filtered["execution_status"] = filtered["code"].apply(
+        lambda code: get_measure_execution_status(monitoring_df, code, selected_years, selected_quarters)
+    )
+
+    filtered["has_risks"] = filtered["code"].apply(
+        lambda code: measure_has_real_risk(monitoring_df, code, selected_years, selected_quarters)
+    )
 
     filtered["matches_status_mode"] = filtered["code"].apply(
         lambda code: measure_matches_status_mode(
@@ -893,7 +916,7 @@ def calculate_completion(filtered_measures, years=None, quarters=None):
     if years is not None and quarters is not None and all_periods_locked(years, quarters):
         return 0, 0
 
-    done_count = len(filtered_measures[filtered_measures["monitoring_status"] == "Погоджено"])
+    done_count = len(filtered_measures[filtered_measures.get("execution_status", pd.Series(index=filtered_measures.index, dtype=str)) == "Виконано"])
     total_count = len(filtered_measures)
 
     percent = round((done_count / total_count) * 100, 2) if total_count else 0
@@ -1316,7 +1339,7 @@ def collapse_all_main():
 df = load_strat_matrix()
 _all_monitoring_df = load_monitoring()
 # Основна матриця заходів рахується окремо від подань індикаторів.
-monitoring_df = monitoring_data.measures_only(_all_monitoring_df)
+monitoring_df = append_confirmed_closeout_facts(monitoring_data.measures_only(_all_monitoring_df))
 indicator_monitoring_df = monitoring_data.indicators_only(_all_monitoring_df)
 quarter_data = build_quarter_data(monitoring_df)
 
@@ -1422,9 +1445,6 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
-
-with st.container(key="main_auto_refresh_notice"):
-    render_auto_refresh_notice("app", minutes=5)
 
 if str(ANNOUNCEMENT or "").strip():
     st.warning(str(ANNOUNCEMENT).strip(), icon="📢")
@@ -1741,49 +1761,6 @@ filtered_measures = apply_measure_filters(
 filtered_goal_codes = set(filtered_measures["parent_goal_code"].astype(str).str.strip()) if not filtered_measures.empty else set()
 filtered_task_codes = set(filtered_measures["parent_task_code"].astype(str).str.strip()) if not filtered_measures.empty else set()
 
-if selected_ssp_indices or raw_value(search_query):
-    matching_goal_indicator_rows = df[
-        (df["object_type"].isin(["goal", "goal_indicator"]))
-        & df.apply(
-            lambda row: (
-                row_contains_selected_ssp(row, selected_ssp_indices)
-                and indicator_row_matches_search(row, search_query)
-            ),
-            axis=1
-        )
-    ].copy()
-
-    matching_task_indicator_rows = df[
-        (df["object_type"].isin(["task", "task_indicator"]))
-        & df.apply(
-            lambda row: (
-                row_contains_selected_ssp(row, selected_ssp_indices)
-                and indicator_row_matches_search(row, search_query)
-            ),
-            axis=1
-        )
-    ].copy()
-
-    indicator_goal_codes = set(matching_goal_indicator_rows["parent_goal_code"].astype(str).str.strip())
-    direct_goal_codes = set(matching_goal_indicator_rows["code"].astype(str).str.strip())
-
-    indicator_task_goal_codes = set(matching_task_indicator_rows["parent_goal_code"].astype(str).str.strip())
-    indicator_task_codes = set(matching_task_indicator_rows["parent_task_code"].astype(str).str.strip())
-    direct_task_codes = set(matching_task_indicator_rows["code"].astype(str).str.strip())
-
-    filtered_goal_codes = (
-        filtered_goal_codes
-        | indicator_goal_codes
-        | direct_goal_codes
-        | indicator_task_goal_codes
-    )
-
-    filtered_task_codes = (
-        filtered_task_codes
-        | indicator_task_codes
-        | direct_task_codes
-    )
-
 visible_goals = goals[goals["code"].astype(str).str.strip().isin(filtered_goal_codes)].copy()
 visible_tasks = tasks_all[tasks_all["code"].astype(str).str.strip().isin(filtered_task_codes)].copy()
 
@@ -1792,7 +1769,7 @@ done_count, completion_percent = calculate_completion(filtered_measures, selecte
 approved_filtered = count_filtered_status(filtered_measures, "Погоджено")
 waiting_filtered = count_filtered_status(filtered_measures, "На розгляді")
 not_counted_filtered = count_filtered_status(filtered_measures, "Не враховано")
-risk_count = not_counted_filtered
+risk_count = int(filtered_measures["has_risks"].fillna(False).sum()) if not filtered_measures.empty and "has_risks" in filtered_measures.columns else 0
 
 search_cards = "".join([
     make_summary_card("Стратегічних цілей", len(visible_goals)),

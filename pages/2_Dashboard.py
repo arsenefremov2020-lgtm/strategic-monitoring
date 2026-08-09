@@ -2317,6 +2317,7 @@ def render_dashboard_table(
     max_cell_height=74,
     column_widths=None,
     scroll_columns=None,
+    table_width=None,
 ):
     """Read-only table in the Home-page visual standard.
 
@@ -2345,6 +2346,7 @@ def render_dashboard_table(
         show_index=not hide_index,
         column_widths=column_widths or {},
         scroll_columns=scroll_columns or set(),
+        table_width=table_width,
     )
 
 
@@ -4991,6 +4993,7 @@ if breakdown_context is not None:
                 "Покриття, %": lambda value: f"{float(value):.2f}",
             },
             row_class_fn=_dashboard_rank_row_class,
+            table_width="99%",
         )
         st.caption(
             "Кольори рядків: зелений — перші три місця; жовтий — середня група; "
@@ -6153,6 +6156,7 @@ if breakdown_context is not None:
                     f"Факт {finance_year} (млрд грн)",
                 ]],
                 hide_index=False,
+                table_width="99%",
             )
             st.caption(
                 "Кожен захід у межах КПКВК враховано один раз; суми обчислено за числовими значеннями."
@@ -6190,8 +6194,8 @@ if breakdown_context is not None:
             _finance_detail_display(financed_table_rows, finance_year),
             hide_index=True,
             empty_message="За обраними параметрами заходів із фінансуванням немає.",
-            min_width=1380,
             max_cell_height=72,
+            table_width="fit-columns",
             column_widths={
                 "Код": 72,
                 "Захід": 180,
@@ -6291,8 +6295,8 @@ if breakdown_context is not None:
                 "Оцінка виконання, %", "Traffic light", "Ризик", "Risk score", "Причина ризику"
             ]],
             hide_index=True,
-            min_width=2200,
             max_cell_height=76,
+            table_width="fit-columns",
             column_widths={
                 "Період": 82,
                 "Код": 72,
@@ -6617,11 +6621,12 @@ def _trajectory_value_label(value):
         return ""
 
 
-def _trajectory_marker_sizes(values, *, base=38, maximum=64):
+def _trajectory_marker_sizes(values, *, base=28, maximum=40):
+    """Compact circles that still keep a two-decimal value readable inside."""
     sizes = []
     for value in values:
         label = _trajectory_value_label(value)
-        sizes.append(min(maximum, max(base, 18 + len(label) * 5)))
+        sizes.append(min(maximum, max(base, 12 + len(label) * 3.5)))
     return sizes
 
 
@@ -6700,7 +6705,7 @@ def _render_indicator_trajectory_section():
             ),
             text=[_trajectory_value_label(value) for value in values],
             textposition="middle center",
-            textfont=dict(color="#FFFFFF", size=9, family="Arial Black"),
+            textfont=dict(color="#FFFFFF", size=7, family="Arial Black"),
             hovertemplate="Факт %{x}: %{y:.2f}<extra></extra>",
         ))
 
@@ -6718,7 +6723,7 @@ def _render_indicator_trajectory_section():
                 size=[
                     0 if anchor_year is not None and y == anchor_year
                     else _trajectory_marker_sizes(
-                        [required[y]], base=34, maximum=58
+                        [required[y]], base=26, maximum=38
                     )[0]
                     for y in years
                 ],
@@ -6731,7 +6736,7 @@ def _render_indicator_trajectory_section():
                 for y in years
             ],
             textposition="middle center",
-            textfont=dict(color="#FFFFFF", size=8, family="Arial Black"),
+            textfont=dict(color="#FFFFFF", size=7, family="Arial Black"),
             hovertemplate="Необхідно %{x}: %{y:.2f}<extra></extra>",
         ))
 
@@ -6749,7 +6754,7 @@ def _render_indicator_trajectory_section():
                 size=[
                     0 if anchor_year is not None and y == anchor_year
                     else _trajectory_marker_sizes(
-                        [forecast[y]], base=32, maximum=56
+                        [forecast[y]], base=26, maximum=38
                     )[0]
                     for y in years
                 ],
@@ -6762,7 +6767,7 @@ def _render_indicator_trajectory_section():
                 for y in years
             ],
             textposition="middle center",
-            textfont=dict(color="#FFFFFF", size=8, family="Arial Black"),
+            textfont=dict(color="#FFFFFF", size=7, family="Arial Black"),
             hovertemplate="Прогноз %{x}: %{y:.2f}<extra></extra>",
         ))
 
@@ -6773,14 +6778,14 @@ def _render_indicator_trajectory_section():
             y=[t28],
             mode="markers+text",
             marker=dict(
-                size=max(48, 20 + len(target_label) * 5),
+                size=min(44, max(36, 14 + len(target_label) * 3.5)),
                 symbol="circle",
                 color=required_color,
-                line=dict(color=target_border, width=4),
+                line=dict(color=target_border, width=3),
             ),
             text=[target_label],
             textposition="middle center",
-            textfont=dict(color="#FFFFFF", size=9, family="Arial Black"),
+            textfont=dict(color="#FFFFFF", size=8, family="Arial Black"),
             name="Орієнтир 2028",
             hovertemplate="Орієнтир 2028: %{y:.2f}<extra></extra>",
         ))
@@ -6791,14 +6796,14 @@ def _render_indicator_trajectory_section():
             y=[t34],
             mode="markers+text",
             marker=dict(
-                size=max(48, 20 + len(target_label) * 5),
+                size=min(44, max(36, 14 + len(target_label) * 3.5)),
                 symbol="circle",
                 color=required_color,
-                line=dict(color=target_border, width=4),
+                line=dict(color=target_border, width=3),
             ),
             text=[target_label],
             textposition="middle center",
-            textfont=dict(color="#FFFFFF", size=9, family="Arial Black"),
+            textfont=dict(color="#FFFFFF", size=8, family="Arial Black"),
             name="Орієнтир 2034",
             hovertemplate="Орієнтир 2034: %{y:.2f}<extra></extra>",
         ))

@@ -2312,16 +2312,39 @@ def render_dashboard_table(
     empty_message="Записів немає.",
     formatters=None,
     row_class_fn=None,
+    height=325,
+    min_width=None,
+    max_cell_height=74,
+    column_widths=None,
+    scroll_columns=None,
 ):
-    """Read-only table in the single Home-page visual standard."""
+    """Read-only table in the Home-page visual standard.
+
+    Short tables stretch to the full available Dashboard width. Wide tables
+    retain the shared external scroll and may define narrower text columns with
+    their own internal cell scroll.
+    """
+    try:
+        frame = table_data.data if hasattr(table_data, "data") else table_data
+        column_count = len(frame.columns) if isinstance(frame, pd.DataFrame) else 0
+    except Exception:
+        column_count = 0
+    if min_width is None:
+        min_width = 0 if column_count <= 8 else max(
+            1180, min(3600, column_count * 118)
+        )
     render_readonly_table(
         table_data,
-        height=325,
+        height=height,
+        min_width=min_width,
+        max_cell_height=max_cell_height,
         compact=False,
         empty_message=empty_message,
         formatters=formatters or {},
         row_class_fn=row_class_fn,
         show_index=not hide_index,
+        column_widths=column_widths or {},
+        scroll_columns=scroll_columns or set(),
     )
 
 
@@ -5689,31 +5712,91 @@ if dynamics_context is not None:
             unsafe_allow_html=True,
         )
 
-        timeline_data = active.copy()
+        # Стан кожного заходу беремо саме у кварталі його дедлайну, а не
+        # лише з останнього snapshot. Так multi-period фільтр не губить III/IV.
+        timeline_data = active_period_rows.copy()
+        if "period_number" not in timeline_data.columns:
+            timeline_data["period_number"] = timeline_data.apply(
+                lambda row: core_period_number(
+                    row.get("period_year"), row.get("period_quarter")
+                ),
+                axis=1,
+            )
         timeline_data["end_num"] = timeline_data["end_period"].apply(parse_period)
-        timeline_data = timeline_data[timeline_data["end_num"].notna()].copy()
+        timeline_data["period_number"] = pd.to_numeric(
+            timeline_data["period_number"], errors="coerce"
+        )
+        timeline_data["end_num"] = pd.to_numeric(
+            timeline_data["end_num"], errors="coerce"
+        )
 
-        if not timeline_data.empty:
-            def end_num_to_label(n):
-                y = int(n) // 10
-                q_map = {1: "I", 2: "II", 3: "III", 4: "IV"}
-                q = q_map.get(int(n) % 10, "?")
-                return f"{y} {q}"
+        q_num_map = {"I": 1, "II": 2, "III": 3, "IV": 4}
+        selected_deadline_periods = sorted({
+            int(year) * 10 + q_num_map[quarter]
+            for year in dynamics_years
+            for quarter in dynamics_quarters
+            if quarter in q_num_map
+        })
 
-            timeline_data["deadline_label"] = timeline_data["end_num"].apply(end_num_to_label)
+        def end_num_to_label(n):
+            y = int(n) // 10
+            q_map = {1: "I", 2: "II", 3: "III", 4: "IV"}
+            q = q_map.get(int(n) % 10, "?")
+            return f"{y} {q}"
 
+        deadline_order = [
+            end_num_to_label(period) for period in selected_deadline_periods
+        ]
+
+        timeline_data = timeline_data[
+            timeline_data["end_num"].isin(selected_deadline_periods)
+            & (timeline_data["period_number"] == timeline_data["end_num"])
+        ].copy()
+
+        if selected_deadline_periods:
             def _tl_status(row):
                 status = clean(row.get("status_display", ""))
-                return status if status in core_statuses.MODEL_STATUSES else core_statuses.ST_NOTDONE
+                return (
+                    status if status in core_statuses.MODEL_STATUSES
+                    else core_statuses.ST_NOTDONE
+                )
 
-            timeline_data["tl_status"] = timeline_data.apply(_tl_status, axis=1)
+            if not timeline_data.empty:
+                sort_cols = [
+                    column for column in
+                    ["code", "end_num", "request_submitted_at", "request_id"]
+                    if column in timeline_data.columns
+                ]
+                if sort_cols:
+                    timeline_data = timeline_data.sort_values(sort_cols)
+                timeline_data = timeline_data.drop_duplicates(
+                    subset=["code", "end_num"], keep="last"
+                )
+                timeline_data["deadline_label"] = timeline_data["end_num"].apply(
+                    end_num_to_label
+                )
+                timeline_data["tl_status"] = timeline_data.apply(_tl_status, axis=1)
+                tl_grouped = (
+                    timeline_data
+                    .groupby(["deadline_label", "tl_status"])
+                    .size()
+                    .reset_index(name="Кількість")
+                )
+            else:
+                tl_grouped = pd.DataFrame(
+                    columns=["deadline_label", "tl_status", "Кількість"]
+                )
 
+            tl_status_order = list(core_statuses.MODEL_STATUSES)
+            full_index = pd.MultiIndex.from_product(
+                [deadline_order, tl_status_order],
+                names=["deadline_label", "tl_status"],
+            )
             tl_grouped = (
-                timeline_data
-                .groupby(["deadline_label", "end_num", "tl_status"])
-                .size()
-                .reset_index(name="Кількість")
-                .sort_values("end_num")
+                tl_grouped
+                .set_index(["deadline_label", "tl_status"])
+                .reindex(full_index, fill_value=0)
+                .reset_index()
             )
 
             tl_color_map = {
@@ -5729,6 +5812,10 @@ if dynamics_context is not None:
                 x="deadline_label",
                 y="Кількість",
                 color="tl_status",
+                category_orders={
+                    "deadline_label": deadline_order,
+                    "tl_status": tl_status_order,
+                },
                 color_discrete_map=tl_color_map,
                 barmode="stack",
                 labels={
@@ -6092,9 +6179,33 @@ if breakdown_context is not None:
             'факт та еластичність з’являються після внесення файлу фактичного освоєння.</div>',
             unsafe_allow_html=True,
         )
+        financed_table_rows = fin_measures[
+            fin_measures["_finance_types"].apply(
+                lambda values: isinstance(values, list)
+                and any(value != "Без фінансування" for value in values)
+            )
+        ].copy() if not fin_measures.empty else pd.DataFrame()
+
         render_dashboard_table(
-            _finance_detail_display(fin_measures, finance_year),
+            _finance_detail_display(financed_table_rows, finance_year),
             hide_index=True,
+            empty_message="За обраними параметрами заходів із фінансуванням немає.",
+            min_width=1380,
+            max_cell_height=72,
+            column_widths={
+                "Код": 72,
+                "Захід": 180,
+                "Головний ССП": 105,
+                "Статус виконання": 120,
+                "КПКВК": 90,
+                "Інше джерело": 160,
+                f"План {finance_year}, млрд грн": 125,
+                f"Факт {finance_year}, млрд грн": 125,
+                "% фінансового виконання": 135,
+                "Стан виконання заходу, %": 145,
+                "Коефіцієнт еластичності": 135,
+            },
+            scroll_columns={"Захід"},
         )
         st.caption(
             "План — стратегічні дані за обраний рік; факт — єдиний індекс core.finance."
@@ -6180,6 +6291,29 @@ if breakdown_context is not None:
                 "Оцінка виконання, %", "Traffic light", "Ризик", "Risk score", "Причина ризику"
             ]],
             hide_index=True,
+            min_width=2200,
+            max_cell_height=76,
+            column_widths={
+                "Період": 82,
+                "Код": 72,
+                "Захід": 190,
+                "Індикатор": 190,
+                "Одиниця виміру": 105,
+                "Тип продукту": 105,
+                "Головний ССП": 100,
+                "Джерело даних": 120,
+                "Початок": 90,
+                "Кінець": 90,
+                "Планове значення": 110,
+                "Фактичне значення": 110,
+                "Статус виконання": 120,
+                "Оцінка виконання, %": 120,
+                "Traffic light": 120,
+                "Ризик": 115,
+                "Risk score": 90,
+                "Причина ризику": 200,
+            },
+            scroll_columns={"Захід", "Індикатор", "Причина ризику"},
         )
 
         st.markdown("</div>", unsafe_allow_html=True)
@@ -6335,6 +6469,7 @@ def _build_indicator_trajectory(row):
     code = clean(row.get("code"))
     indicator_name = clean(row.get("indicator"))
     code_key, indicator_key = monitoring_data.indicator_identity_key(code, indicator_name)
+
     actual = {}
     for year, col in [(2021, "base_2021"), (2024, "fact_2024"), (2025, "fact_2025")]:
         value = _trajectory_number(row.get(col))
@@ -6354,78 +6489,162 @@ def _build_indicator_trajectory(row):
             req["_value"] = req.apply(
                 lambda r: _trajectory_number(r.get("numeric_value"))
                 if _trajectory_number(r.get("numeric_value")) is not None
-                else _trajectory_number(r.get("value_text")), axis=1
+                else _trajectory_number(r.get("value_text")),
+                axis=1,
             )
             req["_date"] = pd.to_datetime(req.get("as_of_date"), errors="coerce")
-            req["_submitted"] = pd.to_datetime(req.get("submitted_at"), errors="coerce", utc=True)
+            req["_submitted"] = pd.to_datetime(
+                req.get("submitted_at"), errors="coerce", utc=True
+            )
             req["_id"] = pd.to_numeric(req.get("id"), errors="coerce").fillna(-1)
             req = req[req["_year"].notna() & req["_value"].notna()].copy()
             if not req.empty:
-                latest = (req.sort_values(["_year", "_date", "_submitted", "_id"], na_position="first")
-                          .groupby("_year", as_index=False, sort=False).tail(1))
+                latest = (
+                    req.sort_values(
+                        ["_year", "_date", "_submitted", "_id"],
+                        na_position="first",
+                    )
+                    .groupby("_year", as_index=False, sort=False)
+                    .tail(1)
+                )
                 for _, item in latest.iterrows():
                     actual[int(item["_year"])] = float(item["_value"])
 
     target_2028 = _trajectory_number(row.get("strategic_target_2028"))
     target_2034 = _trajectory_number(row.get("strategic_target_2034"))
 
-    # Same baseline fallback used by the MіО trajectory methodology:
-    # 2025 -> 2024 -> 2021.
-    baseline_year = None
-    baseline_value = None
-    for year in (2025, 2024, 2021):
-        value = actual.get(year)
-        if value is not None and value > 0:
-            baseline_year, baseline_value = year, value
-            break
+    numeric_actuals = sorted(
+        (int(year), float(value))
+        for year, value in actual.items()
+        if value is not None
+    )
+    positive_actuals = [
+        (year, value) for year, value in numeric_actuals if value > 0
+    ]
+    anchor_year = numeric_actuals[-1][0] if numeric_actuals else None
+    anchor_value = numeric_actuals[-1][1] if numeric_actuals else None
 
+    # Необхідна траєкторія завжди починається від ОСТАННЬОГО факту.
     required = {}
     required_rates = []
-    if baseline_year is not None and target_2028 is not None:
-        segment = _geometric_path(baseline_year, baseline_value, 2028, target_2028)
-        required.update(segment)
-        if segment and baseline_value > 0:
-            required_rates.append((baseline_year, 2028, (target_2028 / baseline_value) ** (1/(2028-baseline_year)) - 1))
-    elif baseline_year is not None and target_2034 is not None:
-        # Якщо проміжний орієнтир 2028 не заданий, будуємо потрібну
-        # траєкторію прямо до довгострокового орієнтира 2034.
-        segment = _geometric_path(baseline_year, baseline_value, 2034, target_2034)
-        required.update(segment)
-        if segment and baseline_value > 0:
-            required_rates.append((baseline_year, 2034, (target_2034 / baseline_value) ** (1/(2034-baseline_year)) - 1))
-    if target_2028 is not None and target_2034 is not None:
-        segment = _geometric_path(2028, target_2028, 2034, target_2034)
-        required.update(segment)
-        if segment and target_2028 > 0:
-            required_rates.append((2028, 2034, (target_2034 / target_2028) ** (1/6) - 1))
+    if anchor_year is not None and anchor_value is not None and anchor_value > 0:
+        if anchor_year < 2028 and target_2028 is not None and target_2028 > 0:
+            segment = _geometric_path(
+                anchor_year, anchor_value, 2028, target_2028
+            )
+            required.update(segment)
+            if segment:
+                required_rates.append((
+                    anchor_year,
+                    2028,
+                    (target_2028 / anchor_value) ** (1 / (2028 - anchor_year)) - 1,
+                ))
+            if target_2034 is not None and target_2034 > 0:
+                segment_2034 = _geometric_path(
+                    2028, target_2028, 2034, target_2034
+                )
+                required.update(segment_2034)
+                if segment_2034:
+                    required_rates.append((
+                        2028,
+                        2034,
+                        (target_2034 / target_2028) ** (1 / 6) - 1,
+                    ))
+        elif anchor_year < 2034 and target_2034 is not None and target_2034 > 0:
+            segment = _geometric_path(
+                anchor_year, anchor_value, 2034, target_2034
+            )
+            required.update(segment)
+            if segment:
+                required_rates.append((
+                    anchor_year,
+                    2034,
+                    (target_2034 / anchor_value) ** (1 / (2034 - anchor_year)) - 1,
+                ))
+        elif anchor_year < 2028 and target_2034 is not None and target_2034 > 0:
+            segment = _geometric_path(
+                anchor_year, anchor_value, 2034, target_2034
+            )
+            required.update(segment)
+            if segment:
+                required_rates.append((
+                    anchor_year,
+                    2034,
+                    (target_2034 / anchor_value) ** (1 / (2034 - anchor_year)) - 1,
+                ))
 
+    # Червоний прогноз: геометричний темп між ДВОМА ОСТАННІМИ
+    # позитивними фактичними значеннями.
     forecast = {}
     current_rate = None
-    if baseline_year is not None and baseline_value and baseline_value > 0:
-        later_actuals = [(year, value) for year, value in actual.items() if year > baseline_year and value is not None and value > 0]
-        if later_actuals:
-            latest_year, latest_value = max(later_actuals, key=lambda item: item[0])
-            years_elapsed = latest_year - baseline_year
-            if years_elapsed > 0:
-                current_rate = (latest_value / baseline_value) ** (1.0 / years_elapsed)
+    if len(positive_actuals) >= 2:
+        previous_year, previous_value = positive_actuals[-2]
+        latest_year, latest_value = positive_actuals[-1]
+        years_elapsed = latest_year - previous_year
+        if years_elapsed > 0:
+            current_rate = (
+                latest_value / previous_value
+            ) ** (1.0 / years_elapsed)
+            horizon_year = (
+                2034 if target_2034 is not None
+                else (2028 if target_2028 is not None else latest_year + 5)
+            )
+            if horizon_year >= latest_year:
                 forecast = {
-                    year: latest_value * (current_rate ** (year - latest_year))
-                    for year in range(latest_year, 2035)
+                    year: latest_value * (
+                        current_rate ** (year - latest_year)
+                    )
+                    for year in range(latest_year, int(horizon_year) + 1)
                 }
 
-    return actual, required, forecast, required_rates, current_rate, target_2028, target_2034
+    return (
+        actual,
+        required,
+        forecast,
+        required_rates,
+        current_rate,
+        target_2028,
+        target_2034,
+        anchor_year,
+        anchor_value,
+    )
+
+
+def _trajectory_value_label(value):
+    try:
+        return f"{float(value):.2f}".replace(".", ",")
+    except (TypeError, ValueError):
+        return ""
+
+
+def _trajectory_marker_sizes(values, *, base=38, maximum=64):
+    sizes = []
+    for value in values:
+        label = _trajectory_value_label(value)
+        sizes.append(min(maximum, max(base, 18 + len(label) * 5)))
+    return sizes
 
 
 def _render_indicator_trajectory_section():
     indicators = _indicator_trajectory_rows()
-    st.markdown('<div class="section-title">Траєкторія індикаторів стратегічних цілей і завдань</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="section-subtitle">Факт + потрібна траєкторія до орієнтирів 2028/2034 + прогноз за фактичним темпом. Проміжні роки з «х» не вважаються фактом.</div>',
+        '<div class="section-title">Траєкторія індикаторів стратегічних цілей і завдань</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="section-subtitle">Синя лінія — фактичні значення. '
+        'Помаранчева — необхідна траєкторія від останнього факту до орієнтирів '
+        '2028/2034. Червоний пунктир — прогноз за фактичним середньорічним '
+        'темпом. Поява нового факту автоматично переносить точку старту обох '
+        'прогнозних ліній.</div>',
         unsafe_allow_html=True,
     )
     if indicators.empty:
-        st.info("За застосованими фільтрами індикаторів Цілей/Завдань не знайдено.")
+        st.info(
+            "За застосованими фільтрами індикаторів Цілей/Завдань не знайдено."
+        )
         return
+
     indicators = indicators.reset_index(drop=True)
     labels = [
         f"{clean(r.get('code'))} — {clean(r.get('indicator'))}"
@@ -6438,37 +6657,178 @@ def _render_indicator_trajectory_section():
         key="dashboard_indicator_trajectory_choice",
     )
     row = indicators.iloc[int(chosen)]
-    actual, required, forecast, required_rates, current_rate, t28, t34 = _build_indicator_trajectory(row)
+    (
+        actual,
+        required,
+        forecast,
+        required_rates,
+        current_rate,
+        t28,
+        t34,
+        anchor_year,
+        anchor_value,
+    ) = _build_indicator_trajectory(row)
+
     if not actual and t28 is None and t34 is None:
-        st.info("Для цього індикатора немає числових даних, які можна коректно побудувати на лінійному графіку.")
+        st.info(
+            "Для цього індикатора немає числових даних, які можна коректно "
+            "побудувати на лінійному графіку."
+        )
         return
+
+    fact_color = "#005BBB"
+    required_color = "#E66A00"
+    forecast_color = "#DC2626"
+    target_border = "#8F3A00"
+
     fig = go.Figure()
+
     if actual:
         years = sorted(actual)
-        fig.add_trace(go.Scatter(x=years, y=[actual[y] for y in years], mode="lines+markers", name="Фактичні значення"))
+        values = [actual[y] for y in years]
+        fig.add_trace(go.Scatter(
+            x=years,
+            y=values,
+            mode="lines+markers+text",
+            name="Фактичні значення",
+            line=dict(color=fact_color, width=3),
+            marker=dict(
+                color=fact_color,
+                size=_trajectory_marker_sizes(values),
+                symbol="circle",
+                line=dict(color="#FFFFFF", width=2),
+            ),
+            text=[_trajectory_value_label(value) for value in values],
+            textposition="middle center",
+            textfont=dict(color="#FFFFFF", size=9, family="Arial Black"),
+            hovertemplate="Факт %{x}: %{y:.2f}<extra></extra>",
+        ))
+
     if required:
         years = sorted(required)
-        fig.add_trace(go.Scatter(x=years, y=[required[y] for y in years], mode="lines+markers", name="Необхідна траєкторія"))
+        values = [required[y] for y in years]
+        fig.add_trace(go.Scatter(
+            x=years,
+            y=values,
+            mode="lines+markers+text",
+            name="Необхідна траєкторія",
+            line=dict(color=required_color, width=3),
+            marker=dict(
+                color=required_color,
+                size=[
+                    0 if anchor_year is not None and y == anchor_year
+                    else _trajectory_marker_sizes(
+                        [required[y]], base=34, maximum=58
+                    )[0]
+                    for y in years
+                ],
+                symbol="circle",
+                line=dict(color="#FFFFFF", width=2),
+            ),
+            text=[
+                "" if anchor_year is not None and y == anchor_year
+                else _trajectory_value_label(required[y])
+                for y in years
+            ],
+            textposition="middle center",
+            textfont=dict(color="#FFFFFF", size=8, family="Arial Black"),
+            hovertemplate="Необхідно %{x}: %{y:.2f}<extra></extra>",
+        ))
+
     if forecast:
         years = sorted(forecast)
-        fig.add_trace(go.Scatter(x=years, y=[forecast[y] for y in years], mode="lines+markers", name="Прогноз за нинішнім темпом", line=dict(dash="dash")))
+        values = [forecast[y] for y in years]
+        fig.add_trace(go.Scatter(
+            x=years,
+            y=values,
+            mode="lines+markers+text",
+            name="Прогноз за нинішнім темпом",
+            line=dict(color=forecast_color, width=3, dash="dash"),
+            marker=dict(
+                color=forecast_color,
+                size=[
+                    0 if anchor_year is not None and y == anchor_year
+                    else _trajectory_marker_sizes(
+                        [forecast[y]], base=32, maximum=56
+                    )[0]
+                    for y in years
+                ],
+                symbol="circle",
+                line=dict(color="#FFFFFF", width=2),
+            ),
+            text=[
+                "" if anchor_year is not None and y == anchor_year
+                else _trajectory_value_label(forecast[y])
+                for y in years
+            ],
+            textposition="middle center",
+            textfont=dict(color="#FFFFFF", size=8, family="Arial Black"),
+            hovertemplate="Прогноз %{x}: %{y:.2f}<extra></extra>",
+        ))
+
     if t28 is not None:
-        fig.add_trace(go.Scatter(x=[2028], y=[t28], mode="markers", marker=dict(size=12, symbol="diamond"), name="Орієнтир 2028"))
+        target_label = _trajectory_value_label(t28)
+        fig.add_trace(go.Scatter(
+            x=[2028],
+            y=[t28],
+            mode="markers+text",
+            marker=dict(
+                size=max(48, 20 + len(target_label) * 5),
+                symbol="circle",
+                color=required_color,
+                line=dict(color=target_border, width=4),
+            ),
+            text=[target_label],
+            textposition="middle center",
+            textfont=dict(color="#FFFFFF", size=9, family="Arial Black"),
+            name="Орієнтир 2028",
+            hovertemplate="Орієнтир 2028: %{y:.2f}<extra></extra>",
+        ))
     if t34 is not None:
-        fig.add_trace(go.Scatter(x=[2034], y=[t34], mode="markers", marker=dict(size=12, symbol="diamond"), name="Орієнтир 2034"))
+        target_label = _trajectory_value_label(t34)
+        fig.add_trace(go.Scatter(
+            x=[2034],
+            y=[t34],
+            mode="markers+text",
+            marker=dict(
+                size=max(48, 20 + len(target_label) * 5),
+                symbol="circle",
+                color=required_color,
+                line=dict(color=target_border, width=4),
+            ),
+            text=[target_label],
+            textposition="middle center",
+            textfont=dict(color="#FFFFFF", size=9, family="Arial Black"),
+            name="Орієнтир 2034",
+            hovertemplate="Орієнтир 2034: %{y:.2f}<extra></extra>",
+        ))
+
     fig.update_layout(
-        height=430,
+        height=470,
         xaxis=dict(title="Рік", dtick=1),
         yaxis=dict(title=clean(row.get("unit")) or "Значення"),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-        margin=dict(l=55, r=25, t=45, b=50),
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.03, xanchor="left", x=0
+        ),
+        margin=dict(l=55, r=25, t=55, b=50),
     )
     render_plotly_chart(fig, use_container_width=True)
+
     rate_bits = []
     for sy, ey, rate in required_rates:
-        rate_bits.append(f"потрібний середньорічний темп {sy}–{ey}: {rate*100:+.2f}%")
+        rate_bits.append(
+            f"потрібний середньорічний темп {sy}–{ey}: {rate*100:+.2f}%"
+        )
     if current_rate is not None:
-        rate_bits.append(f"фактичний середньорічний темп: {(current_rate-1)*100:+.2f}%")
+        rate_bits.append(
+            f"фактичний середньорічний темп: {(current_rate-1)*100:+.2f}%"
+        )
+    if anchor_year is not None and anchor_value is not None:
+        rate_bits.insert(
+            0,
+            f"точка перебудови: факт {anchor_year} = "
+            f"{_trajectory_value_label(anchor_value)}",
+        )
     if rate_bits:
         st.caption(" · ".join(rate_bits))
 

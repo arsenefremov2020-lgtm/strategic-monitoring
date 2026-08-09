@@ -39,11 +39,13 @@ def reporting_period(now: datetime) -> tuple[int, int]:
 
 
 def should_run(now: datetime) -> bool:
-    return (
-        now.day == 15
-        and now.month in SCHEDULE_MONTHS
-        and now.hour == 18
-    )
+    """Scheduled jobs are date/period driven, never exact-minute driven.
+
+    GitHub cron is best-effort and can start late. The 16th is accepted only as
+    a grace day for a delayed scheduled run; duplicate protection in the archive
+    layer keeps this idempotent.
+    """
+    return now.month in SCHEDULE_MONTHS and now.day in {15, 16}
 
 
 def main() -> int:
@@ -54,8 +56,8 @@ def main() -> int:
     )
 
     if not FORCE_RUN and not should_run(now):
-        print("-- Зараз не контрольний час 18:00 за Києвом; створення знімка пропущено.")
-        return 0
+        print("!! Зараз не контрольна дата автоматичного архівування.", file=sys.stderr)
+        return 3
 
     url = os.environ.get("SUPABASE_URL", "").strip()
     key = os.environ.get("SUPABASE_KEY", "").strip()

@@ -3075,6 +3075,7 @@ def _build_dashboard_context(years_for_calc, quarters_for_calc):
         "obsolete_count": obsolete_count,
         "not_time_count": not_time_count,
         "approved_requests_count": approved_requests_count,
+        "approval_metric_label": approval_metric_label,
         "not_counted_count": not_counted_count,
         "conclusion_title": conclusion_title,
         "conclusion_text": conclusion_text,
@@ -5346,7 +5347,7 @@ if snapshot_context is not None:
 # ============================================================
 
 # Лінія динаміки та водоспад відхилень.
-if dynamics_context is not None:
+if not presentation_mode and dynamics_context is not None:
     _activate_dashboard_context(dynamics_context)
     with dynamics_content:
         trend_df, selected_period_pairs = _build_dynamics_trend_df(
@@ -6099,12 +6100,25 @@ def _geometric_path(start_year, start_value, end_year, end_value):
 
 
 def _indicator_trajectory_rows():
-    indicators = strat_df[strat_df["object_type"].isin(["goal_indicator", "task_indicator"])].copy()
+    """Індикатори для графіків із урахуванням поточної сукупності фільтрів.
+
+    ССП/Ціль/Завдання застосовуються безпосередньо до індикаторів. Фільтри,
+    які існують лише на рівні заходів (тип продукту, статус, фінансування,
+    КПКВК, заступник), звужують індикатори до Цілей/Завдань, що реально
+    залишилися у відфільтрованому наборі Dashboard.
+    """
+    indicators = strat_df[
+        strat_df["object_type"].isin(["goal_indicator", "task_indicator"])
+    ].copy()
     if indicators.empty:
         return indicators
-    indicators = indicators[indicators["indicator"].astype(str).str.strip().ne("")].copy()
+
+    indicators = indicators[
+        indicators["indicator"].astype(str).str.strip().ne("")
+    ].copy()
+
     if selected_department_indices:
-        wanted = set(str(x) for x in selected_department_indices)
+        wanted = {str(x) for x in selected_department_indices}
         indicators = indicators[indicators.apply(
             lambda row: bool(
                 wanted.intersection(
@@ -6112,18 +6126,62 @@ def _indicator_trajectory_rows():
                     | set(split_department_indices(row.get("resp_co_1", "")))
                     | set(split_department_indices(row.get("resp_co_2", "")))
                 )
-            ), axis=1
+            ),
+            axis=1,
         )]
+
     if selected_goals:
-        indicators = indicators[indicators["parent_goal_code"].astype(str).isin([str(v) for v in selected_goals])]
+        wanted_goals = {str(v).strip() for v in selected_goals}
+        indicators = indicators[
+            indicators["parent_goal_code"].astype(str).str.strip().isin(wanted_goals)
+        ]
+
     if selected_tasks:
-        indicators = indicators[indicators["parent_task_code"].astype(str).isin([str(v) for v in selected_tasks])]
-    return indicators.copy()
+        wanted_tasks = {str(v).strip() for v in selected_tasks}
+        indicators = indicators[
+            indicators["parent_task_code"].astype(str).str.strip().isin(wanted_tasks)
+        ]
+
+    measure_only_filters = any([
+        bool(selected_product_types),
+        bool(selected_deputies),
+        bool(selected_statuses),
+        bool(selected_financing),
+        bool(selected_kpkvk),
+    ])
+    if measure_only_filters and not indicators.empty:
+        active_goal_codes = set()
+        active_task_codes = set()
+        if isinstance(active, pd.DataFrame) and not active.empty:
+            if "goal_code" in active.columns:
+                active_goal_codes = set(active["goal_code"].astype(str).str.strip())
+            if "task_code" in active.columns:
+                active_task_codes = set(active["task_code"].astype(str).str.strip())
+        indicators = indicators[indicators.apply(
+            lambda row: (
+                (clean(row.get("object_type")) == "goal_indicator"
+                 and clean(row.get("parent_goal_code")) in active_goal_codes)
+                or
+                (clean(row.get("object_type")) == "task_indicator"
+                 and clean(row.get("parent_task_code")) in active_task_codes)
+            ),
+            axis=1,
+        )]
+
+    if indicators.empty:
+        return indicators
+
+    indicators["_sort_code"] = indicators["code"].apply(code_sort_key)
+    indicators["_sort_indicator"] = indicators["indicator"].astype(str).str.casefold()
+    return indicators.sort_values(
+        ["_sort_code", "_sort_indicator"], kind="stable"
+    ).drop(columns=["_sort_code", "_sort_indicator"]).copy()
 
 
 def _build_indicator_trajectory(row):
     code = clean(row.get("code"))
     indicator_name = clean(row.get("indicator"))
+    code_key, indicator_key = monitoring_data.indicator_identity_key(code, indicator_name)
     actual = {}
     for year, col in [(2021, "base_2021"), (2024, "fact_2024"), (2025, "fact_2025")]:
         value = _trajectory_number(row.get(col))
@@ -6132,10 +6190,12 @@ def _build_indicator_trajectory(row):
 
     req = _indicator_requests_effective.copy()
     if not req.empty:
-        req = req[
-            req.get("strat_code", pd.Series(index=req.index, dtype=str)).astype(str).str.strip().eq(code)
-            & req.get("indicator_name", pd.Series(index=req.index, dtype=str)).astype(str).str.strip().eq(indicator_name)
-        ].copy()
+        req = req[req.apply(
+            lambda item: monitoring_data.indicator_identity_key(
+                item.get("strat_code", ""), item.get("indicator_name", "")
+            ) == (code_key, indicator_key),
+            axis=1,
+        )].copy()
         if not req.empty:
             req["_year"] = pd.to_numeric(req.get("year"), errors="coerce")
             req["_value"] = req.apply(
@@ -6173,6 +6233,13 @@ def _build_indicator_trajectory(row):
         required.update(segment)
         if segment and baseline_value > 0:
             required_rates.append((baseline_year, 2028, (target_2028 / baseline_value) ** (1/(2028-baseline_year)) - 1))
+    elif baseline_year is not None and target_2034 is not None:
+        # Якщо проміжний орієнтир 2028 не заданий, будуємо потрібну
+        # траєкторію прямо до довгострокового орієнтира 2034.
+        segment = _geometric_path(baseline_year, baseline_value, 2034, target_2034)
+        required.update(segment)
+        if segment and baseline_value > 0:
+            required_rates.append((baseline_year, 2034, (target_2034 / baseline_value) ** (1/(2034-baseline_year)) - 1))
     if target_2028 is not None and target_2034 is not None:
         segment = _geometric_path(2028, target_2028, 2034, target_2034)
         required.update(segment)
@@ -6336,7 +6403,13 @@ def _render_dash_auto_summary():
 
 # Окремий керівний блок індикаторів Цілей/Завдань. Він використовує
 # фактичні подання та довгострокові орієнтири, але не змінює формули МіО.
-_render_indicator_trajectory_section()
+# Блок вставляється саме в секцію «Динаміка», а не в кінець сторінки.
+if dynamics_context is not None:
+    _activate_dashboard_context(dynamics_context)
+    with dynamics_content:
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        _render_indicator_trajectory_section()
+        st.markdown('</div>', unsafe_allow_html=True)
 
 if snapshot_context is not None:
     _render_dash_auto_summary()

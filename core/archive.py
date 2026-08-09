@@ -6,6 +6,7 @@ import base64
 import gzip
 import io
 import json
+import re
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
@@ -16,9 +17,10 @@ import pandas as pd
 from core.db import fetch_all
 from core.strategic_data import load_strat_matrix
 from core.statuses import normalize_to_model_status
+from core.dashboard_metrics import build_period_kpi_snapshot, DASHBOARD_FORMULA_VERSION
 
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
-ARCHIVE_SCHEMA_VERSION = "DEMO2-ARCHIVE-1"
+ARCHIVE_SCHEMA_VERSION = "DEMO2-ARCHIVE-2"
 
 STATUS_SCORE = {
     "Виконано": 100.0,
@@ -410,11 +412,22 @@ def build_archive_payload(client: Any, actor: dict[str, Any], reason: str) -> tu
     logs = _safe_fetch(client, "monitoring_logs")
     closeouts = _safe_fetch(client, "closeout_requests")
     closeout_versions = _safe_fetch(client, "closeout_request_versions")
+    period_locks = _safe_fetch(client, "period_locks")
     main_snapshot = build_main_snapshot(strat_df, requests)
     mio_detail, mio_summary = build_mio_snapshot(strat_df, requests)
 
     coverage_label, year_from, year_to = _coverage(requests)
     generated_at = datetime.now(timezone.utc)
+    trend_kpi = None
+    period_match = re.search(r"\b(I{1,3}|IV)\s+квартал\s+(20\d{2})\b", reason or "", flags=re.IGNORECASE)
+    if period_match:
+        trend_kpi = build_period_kpi_snapshot(
+            strat_df,
+            pd.DataFrame(requests),
+            int(period_match.group(2)),
+            period_match.group(1).upper(),
+        )
+
     payload = {
         "schema_version": ARCHIVE_SCHEMA_VERSION,
         "generated_at_utc": generated_at.isoformat(),
@@ -433,6 +446,9 @@ def build_archive_payload(client: Any, actor: dict[str, Any], reason: str) -> tu
         "monitoring_logs": logs,
         "closeout_requests": closeouts,
         "closeout_request_versions": closeout_versions,
+        "period_locks": period_locks,
+        "dashboard_trend_kpi": trend_kpi,
+        "dashboard_formula_version": DASHBOARD_FORMULA_VERSION,
     }
     raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=_json_value).encode("utf-8")
     compressed = gzip.compress(raw, compresslevel=9)

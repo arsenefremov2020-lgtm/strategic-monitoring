@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import builtins
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+from html import escape
+
+import pandas as pd
 
 import streamlit as st
 
@@ -86,29 +89,154 @@ def render_scope_toggle(page_key: str, user: dict | None) -> bool:
     st.caption(f"Ваш ССП: №{own_label}")
 
     if active:
-        if st.button(
+        st.button(
             "⬅ Повернутися до свого ССП",
             key=f"scope_toggle_off_{page_key}",
             use_container_width=True,
-        ):
-            set_scope_override(page_key, False)
-            st.rerun()
+            on_click=set_scope_override,
+            args=(page_key, False),
+        )
         st.caption("ℹ️ Показано інформацію по всіх ССП (тимчасово, лише на цій вкладці).")
     else:
-        if st.button(
+        st.button(
             "🔎 Переглянути загальну інформацію",
             key=f"scope_toggle_on_{page_key}",
             use_container_width=True,
-        ):
-            set_scope_override(page_key, True)
-            st.rerun()
+            on_click=set_scope_override,
+            args=(page_key, True),
+        )
 
     return active
 
 
 
 def render_auto_refresh_notice(page_key: str, *, minutes: int = 5, show_note: bool = True) -> None:
+    """Deprecated compatibility shim. Auto-refresh notices are intentionally disabled."""
     return None
+
+
+def _readonly_status_class(value: Any) -> str:
+    text = str(value or "").strip()
+    # Lazy import avoids turning the generic UI module into a dependency of the
+    # approval engine while still keeping workflow-state recognition central.
+    from core import approval_schemes as schemes
+
+    if schemes.is_approved(text) or text == "Виконано":
+        return "rt-approved"
+    if schemes.is_returned(text) or text == "На доопрацюванні":
+        return "rt-returned"
+    if schemes.is_waiting(text):
+        return "rt-review"
+    if text == "Не настав час":
+        return "rt-notyet"
+    if text == "Не виконано":
+        return "rt-notdone"
+    if text == "Частково виконано":
+        return "rt-partly"
+    return ""
+
+
+def render_readonly_table(
+    data: Any,
+    *,
+    height: int = 325,
+    min_width: int | None = None,
+    max_cell_height: int = 74,
+    compact: bool = False,
+    empty_message: str = "Немає даних для відображення.",
+    value_formatter: Callable[[Any], str] | None = None,
+    formatters: dict[str, Callable[[Any], Any]] | None = None,
+    row_class_fn: Callable[[pd.Series, int], str] | None = None,
+    show_index: bool = False,
+) -> None:
+    """Єдиний HTML-стандарт для НЕінтерактивних таблиць системи.
+
+    Повторює поведінку таблиць Головної: зовнішній вертикальний/горизонтальний
+    скрол, sticky-заголовок, центровані комірки, перенос тексту та внутрішній
+    скрол довгого вмісту. ``st.data_editor`` цим рендерером не замінюється.
+    """
+    if data is None:
+        st.info(empty_message)
+        return
+    # Pandas Styler: беремо його вихідний DataFrame; стандарт таблиць важливіший
+    # за локальні стилі Styler, а статуси підсвічуються централізовано нижче.
+    if hasattr(data, "data") and isinstance(getattr(data, "data"), pd.DataFrame):
+        frame = data.data.copy()
+    elif isinstance(data, pd.DataFrame):
+        frame = data.copy()
+    else:
+        try:
+            frame = pd.DataFrame(data)
+        except Exception:
+            st.info(empty_message)
+            return
+    if frame.empty:
+        st.info(empty_message)
+        return
+
+    formatter = value_formatter or (lambda value: "—" if pd.isna(value) or value is None or str(value).strip() == "" else str(value))
+    formatters = formatters or {}
+    columns = [str(c) for c in frame.columns]
+    display_column_count = len(columns) + (1 if show_index else 0)
+    if min_width is None:
+        min_width = max(900, min(5600, 165 * max(1, display_column_count)))
+    row_pad = "6px 8px" if compact else "8px 10px"
+    font_size = 12 if compact else 13
+
+    css = f"""
+    <style>
+    .readonly-table-scroll {{ overflow:auto; width:100%; max-height:{int(height)}px; border:1px solid #DCE4F0; border-radius:10px; margin:8px 0 18px 0; background:#fff; }}
+    table.readonly-table {{ border-collapse:collapse; table-layout:fixed; min-width:{int(min_width)}px; width:100%; font-size:{font_size}px; color:#132238; }}
+    table.readonly-table th {{ position:sticky; top:0; z-index:3; background:#EAF1FF; color:#132238; padding:9px 10px; border:1px solid #DCE4F0; text-align:center; vertical-align:middle; white-space:normal; font-weight:850; line-height:1.22; }}
+    table.readonly-table td {{ padding:{row_pad}; border:1px solid #DCE4F0; vertical-align:middle; text-align:center; white-space:normal; overflow-wrap:anywhere; line-height:1.32; }}
+    table.readonly-table tr:nth-child(even) {{ background:#F7F9FC; }}
+    table.readonly-table tr:nth-child(odd) {{ background:#FFFFFF; }}
+    table.readonly-table .readonly-cell {{ display:block; max-height:{int(max_cell_height)}px; overflow:hidden; }}
+    table.readonly-table .readonly-cell:hover {{ overflow:auto; }}
+    table.readonly-table td.rt-approved {{ color:#0C713A; font-weight:850; }}
+    table.readonly-table td.rt-returned, table.readonly-table td.rt-notdone {{ color:#B3261E; font-weight:850; }}
+    table.readonly-table td.rt-review {{ color:#032A63; font-weight:850; }}
+    table.readonly-table td.rt-partly {{ color:#8A6400; font-weight:850; }}
+    table.readonly-table td.rt-notyet {{ color:#61708A; font-weight:750; }}
+    table.readonly-table tr.dashboard-rank-green td, table.readonly-table tr.rt-row-green td {{ background:#EEF9F2 !important; }}
+    table.readonly-table tr.dashboard-rank-yellow td, table.readonly-table tr.rt-row-yellow td {{ background:#FFF8E6 !important; }}
+    table.readonly-table tr.dashboard-rank-red td, table.readonly-table tr.rt-row-red td {{ background:#FDEEEE !important; }}
+    </style>
+    """
+    head = ("<th></th>" if show_index else "") + "".join(f"<th>{escape(col)}</th>" for col in columns)
+    rows = []
+    total_rows = len(frame)
+    for index_value, row in frame.iterrows():
+        row_class = ""
+        if row_class_fn is not None:
+            try:
+                row_class = str(row_class_fn(row, total_rows) or "").strip()
+            except Exception:
+                row_class = ""
+        cells = []
+        if show_index:
+            shown_index = formatter(index_value)
+            cells.append(f"<td><span class='readonly-cell'>{escape(str(shown_index)).replace(chr(10), '<br>')}</span></td>")
+        for col in frame.columns:
+            raw = row.get(col)
+            try:
+                local_formatter = formatters.get(str(col)) or formatters.get(col)
+                shown = local_formatter(raw) if local_formatter is not None else formatter(raw)
+            except Exception:
+                shown = str(raw) if raw is not None else "—"
+            status_class = _readonly_status_class(shown)
+            safe_shown = escape(str(shown)).replace("\n", "<br>")
+            cells.append(
+                f"<td class='{status_class}'><span class='readonly-cell'>{safe_shown}</span></td>"
+            )
+        class_attr = f" class='{escape(row_class)}'" if row_class else ""
+        rows.append(f"<tr{class_attr}>" + "".join(cells) + "</tr>")
+    html = css + (
+        "<div class='readonly-table-scroll'><table class='readonly-table'>"
+        f"<thead><tr>{head}</tr></thead><tbody>{''.join(rows)}</tbody></table></div>"
+    )
+    st.markdown(html, unsafe_allow_html=True)
+
 
 def render_own_ssp_badge(user: dict | None, *, label: str = "Ваш ССП") -> None:
     """Уніфікований підпис для ролей, прив'язаних до власного ССП."""
@@ -186,10 +314,9 @@ def render_human_log_table(logs_df, *, extra_columns: list[str] | None = None) -
     if table.empty:
         st.info("Історії змін для цієї заявки поки що немає.")
         return
-    st.dataframe(
+    render_readonly_table(
         style_status_columns(table, ["Попередній статус", "Новий статус"]),
-        use_container_width=True,
-        hide_index=True,
+        height=325,
     )
 
 

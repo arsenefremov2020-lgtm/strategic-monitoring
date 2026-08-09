@@ -322,6 +322,63 @@ def status_completion_warning(status: Any, value: Any, target: Any, unit: Any, c
     return ""
 
 
+def expected_execution_status(
+    value: Any,
+    target: Any,
+    unit: Any,
+    future_targets: Iterable[Any] | None = None,
+) -> str | None:
+    """Повертає єдиний допустимий execution-status для ЗАХОДУ.
+
+    Це правило не використовується для індикаторів Цілей/Завдань — вони мають
+    окрему валідацію значення без прив'язки до річного target/status заходу.
+    """
+    value_text = text(value)
+    target_text = text(target)
+
+    # «х/х» — неоцінюваний період. Не прирівнюємо його до невиконання.
+    if is_x_value(value_text) and is_x_value(target_text):
+        return "Не настав час"
+    if is_x_value(value_text):
+        return "Не настав час" if is_x_value(target_text) else None
+
+    effective_target = first_future_target(future_targets) if is_x_value(target_text) else target_text
+    if not effective_target or is_x_value(effective_target):
+        return None
+
+    value_low = value_text.lower().strip()
+    target_low = text(effective_target).lower().strip()
+
+    yes_no_comparable = (
+        is_yes_no_unit(unit)
+        or (value_low in (YES_VALUES | NO_VALUES) and target_low in (YES_VALUES | NO_VALUES))
+    )
+    if yes_no_comparable:
+        if value_low not in (YES_VALUES | NO_VALUES) or target_low not in (YES_VALUES | NO_VALUES):
+            return None
+        reached = value_reaches_target(value_text, effective_target, unit)
+        if reached is None:
+            # Якщо unit не маркований як так/ні, але обидва значення бінарні.
+            if target_low in YES_VALUES:
+                reached = value_low in YES_VALUES
+            elif target_low in NO_VALUES:
+                reached = value_low in NO_VALUES
+        return "Виконано" if reached else "Не виконано"
+
+    fact_n = parse_number(value_text)
+    plan_n = parse_number(effective_target)
+    if fact_n is None or plan_n is None:
+        return None
+    # Узгоджене правило бізнес-валідації: нульовий факт = «Не виконано».
+    if fact_n == 0:
+        return "Не виконано"
+    if fact_n >= plan_n:
+        return "Виконано"
+    if 0 < fact_n < plan_n:
+        return "Частково виконано"
+    return "Не виконано"
+
+
 def status_value_conflict(
     status: Any,
     value: Any,
@@ -330,54 +387,69 @@ def status_value_conflict(
     code: str = "",
     future_targets: Iterable[Any] | None = None,
 ) -> str:
-    """Жорстко блокує лише однозначні суперечності «Виконано/Не виконано».
+    """Жорстка валідація статусу заходу проти факту й плану.
 
-    Для поточного орієнтира «х» порівняння виконується з першим наступним
-    змістовним орієнтиром. Саме подане значення «х» не є однозначно
-    порівнюваним, тому не блокується цією перевіркою.
+    Дозволений статус визначається централізовано ``expected_execution_status``.
+    ``Втратило актуальність`` лишається окремим ручним бізнес-станом і не
+    підганяється під арифметичне правило.
     """
     status_text = text(status)
-    if status_text not in {"Виконано", "Не виконано"}:
-        return ""
-    if is_x_value(value):
+    if not status_text or status_text == "Втратило актуальність":
         return ""
 
-    effective_target = first_future_target(future_targets) if is_x_value(target) else text(target)
-    if not effective_target or is_x_value(effective_target):
+    expected = expected_execution_status(value, target, unit, future_targets)
+    if expected is None:
+        return ""
+    if status_text == expected:
         return ""
 
-    value_text = text(value)
-    value_low = value_text.lower().strip()
-    target_low = effective_target.lower().strip()
-
-    numeric_comparable = parse_number(value_text) is not None and parse_number(effective_target) is not None
-    yes_no_comparable = (
-        is_yes_no_unit(unit)
-        and value_low in (YES_VALUES | NO_VALUES)
-    ) or (
-        value_low in (YES_VALUES | NO_VALUES)
-        and target_low in (YES_VALUES | NO_VALUES)
-    )
-
-    if not numeric_comparable and not yes_no_comparable:
-        return ""
-
-    reached = value_reaches_target(value_text,effective_target,unit,)
     code_label = f"У заході {code}: " if code else ""
-    target_note = (
-        f" (для орієнтира «х» використано наступний орієнтир «{effective_target}»)"
-        if is_x_value(target)
-        else ""
+    value_text = text(value) or "—"
+    target_text = text(target) or "—"
+
+    if is_x_value(value) and is_x_value(target):
+        return (
+            f"{code_label}для орієнтира «х» і факту «х» допустимий неоцінюваний "
+            f"стан «Не настав час», а не «{status_text}»."
+        )
+    if is_yes_no_unit(unit) and status_text == "Частково виконано":
+        return (
+            f"{code_label}для показника типу так/ні статус «Частково виконано» "
+            "недопустимий."
+        )
+    return (
+        f"{code_label}статус «{status_text}» не відповідає факту «{value_text}» "
+        f"та цільовому орієнтиру «{target_text}». За цими даними допустимий "
+        f"статус — «{expected}»."
     )
 
-    if status_text == "Виконано" and not reached:
-        return (
-            f"{code_label}обрано статус «Виконано», але подане значення «{value_text}» "
-            f"не досягає цільового орієнтира «{effective_target}»{target_note}."
-        )
-    if status_text == "Не виконано" and reached:
-        return (
-            f"{code_label}обрано статус «Не виконано», але подане значення «{value_text}» "
-            f"досягає або перевищує цільовий орієнтир «{effective_target}»{target_note}."
-        )
-    return ""
+
+def validate_indicator_fact_value(value: Any, unit: Any) -> tuple[bool, str]:
+    """Валідація індикатора Цілі/Завдання без правил target/status заходу."""
+    return validate_fact_value(value, unit)
+
+
+def validation_errors_for_record(
+    *,
+    object_kind: Any,
+    status: Any,
+    value: Any,
+    target: Any,
+    unit: Any,
+    code: str = "",
+    future_targets: Iterable[Any] | None = None,
+) -> list[str]:
+    """Єдина точка вибору між логікою заходу та логікою індикатора."""
+    kind = text(object_kind).casefold() or "measure"
+    if kind == "indicator":
+        ok, message = validate_indicator_fact_value(value, unit)
+        return [message] if not ok and message else []
+
+    errors: list[str] = []
+    ok, message = validate_fact_value_for_target(value, unit, target, future_targets)
+    if not ok and message:
+        errors.append(message)
+    conflict = status_value_conflict(status, value, target, unit, code, future_targets)
+    if conflict:
+        errors.append(conflict)
+    return errors

@@ -33,8 +33,8 @@ MONITORING_COLUMNS = [
     "id", "year", "quarter", "department",
     "responsible_person", "phone", "email",
     "strat_code", "object_name", "indicator_name",
-    "status", "progress_text", "numeric_value", "risks",
-    "submitted_at", "approval_status", "admin_comment", "created_at",
+    "status", "progress_text", "numeric_value", "value_text", "risks",
+    "submitted_at", "approval_status", "admin_comment", "created_at", "updated_at",
     "start_date", "end_date",
     "file_names", "file_urls",
     "npa_link",
@@ -129,9 +129,14 @@ def apply_yes_no_completion_inheritance(monitoring_df: pd.DataFrame) -> pd.DataF
                 continue
 
             source_quarter, source = max(prior_real, key=lambda item: item[0])
+            # Офіційне успадкування можливе тільки від остаточно погодженого
+            # факту. Непогоджене/повернуте подання не породжує synthetic факт.
+            if _clean(source.get("approval_status")) != "Погоджено":
+                continue
             if _clean(source.get("status")) != "Виконано":
                 continue
-            if _clean(source.get("numeric_value")).lower() not in _AUTO_INHERITED_YES_VALUES:
+            source_value = _clean(source.get("numeric_value")) or _clean(source.get("value_text"))
+            if source_value.lower() not in _AUTO_INHERITED_YES_VALUES:
                 continue
 
             inherited = source.copy()
@@ -195,8 +200,8 @@ def load_monitoring_requests() -> pd.DataFrame:
 @st.cache_data(ttl=20, show_spinner=False)
 def load_monitoring_requests_live() -> pd.DataFrame:
     """
-    «Швидке» читання заявок для РОБОЧИХ сторінок (Мій кабінет,
-    Мої заявки, Адміністрування): TTL 20 секунд, щоб рішення інших
+    «Швидке» читання заявок для РОБОЧИХ сторінок (Моніторинг виконання,
+    Мій кабінет, Мої заявки, Адміністрування): TTL 20 секунд, щоб рішення інших
     ланок з'являлися практично одразу.
 
     Оглядові сторінки (Головна, Dashboard, Картка заходу,

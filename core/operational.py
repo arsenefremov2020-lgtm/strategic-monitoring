@@ -7,10 +7,10 @@ status without recalculation or automatic status substitution. Quarterly values
 are cumulative year-to-date values and are therefore consumed exactly as stored.
 
 Confirmed data includes only requests finally approved by the last link of the
-approval chain. Operational data additionally includes the current contents of
-requests for which the audit log proves that the coordinator previously passed
-the request to a later link. That historical fact remains valid even when the
-request was subsequently returned for revision.
+approval chain. Operational data additionally includes the immutable request version that the
+audit log proves had already passed the coordinator. If the request is later
+returned and edited, the newer unapproved payload never replaces the version
+that the coordinator actually reviewed.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ MODE_HELP = (
     "«Підтверджені дані» — лише заявки, закриті останньою ланкою погодження. "
     "«Оперативна оцінка» — також заявки, щодо яких журнал дій підтверджує, що "
     "координатор уже передавав їх далі. В обох режимах використовуються однакові "
-    "актуальні подані значення та реальний поданий статус виконання."
+    "значення відповідної погодженої/координаторської версії та її реальний статус виконання."
 )
 
 _FORWARD_AFTER_COORDINATOR_STATUSES = {
@@ -107,41 +107,108 @@ def load_monitoring_logs() -> pd.DataFrame:
         return _ensure_log_columns(pd.DataFrame())
 
 
-def coordinator_passed_request_ids(logs_df: pd.DataFrame | None) -> set[int]:
-    """Return request IDs that the coordinator demonstrably passed onward.
+@st.cache_data(ttl=20, show_spinner=False)
+def load_monitoring_versions() -> pd.DataFrame:
+    """Read immutable request versions used to reconstruct coordinator-approved facts."""
+    try:
+        return pd.DataFrame(fetch_all("monitoring_request_versions", "*", order=("id", False)))
+    except Exception as exc:
+        show_warning(
+            "Не вдалося прочитати версії заявок; оперативна оцінка використовуватиме підтверджені дані без неперевірених підмін.",
+            exc,
+            "Читання monitoring_request_versions для оперативної оцінки",
+        )
+        return pd.DataFrame()
 
-    The decision is based on an audit transition from the coordinator-review
-    state to a later state. The current request status is deliberately ignored.
-    """
+
+def _coordinator_pass_events(logs_df: pd.DataFrame | None) -> dict[int, pd.Timestamp]:
+    """Latest audit timestamp at which each request demonstrably passed coordinator."""
     logs = _ensure_log_columns(logs_df)
-    if logs.empty:
-        return set()
-
-    passed: set[int] = set()
+    events: dict[int, pd.Timestamp] = {}
     for _, row in logs.iterrows():
         request_id = _request_id(row.get("request_id"))
         if request_id is None:
             continue
-
         related_table = _clean(row.get("related_table"))
         if related_table and related_table != "monitoring_requests":
             continue
-
         old_status = _clean(row.get("old_status"))
         new_status = _clean(row.get("new_status"))
-        if old_status != STATUS_COORDINATOR_REVIEW:
+        if old_status != STATUS_COORDINATOR_REVIEW or new_status not in _FORWARD_AFTER_COORDINATOR_STATUSES:
             continue
-        if new_status not in _FORWARD_AFTER_COORDINATOR_STATUSES:
-            continue
-
         actor_role = _clean(row.get("actor_role"))
         action = _clean(row.get("action")).casefold()
-        actor_is_coordinator = actor_role == ROLE_ADMIN
-        action_is_coordinator = "координатор" in action and "повернен" not in action
-        if actor_is_coordinator or action_is_coordinator:
-            passed.add(request_id)
+        if not (actor_role == ROLE_ADMIN or ("координатор" in action and "повернен" not in action)):
+            continue
+        ts = pd.to_datetime(row.get("changed_at"), errors="coerce", utc=True)
+        if pd.isna(ts):
+            continue
+        if request_id not in events or ts > events[request_id]:
+            events[request_id] = ts
+    return events
 
-    return passed
+
+def _restore_coordinator_passed_versions(
+    monitoring_df: pd.DataFrame,
+    logs_df: pd.DataFrame | None,
+    versions_df: pd.DataFrame | None = None,
+) -> tuple[pd.DataFrame, set[int]]:
+    """Replace mutable payloads with the immutable version seen at coordinator pass.
+
+    Final-approved rows remain current/final. Only non-final requests that have
+    actually passed the coordinator are overlaid from version history. If a
+    trustworthy version cannot be found, that request is excluded from the
+    operational extension rather than presenting a later edited fact as approved.
+    """
+    data = monitoring_df.copy()
+    events = _coordinator_pass_events(logs_df)
+    if not events or data.empty:
+        return data, set()
+    versions = load_monitoring_versions() if versions_df is None else versions_df.copy()
+    if versions.empty or "request_id" not in versions.columns:
+        return data, set()
+
+    versions = versions.copy()
+    versions["_request_id"] = versions["request_id"].apply(_request_id)
+    versions["_created_at"] = pd.to_datetime(versions.get("created_at"), errors="coerce", utc=True)
+    versions["_version_number"] = pd.to_numeric(versions.get("version_number"), errors="coerce").fillna(-1)
+    payload_columns = [
+        "year", "quarter", "department", "responsible_person", "phone", "email",
+        "strat_code", "status", "progress_text", "risks", "file_names", "file_urls",
+        "approval_status", "admin_comment", "start_date", "end_date", "npa_link",
+        "approval_chain", "chain_stage", "scheme_label", "object_kind", "object_name",
+        "indicator_name", "as_of_date", "numeric_value", "value_text",
+    ]
+    trustworthy: set[int] = set()
+    id_series = data.get("id", pd.Series(index=data.index, dtype=object)).apply(_request_id)
+    for request_id, pass_ts in events.items():
+        current_idx = data.index[id_series == request_id].tolist()
+        if not current_idx:
+            continue
+        current_row = data.loc[current_idx[0]]
+        if _clean(current_row.get("approval_status")) == CONFIRMED_STATUS:
+            trustworthy.add(request_id)
+            continue
+        candidates = versions[
+            (versions["_request_id"] == request_id)
+            & (versions["_created_at"].notna())
+            & (versions["_created_at"] <= pass_ts + pd.Timedelta(seconds=2))
+        ].copy()
+        if candidates.empty:
+            continue
+        version = candidates.sort_values(["_created_at", "_version_number"], ascending=[False, False]).iloc[0]
+        for col in payload_columns:
+            if col in data.columns and col in version.index:
+                data.at[current_idx[0], col] = version.get(col)
+        data.at[current_idx[0], "_coordinator_pass_version"] = int(version.get("version_number") or 0)
+        data.at[current_idx[0], "_coordinator_passed_at"] = pass_ts.isoformat()
+        trustworthy.add(request_id)
+    return data, trustworthy
+
+
+def coordinator_passed_request_ids(logs_df: pd.DataFrame | None) -> set[int]:
+    """Return request IDs that demonstrably passed the coordinator."""
+    return set(_coordinator_pass_events(logs_df).keys())
 
 
 def _year_key(value) -> str:
@@ -209,6 +276,7 @@ def build_operational_overlay(
     target_by_code_year=None,
     *,
     logs_df: pd.DataFrame | None = None,
+    versions_df: pd.DataFrame | None = None,
 ) -> dict:
     """Build an operational overlay without changing submitted statistics.
 
@@ -219,8 +287,8 @@ def build_operational_overlay(
         return {}
 
     logs = load_monitoring_logs() if logs_df is None else logs_df
-    passed_ids = coordinator_passed_request_ids(logs)
-    _, effective = _latest_effective_rows(monitoring_df, passed_ids)
+    restored, passed_ids = _restore_coordinator_passed_versions(monitoring_df, logs, versions_df)
+    _, effective = _latest_effective_rows(restored, passed_ids)
     overlay: dict = {}
 
     for _, record in effective.iterrows():
@@ -239,6 +307,7 @@ def apply_operational_mode(
     target_by_code_year=None,
     *,
     logs_df: pd.DataFrame | None = None,
+    versions_df: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, list[dict]]:
     """Expose final and coordinator-passed requests through one downstream filter.
 
@@ -255,8 +324,8 @@ def apply_operational_mode(
         return empty, []
 
     logs = load_monitoring_logs() if logs_df is None else logs_df
-    passed_ids = coordinator_passed_request_ids(logs)
-    non_eligible, effective = _latest_effective_rows(monitoring_df, passed_ids)
+    restored, passed_ids = _restore_coordinator_passed_versions(monitoring_df, logs, versions_df)
+    non_eligible, effective = _latest_effective_rows(restored, passed_ids)
 
     if effective.empty:
         result = monitoring_df.copy()
@@ -279,6 +348,55 @@ def apply_operational_mode(
     result = pd.concat([non_eligible, effective], ignore_index=True, sort=False)
     return result, []
 
+
+
+def operational_indicator_rows(
+    monitoring_df: pd.DataFrame,
+    *,
+    logs_df: pd.DataFrame | None = None,
+    versions_df: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Return one effective indicator request per indicator/year/quarter.
+
+    Uses the same immutable coordinator-pass reconstruction as measure
+    operational mode, but keeps ``indicator_name`` in the identity key so
+    multiple indicators under the same strategic code never collapse together.
+    """
+    if monitoring_df is None or monitoring_df.empty:
+        return pd.DataFrame(columns=getattr(monitoring_df, "columns", []))
+    logs = load_monitoring_logs() if logs_df is None else logs_df
+    restored, passed_ids = _restore_coordinator_passed_versions(
+        monitoring_df, logs, versions_df
+    )
+    data = restored.copy()
+    for col in ["id", "object_kind", "approval_status", "strat_code", "indicator_name", "year", "quarter", "submitted_at"]:
+        if col not in data.columns:
+            data[col] = ""
+    ids = data["id"].apply(_request_id)
+    indicator_mask = data["object_kind"].astype(str).str.strip().str.lower() == "indicator"
+    final_mask = data["approval_status"].astype(str).str.strip() == CONFIRMED_STATUS
+    passed_mask = ids.isin(passed_ids)
+    eligible = data[indicator_mask & (final_mask | passed_mask)].copy()
+    if eligible.empty:
+        return eligible
+    eligible["_indicator_key"] = eligible.apply(
+        lambda r: (
+            _clean(r.get("strat_code")), _clean(r.get("indicator_name")),
+            _year_key(r.get("year")), quarter_key(r.get("quarter")),
+        ),
+        axis=1,
+    )
+    eligible["_sort_dt"] = pd.to_datetime(eligible["submitted_at"], errors="coerce", utc=True)
+    eligible["_sort_id"] = eligible["id"].apply(lambda value: _request_id(value) or -1)
+    eligible = (
+        eligible.sort_values(["_indicator_key", "_sort_dt", "_sort_id"], na_position="first")
+        .groupby("_indicator_key", as_index=False, sort=False).tail(1)
+        .drop(columns=["_indicator_key", "_sort_dt", "_sort_id"])
+    )
+    eligible["_source_approval_status"] = eligible["approval_status"]
+    eligible["_operational"] = eligible["approval_status"].astype(str).str.strip() != CONFIRMED_STATUS
+    eligible.loc[eligible["_operational"], "approval_status"] = CONFIRMED_STATUS
+    return eligible
 
 def build_target_map(strat_df: pd.DataFrame) -> dict:
     """Backward-compatible target map; operational mode no longer consumes it."""

@@ -64,8 +64,16 @@ def _extract_quarter_number(value: object) -> int | None:
     return {"I": 1, "II": 2, "III": 3, "IV": 4, "1": 1, "2": 2, "3": 3, "4": 4}.get(plain)
 
 
+def quarter_to_number_strict(value: object) -> int:
+    """Strict business parser: invalid/missing quarters are data errors, not Q1."""
+    quarter = _extract_quarter_number(value)
+    if quarter is None:
+        raise ValueError(f"Invalid reporting quarter: {value!r}")
+    return int(quarter)
+
+
 def quarter_to_number(value: object) -> int:
-    """Convert Ukrainian/Roman/Arabic quarter labels into an integer 1-4."""
+    """Permissive display parser retained for UI labels; invalid values fall back to Q1."""
     return _extract_quarter_number(value) or 1
 
 
@@ -91,7 +99,7 @@ def period_number(year: object, quarter: object) -> int:
     year_match = re.search(r"20\d{2}", clean_text(year))
     if not year_match:
         raise ValueError(f"Invalid reporting year: {year!r}")
-    return int(year_match.group(0)) * 10 + quarter_to_number(quarter)
+    return int(year_match.group(0)) * 10 + quarter_to_number_strict(quarter)
 
 
 def period_label(year: object, quarter: object) -> str:

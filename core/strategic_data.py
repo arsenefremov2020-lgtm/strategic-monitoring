@@ -198,6 +198,54 @@ def load_strat_matrix():
     result["parent_task_code"] = pt_codes
     result["parent_task_name"] = pt_names
 
+    # Один фізичний рядок Excel може одночасно бути заголовком Цілі/Завдання
+    # і містити ПЕРШИЙ індикатор цієї Цілі/Завдання. Раніше такий індикатор
+    # губився, бо object_type міг мати лише одне значення. Зберігаємо
+    # структурний рядок як є і породжуємо додатковий логічний indicator-row.
+    def _meaningful_indicator(value) -> bool:
+        text = raw_value(value).strip()
+        if not text or text.lower() in {"nan", "none", "null"}:
+            return False
+        # Декоративні лапки/риски/розділювачі не є індикаторами.
+        semantic = "".join(ch for ch in text if ch.isalnum())
+        return bool(semantic)
+
+    result["_source_order"] = range(len(result))
+    synthetic_indicators = []
+    for _, row in result.iterrows():
+        obj_type = raw_value(row.get("object_type"))
+        if obj_type not in {"goal", "task"} or not _meaningful_indicator(row.get("indicator")):
+            continue
+        indicator_row = row.copy()
+        indicator_row["object_type"] = "goal_indicator" if obj_type == "goal" else "task_indicator"
+        indicator_row["type_marker"] = ""
+        indicator_row["_source_order"] = float(row.get("_source_order", 0)) + 0.1
+        if obj_type == "goal":
+            indicator_row["parent_goal_code"] = raw_value(row.get("code"))
+            indicator_row["parent_goal_name"] = raw_value(row.get("name"))
+            indicator_row["parent_task_code"] = ""
+            indicator_row["parent_task_name"] = ""
+        else:
+            indicator_row["parent_task_code"] = raw_value(row.get("code"))
+            indicator_row["parent_task_name"] = raw_value(row.get("name"))
+        synthetic_indicators.append(indicator_row)
+
+    if synthetic_indicators:
+        result = pd.concat(
+            [result, pd.DataFrame(synthetic_indicators)],
+            ignore_index=True,
+            sort=False,
+        )
+
+    indicator_mask = result["object_type"].isin(["goal_indicator", "task_indicator"])
+    if indicator_mask.any():
+        result = result[~indicator_mask | result["indicator"].map(_meaningful_indicator)].copy()
+
+    # Стабільний порядок: структурний рядок, а одразу після нього — його
+    # синтетичний перший індикатор; решта логічних рядків зберігають порядок.
+    result = result.sort_values("_source_order", kind="stable").drop(columns=["_source_order"])
+    result = result.reset_index(drop=True)
+
     # ── Синоніми (та сама фізична колонка під історичними іменами) ──
     for canonical, aliases in _ALIASES.items():
         for alias in aliases:

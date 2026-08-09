@@ -356,7 +356,7 @@ def render_version_comparison(versions_df: pd.DataFrame, *, key_prefix: str) -> 
     ).set_properties(
         subset=["Стало"], **{"background-color": "#eff6ff", "white-space": "pre-wrap"}
     ).set_properties(subset=["Поле"], **{"font-weight": "700"})
-    st.dataframe(styled, use_container_width=True, hide_index=True)
+    render_readonly_table(styled)
 
 
 def human_versions_table(versions_df: pd.DataFrame) -> pd.DataFrame:

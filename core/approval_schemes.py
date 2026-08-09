@@ -63,6 +63,38 @@ ALL_APPROVAL_STATUSES = [
 ]
 
 
+def is_waiting(status: object) -> bool:
+    """True для будь-якого чинного стану, що очікує наступної дії."""
+    return str(status or "").strip() in ALL_WAITING_STATUSES
+
+
+def is_returned(status: object) -> bool:
+    """True для будь-якого чинного стану повернення на доопрацювання."""
+    return str(status or "").strip() in ALL_RETURNED_STATUSES
+
+
+def is_approved(status: object) -> bool:
+    return str(status or "").strip() == APPROVED_STATUS
+
+
+def waiting_stage_for_status(status: object) -> str:
+    """Стабільний машинний ключ поточної ланки очікування.
+
+    Використовується presentation/task сторінками замість порівнянь із
+    конкретними текстами статусів. Назви статусів при цьому не змінюються.
+    """
+    value = str(status or "").strip()
+    if value == STATUS_COORDINATOR_REVIEW:
+        return "coordinator"
+    if value == STATUS_SUPERADMIN_REVIEW:
+        return "superadmin"
+    if value == STATUS_MANAGER_REVIEW:
+        return "manager"
+    if value == STATUS_WAITING_MANAGER_SELECTION:
+        return "submitter_manager_selection"
+    return ""
+
+
 # ------------------------------------------------------------
 # Ланки
 # ------------------------------------------------------------

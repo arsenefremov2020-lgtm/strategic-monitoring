@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 import pandas as pd
 import streamlit as st
 
+from core import approval_schemes as schemes
+
 
 def _clean(value: object) -> str:
     if value is None or pd.isna(value):
@@ -44,21 +46,23 @@ def build_admin_notifications(requests_df: pd.DataFrame) -> list[dict[str, objec
             data[col] = ""
     statuses = data["approval_status"].astype(str)
     data["_days_waiting"] = data["submitted_at"].apply(_days_waiting)
+    waiting_mask = statuses.isin(schemes.ALL_WAITING_STATUSES)
+    returned_mask = statuses.isin(schemes.ALL_RETURNED_STATUSES)
     return [
         {
-            "value": int((statuses == "Очікує погодження").sum()),
+            "value": int((statuses == schemes.STATUS_COORDINATOR_REVIEW).sum()),
             "label": "Нові заявки на погодження",
         },
         {
-            "value": int((statuses == "Повернуто на доопрацювання").sum()),
+            "value": int(returned_mask.sum()),
             "label": "Повернуті на доопрацювання",
         },
         {
-            "value": int((statuses == "Очікує: Керівник ССП").sum()),
-            "label": "Очікує: Керівник ССП",
+            "value": int((statuses == schemes.STATUS_MANAGER_REVIEW).sum()),
+            "label": "На розгляді керівника",
         },
         {
-            "value": int(((statuses == "Очікує погодження") & (data["_days_waiting"] > 5)).sum()),
+            "value": int((waiting_mask & (data["_days_waiting"] > 5)).sum()),
             "label": "Очікують понад 5 днів",
         },
     ]
@@ -76,15 +80,15 @@ def build_cabinet_notifications(requests_df: pd.DataFrame) -> list[dict[str, obj
     comments = data["admin_comment"].astype(str).str.strip()
     return [
         {
-            "value": int((statuses == "Повернуто на доопрацювання").sum()),
+            "value": int(statuses.isin(schemes.ALL_RETURNED_STATUSES).sum()),
             "label": "Повернуто на доопрацювання",
         },
         {
-            "value": int((statuses == "Очікує: Керівник ССП").sum()),
-            "label": "Очікує підтвердження керівника",
+            "value": int((statuses == schemes.STATUS_MANAGER_REVIEW).sum()),
+            "label": "Очікує рішення керівника",
         },
         {
-            "value": int((statuses == "Погоджено").sum()),
+            "value": int((statuses == schemes.APPROVED_STATUS).sum()),
             "label": "Погоджено",
         },
         {

@@ -150,6 +150,7 @@ def render_readonly_table(
     show_index: bool = False,
     column_widths: dict[str, int | str] | None = None,
     scroll_columns: list[str] | set[str] | tuple[str, ...] | None = None,
+    table_width: str | int | None = None,
 ) -> None:
     """Єдиний HTML-стандарт для НЕінтерактивних таблиць системи.
 
@@ -187,6 +188,20 @@ def render_readonly_table(
     row_pad = "6px 8px" if compact else "8px 10px"
     font_size = 12 if compact else 13
 
+    # Ширина таблиці може працювати у трьох режимах:
+    # - None: історичний системний стандарт (wrapper 100%, table >= min_width);
+    # - відсоток / px: wrapper займає рівно задану ширину, table заповнює його;
+    # - "fit-columns": ширина table = сумі заданих колонок, wrapper лише обрізає
+    #   її по viewport і дає зовнішній горизонтальний скрол. Це прибирає порожній
+    #   білий хвіст після останньої колонки у широких Dashboard-таблицях.
+    fit_columns = str(table_width).strip().lower() == "fit-columns"
+    explicit_wrapper_width = None
+    if table_width is not None and not fit_columns:
+        if isinstance(table_width, (int, float)):
+            explicit_wrapper_width = f"{max(1, int(table_width))}px"
+        else:
+            explicit_wrapper_width = str(table_width).strip() or None
+
     def _column_css_width(value: Any) -> str:
         if value is None:
             return ""
@@ -203,10 +218,40 @@ def render_readonly_table(
         col_parts.append(f"<col style='width:{escape(width)}'>" if width else "<col>")
     colgroup = "<colgroup>" + "".join(col_parts) + "</colgroup>"
 
+    if fit_columns:
+        def _column_px(value: Any) -> int:
+            if isinstance(value, (int, float)):
+                return max(1, int(value))
+            text = str(value or "").strip().lower()
+            if text.endswith("px"):
+                try:
+                    return max(1, int(float(text[:-2].strip())))
+                except ValueError:
+                    pass
+            return 165
+
+        exact_width = (54 if show_index else 0) + sum(
+            _column_px(column_widths.get(col)) for col in columns
+        )
+        wrapper_width_css = "fit-content"
+        wrapper_max_width_css = "100%"
+        table_width_css = f"{exact_width}px"
+        table_min_width_css = table_width_css
+    elif explicit_wrapper_width:
+        wrapper_width_css = explicit_wrapper_width
+        wrapper_max_width_css = "100%"
+        table_width_css = "100%"
+        table_min_width_css = "100%"
+    else:
+        wrapper_width_css = "100%"
+        wrapper_max_width_css = "100%"
+        table_width_css = "100%"
+        table_min_width_css = f"{int(min_width)}px"
+
     css = f"""
     <style>
-    .readonly-table-scroll {{ overflow:auto; width:100%; max-height:{int(height)}px; border:1px solid #DCE4F0; border-radius:10px; margin:8px 0 18px 0; background:#fff; }}
-    table.readonly-table {{ border-collapse:collapse; table-layout:fixed; min-width:{int(min_width)}px; width:100%; font-size:{font_size}px; color:#132238; }}
+    .readonly-table-scroll {{ overflow:auto; width:{wrapper_width_css} !important; max-width:{wrapper_max_width_css} !important; max-height:{int(height)}px; border:1px solid #DCE4F0; border-radius:10px; margin:8px 0 18px 0; background:#fff; }}
+    table.readonly-table {{ border-collapse:collapse; table-layout:fixed; min-width:{table_min_width_css} !important; width:{table_width_css} !important; max-width:none !important; font-size:{font_size}px; color:#132238; }}
     table.readonly-table th {{ position:sticky; top:0; z-index:3; background:#EAF1FF; color:#132238; padding:9px 10px; border:1px solid #DCE4F0; text-align:center; vertical-align:middle; white-space:normal; font-weight:850; line-height:1.22; }}
     table.readonly-table td {{ padding:{row_pad}; border:1px solid #DCE4F0; vertical-align:middle; text-align:center; white-space:normal; overflow-wrap:anywhere; line-height:1.32; }}
     table.readonly-table tr:nth-child(even) {{ background:#F7F9FC; }}

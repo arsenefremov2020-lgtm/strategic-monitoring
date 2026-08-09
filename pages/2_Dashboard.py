@@ -32,6 +32,9 @@ from core.access import (
     is_scope_lockable_user,
     is_scope_override_active,
     get_user_ssp_index,
+    is_guest_user,
+    is_admin_user,
+    is_super_admin_user,
 )
 from core.ui import render_readonly_table, render_scope_toggle
 from core.stage4 import render_measure_rows_with_card_links
@@ -921,10 +924,13 @@ def load_strat_matrix():
 
 
 def load_requests():
-    """ЄДИНЕ джерело — core.monitoring_data (правки К2, П2).
-    Dashboard аналізує ЗАХОДИ, тому подання індикаторів (object_kind='indicator')
-    відфільтровуються одразу."""
-    return monitoring_data.measures_only(monitoring_data.load_monitoring_requests())
+    """Єдине читання всіх моніторингових подань для Dashboard.
+
+    Заходи та індикатори розділяються вже після застосування однакової
+    dashboard-scope логіки. Це важливо для графіків індикаторів: їхні фактичні
+    подання не повинні зникати ще на етапі завантаження.
+    """
+    return monitoring_data.load_monitoring_requests()
 
 
 # ============================================================
@@ -1077,7 +1083,8 @@ def plan_fact_percent(actual, target):
     return dashboard_metrics.plan_fact_percent(actual, target)
 def is_quantitative_plan_fact(row):
     return dashboard_metrics.is_quantitative_plan_fact(
-        row.get("numeric_value", ""), row.get("selected_target", "")
+        row.get("fact_value", row.get("numeric_value", "")),
+        row.get("selected_target", ""),
     )
 def traffic_light(score):
     return dashboard_metrics.traffic_light(score)
@@ -1173,7 +1180,10 @@ def build_risk_observation_map(approved_requests, year, selected_quarter_num):
         return {}
 
     history = approved_requests.copy()
-    for column in ["id", "year", "quarter", "strat_code", "status", "numeric_value", "submitted_at"]:
+    for column in [
+        "id", "year", "quarter", "strat_code", "status",
+        "numeric_value", "value_text", "submitted_at",
+    ]:
         if column not in history.columns:
             history[column] = ""
 
@@ -1213,7 +1223,11 @@ def build_risk_observation_map(approved_requests, year, selected_quarter_num):
             {
                 "quarter_num": int(record["_risk_quarter_num"]),
                 "quarter_fraction": QUARTER_FRACTIONS[int(record["_risk_quarter_num"])],
-                "fact": record.get("numeric_value", ""),
+                "fact": (
+                    record.get("numeric_value", "")
+                    if clean(record.get("numeric_value", ""))
+                    else record.get("value_text", "")
+                ),
                 "status": record.get("status", ""),
             }
             for _, record in rows.iterrows()
@@ -1776,6 +1790,72 @@ def render_indicator_bar(
 # CORE DATA FUNCTIONS
 # ============================================================
 
+def latest_approved_measure_records_as_of(requests_df, year, quarter, codes=None):
+    """Останній погоджений факт заходу не пізніше обраного зрізу.
+
+    Використовується тільки для заходів, строк яких уже завершився до
+    обраного кварталу. Для ще активних заходів Dashboard і надалі вимагає
+    дані саме за обраний звітний квартал, щоб відсутність поточного подання
+    не маскувалася старим фактом.
+    """
+    if requests_df is None or requests_df.empty:
+        return pd.DataFrame(columns=["strat_code"])
+
+    data = requests_df.copy()
+    required = [
+        "id", "year", "quarter", "strat_code", "status", "numeric_value",
+        "value_text", "risks", "progress_text", "approval_status",
+        "submitted_at", "object_kind",
+    ]
+    for column in required:
+        if column not in data.columns:
+            data[column] = ""
+
+    selected_period = core_period_number(year, quarter)
+
+    def _request_period_number(row):
+        try:
+            if not clean(row.get("year")) or not clean(row.get("quarter")):
+                return None
+            return core_period_number(
+                int(float(row.get("year"))),
+                row.get("quarter"),
+            )
+        except (TypeError, ValueError):
+            return None
+
+    data["_period_number"] = data.apply(_request_period_number, axis=1)
+    data = data[
+        (data["approval_status"].astype(str).str.strip() == operational.CONFIRMED_STATUS)
+        & (
+            data["object_kind"].fillna("measure").astype(str).str.strip().str.lower()
+            != "indicator"
+        )
+        & pd.to_numeric(data["_period_number"], errors="coerce").le(selected_period)
+    ].copy()
+
+    if codes is not None:
+        code_set = {clean(code) for code in codes if clean(code)}
+        data = data[data["strat_code"].apply(clean).isin(code_set)].copy()
+
+    if data.empty:
+        return data.drop(columns=["_period_number"], errors="ignore")
+
+    data["_submitted_sort"] = pd.to_datetime(
+        data["submitted_at"], errors="coerce", utc=True
+    )
+    data["_id_sort"] = pd.to_numeric(data["id"], errors="coerce").fillna(-1)
+    return (
+        data.sort_values(
+            ["strat_code", "_period_number", "_submitted_sort", "_id_sort"],
+            na_position="first",
+        )
+        .groupby("strat_code", as_index=False, sort=False)
+        .tail(1)
+        .drop(columns=["_period_number", "_submitted_sort", "_id_sort"])
+    )
+
+
 def prepare_period_data(strat_df, requests_df, year, quarter, department="Усі", period_locked_override=None):
     measures = strat_df[strat_df["object_type"] == "measure"].copy()
     goals = strat_df[strat_df["object_type"] == "goal"].copy()
@@ -1800,10 +1880,12 @@ def prepare_period_data(strat_df, requests_df, year, quarter, department="Усі
         axis=1,
     )
 
-    # До квартальної вибірки входять лише заходи, строк виконання яких
-    # охоплює саме цей звітний період. Невизначені та майбутні періоди
-    # не перетворюються на штучний статус «Не настав час».
-    active = measures[measures["period_state"] == "active"].copy()
+    # Моментний зріз "станом на квартал" включає все, що вже мало
+    # розпочатися до цього моменту: і поточно активні, і вже завершені заходи.
+    # Майбутні заходи не включаються, бо їхній строк ще не настав.
+    active = measures[
+        measures["period_state"].isin(["active", "ended"])
+    ].copy()
 
     if department != "Усі":
         active = active[active["department"].astype(str) == str(department)]
@@ -1811,7 +1893,8 @@ def prepare_period_data(strat_df, requests_df, year, quarter, department="Усі
     requests = requests_df.copy() if isinstance(requests_df, pd.DataFrame) else pd.DataFrame()
     required_cols = [
         "id", "year", "quarter", "strat_code", "status", "numeric_value",
-        "risks", "progress_text", "approval_status", "submitted_at",
+        "value_text", "risks", "progress_text", "approval_status", "submitted_at",
+        "object_kind",
     ]
     for column in required_cols:
         if column not in requests.columns:
@@ -1825,12 +1908,42 @@ def prepare_period_data(strat_df, requests_df, year, quarter, department="Усі
     )
 
     period_request_columns = [
-        "strat_code", "status", "numeric_value", "risks", "progress_text",
-        "approval_status", "submitted_at", "id",
+        "strat_code", "status", "numeric_value", "value_text", "risks",
+        "progress_text", "approval_status", "submitted_at", "id",
     ]
-    period_requests = dashboard_metrics.latest_approved_records(requests, year, quarter)
+
+    # Для активних заходів потрібне подання саме за обраний квартал.
+    exact_period_requests = dashboard_metrics.latest_approved_records(
+        requests, year, quarter
+    )
+
+    # Для вже завершених заходів їхній останній погоджений результат має
+    # залишатися у наступних зрізах. Якщо після завершення було подано
+    # уточнений/підсумковий факт (наприклад у IV кварталі), він має пріоритет.
+    ended_codes = active.loc[
+        active["period_state"] == "ended", "code"
+    ].astype(str).tolist()
+    ended_as_of_requests = latest_approved_measure_records_as_of(
+        requests, year, quarter, ended_codes
+    )
+
+    active_exact = exact_period_requests[
+        exact_period_requests["strat_code"].astype(str).isin(
+            active.loc[active["period_state"] == "active", "code"].astype(str)
+        )
+    ].copy() if not exact_period_requests.empty else pd.DataFrame()
+
+    period_requests = pd.concat(
+        [active_exact, ended_as_of_requests],
+        ignore_index=True,
+        sort=False,
+    )
     if period_requests.empty:
         period_requests = pd.DataFrame(columns=period_request_columns)
+
+    for column in period_request_columns:
+        if column not in period_requests.columns:
+            period_requests[column] = ""
 
     period_requests = period_requests.rename(columns={
         "submitted_at": "request_submitted_at",
@@ -1838,8 +1951,9 @@ def prepare_period_data(strat_df, requests_df, year, quarter, department="Усі
     })
     active = active.merge(
         period_requests[[
-            "strat_code", "status", "numeric_value", "risks", "progress_text",
-            "approval_status", "request_submitted_at", "request_id",
+            "strat_code", "status", "numeric_value", "value_text",
+            "risks", "progress_text", "approval_status",
+            "request_submitted_at", "request_id",
         ]],
         left_on="code",
         right_on="strat_code",
@@ -1851,6 +1965,15 @@ def prepare_period_data(strat_df, requests_df, year, quarter, department="Усі
     if period_locked:
         active["status"] = "Не настав час"
     active["numeric_value"] = active["numeric_value"].fillna("")
+    active["value_text"] = active["value_text"].fillna("")
+    active["fact_value"] = active.apply(
+        lambda row: (
+            row["numeric_value"]
+            if clean(row.get("numeric_value", ""))
+            else row.get("value_text", "")
+        ),
+        axis=1,
+    )
     active["risks"] = active["risks"].fillna("")
     active["progress_text"] = active["progress_text"].fillna("")
     active["approval_status"] = active["approval_status"].fillna("")
@@ -1861,7 +1984,8 @@ def prepare_period_data(strat_df, requests_df, year, quarter, department="Усі
     active["status_display"] = active["status"].apply(status_display)
     active["status_score"] = active["status"].apply(status_score)
     active["plan_fact_percent"] = active.apply(
-        lambda row: plan_fact_percent(row["numeric_value"], row["selected_target"]), axis=1
+        lambda row: plan_fact_percent(row["fact_value"], row["selected_target"]),
+        axis=1,
     )
     active["is_quantitative_pf"] = active.apply(is_quantitative_plan_fact, axis=1)
     active["performance_score"] = active.apply(
@@ -2433,16 +2557,39 @@ st.markdown(f"""
 # ============================================================
 
 strat_df = load_strat_matrix()
-requests_df = load_requests()
+all_requests_df = load_requests()
 
-# Ролі, звужені до власного ССП, бачать за замовчуванням тільки своє ССП.
-# На цьому рівні звужуються лише подання; ієрархічна матриця залишається повною.
-requests_df = filter_requests_for_user(
-    requests_df, current_user, ssp_columns=["department"], page_key="Dashboard"
+# Dashboard має окрему read-only модель видимості:
+# - guest / admin / super-admin бачать усю аналітику;
+# - ССП-родина за замовчуванням бачить лише свій ССП;
+# - після переходу ССП у загальний режим звуження повністю знімається.
+_dashboard_full_scope = (
+    is_guest_user(current_user)
+    or is_admin_user(current_user)
+    or is_super_admin_user(current_user)
+    or is_scope_override_active("Dashboard")
 )
 
+if _dashboard_full_scope:
+    scoped_requests_df = all_requests_df.copy()
+else:
+    scoped_requests_df = filter_requests_for_user(
+        all_requests_df,
+        current_user,
+        ssp_columns=["department"],
+        page_key="Dashboard",
+    )
+
+requests_df = monitoring_data.measures_only(scoped_requests_df)
+
 measures_all = strat_df[strat_df["object_type"] == "measure"].copy()
-measures_all = filter_actions_for_user(measures_all, current_user, page_key="Dashboard")
+if not _dashboard_full_scope:
+    measures_all = filter_actions_for_user(
+        measures_all,
+        current_user,
+        page_key="Dashboard",
+    )
+
 goals_all = strat_df[strat_df["object_type"] == "goal"].copy()
 tasks_all = strat_df[strat_df["object_type"] == "task"].copy()
 
@@ -2763,8 +2910,14 @@ if is_scope_lockable_user(current_user) and not is_scope_override_active("Dashbo
 # ============================================================
 
 _indicator_requests_source = (
-    requests_df[requests_df.get("object_kind", pd.Series(index=requests_df.index, dtype=str)).astype(str).str.lower().eq("indicator")].copy()
-    if not requests_df.empty else pd.DataFrame()
+    scoped_requests_df[
+        scoped_requests_df.get(
+            "object_kind",
+            pd.Series(index=scoped_requests_df.index, dtype=str),
+        ).astype(str).str.lower().eq("indicator")
+    ].copy()
+    if not scoped_requests_df.empty
+    else pd.DataFrame()
 )
 if data_source_mode == operational.MODE_OPERATIONAL and not _indicator_requests_source.empty:
     _indicator_requests_effective = operational.operational_indicator_rows(_indicator_requests_source)
@@ -3170,7 +3323,7 @@ def _finance_annual_score_map(period_rows, year):
             result[code] = "х"
             continue
 
-        actual = clean(row.get("numeric_value", ""))
+        actual = clean(row.get("fact_value", row.get("numeric_value", "")))
         target = clean(row.get("selected_target", ""))
         unit = clean(row.get("unit", "")).lower()
         if not actual or not target or target.lower() == "х":
@@ -3898,7 +4051,7 @@ if presentation_mode:
                 try:
                     import plotly.express as _pdf_px
                     _pdf_kpis = [
-                        ("Всього активних заходів", str(total_active)),
+                        ("Всього заходів у зрізі", str(total_active)),
                         ("Виконано", str(completed_count)),
                         ("Частково виконано", str(partly_count)),
                         ("Не виконано", str(not_done_count)),
@@ -4271,7 +4424,7 @@ if presentation_mode:
             </div>
             <div class="pres-filter-pills">
                 {filter_pills_html}
-                <span class="pres-filter-pill">📌 {total_active} активних заходів</span>
+                <span class="pres-filter-pill">📌 {total_active} заходів у зрізі</span>
                 <span class="pres-filter-pill">🕐 {now_kyiv().strftime('%d.%m.%Y %H:%M')}</span>
             </div>
         </div>
@@ -4287,7 +4440,7 @@ if presentation_mode:
                 <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:20px 18px;">
                     <div style="font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.35);margin-bottom:8px;">Виконання СП</div>
                     <div style="font-size:44px;font-weight:900;color:#fff;line-height:1;">{completion}%</div>
-                    <div style="font-size:12px;color:rgba(255,255,255,.35);margin-top:4px;">Середнє по активних заходах</div>
+                    <div style="font-size:12px;color:rgba(255,255,255,.35);margin-top:4px;">Середнє по заходах у зрізі</div>
                 </div>
                 <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:20px 18px;">
                     <div style="font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.35);margin-bottom:8px;">Покриття</div>
@@ -4307,7 +4460,7 @@ if presentation_mode:
             <div class="pres-slide-num">03 / 07</div>
             <div class="pres-section-label">Ключові показники</div>
             <div class="pres-slide-h2">Статистика виконання заходів</div>
-            <div class="pres-slide-hsub">{period_label} · {total_active} активних заходів</div>
+            <div class="pres-slide-hsub">{period_label} · {total_active} заходів у зрізі</div>
 
             <div class="pres-kpi-grid">
                 <div class="pres-kpi-card blue">
@@ -4370,7 +4523,7 @@ if presentation_mode:
             <div class="pres-slide-num">05 / 07</div>
             <div class="pres-section-label">Автоматична оцінка ризиків</div>
             <div class="pres-slide-h2">Розподіл ризиків недосягнення</div>
-            <div class="pres-slide-hsub">{total_active} активних заходів · {period_label}</div>
+            <div class="pres-slide-hsub">{total_active} заходів у зрізі · {period_label}</div>
 
             <div class="pres-risk-grid">
                 <div class="pres-risk-card high">
@@ -4419,7 +4572,7 @@ if presentation_mode:
             <div class="pres-slide-num">07 / 07</div>
             <div class="pres-section-label">Фінансування заходів</div>
             <div class="pres-slide-h2">Структура та обсяги фінансування</div>
-            <div class="pres-slide-hsub">{period_label} · {pres_fin_total} активних заходів</div>
+            <div class="pres-slide-hsub">{period_label} · {pres_fin_total} заходів у зрізі</div>
 
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-top:36px;max-width:900px;">
                 <div>
@@ -4459,7 +4612,7 @@ if snapshot_context is not None:
                 f"Виконання: {_format_summary_number(completion)}%",
                 f"Покриття: {_format_summary_number(coverage)}%",
                 f"Відхилення: {_format_summary_number(deviation_current)} в.п.",
-                f"Активних заходів: {total_active}",
+                f"Заходів у зрізі: {total_active}",
             ],
             tone=conclusion_badge,
         )
@@ -4643,7 +4796,7 @@ if snapshot_context is not None:
     with snapshot_content:
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
         st.markdown('<div class="section-title">Статуси виконання за принципом світлофора</div>', unsafe_allow_html=True)
-        st.markdown('<div class="section-subtitle">Розподіл активних заходів за станом виконання</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-subtitle">Розподіл заходів у зрізі за станом виконання</div>', unsafe_allow_html=True)
         fig_tl = px.pie(
             traffic_counts,
             names="traffic_light",
@@ -4761,7 +4914,7 @@ if breakdown_context is not None:
             labels={
                 "Виконання": "Виконання, %",
                 "label": "",
-                "Активних_заходів": "Активних заходів",
+                "Активних_заходів": "Заходів у зрізі",
                 "Покриття_%": "Покриття, %",
                 "Ризикових": "Ризикових заходів",
             },
@@ -4804,7 +4957,7 @@ if breakdown_context is not None:
         ]].rename(columns={
             "ssp_department": "Самостійний структурний підрозділ",
             "Покриття_%": "Покриття, %",
-            "Активних_заходів": "Активних заходів"
+            "Активних_заходів": "Заходів у зрізі"
         })
 
         render_dashboard_table(
@@ -4845,7 +4998,7 @@ if breakdown_context is not None:
             labels={
                 "ssp_department": "Самостійний структурний підрозділ",
                 "Виконання": "Виконання, %",
-                "Активних_заходів": "Активних заходів",
+                "Активних_заходів": "Заходів у зрізі",
                 "Покриття_%": "Покриття, %",
                 "Ризикових": "Ризикових заходів",
                 "Критичних": "Критичний ризик",
@@ -4919,7 +5072,7 @@ if breakdown_context is not None:
             labels={
                 "Dep_short": "Заступник Міністра",
                 "Виконання": "Виконання, %",
-                "Активних_заходів": "Активних заходів",
+                "Активних_заходів": "Заходів у зрізі",
                 "Покриття_%": "Покриття, %",
                 "Ризикових": "Ризикових заходів",
             },
@@ -4930,7 +5083,7 @@ if breakdown_context is not None:
             hovertemplate=(
                 "<b>%{customdata[0]}</b><br>"
                 "Виконання: %{y:.2f}%<br>"
-                "Активних заходів: %{customdata[1]}<br>"
+                "Заходів у зрізі: %{customdata[1]}<br>"
                 "Покриття: %{customdata[2]:.2f}%<br>"
                 "Ризикових: %{customdata[3]}"
                 "<extra></extra>"
@@ -5236,7 +5389,7 @@ if snapshot_context is not None:
                     "<b>%{customdata[0]}</b><br>"
                     "Виконання: %{customdata[1]:.2f}%<br>"
                     "Середній річний темп: %{customdata[2]:+.2f}% плану<br>"
-                    "Активних заходів: %{customdata[3]}<extra></extra>"
+                    "Заходів у зрізі: %{customdata[3]}<extra></extra>"
                 ),
                 cliponaxis=False,
                 showlegend=False,
@@ -5972,7 +6125,7 @@ if breakdown_context is not None:
                     "department": "Головний ССП",
                     "status_display": "Статус виконання",
                     "selected_target": "Планове значення",
-                    "numeric_value": "Фактичне значення",
+                    "fact_value": "Фактичне значення",
                     "auto_risk": "Рівень ризику",
                     "risk_score": "Risk score",
                     "traffic_light": "Traffic light",
@@ -5991,12 +6144,12 @@ if breakdown_context is not None:
                     hide_index=True,
                 )
 
-# Повна таблиця активних заходів.
+# Повна таблиця заходів у зрізі.
 if breakdown_context is not None:
     _activate_dashboard_context(breakdown_context)
     with breakdown_content:
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">Повна таблиця активних заходів</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Повна таблиця заходів у зрізі</div>', unsafe_allow_html=True)
 
         full = active.rename(columns={
             "period_label": "Період",
@@ -6010,7 +6163,7 @@ if breakdown_context is not None:
             "start_period": "Початок",
             "end_period": "Кінець",
             "selected_target": "Планове значення",
-            "numeric_value": "Фактичне значення",
+            "fact_value": "Фактичне значення",
             "status_display": "Статус виконання",
             "performance_score": "Оцінка виконання, %",
             "auto_risk": "Ризик",
@@ -6039,9 +6192,9 @@ if breakdown_context is not None:
 with st.expander("Методологія розрахунку"):
     st.markdown("""
     <div class="methodology-box">
-    <strong>Активні заходи</strong> — заходи, період виконання яких охоплює обраний рік і квартал.<br><br>
+    <strong>Заходи у зрізі</strong> — усі заходи, строк виконання яких уже настав станом на обраний рік і квартал. До зрізу входять як поточно активні, так і вже завершені заходи; майбутні заходи не включаються.<br><br>
 
-    <strong>Виконання СП</strong> рахується як середня оцінка виконання активних заходів:
+    <strong>Виконання СП</strong> рахується як середня оцінка виконання заходів у зрізі:
     <ul>
         <li>якщо є планове та фактичне значення — використовується співвідношення факт / план зі стелею 100%;</li>
         <li>якщо план / факт не можна порахувати числово — використовується статус виконання;</li>

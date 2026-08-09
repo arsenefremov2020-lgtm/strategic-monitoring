@@ -9,7 +9,7 @@ from html import escape
 import re
 from core.page_setup import page_setup, render_footer
 from core.timeutils import now_kyiv
-from core.ui import render_request_timeline
+from core.ui import render_readonly_table, render_request_timeline
 from core.stage4 import format_kyiv_datetime, quarter_to_roman, style_status_columns
 from core.strategic_data import load_strat_matrix as core_load_strat_matrix
 from core import monitoring_data
@@ -27,8 +27,7 @@ from core.access import filter_requests_for_user, get_prefilled_user_contacts
 from core.operational import build_target_map
 from core.validation import (
     cumulative_quarter_decrease_error,
-    status_value_conflict,
-    validate_fact_value_for_target,
+    validation_errors_for_record,
 )
 from config.users import get_user_by_email
 
@@ -644,48 +643,22 @@ with st.expander("Перелік поданих відомостей", expanded=
     _table_rows = []
     for _, _row in filtered.iterrows():
         _coord_name, _coord_phone = _coordinator_details(_row)
-        _table_rows.append(
-            "<tr>"
-            f"<td>{display_text(_row.get('id'))}</td>"
-            f"<td>{display_text(_period_label(_row.get('year'), _row.get('quarter')))}</td>"
-            f"<td>{display_text(_target_for_record(_row))}</td>"
-            f"<td>{display_text(_fact_for_record(_row))}</td>"
-            f"<td>{display_text(_row.get('_visual_status'))}</td>"
-            f"<td>{display_text(_row.get('approval_status'))}</td>"
-            f"<td>{display_text(_coord_name)}</td>"
-            f"<td>{display_text(_coord_phone)}</td>"
-            f"<td>{display_text(_row.get('admin_comment'))}</td>"
-            f"<td>{display_text(format_kyiv_datetime(_row.get('submitted_at')))}</td>"
-            "</tr>"
-        )
-
-    st.markdown(
-        """
-        <div class="myreq-table-scroll">
-          <table class="myreq-html-table">
-            <thead>
-              <tr>
-                <th>ID заявки</th>
-                <th>Звітний період</th>
-                <th>Цільовий орієнтир</th>
-                <th>Фактичне значення</th>
-                <th>Статус виконання</th>
-                <th>Статус погодження</th>
-                <th>Координатор</th>
-                <th>Номер телефону координатора</th>
-                <th>Коментар координатора</th>
-                <th>Дата подання</th>
-              </tr>
-            </thead>
-            <tbody>
-        """
-        + "".join(_table_rows)
-        + """
-            </tbody>
-          </table>
-        </div>
-        """,
-        unsafe_allow_html=True,
+        _table_rows.append({
+            "ID заявки": clean(_row.get("id")) or "—",
+            "Звітний період": _period_label(_row.get("year"), _row.get("quarter")),
+            "Цільовий орієнтир": _target_for_record(_row) or "—",
+            "Фактичне значення": _fact_for_record(_row) or "—",
+            "Статус виконання": clean(_row.get("_visual_status")) or "—",
+            "Статус погодження": clean(_row.get("approval_status")) or "—",
+            "Координатор": _coord_name or "—",
+            "Номер телефону координатора": _coord_phone or "—",
+            "Коментар координатора": clean(_row.get("admin_comment")) or "—",
+            "Дата подання": format_kyiv_datetime(_row.get("submitted_at")) or "—",
+        })
+    render_readonly_table(
+        pd.DataFrame(_table_rows),
+        height=325,
+        empty_message="Поданих відомостей за вибраними фільтрами немає.",
     )
 
 # ============================================================
@@ -993,7 +966,7 @@ if (
                         )
                     monitoring_data.invalidate_monitoring_cache()
                     st.success("Заявку направлено обраному керівнику.")
-                    st.rerun()
+                    pass  # no explicit rerun: the triggering user action completes in this run
                 except TransitionRejected as exc:
                     st.error(exc.message)
                 except Exception as exc:
@@ -1088,25 +1061,15 @@ if _can_early_modify:
 
             de_future_targets = _future_targets_for_record(selected_row, mi)
             if has_value(de_new_value):
-                de_value_ok, de_value_error = validate_fact_value_for_target(
-                    de_new_value,
-                    de_unit,
-                    selected_target,
-                    de_future_targets,
-                )
-                if not de_value_ok:
-                    de_errors.append(de_value_error)
-
-            de_conflict_error = status_value_conflict(
-                de_new_status,
-                de_new_value,
-                selected_target,
-                de_unit,
-                code,
-                de_future_targets,
-            )
-            if de_conflict_error:
-                de_errors.append(de_conflict_error)
+                de_errors.extend(validation_errors_for_record(
+                    object_kind=selected_row.get("object_kind") or "measure",
+                    status=de_new_status,
+                    value=de_new_value,
+                    target=selected_target,
+                    unit=de_unit,
+                    code=code,
+                    future_targets=de_future_targets,
+                ))
 
             if de_errors:
                 for error in de_errors:
@@ -1145,8 +1108,9 @@ if _can_early_modify:
                         "на поточній ланці схеми погодження."
                     )
                     st.session_state["my_requests_edit_notice_ts"] = now_kyiv().isoformat()
+                    st.session_state["my_requests_edit_notice_request_id"] = int(selected_id)
                     monitoring_data.invalidate_monitoring_cache()
-                    st.rerun()
+                    pass  # no explicit rerun: the triggering user action completes in this run
                 except TransitionRejected as exc:
                     st.error(exc.message)
                 except Exception as exc:
@@ -1190,7 +1154,7 @@ if _can_early_modify:
                 )
                 monitoring_data.invalidate_monitoring_cache()
                 st.success("Заявку відкликано.")
-                st.rerun()
+                pass  # no explicit rerun: the triggering user action completes in this run
             except TransitionRejected as exc:
                 st.error(exc.message)
             except Exception as exc:
@@ -1200,6 +1164,13 @@ if _can_early_modify:
 # ── Тимчасове підтвердження успішного редагування ──
 _edit_notice = st.session_state.get("my_requests_edit_notice", "")
 _edit_notice_ts_raw = st.session_state.get("my_requests_edit_notice_ts", "")
+_edit_notice_request_id = st.session_state.get("my_requests_edit_notice_request_id")
+if _edit_notice and str(_edit_notice_request_id) != str(selected_id):
+    st.session_state.pop("my_requests_edit_notice", None)
+    st.session_state.pop("my_requests_edit_notice_ts", None)
+    st.session_state.pop("my_requests_edit_notice_request_id", None)
+    _edit_notice = ""
+    _edit_notice_ts_raw = ""
 _edit_notice_active = False
 _edit_notice_remaining_ms = 0
 
@@ -1217,22 +1188,14 @@ if _edit_notice and _edit_notice_ts_raw:
         else:
             st.session_state.pop("my_requests_edit_notice", None)
             st.session_state.pop("my_requests_edit_notice_ts", None)
+            st.session_state.pop("my_requests_edit_notice_request_id", None)
     except (TypeError, ValueError):
         st.session_state.pop("my_requests_edit_notice", None)
         st.session_state.pop("my_requests_edit_notice_ts", None)
+        st.session_state.pop("my_requests_edit_notice_request_id", None)
 
 if _edit_notice_active:
     st.success(_edit_notice)
-    import streamlit.components.v1 as components
-
-    components.html(
-        f"""
-        <script>
-        setTimeout(function() {{ window.parent.location.reload(); }}, {_edit_notice_remaining_ms});
-        </script>
-        """,
-        height=0,
-    )
 
 
 # ============================================================
@@ -1271,14 +1234,10 @@ with st.expander("Історія версій заявки", expanded=False):
                 "Посилання на НПА": clean(version_row.get("npa_link")) or "—",
             })
         versions_show = pd.DataFrame(_version_rows)
-        st.dataframe(
-            style_status_columns(
+        render_readonly_table(style_status_columns(
                 versions_show,
                 ["Статус погодження", "Статус виконання"],
-            ),
-            use_container_width=True,
-            hide_index=True,
-        )
+            ))
 
 
 # ============================================================
@@ -1387,25 +1346,15 @@ if approval in schemes.ALL_RETURNED_STATUSES:
 
         future_targets = _future_targets_for_record(selected_row, mi)
         if has_value(new_value):
-            value_ok, value_error = validate_fact_value_for_target(
-                new_value,
-                unit,
-                selected_target,
-                future_targets,
-            )
-            if not value_ok:
-                errors.append(value_error)
-
-        conflict_error = status_value_conflict(
-            new_status,
-            new_value,
-            selected_target,
-            unit,
-            code,
-            future_targets,
-        )
-        if conflict_error:
-            errors.append(conflict_error)
+            errors.extend(validation_errors_for_record(
+                object_kind=selected_row.get("object_kind") or "measure",
+                status=new_status,
+                value=new_value,
+                target=selected_target,
+                unit=unit,
+                code=code,
+                future_targets=future_targets,
+            ))
 
         if errors:
             st.error("Повторне подання не виконано:")
@@ -1471,8 +1420,9 @@ if approval in schemes.ALL_RETURNED_STATUSES:
                     f"Зараз заявку розглядає ланка «{clean(_resubmit_stage_label)}»."
                 )
                 st.session_state["my_requests_edit_notice_ts"] = now_kyiv().isoformat()
+                st.session_state["my_requests_edit_notice_request_id"] = int(selected_id)
                 monitoring_data.invalidate_monitoring_cache()
-                st.rerun()
+                pass  # no explicit rerun: the triggering user action completes in this run
             except TransitionRejected as exc:
                 st.error(exc.message)
             except Exception as exc:

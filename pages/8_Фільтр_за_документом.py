@@ -22,9 +22,10 @@ from core.timeutils import now_kyiv
 from core.page_setup import page_setup, render_footer
 from core.strategic_data import load_strat_matrix, strip_leading_code
 from core import monitoring_data
+from core import approval_schemes as schemes
 from core import periods as core_periods
 from core.access import filter_actions_for_user
-from core.ui import render_scope_toggle, render_auto_refresh_notice, load_css
+from core.ui import render_readonly_table, render_scope_toggle, load_css
 from core.statuses import legend_badge
 from core.closeouts import load_manual_closeouts
 from core.period_locks import all_periods_locked, is_period_locked
@@ -38,7 +39,6 @@ PAGE_KEY = "Фільтр за документом"
 
 current_user = page_setup(PAGE_KEY, page_name=PAGE_KEY)
 load_css()
-render_auto_refresh_notice(PAGE_KEY, minutes=5, show_note=False)
 
 st.markdown(
     '<div class="card">'
@@ -176,14 +176,14 @@ if ppdu_clicked or apply_clicked:
         "active_only": st.session_state.get("npa_active_pending", True),
         "official_only": st.session_state.get("npa_official_pending", True),
     }
-    st.rerun()
+    pass  # no explicit rerun: the triggering user action completes in this run
 
 if reset_clicked:
     st.session_state.npa_filter_applied = dict(_defaults)
     for key in ["npa_doc_pending", "npa_year_pending", "npa_quarters_pending",
                 "npa_active_pending", "npa_official_pending"]:
         st.session_state.pop(key, None)
-    st.rerun()
+    pass  # no explicit rerun: the triggering user action completes in this run
 
 params = st.session_state.npa_filter_applied
 selected_doc = params.get("doc", "")
@@ -209,14 +209,21 @@ matched = measures_scoped[
 sel_year = params.get("year", "Усі")
 sel_quarters = list(params.get("quarters") or [])
 
-# «Лише активні»: період заходу вже настав для обраного року/кварталу
+# «Лише активні»: для мульти-періодного звіту захід лишається, якщо він
+# активний хоча б в одному з обраних кварталів.
 if params.get("active_only") and sel_year != "Усі":
-    _q_last = (sel_quarters or ["IV"])[-1]
-    _sel_period = int(sel_year) * 10 + core_periods.quarter_to_number(_q_last)
-    matched = matched[~matched["measure_start_date"].map(
-        lambda v: core_periods.is_measure_not_started(
-            core_periods.parse_period(v), _sel_period)
-    )].copy()
+    _selected_periods = [
+        int(sel_year) * 10 + core_periods.quarter_to_number_strict(q)
+        for q in (sel_quarters or ["I", "II", "III", "IV"])
+    ]
+    def _active_in_any_selected_period(row):
+        _start = core_periods.parse_period(row.get("measure_start_date"))
+        _end = core_periods.parse_period(row.get("measure_end_date"))
+        return any(
+            core_periods.get_period_state(_start, _end, period) in {"active", "unknown_period"}
+            for period in _selected_periods
+        )
+    matched = matched[matched.apply(_active_in_any_selected_period, axis=1)].copy()
 
 # Останні моніторингові відомості по кодах
 codes = matched["code"].astype(str).str.strip().tolist()
@@ -253,9 +260,9 @@ def _submission_state(code: str, start_raw) -> tuple[str, dict]:
                 "submitted": raw(row.get("submitted_at"))[:16].replace("T", " "),
             }
         ap = raw(row.get("approval_status"))
-        if ap == "Погоджено":
+        if schemes.is_approved(ap):
             b = legend_badge("Погоджено")
-        elif ap == "Повернуто на доопрацювання":
+        elif schemes.is_returned(ap):
             b = legend_badge("На доопрацюванні")
         else:
             b = legend_badge("На розгляді")
@@ -272,7 +279,7 @@ def _submission_state(code: str, start_raw) -> tuple[str, dict]:
         if any((code, str(sel_year), q) in manual_closeouts and not is_period_locked(sel_year, q) for q in _quarters):
             return legend_badge("Закрито адміністратором"), {}
         _q_last = _quarters[-1]
-        _sel_period = int(sel_year) * 10 + core_periods.quarter_to_number(_q_last)
+        _sel_period = int(sel_year) * 10 + core_periods.quarter_to_number_strict(_q_last)
         if core_periods.is_measure_not_started(
                 core_periods.parse_period(start_raw), _sel_period):
             return legend_badge("Не настав час"), {}
@@ -310,8 +317,7 @@ st.markdown(
     f'<div style="font-size:12px;color:#61708A;margin-top:8px;">Документ: '
     f'<b>{escape(selected_doc)}</b> · Рік: {escape(str(sel_year))} · '
     f'Квартали: {escape(", ".join(sel_quarters) if sel_quarters else "усі")} · '
-    f'Режим: {"офіційні" if params.get("official_only") else "оперативні"} '
-    f'дані</div></div>',
+    f'Режим: {"офіційні" if params.get("official_only") else "усі подання незалежно від статусу"}</div></div>',
     unsafe_allow_html=True,
 )
 
@@ -364,29 +370,15 @@ for (_, m), (badge, info) in zip(matched.iterrows(), _states):
         "Останнє подання": info.get("submitted", ""),
     })
 
-_head = (
-    "<tr>"
-    '<th style="text-align:left;">Код</th>'
-    '<th style="text-align:left;">Захід</th>'
-    '<th style="text-align:left;">Тип продукту</th>'
-    '<th style="text-align:left;">Індикатор</th>'
-    '<th style="text-align:left;">Головний виконавець</th>'
-    "<th>Стан подання</th>"
-    '<th style="text-align:left;">Статус виконання</th>'
-    "<th>Факт</th>"
-    "<th>Останнє подання</th>"
-    "</tr>"
-)
-st.markdown(
-    '<div style="max-height:560px;overflow:auto;border:1px solid #DCE4F0;'
-    'border-radius:10px;">'
-    '<table style="width:100%;border-collapse:collapse;font-size:12.5px;">'
-    '<thead style="position:sticky;top:0;z-index:2;background:#132238;'
-    'color:#fff;">'
-    f"{_head}</thead><tbody>"
-    + "".join(_rows_html)
-    + "</tbody></table></div>",
-    unsafe_allow_html=True,
+display_rows = pd.DataFrame(export_rows)[[
+    "Код", "Захід", "Тип продукту", "Індикатор", "Головний виконавець",
+    "Стан подання", "Статус виконання", "Фактичне значення", "Останнє подання",
+]] if export_rows else pd.DataFrame()
+render_readonly_table(
+    display_rows,
+    height=560,
+    min_width=1600,
+    empty_message="За вибраними параметрами немає заходів.",
 )
 st.markdown('</div>', unsafe_allow_html=True)
 
@@ -400,7 +392,7 @@ params_df = pd.DataFrame([
     {"Параметр": "Квартали",
      "Значення": ", ".join(sel_quarters) if sel_quarters else "усі"},
     {"Параметр": "Режим",
-     "Значення": "офіційні" if params.get("official_only") else "оперативні"},
+     "Значення": "офіційні" if params.get("official_only") else "усі подання незалежно від статусу"},
     {"Параметр": "Сформовано",
      "Значення": now_kyiv().strftime("%d.%m.%Y %H:%M")},
 ])

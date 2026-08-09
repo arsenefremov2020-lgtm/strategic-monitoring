@@ -12,7 +12,6 @@ import streamlit as st
 from core.period_locks import apply_locked_status, is_period_locked
 from core.timeutils import now_kyiv
 from core.page_setup import page_setup, render_footer
-from core.ui import render_auto_refresh_notice
 from core.strategic_data import load_strat_matrix as core_load_strat_matrix, measure_name_by_code
 from core import monitoring_data
 from core import statuses as core_statuses
@@ -20,13 +19,12 @@ from core.text_utils import names_match, normalize_name
 from core.ui import load_css
 from core.excel_loader import read_excel_sheet
 from core import operational
-from core.closeouts import load_manual_closeouts
+from core.closeouts import load_manual_closeouts, load_manual_closeout_records, manual_closeout_record_index
 from core.exports import fig_png_bytes, render_png_download, write_styled_excel, build_presentation_pdf
 from core.errors import log_cosmetic_error, show_warning
 from core.access import filter_actions_for_user, filter_requests_for_user
 
 current_user = page_setup("Оцінка МіО", page_name="Оцінка МіО")
-render_auto_refresh_notice("Оцінка МіО", minutes=5)
 
 
 FILE_PATH = "Під моніторинг СП.xlsx"
@@ -306,11 +304,11 @@ div[data-testid="stRadio"].mio-tabs > div { gap: 4px !important; }
    Красива таблиця режиму «М_заходи»
    ══════════════════════════════════════════════ */
 .mio-tablewrap {
-    max-height: 640px;
+    max-height: 325px;
     overflow: auto;
     border: 1px solid #DCE4F0;
-    border-radius: 14px;
-    box-shadow: 0 4px 18px rgba(15,30,60,0.06);
+    border-radius: 10px;
+    box-shadow: none;
     background: #ffffff;
     position: relative;
 }
@@ -322,10 +320,11 @@ div[data-testid="stRadio"].mio-tabs > div { gap: 4px !important; }
 .mio-tablewrap::-webkit-scrollbar-track { background: #F7F9FC; }
 
 .mio-table {
-    border-collapse: separate;
+    border-collapse: collapse;
     border-spacing: 0;
     width: 100%;
-    font-size: 12.5px;
+    table-layout: fixed;
+    font-size: 13px;
     color: #132238;
     min-width: 1080px;
 }
@@ -337,9 +336,11 @@ div[data-testid="stRadio"].mio-tabs > div { gap: 4px !important; }
     font-weight: 800;
     color: #032A63;
     text-align: center;
-    padding: 8px 10px;
-    border-bottom: 1px solid #DCE4F0;
-    white-space: nowrap;
+    padding: 9px 10px;
+    border: 1px solid #DCE4F0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.22;
 }
 .mio-table thead tr.grp th { top: 0; z-index: 3; font-size: 12px; }
 .mio-table thead tr.sub th { top: 35px; z-index: 3; font-weight: 700; font-size: 11px; color: #61708A; }
@@ -388,12 +389,17 @@ div[data-testid="stRadio"].mio-tabs > div { gap: 4px !important; }
 
 /* ── Комірки даних ── */
 .mio-table tbody td {
-    padding: 7px 8px;
-    border-bottom: 1px solid #F7F9FC;
+    padding: 8px 10px;
+    border: 1px solid #DCE4F0;
     text-align: center;
     vertical-align: middle;
     background: #ffffff;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.32;
 }
+.mio-table tbody td > div, .mio-table tbody td > span { max-height:74px; overflow:hidden; display:block; }
+.mio-table tbody td > div:hover, .mio-table tbody td > span:hover { overflow:auto; }
 .mio-table tbody tr:nth-child(even) td { background: #F7F9FC; }
 .mio-table tbody tr:hover td { background: #EAF1FF; }
 .mio-table tbody tr:last-child td { border-bottom: none; }
@@ -1809,14 +1815,11 @@ if mio_data_mode == operational.MODE_OPERATIONAL and not monitoring_df.empty:
     if mio_auto_list:
         with st.expander(f"⚡ Авто-зараховані заходи: {len(mio_auto_list)} — деталі"):
             st.caption(operational.auto_completed_caption(mio_auto_list))
-            st.dataframe(
-                pd.DataFrame(mio_auto_list).rename(columns={
+            render_readonly_table(pd.DataFrame(mio_auto_list).rename(columns={
                     "code": "Код заходу", "year": "Рік", "quarter": "Квартал",
                     "value": "Подане значення", "target": "Річний орієнтир",
                     "approval_status": "Поточний етап погодження",
-                }),
-                use_container_width=True, hide_index=True,
-            )
+                }))
 else:
     st.caption("✅ Розрахунок лише за заявками, що пройшли всі етапи схеми погодження.")
 
@@ -1824,9 +1827,11 @@ else:
 # перезаписати «Не настав час» авто-зарахуванням.
 monitoring_df = apply_locked_status(monitoring_df, status_col="status")
 
-# 🔒 Ручні закриття — офіційні, в обох режимах: для періодів без запису
-# «Погоджено» додається синтетичний запис «Виконано».
+# 🔒 Ручні закриття — офіційні, в обох режимах. У МіО передаємо лише
+# ФАКТИЧНІ дані закриття; жодна формула МіО нижче не змінюється.
 _mio_closeouts = load_manual_closeouts()
+_mio_closeout_records = load_manual_closeout_records()
+_mio_closeout_index = manual_closeout_record_index(_mio_closeout_records)
 if _mio_closeouts:
     _mio_keys = set()
     if not monitoring_df.empty:
@@ -1837,19 +1842,33 @@ if _mio_closeouts:
                 str(_r.get("year", "")).strip(),
                 _quarter_key(_r.get("quarter", "")),
             ))
-    _mio_synth = [
-        {
+    _mio_synth = []
+    _mio_incomplete_closeouts = 0
+    for _c, _y, _q in _mio_closeouts:
+        if (_c, _y, _q) in _mio_keys or is_period_locked(_y, _q):
+            continue
+        _record = _mio_closeout_index.get((_c, _y, _q), {})
+        _fact_status = clean(_record.get("fact_status", ""))
+        _fact_numeric = _record.get("fact_numeric_value")
+        _fact_text = clean(_record.get("fact_value_text", ""))
+        if not _fact_status and _fact_numeric in (None, "") and not _fact_text:
+            _mio_incomplete_closeouts += 1
+            continue
+        _mio_synth.append({
             "strat_code": _c, "year": _y, "quarter": _q,
-            "approval_status": "Погоджено", "status": "Виконано",
-            "numeric_value": "", "progress_text": "Закрито вручну адміністратором",
-            "risks": "", "submitted_at": "", "object_kind": "measure",
-        }
-        for (_c, _y, _q) in _mio_closeouts
-        if (_c, _y, _q) not in _mio_keys and not is_period_locked(_y, _q)
-    ]
+            "approval_status": "Погоджено", "status": _fact_status,
+            "numeric_value": _fact_numeric, "value_text": _fact_text,
+            "progress_text": clean(_record.get("fact_progress_text", "")) or "Закрито вручну адміністратором",
+            "risks": "", "submitted_at": clean(_record.get("decided_at", "")),
+            "object_kind": "measure", "_manual_closeout": True,
+        })
     if _mio_synth:
         monitoring_df = pd.concat([monitoring_df, pd.DataFrame(_mio_synth)], ignore_index=True)
-        st.caption(f"🔒 Враховано ручних закриттів заходів (офіційні): {len(_mio_synth)}.")
+        st.caption(f"🔒 Враховано ручних закриттів заходів із зафіксованим фактом: {len(_mio_synth)}.")
+    if _mio_incomplete_closeouts:
+        st.warning(
+            f"{_mio_incomplete_closeouts} підтверджене ручне закриття не має зафіксованого факту й не включене до розрахунку МіО до ручної звірки."
+        )
 
 # ============================================================
 # HEADER
@@ -1932,11 +1951,11 @@ with _mio_a:
             "active_mode": active_mode,
             "years": list(st.session_state.get("mio_years", [2026]) or [2026]),
         }
-        st.rerun()
+        pass  # no explicit rerun: the triggering user action completes in this run
 with _mio_b:
     if st.button("Скинути параметри", use_container_width=True, key="mio_reset_filters_v19"):
         st.session_state["mio_filters_applied_v19"] = _mio_defaults.copy()
-        st.rerun()
+        pass  # no explicit rerun: the triggering user action completes in this run
 with _mio_c:
     st.caption("Режим МіО, джерело даних і роки застосовуються після натискання кнопки.")
 _mio_applied = st.session_state.get("mio_filters_applied_v19", _mio_defaults.copy())
@@ -3272,7 +3291,7 @@ def render_mode_integral(strat_df, monitoring_df, years):
             for pref in (f"Заходи {y}", f"Завдання {y}", f"Прогрес {y}", f"Інтеграл {y}"):
                 view[pref] = view[pref].map(_int_fmt_pct)
                 cols.append(pref)
-        st.dataframe(view[cols], use_container_width=True, hide_index=True)
+        render_readonly_table(view[cols])
 
     # ── Експорт ──
     csv = rows_df.copy()
@@ -3890,12 +3909,12 @@ _INFOGR_CSS = """
 .iz-kpi { text-align:center; min-width:90px; }
 .iz-kpi .kl { font-size:11px; font-weight:800; color:#61708A; }
 .iz-kpi .kv { font-size:24px; font-weight:900; color:#132238; }
-.iz-ind-table { width:100%; border-collapse:collapse; margin-top:8px; font-size:12px; }
-.iz-ind-table th { background:#032A63; color:#fff; font-size:10.5px; font-weight:800;
-  text-transform:uppercase; padding:6px 8px; text-align:center; }
-.iz-ind-table th.iz-left { text-align:left; }
-.iz-ind-table td { padding:6px 8px; border-bottom:1px solid #DCE4F0; text-align:center; }
-.iz-ind-table td.iz-left { text-align:left; font-weight:600; color:#132238; }
+.iz-ind-table { width:100%; min-width:1100px; table-layout:fixed; border-collapse:collapse; margin-top:0; font-size:13px; }
+.iz-ind-table th { position:sticky; top:0; z-index:3; background:#EAF1FF; color:#132238; font-size:13px; font-weight:850;
+  padding:9px 10px; text-align:center; border:1px solid #DCE4F0; white-space:normal; overflow-wrap:anywhere; line-height:1.22; }
+.iz-ind-table th.iz-left { text-align:center; }
+.iz-ind-table td { padding:8px 10px; border:1px solid #DCE4F0; text-align:center; white-space:normal; overflow-wrap:anywhere; line-height:1.32; }
+.iz-ind-table td.iz-left { text-align:center; font-weight:600; color:#132238; }
 .iz-task-card { background:#fff; border:1px solid #DCE4F0; border-radius:8px; padding:14px;
   margin-bottom:14px; }
 .iz-task-title { font-weight:800; font-size:12.5px; color:#032A63; text-transform:uppercase; }
@@ -4322,7 +4341,7 @@ def render_mode_infogr_sczz(strat_df, monitoring_df, years):
                 body += (f"<tr><td class='iz-left'>{raw_value(r['Індикатор'])}</td>"
                          f"<td>{raw_value(fact_y)}</td><td>{score_str}</td>"
                          f"<td>{raw_value(r['Ціль 2028'])}</td></tr>")
-            st.markdown(f"<table class='iz-ind-table'>{head}{body}</table>", unsafe_allow_html=True)
+            st.markdown(f"<div class='mio-tablewrap'><table class='iz-ind-table'>{head}{body}</table></div>", unsafe_allow_html=True)
         else:
             st.info("Немає показників цілі.")
     with gcol2:

@@ -7,7 +7,7 @@ import streamlit as st
 from core.data_types import prepare_monitoring_payload
 from core.db import get_supabase_client
 from core.deputies import DEPUTY_MINISTER_BY_SSP
-from core.ui import load_css
+from core.ui import load_css, render_readonly_table
 from core.config import FILE_PATH, SHEET_NAME
 from core.excel_loader import read_excel_sheet
 
@@ -21,7 +21,7 @@ from core.access import (
     should_prefill_contact_fields,
     user_has_all_ssp_access,
 )
-from core.closeouts import load_manual_closeouts
+from core.closeouts import closeout_fact_value, load_manual_closeout_records, load_manual_closeouts, manual_closeout_record_index
 from core.strategic_data import load_strat_matrix as load_full_strat_matrix
 from core import monitoring_data
 from core import statuses as core_statuses
@@ -711,8 +711,9 @@ def load_strat_matrix():
 
 
 def load_monitoring():
-    """ЄДИНЕ джерело — core.monitoring_data (правки К2, П2)."""
-    return monitoring_data.load_monitoring_requests()
+    """Live-read requests while preserving the page's approved yes/no inheritance."""
+    live = monitoring_data.load_monitoring_requests_live()
+    return monitoring_data.apply_yes_no_completion_inheritance(live)
 
 
 def ensure_monitoring_columns(monitoring_df):
@@ -967,9 +968,10 @@ if submission_mode == "indicators":
         )
 
     full_matrix = load_full_strat_matrix()
-    indicator_rows = full_matrix[
+    all_indicator_rows = full_matrix[
         full_matrix["object_type"].isin(["goal_indicator", "task_indicator"])
     ].copy()
+    indicator_rows = all_indicator_rows.copy()
 
     indicator_rows = filter_actions_for_user(
         indicator_rows,
@@ -1009,7 +1011,8 @@ if submission_mode == "indicators":
     )
 
     _indicator_names_by_code = {}
-    for _, _row in indicator_rows.iterrows():
+    # Унікальність legacy-коду визначаємо за ПОВНОЮ матрицею, а не після UI-фільтрів.
+    for _, _row in all_indicator_rows.iterrows():
         _code = raw_value(_row.get("code", ""))
         _name_key = monitoring_data.indicator_identity_key(
             _code, _row.get("indicator", "")
@@ -1095,65 +1098,15 @@ if submission_mode == "indicators":
         )
 
     ind_display_cols = [c for c in ind_df_table.columns if not c.startswith("_")]
-    ind_editor_df = add_editor_bottom_spacer(ind_df_table)
+    ind_locked_df = ind_df_table[ind_df_table["_locked"] == True].copy()
+    ind_editable_df = ind_df_table[ind_df_table["_locked"] == False].copy()
+    if not ind_locked_df.empty:
+        st.markdown("**Уже подані / заблоковані індикатори**")
+        locked_cols = [c for c in ind_display_cols if c != "Подати"]
+        render_readonly_table(ind_locked_df[[c for c in locked_cols if c in ind_locked_df.columns]], height=250)
+
+    ind_editor_df = add_editor_bottom_spacer(ind_editable_df)
     _ind_visible_height = TABLE_VISIBLE_HEIGHT_PX
-
-    with st.container(height=TABLE_CONTAINER_HEIGHT_PX):
-        ind_edited = st.data_editor(
-            ind_editor_df,
-            key=(
-                f"indicator_editor_{normalize_key(ind_ssp_index)}_{ind_year}_"
-                f"{ind_as_of.isoformat()}"
-            ),
-            use_container_width=True,
-            hide_index=True,
-            height=_ind_visible_height,
-            row_height=72,
-            num_rows="fixed",
-            column_order=ind_display_cols,
-            disabled=[
-                "Код",
-                "СЦ / Завдання",
-                "Індикатор",
-                "Одиниці\nвиміру",
-                "2021\n(базовий)",
-                f"{ind_year}\n(цільовий орієнтир)",
-                fact_col,
-            ],
-            column_config={
-                "Подати": st.column_config.CheckboxColumn("Подати", width=80),
-                fact_col: st.column_config.ImageColumn(
-                    fact_col,
-                    help="Останнє подане значення цього індикатора за обраний рік",
-                    width=130,
-                ),
-                value_col: st.column_config.TextColumn(
-                    f"🔴 {value_col}",
-                    width=150,
-                    help="Обов'язкове поле. Фактичне значення індикатора станом на обрану дату",
-                ),
-                "Опис\nпрогресу": st.column_config.TextColumn(
-                    "🔴 Опис\nпрогресу",
-                    width=280,
-                    help="Обов'язкове поле",
-                ),
-                "Ризики / проблеми /\nвідхилення": st.column_config.TextColumn(
-                    "🟡 Ризики / проблеми /\nвідхилення",
-                    width=280,
-                    help="Необов'язкове поле",
-                ),
-                "Посилання\nна НПА": st.column_config.TextColumn(
-                    "🟡 Посилання\nна НПА",
-                    width=220,
-                    help="Необов'язкове. Кілька посилань — через кому або крапку з комою",
-                ),
-                "_locked": st.column_config.CheckboxColumn("_locked", width=1),
-            },
-        )
-
-    # Успішне подання показується саме між таблицею і схемою погодження.
-    render_submission_notice(dismissible=False, consume=True)
-
     _ind_scheme_prefix = (
         f"ind_{normalize_key(ind_ssp_index)}_{ind_year}_{ind_as_of.isoformat()}"
     )
@@ -1162,11 +1115,58 @@ if submission_mode == "indicators":
         _ind_scheme_prefix,
     )
 
-    if st.button(
-        "Подати значення індикаторів на розгляд",
-        use_container_width=True,
-        key="ind_submit",
+    with st.form(
+        f"indicator_submission_form_{normalize_key(ind_ssp_index)}_{ind_year}_{ind_as_of.isoformat()}",
+        clear_on_submit=False,
     ):
+        with st.container(height=TABLE_CONTAINER_HEIGHT_PX):
+            ind_edited = st.data_editor(
+                ind_editor_df,
+                key=(
+                    f"indicator_editor_{normalize_key(ind_ssp_index)}_{ind_year}_"
+                    f"{ind_as_of.isoformat()}"
+                ),
+                use_container_width=True,
+                hide_index=True,
+                height=_ind_visible_height,
+                row_height=72,
+                num_rows="fixed",
+                column_order=ind_display_cols,
+                disabled=[
+                    "Код",
+                    "СЦ / Завдання",
+                    "Індикатор",
+                    "Одиниці\nвиміру",
+                    "2021\n(базовий)",
+                    f"{ind_year}\n(цільовий орієнтир)",
+                    fact_col,
+                ],
+                column_config={
+                    "Подати": st.column_config.CheckboxColumn("Подати", width=80),
+                    fact_col: st.column_config.ImageColumn(
+                        fact_col,
+                        help="Останнє подане значення цього індикатора за обраний рік",
+                        width=130,
+                    ),
+                    value_col: st.column_config.TextColumn(
+                        f"🔴 {value_col}", width=150,
+                        help="Обов'язкове поле. Фактичне значення індикатора станом на обрану дату",
+                    ),
+                    "Опис\nпрогресу": st.column_config.TextColumn("🔴 Опис\nпрогресу", width=280, help="Обов'язкове поле"),
+                    "Ризики / проблеми /\nвідхилення": st.column_config.TextColumn("🟡 Ризики / проблеми /\nвідхилення", width=280, help="Необов'язкове поле"),
+                    "Посилання\nна НПА": st.column_config.TextColumn("🟡 Посилання\nна НПА", width=220, help="Необов'язкове. Кілька посилань — через кому або крапку з комою"),
+                    "_locked": st.column_config.CheckboxColumn("_locked", width=1),
+                },
+            )
+        ind_submit = st.form_submit_button(
+            "Подати значення індикаторів на розгляд",
+            use_container_width=True,
+        )
+
+    # Успішне подання показується під формою без додаткового rerun.
+    render_submission_notice(dismissible=False, consume=True)
+
+    if ind_submit:
         ind_errors = []
         if not ind_scheme_ready:
             ind_errors.append(
@@ -1273,7 +1273,7 @@ if submission_mode == "indicators":
                         "Частину індикаторів не подано: "
                         + " | ".join(rejected_messages)
                     )
-                st.rerun()
+                st.success("Подання індикаторів успішно відправлено на розгляд.")
             elif rejected_messages:
                 st.error("Подання відхилено: " + " | ".join(rejected_messages))
 
@@ -1551,14 +1551,16 @@ if not monitoring_df.empty:
         if code_key and code_key not in submitted_map:
             submitted_map[code_key] = mrow
 
-manual_closeouts = load_manual_closeouts()
+manual_closeout_records = load_manual_closeout_records()
+manual_closeout_index = manual_closeout_record_index(manual_closeout_records)
+manual_closeouts = set(manual_closeout_index) or load_manual_closeouts()
 
 # Номер обраного звітного періоду (рік*10 + квартал) для перевірки
 # «Не настав час» — ТЗ 10.18: система має правильно зчитувати, коли
 # саме починається захід, і не давати подавати відомості раніше.
 _selected_period_num = (
     int(str(selected_year)) * 10
-    + core_periods.quarter_to_number(selected_quarter)
+    + core_periods.quarter_to_number_strict(selected_quarter)
 )
 _not_started_hidden = 0
 
@@ -1607,8 +1609,9 @@ for _, row in filtered_measures.iterrows():
         _not_started_hidden += 1
         continue
 
+    closeout_record = manual_closeout_index.get((code, str(selected_year), str(selected_quarter)))
     if existing is not None:
-        q_fact_val = raw_value(existing.get("numeric_value", ""))
+        q_fact_val = raw_value(existing.get("numeric_value", "")) or raw_value(existing.get("value_text", ""))
         status_val = raw_value(existing.get("status", ""))
         progress_val = raw_value(existing.get("progress_text", ""))
         risks_val = raw_value(existing.get("risks", ""))
@@ -1619,6 +1622,19 @@ for _, row in filtered_measures.iterrows():
             lock_label = ""
         else:
             lock_label = "✅ Погоджено" if is_approved else "⏳ На розгляді"
+    elif closeout_record is not None:
+        # Ручне закриття є самостійним підтвердженим станом навіть тоді,
+        # коли materialized monitoring_request пошкоджений або відсутній.
+        q_fact_val = raw_value(closeout_fact_value(closeout_record))
+        status_val = raw_value(closeout_record.get("fact_status", ""))
+        progress_val = raw_value(closeout_record.get("fact_progress_text", ""))
+        risks_val = ""
+        npa_link_val = ""
+        lock_label = (
+            "🔒 Закрито вручну"
+            if bool(closeout_record.get("materialization_ok"))
+            else "🔒 Закрито вручну · потребує звірки"
+        )
     else:
         q_fact_val = status_val = progress_val = risks_val = npa_link_val = ""
         lock_label = ""
@@ -1706,17 +1722,29 @@ else:
     # Якщо є заблоковані рядки — показати інфо-банер
     locked_count = int(locked_mask.sum())
     if locked_count:
-        approved_count_lock = int((table_df["_lock_label"].str.contains("Погоджено")).sum())
-        pending_count_lock  = locked_count - approved_count_lock
+        _labels = table_df["_lock_label"].fillna("").astype(str)
+        approved_count_lock = int(_labels.str.contains("Погоджено", regex=False).sum())
+        reconcile_count_lock = int(_labels.str.contains("потребує звірки", regex=False).sum())
+        manual_count_lock = int(
+            (_labels.str.contains("Закрито вручну", regex=False)
+             & ~_labels.str.contains("потребує звірки", regex=False)).sum()
+        )
+        pending_count_lock = max(
+            locked_count - approved_count_lock - manual_count_lock - reconcile_count_lock, 0
+        )
         parts = []
         if pending_count_lock:
             parts.append(f"<strong>{pending_count_lock}</strong> ⏳ на розгляді")
         if approved_count_lock:
             parts.append(f"<strong>{approved_count_lock}</strong> ✅ погоджено")
+        if manual_count_lock:
+            parts.append(f"<strong>{manual_count_lock}</strong> 🔒 закрито вручну")
+        if reconcile_count_lock:
+            parts.append(f"<strong>{reconcile_count_lock}</strong> ⚠️ ручне закриття потребує звірки")
         st.markdown(
             f'''<div class="note-box" style="background:#FDF3D8;border:1px solid #F4B400;color:#8A6400;">
-                За {locked_count} заходом(заходами) у {quarter_label} відомості вже подано: {", ".join(parts)}.
-                Поля цих заходів заповнені поданими даними та <strong>заблоковані</strong> для редагування.
+                За {locked_count} заходом(заходами) у {quarter_label} відомості вже зафіксовано: {", ".join(parts)}.
+                Поля цих заходів показані окремо як read-only і <strong>не доступні для редагування</strong>.
             </div>''',
             unsafe_allow_html=True
         )
@@ -1819,24 +1847,45 @@ else:
         unsafe_allow_html=True,
     )
 
-    with st.container(height=TABLE_CONTAINER_HEIGHT_PX):
-        edited_df = st.data_editor(
-            editor_table_df,
-            key=(
-                f"monitoring_editor_{normalize_key(selected_ssp_index)}_{selected_year}_"
-                f"{selected_quarter}_{normalize_key(search_query)}"
-            ),
-            use_container_width=True,
-            hide_index=True,
-            height=_visible_height,
-            row_height=80,
-            num_rows="fixed",
-            column_config=col_config,
-            column_order=display_cols,   # приховуємо _locked/_lock_label
-            disabled=always_disabled,
-        )
+    locked_measure_df = table_df[table_df["_locked"] == True].copy()
+    editable_measure_df = table_df[table_df["_locked"] == False].copy()
+    if not locked_measure_df.empty:
+        st.markdown("**Уже подані / заблоковані заходи**")
+        locked_cols = [c for c in display_cols if c != "Подати"]
+        render_readonly_table(locked_measure_df[[c for c in locked_cols if c in locked_measure_df.columns]], height=260)
 
-# Успішне подання показується саме між таблицею і схемою погодження.
+    editor_table_df = add_editor_bottom_spacer(editable_measure_df)
+    _meas_scheme_prefix = (
+        f"meas_{normalize_key(selected_ssp_index)}_{selected_year}_{selected_quarter}"
+    )
+    measures_scheme_name, measures_chain, measures_scheme_ready = render_start_chain(
+        selected_ssp_index,
+        _meas_scheme_prefix,
+    )
+
+    with st.form(
+        f"measure_submission_form_{normalize_key(selected_ssp_index)}_{selected_year}_{selected_quarter}_{normalize_key(search_query)}",
+        clear_on_submit=False,
+    ):
+        with st.container(height=TABLE_CONTAINER_HEIGHT_PX):
+            edited_df = st.data_editor(
+                editor_table_df,
+                key=(
+                    f"monitoring_editor_{normalize_key(selected_ssp_index)}_{selected_year}_"
+                    f"{selected_quarter}_{normalize_key(search_query)}"
+                ),
+                use_container_width=True,
+                hide_index=True,
+                height=_visible_height,
+                row_height=80,
+                num_rows="fixed",
+                column_config=col_config,
+                column_order=display_cols,
+                disabled=always_disabled,
+            )
+        submit_clicked = st.form_submit_button("Подати на розгляд", use_container_width=True)
+
+# Успішне подання показується під формою без додаткового rerun.
 render_submission_notice(dismissible=False, consume=True)
 
 
@@ -1935,20 +1984,6 @@ def validate_submission():
     return errors
 
 
-# ------------------------------------------------------------
-# Схема погодження для подання заходів
-# ------------------------------------------------------------
-
-_meas_scheme_prefix = (
-    f"meas_{normalize_key(selected_ssp_index)}_{selected_year}_{selected_quarter}"
-)
-measures_scheme_name, measures_chain, measures_scheme_ready = render_start_chain(
-    selected_ssp_index,
-    _meas_scheme_prefix,
-)
-
-submit_clicked = st.button("Подати на розгляд", use_container_width=True)
-
 if submit_clicked:
     validation_errors = validate_submission()
 
@@ -2026,7 +2061,9 @@ if submit_clicked:
                 st.session_state["monitoring_submit_warning"] = (
                     "Частину заходів не подано: " + " | ".join(rejected_messages)
                 )
-            st.rerun()
+            st.success(
+                f"Подано {len(successful_codes)} захід(ів). Для оновлення станів у таблиці скористайтеся Refresh браузера за потреби."
+            )
         elif rejected_messages:
             st.error("Подання відхилено: " + " | ".join(rejected_messages))
 

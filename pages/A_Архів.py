@@ -220,7 +220,7 @@ def show_table(title: str, key: str, empty_message: str) -> None:
     if frame.empty:
         st.info(empty_message)
     else:
-        st.dataframe(frame, use_container_width=True, hide_index=True)
+        render_readonly_table(frame)
 
 
 tab_main, tab_requests, tab_mio, tab_logs = st.tabs(
@@ -238,7 +238,7 @@ with tab_requests:
         if frame.empty:
             st.info("У знімку немає версій заявок.")
         else:
-            st.dataframe(frame, use_container_width=True, hide_index=True)
+            render_readonly_table(frame)
 
 with tab_mio:
     show_table("Оцінки МіО по ССП", "mio_ssp_summary", "У знімку немає розрахованих оцінок МіО.")
@@ -247,7 +247,7 @@ with tab_mio:
         if frame.empty:
             st.info("У знімку немає розрахункових складових МіО.")
         else:
-            st.dataframe(frame, use_container_width=True, hide_index=True)
+            render_readonly_table(frame)
 
 with tab_logs:
     show_table("Повний журнал дій", "monitoring_logs", "У знімку немає записів журналу.")

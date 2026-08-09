@@ -4,7 +4,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from core.period_locks import is_period_locked
 from core.timeutils import now_kyiv
-from core.db import get_supabase_client
+from core.db import get_supabase_client, fetch_all
 from core.deputies import DEPUTY_MINISTER_BY_SSP
 from core.config import FILE_PATH, SHEET_NAME
 from core.excel_loader import read_excel_sheet
@@ -12,13 +12,17 @@ from core.page_setup import page_setup, render_footer
 from core.strategic_data import load_strat_matrix as core_load_strat_matrix
 from core import monitoring_data
 from core import statuses as core_statuses
+from core import dashboard_metrics
 from core.periods import quarter_key as core_quarter_key
 from core.periods import parse_period as core_parse_period
 from core.periods import period_number as core_period_number
+from core.periods import quarter_to_number_strict as core_quarter_to_number_strict
+from core.periods import quarter_to_roman as core_quarter_to_roman
 from core import operational
 from core import finance as core_finance
-from core.closeouts import load_manual_closeouts
+from core.closeouts import append_confirmed_closeout_facts
 from core.exports import build_presentation_pdf
+from core.archive import decode_snapshot_payload
 from core.errors import log_cosmetic_error, show_incident
 from core.periods import get_period_state
 from core.filters import get_source_options, match_source
@@ -29,14 +33,13 @@ from core.access import (
     is_scope_override_active,
     get_user_ssp_index,
 )
-from core.ui import render_scope_toggle, render_auto_refresh_notice
+from core.ui import render_readonly_table, render_scope_toggle
 from core.stage4 import render_measure_rows_with_card_links
 from datetime import datetime
 from html import escape
 import re
 
 current_user = page_setup("Dashboard", page_name="Dashboard")
-render_auto_refresh_notice("Dashboard", minutes=5)
 supabase = get_supabase_client()
 
 # ============================================================
@@ -957,15 +960,13 @@ def parse_period(value):
 
 
 def quarter_to_number(q):
-    q = str(q).strip()
-    mapping = {"I": 1, "II": 2, "III": 3, "IV": 4, "1": 1, "2": 2, "3": 3, "4": 4}
-    return mapping.get(q, 1)
+    """Business parser: invalid quarters must not silently become Q1."""
+    return core_quarter_to_number_strict(q)
 
 
 def quarter_to_roman(q):
-    q = str(q).strip()
-    mapping = {"1": "I", "2": "II", "3": "III", "4": "IV", "I": "I", "II": "II", "III": "III", "IV": "IV"}
-    return mapping.get(q, "I")
+    """Display normalisation; business calculations use strict quarter_to_number."""
+    return core_quarter_to_roman(q)
 
 
 def get_goal_code(code):
@@ -1065,60 +1066,21 @@ def deputy_matches(row, selected_deputies):
 
 
 def status_display(status):
-    """ЄДИНА шкала — core.statuses (правки П5/К5, стандарт моделі МіО).
-    Для «Не подано» зберігаємо окреме відображення (немає даних)."""
-    raw = clean(status)
-    if raw == "Не подано" or raw == "":
-        return "Не виконано"
-    disp = core_statuses.status_display(raw)
-    if disp == core_statuses.ST_NOTYET:
-        return "Не настав час"
-    if disp == core_statuses.ST_OBSOLETE:
-        return "Втратило актуальність"
-    return disp
-
-
+    return dashboard_metrics.status_display(status)
 def is_excluded_status(status):
     return status_display(status) in ["Не настав час", "Втратило актуальність"]
 
 
 def status_score(status):
-    """Бали лише за 5-статусною шкалою моделі МіО (Виконано=100,
-    Частково=75, Не виконано=0, «х»/«в/а» → None)."""
-    return core_statuses.status_score(status)
-
-
+    return dashboard_metrics.status_score(status)
 def plan_fact_percent(actual, target):
-    actual_num = to_number(actual)
-    target_num = to_number(target)
-    actual_text = normalize_text(actual)
-    target_text = normalize_text(target)
-    if actual_num is not None and target_num is not None and target_num != 0:
-        return round(min((actual_num / target_num) * 100, 100), 2)
-    if target_text in ["так", "yes"] or actual_text in ["так", "нi", "yes", "no"]:
-        if actual_text in ["так", "yes"]:
-            return 100
-        if actual_text in ["нi", "no"]:
-            return 0
-    return None
-
-
+    return dashboard_metrics.plan_fact_percent(actual, target)
 def is_quantitative_plan_fact(row):
-    actual_num = to_number(row.get("numeric_value", ""))
-    target_num = to_number(row.get("selected_target", ""))
-    return actual_num is not None and target_num is not None and target_num != 0
-
-
+    return dashboard_metrics.is_quantitative_plan_fact(
+        row.get("numeric_value", ""), row.get("selected_target", "")
+    )
 def traffic_light(score):
-    if score is None or pd.isna(score):
-        return "⚪ Не оцінюється"
-    if score >= 100:
-        return "🟢 У графіку"
-    if score >= 75:
-        return "🟡 Часткове виконання"
-    return "🔴 Відстає"
-
-
+    return dashboard_metrics.traffic_light(score)
 QUARTER_FRACTIONS = {1: 0.25, 2: 0.50, 3: 0.75, 4: 1.00}
 RISKY_LEVELS = ("Критичний ризик", "Високий ризик", "Середній ризик")
 RISK_RESULT_COLUMNS = [
@@ -1567,19 +1529,9 @@ def dashboard_conclusion(completion, risk_share, coverage):
 
 
 def expected_completion_for_quarter(quarter_num):
-    """Calendar progress expected by the end of the selected quarter."""
-    try:
-        quarter_num = int(quarter_num)
-    except (TypeError, ValueError):
-        quarter_num = 4
-    return round(QUARTER_FRACTIONS.get(quarter_num, 1.0) * 100, 2)
-
-
+    return dashboard_metrics.expected_completion_for_quarter(quarter_num)
 def deviation_for_period(completion, quarter_num):
-    expected = expected_completion_for_quarter(quarter_num)
-    return round(float(completion or 0) - expected, 2)
-
-
+    return dashboard_metrics.deviation_for_period(completion, quarter_num)
 def gauge_chart(value, title):
     fig = go.Figure(go.Indicator(
         mode="gauge+number",
@@ -1824,7 +1776,7 @@ def render_indicator_bar(
 # CORE DATA FUNCTIONS
 # ============================================================
 
-def prepare_period_data(strat_df, requests_df, year, quarter, department="Усі"):
+def prepare_period_data(strat_df, requests_df, year, quarter, department="Усі", period_locked_override=None):
     measures = strat_df[strat_df["object_type"] == "measure"].copy()
     goals = strat_df[strat_df["object_type"] == "goal"].copy()
 
@@ -1837,7 +1789,11 @@ def prepare_period_data(strat_df, requests_df, year, quarter, department="Усі
 
     selected_q_num = quarter_to_number(quarter)
     selected_period_num = core_period_number(year, quarter)
-    period_locked = is_period_locked(year, quarter)
+    period_locked = (
+        bool(period_locked_override)
+        if period_locked_override is not None
+        else is_period_locked(year, quarter)
+    )
 
     measures["period_state"] = measures.apply(
         lambda row: get_period_state(row.get("start_num"), row.get("end_num"), selected_period_num),
@@ -1870,33 +1826,11 @@ def prepare_period_data(strat_df, requests_df, year, quarter, department="Усі
 
     period_request_columns = [
         "strat_code", "status", "numeric_value", "risks", "progress_text",
-        "submitted_at", "id",
+        "approval_status", "submitted_at", "id",
     ]
-    if approved_requests.empty:
+    period_requests = dashboard_metrics.latest_approved_records(requests, year, quarter)
+    if period_requests.empty:
         period_requests = pd.DataFrame(columns=period_request_columns)
-    else:
-        selected_year = int(year)
-        selected_quarter = core_quarter_key(quarter)
-        request_years = pd.to_numeric(approved_requests["year"], errors="coerce")
-        request_quarters = approved_requests["quarter"].apply(core_quarter_key)
-        period_requests = approved_requests[
-            (request_years == selected_year) & (request_quarters == selected_quarter)
-        ].copy()
-
-        if not period_requests.empty:
-            period_requests["_submitted_sort"] = pd.to_datetime(
-                period_requests["submitted_at"], errors="coerce", utc=True
-            )
-            period_requests["_id_sort"] = pd.to_numeric(
-                period_requests["id"], errors="coerce"
-            ).fillna(-1)
-            period_requests = (
-                period_requests
-                .sort_values(["strat_code", "_submitted_sort", "_id_sort"], na_position="first")
-                .groupby("strat_code", as_index=False, sort=False)
-                .tail(1)
-                .drop(columns=["_submitted_sort", "_id_sort"])
-            )
 
     period_requests = period_requests.rename(columns={
         "submitted_at": "request_submitted_at",
@@ -1905,7 +1839,7 @@ def prepare_period_data(strat_df, requests_df, year, quarter, department="Усі
     active = active.merge(
         period_requests[[
             "strat_code", "status", "numeric_value", "risks", "progress_text",
-            "request_submitted_at", "request_id",
+            "approval_status", "request_submitted_at", "request_id",
         ]],
         left_on="code",
         right_on="strat_code",
@@ -1919,6 +1853,7 @@ def prepare_period_data(strat_df, requests_df, year, quarter, department="Усі
     active["numeric_value"] = active["numeric_value"].fillna("")
     active["risks"] = active["risks"].fillna("")
     active["progress_text"] = active["progress_text"].fillna("")
+    active["approval_status"] = active["approval_status"].fillna("")
     active["request_submitted_at"] = active["request_submitted_at"].fillna("")
     active["request_id"] = active["request_id"].fillna("")
     active["selected_target"] = active[f"target_{year}"] if f"target_{year}" in active.columns else ""
@@ -2254,56 +2189,25 @@ def render_dashboard_table(
     formatters=None,
     row_class_fn=None,
 ):
-    """Рендерить таблицю точним HTML-шаблоном сторінки «Адміністрування»."""
-    source = getattr(table_data, "data", table_data)
-    if not isinstance(source, pd.DataFrame):
-        source = pd.DataFrame(source)
-    if source.empty:
-        st.info(empty_message)
-        return
-
-    formatters = formatters or {}
-    headers = list(source.columns)
-    header_cells = []
-    if not hide_index:
-        header_cells.append("<th></th>")
-    header_cells.extend(f"<th>{escape(str(column))}</th>" for column in headers)
-
-    body_rows = []
-    total_rows = len(source)
-    for index_value, row in source.iterrows():
-        row_class = ""
-        if row_class_fn is not None:
-            try:
-                row_class = clean(row_class_fn(row, total_rows))
-            except Exception as exc:
-                log_cosmetic_error("Визначення стилю рядка таблиці Dashboard", exc)
-        class_attr = f' class="{escape(row_class)}"' if row_class else ""
-        cells = []
-        if not hide_index:
-            cells.append(f"<td>{_dashboard_html_cell(index_value)}</td>")
-        for column in headers:
-            cells.append(
-                f"<td>{_dashboard_html_cell(row.get(column), formatters.get(column))}</td>"
-            )
-        body_rows.append(f"<tr{class_attr}>{''.join(cells)}</tr>")
-
-    html = (
-        '<div class="myreq-table-scroll"><table class="myreq-html-table">'
-        f"<thead><tr>{''.join(header_cells)}</tr></thead>"
-        f"<tbody>{''.join(body_rows)}</tbody>"
-        "</table></div>"
+    """Read-only table in the single Home-page visual standard."""
+    render_readonly_table(
+        table_data,
+        height=325,
+        compact=False,
+        empty_message=empty_message,
+        formatters=formatters or {},
+        row_class_fn=row_class_fn,
+        show_index=not hide_index,
     )
-    st.markdown(html, unsafe_allow_html=True)
 
 
 def collapse_to_latest_measure_rows(df):
-    """Return one row per measure for the multi-period current snapshot.
+    """Return one row per measure for a single, unambiguous snapshot period.
 
-    The population is taken from the latest period with the maximum number of
-    active measures in the selected range. Each measure then receives its latest
-    available submitted value in the range; if it has no submission, its latest
-    active-period row is retained as «Не подано».
+    The population is always the latest selected period present in ``df``.
+    For that population, the latest known submitted fact at or before the
+    snapshot may be carried forward explicitly; rows without data stay
+    ``Не подано`` for the snapshot.
     """
     if df.empty:
         return df
@@ -2317,18 +2221,18 @@ def collapse_to_latest_measure_rows(df):
     if "has_monitoring_data" not in data.columns:
         data["has_monitoring_data"] = data.get("status", "").astype(str) != "Не подано"
 
-    period_counts = data.groupby("period_number")["code"].nunique()
-    maximum_count = int(period_counts.max()) if not period_counts.empty else 0
-    if maximum_count <= 0:
-        return data.iloc[0:0].copy()
-
-    population_period = int(period_counts[period_counts == maximum_count].index.max())
-    population_codes = set(
-        data.loc[data["period_number"] == population_period, "code"].astype(str)
-    )
-    candidates = data[data["code"].astype(str).isin(population_codes)].copy()
+    snapshot_period = int(pd.to_numeric(data["period_number"], errors="coerce").dropna().max())
+    population = data[data["period_number"] == snapshot_period].copy()
+    if population.empty:
+        return population
+    population_codes = set(population["code"].astype(str))
+    candidates = data[
+        data["code"].astype(str).isin(population_codes)
+        & (pd.to_numeric(data["period_number"], errors="coerce") <= snapshot_period)
+    ].copy()
 
     with_data = candidates[candidates["has_monitoring_data"].fillna(False)].copy()
+    latest_with_data = pd.DataFrame(columns=candidates.columns)
     if not with_data.empty:
         with_data["_request_dt_sort"] = pd.to_datetime(
             with_data.get("request_submitted_at", ""), errors="coerce", utc=True
@@ -2338,32 +2242,26 @@ def collapse_to_latest_measure_rows(df):
         ).fillna(-1)
         latest_with_data = (
             with_data
-            .sort_values(
-                ["code", "period_number", "_request_dt_sort", "_request_id_sort"],
-                na_position="first",
-            )
+            .sort_values(["code", "period_number", "_request_dt_sort", "_request_id_sort"], na_position="first")
             .groupby("code", as_index=False, sort=False)
             .tail(1)
             .drop(columns=["_request_dt_sort", "_request_id_sort"])
         )
-    else:
-        latest_with_data = with_data
+        latest_with_data["fact_period_number"] = latest_with_data["period_number"]
+        latest_with_data["carried_forward"] = latest_with_data["period_number"] < snapshot_period
+        # Snapshot semantics: keep the fact source period separately, but the
+        # row itself belongs to the one selected snapshot period.
+        latest_with_data["period_number"] = snapshot_period
 
     selected_codes = set(latest_with_data["code"].astype(str)) if not latest_with_data.empty else set()
-    without_data = candidates[~candidates["code"].astype(str).isin(selected_codes)].copy()
-    latest_without_data = (
-        without_data
-        .sort_values(["code", "period_number"])
-        .groupby("code", as_index=False, sort=False)
-        .tail(1)
-        if not without_data.empty
-        else without_data
-    )
+    latest_without_data = population[~population["code"].astype(str).isin(selected_codes)].copy()
+    if not latest_without_data.empty:
+        latest_without_data["fact_period_number"] = pd.NA
+        latest_without_data["carried_forward"] = False
 
     result = pd.concat([latest_with_data, latest_without_data], ignore_index=True, sort=False)
     result["_code_sort"] = result["code"].map(code_sort_key)
     return result.sort_values("_code_sort").drop(columns="_code_sort").reset_index(drop=True)
-
 
 def _period_number_to_text(period_num):
     year = int(period_num) // 10
@@ -2372,23 +2270,18 @@ def _period_number_to_text(period_num):
 
 
 def resolve_snapshot_period_number(active_period_rows, years, quarters):
+    """Resolve the one snapshot period requested by the user.
+
+    The label must never drift to an earlier period merely because the latest
+    period has no submissions. Missing data in the selected snapshot remain
+    visible as missing and continue to affect the Dashboard as designed.
+    """
     selected_periods = sorted({
         core_period_number(year, quarter)
         for year in years
         for quarter in quarters
     })
-    if not selected_periods:
-        return None
-
-    snapshot_period = selected_periods[-1]
-    if not active_period_rows.empty and "has_monitoring_data" in active_period_rows.columns:
-        periods_with_data = active_period_rows.loc[
-            active_period_rows["has_monitoring_data"].fillna(False), "period_number"
-        ]
-        if not periods_with_data.empty:
-            snapshot_period = int(periods_with_data.max())
-    return int(snapshot_period)
-
+    return int(selected_periods[-1]) if selected_periods else None
 
 def build_period_context(active_period_rows, years, quarters):
     selected_periods = sorted({
@@ -2869,6 +2762,19 @@ if is_scope_lockable_user(current_user) and not is_scope_override_active("Dashbo
 # ДЖЕРЕЛО ДАНИХ І РУЧНІ ЗАКРИТТЯ
 # ============================================================
 
+_indicator_requests_source = (
+    requests_df[requests_df.get("object_kind", pd.Series(index=requests_df.index, dtype=str)).astype(str).str.lower().eq("indicator")].copy()
+    if not requests_df.empty else pd.DataFrame()
+)
+if data_source_mode == operational.MODE_OPERATIONAL and not _indicator_requests_source.empty:
+    _indicator_requests_effective = operational.operational_indicator_rows(_indicator_requests_source)
+elif not _indicator_requests_source.empty:
+    _indicator_requests_effective = _indicator_requests_source[
+        _indicator_requests_source.get("approval_status", pd.Series(index=_indicator_requests_source.index, dtype=str)).astype(str).str.strip().eq("Погоджено")
+    ].copy()
+else:
+    _indicator_requests_effective = pd.DataFrame()
+
 if data_source_mode == operational.MODE_OPERATIONAL and not requests_df.empty:
     _approval_logs = operational.load_monitoring_logs()
     requests_df, _ = operational.apply_operational_mode(
@@ -2877,50 +2783,9 @@ if data_source_mode == operational.MODE_OPERATIONAL and not requests_df.empty:
     )
 
 # Ручні закриття лишаються офіційною частиною обох режимів даних.
-_manual_closeouts = load_manual_closeouts()
-manual_closeout_rows = 0
-if _manual_closeouts:
-    _existing_keys = set()
-    if not requests_df.empty:
-        for _, _request_row in requests_df[
-            requests_df["approval_status"].astype(str) == "Погоджено"
-        ].iterrows():
-            _existing_keys.add(
-                (
-                    str(_request_row.get("strat_code", "")).strip(),
-                    str(_request_row.get("year", "")).strip(),
-                    quarter_to_roman(_request_row.get("quarter", "")),
-                )
-            )
-    _synthetic_rows = []
-    for _code, _year, _quarter in _manual_closeouts:
-        if (_code, _year, _quarter) in _existing_keys:
-            continue
-        _synthetic_rows.append(
-            {
-                "year": _year,
-                "quarter": _quarter,
-                "department": "",
-                "strat_code": _code,
-                "status": "Виконано",
-                "numeric_value": "",
-                "risks": "",
-                "progress_text": (
-                    "Закрито вручну адміністратором "
-                    "(підтверджено супер-адміном)"
-                ),
-                "approval_status": "Погоджено",
-                "submitted_at": "",
-                "object_kind": "measure",
-                "_manual_closeout": True,
-            }
-        )
-    if _synthetic_rows:
-        manual_closeout_rows = len(_synthetic_rows)
-        requests_df = pd.concat(
-            [requests_df, pd.DataFrame(_synthetic_rows)],
-            ignore_index=True,
-        )
+# Один shared resolver додає реальний closeout-факт лише коли валідної
+# materialized заявки немає; статус «Виконано» ніколи не вигадується.
+requests_df = append_confirmed_closeout_facts(requests_df, include_incomplete=True)
 
 if requests_df.empty:
     requests_df = pd.DataFrame(
@@ -3113,7 +2978,7 @@ def _build_dashboard_context(years_for_calc, quarters_for_calc):
         active[active["status_display"] == "Частково виконано"]
     )
     not_done_count = len(
-        active[active["status_display"] == "Не виконано"]
+        active[(active["status_display"] == "Не виконано") & (active["status"] != "Не подано")]
     )
     obsolete_count = len(
         active[active["status_display"] == "Втратило актуальність"]
@@ -3122,8 +2987,14 @@ def _build_dashboard_context(years_for_calc, quarters_for_calc):
         active[active["status_display"] == "Не настав час"]
     )
 
-    approved_requests_count = submitted_count
+    if data_source_mode == operational.MODE_OPERATIONAL:
+        approved_requests_count = len(active[active.get("has_monitoring_data", False).fillna(False)])
+    else:
+        approved_requests_count = len(
+            active[active.get("approval_status", pd.Series(index=active.index, dtype=str)).astype(str).str.strip() == "Погоджено"]
+        )
     not_counted_count = len(active[active["status"] == "Не подано"])
+    approval_metric_label = "Пройшли координатора" if data_source_mode == operational.MODE_OPERATIONAL else "Погоджено"
     conclusion_title, conclusion_text, conclusion_badge = dashboard_conclusion(
         completion,
         risk_share,
@@ -3659,6 +3530,154 @@ def _goal_quarter_drop_signals(active, minimum_drop=10.0):
     )
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _load_dashboard_archive_payloads():
+    """Immutable reporting-period snapshots for the historical trend line."""
+    try:
+        rows = fetch_all(
+            "archive_snapshots",
+            "id,year,quarter,reason,archived_at,snapshot_type,snapshot_gzip_b64",
+            order=("archived_at", True),
+        )
+    except Exception:
+        return {}
+    result = {}
+    roman_to_num = {"I": 1, "II": 2, "III": 3, "IV": 4}
+    num_to_roman = {1: "I", 2: "II", 3: "III", 4: "IV"}
+    for row in rows or []:
+        encoded = row.get("snapshot_gzip_b64")
+        if not encoded:
+            continue
+        try:
+            payload = decode_snapshot_payload(encoded)
+        except Exception:
+            continue
+        reason = clean(row.get("reason", ""))
+        match = re.search(r"\b(IV|III|II|I)\s+квартал\s+(20\d{2})", reason, flags=re.I)
+        if match:
+            period = (int(match.group(2)), match.group(1).upper())
+        else:
+            # Legacy snapshots store the anchor quarter (the quarter in which
+            # the snapshot was created). The reporting period is the previous one.
+            try:
+                anchor_year = int(float(row.get("year")))
+                anchor_quarter = quarter_to_number(row.get("quarter"))
+            except Exception:
+                continue
+            report_quarter = anchor_quarter - 1
+            report_year = anchor_year
+            if report_quarter <= 0:
+                report_quarter = 4
+                report_year -= 1
+            period = (report_year, num_to_roman[report_quarter])
+        # Ordered oldest→newest; replacements/latest snapshots deliberately win.
+        result[period] = payload
+    return result
+
+
+def _archived_period_lock(payload, year, quarter):
+    locks = payload.get("period_locks") if isinstance(payload, dict) else None
+    if not isinstance(locks, list):
+        return None
+    q = quarter_to_number(quarter)
+    for row in locks:
+        try:
+            if int(row.get("year")) == int(year) and int(row.get("quarter")) == q:
+                return bool(row.get("locked"))
+        except Exception:
+            continue
+    return None
+
+
+def _apply_archived_closeouts(requests, closeouts):
+    """Materialise immutable closeout facts from an archive payload for analytics."""
+    data = requests.copy() if isinstance(requests, pd.DataFrame) else pd.DataFrame()
+    if not isinstance(closeouts, list) or not closeouts:
+        return data
+    existing = set()
+    if not data.empty:
+        for _, row in data[data.get("approval_status", pd.Series(index=data.index, dtype=str)).astype(str).eq("Погоджено")].iterrows():
+            existing.add((clean(row.get("strat_code")), str(row.get("year")).strip(), quarter_to_roman(row.get("quarter"))))
+    additions = []
+    for row in closeouts:
+        if clean(row.get("approval_status")) != "Підтверджено":
+            continue
+        code = clean(row.get("strat_code"))
+        year = str(row.get("period_year") or "").strip()
+        scope = clean(row.get("scope")).casefold()
+        quarter = quarter_to_roman(row.get("period_quarter"))
+        quarters = ["I", "II", "III", "IV"] if scope == "рік" else [quarter]
+        for q in quarters:
+            if (code, year, q) in existing:
+                continue
+            additions.append({
+                "strat_code": code, "year": year, "quarter": q,
+                "approval_status": "Погоджено",
+                "status": clean(row.get("fact_status")) or "Не подано",
+                "numeric_value": row.get("fact_numeric_value"),
+                "value_text": row.get("fact_value_text"),
+                "progress_text": clean(row.get("fact_progress_text")),
+                "risks": "", "submitted_at": clean(row.get("decided_at")),
+                "object_kind": "measure", "_manual_closeout": True,
+            })
+    return pd.concat([data, pd.DataFrame(additions)], ignore_index=True, sort=False) if additions else data
+
+
+def _archived_filtered_period_rows(year, quarter):
+    payload = _load_dashboard_archive_payloads().get((int(year), quarter_to_roman(quarter)))
+    if not payload:
+        return None
+    archived_strat = pd.DataFrame(payload.get("main_table") or [])
+    archived_requests = pd.DataFrame(payload.get("monitoring_requests") or [])
+    if archived_strat.empty:
+        return None
+    archived_requests = _apply_archived_closeouts(archived_requests, payload.get("closeout_requests") or [])
+    if data_source_mode == operational.MODE_OPERATIONAL and not archived_requests.empty:
+        archived_requests, _ = operational.apply_operational_mode(
+            archived_requests,
+            logs_df=pd.DataFrame(payload.get("monitoring_logs") or []),
+            versions_df=pd.DataFrame(payload.get("monitoring_request_versions") or []),
+        )
+    period_rows = prepare_period_data(
+        archived_strat, archived_requests, year, quarter, "Усі",
+        period_locked_override=_archived_period_lock(payload, year, quarter),
+    )
+    return apply_dashboard_filters(
+        period_rows,
+        selected_department_indices, selected_goals, selected_tasks, selected_measures,
+        selected_product_types, selected_deputies, selected_statuses, selected_sources,
+        selected_financing, selected_kpkvk,
+    )
+
+
+def _archived_frozen_trend_kpi(year, quarter):
+    """Return immutable precomputed KPI when the current view is system-wide official."""
+    dimension_filters = [
+        selected_department_indices, selected_goals, selected_tasks, selected_measures,
+        selected_product_types, selected_deputies, selected_statuses, selected_sources,
+        selected_financing, selected_kpkvk,
+    ]
+    if data_source_mode != operational.MODE_CONFIRMED or any(bool(value) for value in dimension_filters):
+        return None
+    payload = _load_dashboard_archive_payloads().get((int(year), quarter_to_roman(quarter)))
+    if not isinstance(payload, dict):
+        return None
+    kpi = payload.get("dashboard_trend_kpi")
+    if not isinstance(kpi, dict):
+        return None
+    try:
+        if int(kpi.get("year")) != int(year) or quarter_to_roman(kpi.get("quarter")) != quarter_to_roman(quarter):
+            return None
+        return {
+            "execution": float(kpi.get("execution", 0) or 0),
+            "coverage": float(kpi.get("coverage", 0) or 0),
+            "formula_version": clean(kpi.get("formula_version")),
+            "population_size": int(kpi.get("population_size", 0) or 0),
+        }
+    except (TypeError, ValueError):
+        return None
+
+
 def _build_dynamics_trend_df(active_rows, selected_years_for_calc, selected_quarters_for_calc):
     trend_rows = []
     selected_period_pairs = sorted(
@@ -3672,7 +3691,20 @@ def _build_dynamics_trend_df(active_rows, selected_years_for_calc, selected_quar
 
     for year, quarter in selected_period_pairs:
         period_num = core_period_number(year, quarter)
-        period_rows = active_rows[active_rows["period_number"] == period_num].copy()
+        frozen_kpi = _archived_frozen_trend_kpi(year, quarter)
+        archived_rows = None if frozen_kpi is not None else _archived_filtered_period_rows(year, quarter)
+        if frozen_kpi is not None:
+            period_rows = pd.DataFrame()
+            historical_source = (
+                "Зафіксований KPI"
+                + (f" · {frozen_kpi.get('formula_version')}" if frozen_kpi.get("formula_version") else "")
+            )
+        elif archived_rows is not None:
+            period_rows = archived_rows.copy()
+            historical_source = "Архівний знімок"
+        else:
+            period_rows = active_rows[active_rows["period_number"] == period_num].copy()
+            historical_source = "Поточний розрахунок"
         monitoring_was_not_conducted = (
             int(year) == 2026 and quarter_to_number(quarter) in (1, 2)
         )
@@ -3685,6 +3717,11 @@ def _build_dynamics_trend_df(active_rows, selected_years_for_calc, selected_quar
 
         if monitoring_was_not_conducted:
             value, coverage_value, deviation_value = 0, 0, 0
+        elif frozen_kpi is not None:
+            value = frozen_kpi["execution"]
+            coverage_value = frozen_kpi["coverage"]
+            deviation_value = deviation_for_period(value, quarter_to_number(quarter))
+            has_data = bool(frozen_kpi.get("population_size", 0))
         elif period_rows.empty:
             value, coverage_value = 0, 0
             deviation_value = deviation_for_period(value, quarter_to_number(quarter))
@@ -3704,6 +3741,7 @@ def _build_dynamics_trend_df(active_rows, selected_years_for_calc, selected_quar
             "Відхилення за звітний період": deviation_value,
             "Є_дані": has_data,
             "Моніторинг_не_проводився": monitoring_was_not_conducted,
+            "Джерело": historical_source,
         })
 
     return pd.DataFrame(trend_rows), selected_period_pairs
@@ -4282,7 +4320,7 @@ if presentation_mode:
                     <div class="pres-kpi-sub">{pct_value(completed_count, total_active)}</div>
                 </div>
                 <div class="pres-kpi-card green">
-                    <div class="pres-kpi-label">Погоджено</div>
+                    <div class="pres-kpi-label">{approval_metric_label}</div>
                     <div class="pres-kpi-value">{approved_requests_count}</div>
                     <div class="pres-kpi-sub">{pct_value(approved_requests_count, total_active)}</div>
                 </div>
@@ -4428,7 +4466,7 @@ if snapshot_context is not None:
         _main_kpi_items = [
             {"key": "all", "title": "Заходів", "count": total_active, "percent": "100.0%", "color": "kpi-blue"},
             {"key": "completed", "title": "Виконано", "count": completed_count, "percent": pct_value(completed_count, total_active), "color": "kpi-green"},
-            {"key": "approved", "title": "Погоджено", "count": approved_requests_count, "percent": pct_value(approved_requests_count, total_active), "color": "kpi-green"},
+            {"key": "approved", "title": approval_metric_label, "count": approved_requests_count, "percent": pct_value(approved_requests_count, total_active), "color": "kpi-green"},
             {"key": "not_counted", "title": "Не враховано", "count": not_counted_count, "percent": pct_value(not_counted_count, total_active), "color": "kpi-red"},
             {"key": "not_done", "title": "Не виконано", "count": not_done_count, "percent": pct_value(not_done_count, total_active), "color": "kpi-red"},
             {"key": "obsolete", "title": "Втратило актуальність", "count": obsolete_count, "percent": pct_value(obsolete_count, total_active), "color": "kpi-gray"},
@@ -4437,12 +4475,22 @@ if snapshot_context is not None:
         ]
         _selected_kpi = render_kpi_grid(_main_kpi_items, interactive=True, query_key="kpi")
 
+        if data_source_mode == operational.MODE_OPERATIONAL:
+            _approved_detail = active[active.get("has_monitoring_data", False).fillna(False)].copy()
+        else:
+            _approved_detail = active[
+                active.get("approval_status", pd.Series(index=active.index, dtype=str))
+                .astype(str).str.strip() == "Погоджено"
+            ].copy()
+
         _kpi_detail_frames = {
             "all": active.copy(),
             "completed": active[active["status_display"] == "Виконано"].copy(),
-            "approved": active[active["status"] != "Не подано"].copy(),
+            "approved": _approved_detail,
             "not_counted": active[active["status"] == "Не подано"].copy(),
-            "not_done": active[active["status_display"] == "Не виконано"].copy(),
+            "not_done": active[
+                (active["status_display"] == "Не виконано") & (active["status"] != "Не подано")
+            ].copy(),
             "obsolete": active[active["status_display"] == "Втратило актуальність"].copy(),
             "not_time": active[active["status_display"] == "Не настав час"].copy(),
             "partly": active[active["status_display"] == "Частково виконано"].copy(),
@@ -5671,7 +5719,7 @@ if breakdown_context is not None:
                         del st.query_params["finance_kpi"]
                 except Exception as exc:
                     log_cosmetic_error("Скидання деталізації фінансових KPI", exc)
-                st.rerun()
+                pass  # no explicit rerun: the triggering user action completes in this run
 
         st.markdown('<div style="margin-top:18px;"></div>', unsafe_allow_html=True)
 
@@ -6025,6 +6073,186 @@ with st.expander("Методологія розрахунку"):
 if snapshot_context is not None:
     _activate_dashboard_context(snapshot_context)
 
+def _trajectory_number(value):
+    text = clean(value).replace("\u00a0", " ").replace(" ", "").replace(",", ".")
+    match = re.search(r"[-+]?\d+(?:\.\d+)?", text)
+    if not match:
+        return None
+    try:
+        return float(match.group(0))
+    except ValueError:
+        return None
+
+
+def _geometric_path(start_year, start_value, end_year, end_value):
+    """Year-by-year geometric path, matching the annual-rate idea used by MіО."""
+    try:
+        start_year, end_year = int(start_year), int(end_year)
+        start_value, end_value = float(start_value), float(end_value)
+    except (TypeError, ValueError):
+        return {}
+    years = end_year - start_year
+    if years <= 0 or start_value <= 0 or end_value <= 0:
+        return {}
+    rate = (end_value / start_value) ** (1.0 / years)
+    return {year: start_value * (rate ** (year - start_year)) for year in range(start_year, end_year + 1)}
+
+
+def _indicator_trajectory_rows():
+    indicators = strat_df[strat_df["object_type"].isin(["goal_indicator", "task_indicator"])].copy()
+    if indicators.empty:
+        return indicators
+    indicators = indicators[indicators["indicator"].astype(str).str.strip().ne("")].copy()
+    if selected_department_indices:
+        wanted = set(str(x) for x in selected_department_indices)
+        indicators = indicators[indicators.apply(
+            lambda row: bool(
+                wanted.intersection(
+                    set(split_department_indices(row.get("resp_main", "")))
+                    | set(split_department_indices(row.get("resp_co_1", "")))
+                    | set(split_department_indices(row.get("resp_co_2", "")))
+                )
+            ), axis=1
+        )]
+    if selected_goals:
+        indicators = indicators[indicators["parent_goal_code"].astype(str).isin([str(v) for v in selected_goals])]
+    if selected_tasks:
+        indicators = indicators[indicators["parent_task_code"].astype(str).isin([str(v) for v in selected_tasks])]
+    return indicators.copy()
+
+
+def _build_indicator_trajectory(row):
+    code = clean(row.get("code"))
+    indicator_name = clean(row.get("indicator"))
+    actual = {}
+    for year, col in [(2021, "base_2021"), (2024, "fact_2024"), (2025, "fact_2025")]:
+        value = _trajectory_number(row.get(col))
+        if value is not None:
+            actual[year] = value
+
+    req = _indicator_requests_effective.copy()
+    if not req.empty:
+        req = req[
+            req.get("strat_code", pd.Series(index=req.index, dtype=str)).astype(str).str.strip().eq(code)
+            & req.get("indicator_name", pd.Series(index=req.index, dtype=str)).astype(str).str.strip().eq(indicator_name)
+        ].copy()
+        if not req.empty:
+            req["_year"] = pd.to_numeric(req.get("year"), errors="coerce")
+            req["_value"] = req.apply(
+                lambda r: _trajectory_number(r.get("numeric_value"))
+                if _trajectory_number(r.get("numeric_value")) is not None
+                else _trajectory_number(r.get("value_text")), axis=1
+            )
+            req["_date"] = pd.to_datetime(req.get("as_of_date"), errors="coerce")
+            req["_submitted"] = pd.to_datetime(req.get("submitted_at"), errors="coerce", utc=True)
+            req["_id"] = pd.to_numeric(req.get("id"), errors="coerce").fillna(-1)
+            req = req[req["_year"].notna() & req["_value"].notna()].copy()
+            if not req.empty:
+                latest = (req.sort_values(["_year", "_date", "_submitted", "_id"], na_position="first")
+                          .groupby("_year", as_index=False, sort=False).tail(1))
+                for _, item in latest.iterrows():
+                    actual[int(item["_year"])] = float(item["_value"])
+
+    target_2028 = _trajectory_number(row.get("strategic_target_2028"))
+    target_2034 = _trajectory_number(row.get("strategic_target_2034"))
+
+    # Same baseline fallback used by the MіО trajectory methodology:
+    # 2025 -> 2024 -> 2021.
+    baseline_year = None
+    baseline_value = None
+    for year in (2025, 2024, 2021):
+        value = actual.get(year)
+        if value is not None and value > 0:
+            baseline_year, baseline_value = year, value
+            break
+
+    required = {}
+    required_rates = []
+    if baseline_year is not None and target_2028 is not None:
+        segment = _geometric_path(baseline_year, baseline_value, 2028, target_2028)
+        required.update(segment)
+        if segment and baseline_value > 0:
+            required_rates.append((baseline_year, 2028, (target_2028 / baseline_value) ** (1/(2028-baseline_year)) - 1))
+    if target_2028 is not None and target_2034 is not None:
+        segment = _geometric_path(2028, target_2028, 2034, target_2034)
+        required.update(segment)
+        if segment and target_2028 > 0:
+            required_rates.append((2028, 2034, (target_2034 / target_2028) ** (1/6) - 1))
+
+    forecast = {}
+    current_rate = None
+    if baseline_year is not None and baseline_value and baseline_value > 0:
+        later_actuals = [(year, value) for year, value in actual.items() if year > baseline_year and value is not None and value > 0]
+        if later_actuals:
+            latest_year, latest_value = max(later_actuals, key=lambda item: item[0])
+            years_elapsed = latest_year - baseline_year
+            if years_elapsed > 0:
+                current_rate = (latest_value / baseline_value) ** (1.0 / years_elapsed)
+                forecast = {
+                    year: latest_value * (current_rate ** (year - latest_year))
+                    for year in range(latest_year, 2035)
+                }
+
+    return actual, required, forecast, required_rates, current_rate, target_2028, target_2034
+
+
+def _render_indicator_trajectory_section():
+    indicators = _indicator_trajectory_rows()
+    st.markdown('<div class="section-title">Траєкторія індикаторів стратегічних цілей і завдань</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="section-subtitle">Факт + потрібна траєкторія до орієнтирів 2028/2034 + прогноз за фактичним темпом. Проміжні роки з «х» не вважаються фактом.</div>',
+        unsafe_allow_html=True,
+    )
+    if indicators.empty:
+        st.info("За застосованими фільтрами індикаторів Цілей/Завдань не знайдено.")
+        return
+    indicators = indicators.reset_index(drop=True)
+    labels = [
+        f"{clean(r.get('code'))} — {clean(r.get('indicator'))}"
+        for _, r in indicators.iterrows()
+    ]
+    chosen = st.selectbox(
+        "Індикатор для графіка",
+        list(range(len(indicators))),
+        format_func=lambda i: labels[i],
+        key="dashboard_indicator_trajectory_choice",
+    )
+    row = indicators.iloc[int(chosen)]
+    actual, required, forecast, required_rates, current_rate, t28, t34 = _build_indicator_trajectory(row)
+    if not actual and t28 is None and t34 is None:
+        st.info("Для цього індикатора немає числових даних, які можна коректно побудувати на лінійному графіку.")
+        return
+    fig = go.Figure()
+    if actual:
+        years = sorted(actual)
+        fig.add_trace(go.Scatter(x=years, y=[actual[y] for y in years], mode="lines+markers", name="Фактичні значення"))
+    if required:
+        years = sorted(required)
+        fig.add_trace(go.Scatter(x=years, y=[required[y] for y in years], mode="lines+markers", name="Необхідна траєкторія"))
+    if forecast:
+        years = sorted(forecast)
+        fig.add_trace(go.Scatter(x=years, y=[forecast[y] for y in years], mode="lines+markers", name="Прогноз за нинішнім темпом", line=dict(dash="dash")))
+    if t28 is not None:
+        fig.add_trace(go.Scatter(x=[2028], y=[t28], mode="markers", marker=dict(size=12, symbol="diamond"), name="Орієнтир 2028"))
+    if t34 is not None:
+        fig.add_trace(go.Scatter(x=[2034], y=[t34], mode="markers", marker=dict(size=12, symbol="diamond"), name="Орієнтир 2034"))
+    fig.update_layout(
+        height=430,
+        xaxis=dict(title="Рік", dtick=1),
+        yaxis=dict(title=clean(row.get("unit")) or "Значення"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        margin=dict(l=55, r=25, t=45, b=50),
+    )
+    render_plotly_chart(fig, use_container_width=True)
+    rate_bits = []
+    for sy, ey, rate in required_rates:
+        rate_bits.append(f"потрібний середньорічний темп {sy}–{ey}: {rate*100:+.2f}%")
+    if current_rate is not None:
+        rate_bits.append(f"фактичний середньорічний темп: {(current_rate-1)*100:+.2f}%")
+    if rate_bits:
+        st.caption(" · ".join(rate_bits))
+
+
 def _render_dash_auto_summary():
     try:
         _q_order = ["I", "II", "III", "IV"]
@@ -6105,6 +6333,10 @@ def _render_dash_auto_summary():
         # Тестовий режим не має права зламати Dashboard.
         log_cosmetic_error("Автоматичний текстовий підсумок Dashboard", exc)
 
+
+# Окремий керівний блок індикаторів Цілей/Завдань. Він використовує
+# фактичні подання та довгострокові орієнтири, але не змінює формули МіО.
+_render_indicator_trajectory_section()
 
 if snapshot_context is not None:
     _render_dash_auto_summary()

@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from core.data_types import normalise_closeout_frame, prepare_monitoring_payload
 from core.db import fetch_all, get_supabase_client
-from core.ui import load_css, prepare_human_log_table, render_request_timeline
+from core.ui import load_css, prepare_human_log_table, render_readonly_table, render_request_timeline
 from core.errors import log_cosmetic_error, show_incident, show_warning
 from core.config import FILE_PATH, SHEET_NAME
 from core.excel_loader import read_excel_sheet
@@ -17,8 +17,7 @@ from core import monitoring_data
 from core.statuses import SUBMISSION_STATUS_OPTIONS
 from core.validation import (
     cumulative_quarter_decrease_error,
-    status_value_conflict,
-    validate_fact_value_for_target,
+    validation_errors_for_record,
 )
 from core.transitions import (
     TransitionRejected,
@@ -474,20 +473,15 @@ def _html_cell(value):
 
 
 def _render_html_table(headers, rows, empty_message="Записів немає."):
-    """Єдиний HTML-рендер через глобальні класи таблиць системи."""
+    """Read-only table in the single Home-page visual standard."""
     if not rows:
         st.info(empty_message)
         return
-    header_html = "".join(f"<th>{escape(str(header))}</th>" for header in headers)
-    body_html = "".join(
-        "<tr>" + "".join(f"<td>{_html_cell(value)}</td>" for value in row) + "</tr>"
-        for row in rows
-    )
-    st.markdown(
-        '<div class="myreq-table-scroll"><table class="myreq-html-table">'
-        f"<thead><tr>{header_html}</tr></thead><tbody>{body_html}</tbody>"
-        "</table></div>",
-        unsafe_allow_html=True,
+    render_readonly_table(
+        pd.DataFrame(rows, columns=headers),
+        height=325,
+        compact=False,
+        empty_message=empty_message,
     )
 
 
@@ -687,7 +681,7 @@ def _render_cabinet_decision_notices():
         ):
             st.session_state.pop("cab_action_success_notice", None)
             st.session_state.pop("cab_last_decision_notice", None)
-            st.rerun()
+            pass  # no explicit rerun: the triggering user action completes in this run
 
 
 def _render_cabinet_submission_notice():
@@ -1409,7 +1403,7 @@ else:
                 )
                 _queue_cabinet_selection_reset(selected_id)
                 monitoring_data.invalidate_monitoring_cache()
-                st.rerun()
+                pass  # no explicit rerun: the triggering user action completes in this run
             except TransitionRejected as exc:
                 st.error(exc.message)
             except Exception as exc:
@@ -1470,7 +1464,7 @@ else:
                     )
                     _queue_cabinet_selection_reset(selected_id)
                     monitoring_data.invalidate_monitoring_cache()
-                    st.rerun()
+                    pass  # no explicit rerun: the triggering user action completes in this run
                 except TransitionRejected as exc:
                     st.error(exc.message)
                 except Exception as exc:
@@ -1559,25 +1553,15 @@ else:
                     _cab_chain_for_edit = _chain
                     _cab_target_stage = _stage_idx
                     if has_value(cab_new_value):
-                        cab_value_ok, cab_value_error = validate_fact_value_for_target(
-                            cab_new_value,
-                            cab_unit,
-                            _cab_selected_target,
-                            _cab_future_targets,
-                        )
-                        if not cab_value_ok:
-                            cab_edit_errors.append(cab_value_error)
-
-                    cab_conflict_error = status_value_conflict(
-                        cab_new_status,
-                        cab_new_value,
-                        _cab_selected_target,
-                        cab_unit,
-                        code,
-                        _cab_future_targets,
-                    )
-                    if cab_conflict_error:
-                        cab_edit_errors.append(cab_conflict_error)
+                        cab_edit_errors.extend(validation_errors_for_record(
+                            object_kind=selected_row.get("object_kind") or "measure",
+                            status=cab_new_status,
+                            value=cab_new_value,
+                            target=_cab_selected_target,
+                            unit=cab_unit,
+                            code=code,
+                            future_targets=_cab_future_targets,
+                        ))
 
                     if cab_edit_errors:
                         for cab_error in cab_edit_errors:
@@ -1641,7 +1625,7 @@ else:
                             )
                             _queue_cabinet_selection_reset(selected_id)
                             monitoring_data.invalidate_monitoring_cache()
-                            st.rerun()
+                            pass  # no explicit rerun: the triggering user action completes in this run
                         except TransitionRejected as exc:
                             st.error(exc.message)
                         except Exception as exc:
@@ -1844,7 +1828,7 @@ if _my_role == ROLE_SSP_HEAD:
                             )
                             st.success(f"Вашу реакцію зафіксовано: {_new_head_status}.")
                             monitoring_data.invalidate_monitoring_cache()
-                            st.rerun()
+                            pass  # no explicit rerun: the triggering user action completes in this run
                         except Exception as exc:
                             show_incident(
                                 exc,

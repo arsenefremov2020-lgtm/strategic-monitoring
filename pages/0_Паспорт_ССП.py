@@ -16,7 +16,7 @@ import pandas as pd
 import streamlit as st
 
 from core.page_setup import page_setup, render_footer
-from core.ui import load_css, render_own_ssp_badge, apply_reset_buttons, render_scope_toggle
+from core.ui import load_css, render_own_ssp_badge, apply_reset_buttons, render_scope_toggle, render_readonly_table
 from core.db import get_supabase_client
 from core import monitoring_data
 from core import approval_schemes as schemes
@@ -154,7 +154,7 @@ if reset:
     for k in ("passport_ssp_select", "passport_year_select",
               "passport_params_applied"):
         st.session_state.pop(k, None)
-    st.rerun()
+    pass  # no explicit rerun: the triggering user action completes in this run
 
 if applied:
     st.session_state["passport_params_applied"] = {
@@ -207,7 +207,7 @@ for r in _role_order:
 
 if _team_rows:
     team_df = pd.DataFrame(_team_rows, columns=["Роль", "ПІБ", "Email"])
-    st.dataframe(team_df, use_container_width=True, hide_index=True)
+    render_readonly_table(team_df, height=260, compact=True)
 else:
     st.info("Для цього ССП поки що не знайдено користувачів у таблиці доступів.")
 st.markdown("</div>", unsafe_allow_html=True)
@@ -247,12 +247,15 @@ def _measure_state_cells(code: str, start_raw, end_raw) -> list[str]:
                 & (ssp_requests["_qnum"] == qn)
             ]
             if not hit.empty:
+                _sort_cols = [c for c in ("updated_at", "submitted_at", "id") if c in hit.columns]
+                if _sort_cols:
+                    hit = hit.sort_values(_sort_cols, ascending=False, na_position="last")
                 row = hit.iloc[0]
         if row is not None:
             approval = clean(row.get("approval_status"))
             if approval == "Погоджено":
                 cells.append(legend_badge("Погоджено"))
-            elif approval == "Повернуто на доопрацювання":
+            elif schemes.is_returned(approval):
                 cells.append(legend_badge("На доопрацюванні"))
             else:
                 cells.append(legend_badge("На розгляді"))
@@ -276,11 +279,16 @@ _summary = {
 if not ssp_requests.empty:
     _summary["подано (рік)"] = int(ssp_requests["strat_code"].nunique())
     _summary["погоджено"] = int(
-        (ssp_requests["approval_status"].astype(str) == "Погоджено").sum()
+        ssp_requests.loc[
+            ssp_requests["approval_status"].astype(str).str.strip() == schemes.APPROVED_STATUS,
+            "strat_code",
+        ].astype(str).str.strip().nunique()
     )
     _summary["повернуто"] = int(
-        (ssp_requests["approval_status"].astype(str)
-         == "Повернуто на доопрацювання").sum()
+        ssp_requests.loc[
+            ssp_requests["approval_status"].map(schemes.is_returned),
+            "strat_code",
+        ].astype(str).str.strip().nunique()
     )
 _summary["закрито вручну"] = sum(
     1 for (c, y, q) in manual_closeouts if y == year and
@@ -322,41 +330,24 @@ export_rows = []
 if measures.empty:
     st.info("За стратегічною матрицею у цього ССП немає заходів.")
 else:
-    _html_rows = []
+    _display_rows = []
     for _, m in measures.iterrows():
         code = clean(m.get("code"))
         name = clean(m.get("name"))
         cells = _measure_state_cells(
             code, m.get("measure_start_date"), m.get("measure_end_date")
         )
-        _html_rows.append(
-            "<tr>"
-            f'<td style="white-space:nowrap;font-weight:700;">{code}</td>'
-            f'<td style="min-width:260px;">{name}</td>'
-            + "".join(f'<td style="text-align:center;">{c}</td>' for c in cells)
-            + "</tr>"
-        )
-        export_rows.append({
-            "Код": code, "Захід": name,
-            **{f"{q} квартал": re.sub(r"<[^>]+>", "", c) for q, c in
-               zip(QUARTERS, cells)},
-        })
-    _head = (
-        "<tr>"
-        '<th style="text-align:left;">Код</th>'
-        '<th style="text-align:left;">Захід</th>'
-        + "".join(f"<th>{q}</th>" for q in QUARTERS)
-        + "</tr>"
-    )
-    st.markdown(
-        '<div style="max-height:480px;overflow-y:auto;border:1px solid '
-        '#e2e8f0;border-radius:10px;">'
-        '<table style="width:100%;border-collapse:collapse;font-size:12.5px;">'
-        f'<thead style="position:sticky;top:0;background:#0f172a;color:#fff;">'
-        f"{_head}</thead><tbody>"
-        + "".join(_html_rows)
-        + "</tbody></table></div>",
-        unsafe_allow_html=True,
+        quarter_values = {
+            f"{q} квартал": re.sub(r"<[^>]+>", "", c)
+            for q, c in zip(QUARTERS, cells)
+        }
+        _display_rows.append({"Код": code, "Захід": name, **quarter_values})
+        export_rows.append({"Код": code, "Захід": name, **quarter_values})
+    render_readonly_table(
+        pd.DataFrame(_display_rows),
+        height=480,
+        min_width=1250,
+        empty_message="Заходів немає.",
     )
 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -465,50 +456,34 @@ if _co_toggle:
     if _co_measures.empty:
         st.info("Заходів, де ваш ССП визначено співвиконавцем, не знайдено.")
     else:
-        _co_html_rows = []
+        _co_display_rows = []
         for _, m in _co_measures.iterrows():
             code = clean(m.get("code"))
             name = clean(m.get("name"))
             _main_idx = extract_ssp_index(m.get("resp_main"))
             _main_label = _ssp_labels.get(_main_idx, f"ССП №{_main_idx}")
-            # Контакт: відповідальна особа (роль ССП) головного виконавця
             _contacts = []
             for u in (get_users_by_ssp_index(_main_idx) or {}).values():
                 if clean(u.get("role")) == ROLE_SSP:
                     _nm = clean(u.get("full_name")) or clean(u.get("email"))
                     _em = clean(u.get("email"))
                     _contacts.append(f"{_nm}" + (f" · {_em}" if _em else ""))
-            _contact_txt = "<br>".join(_contacts) if _contacts else "—"
+            _contact_txt = "\n".join(_contacts) if _contacts else "—"
             cells = _measure_state_cells(
                 code, m.get("measure_start_date"), m.get("measure_end_date")
             )
-            _co_html_rows.append(
-                "<tr>"
-                f'<td style="white-space:nowrap;font-weight:700;">{code}</td>'
-                f'<td style="min-width:220px;">{name}</td>'
-                f'<td style="min-width:150px;">{_main_label}</td>'
-                f'<td style="min-width:190px;font-size:11.5px;">{_contact_txt}</td>'
-                + "".join(f'<td style="text-align:center;">{c}</td>' for c in cells)
-                + "</tr>"
-            )
-        _co_head = (
-            "<tr>"
-            '<th style="text-align:left;">Код</th>'
-            '<th style="text-align:left;">Захід</th>'
-            '<th style="text-align:left;">Головний виконавець</th>'
-            '<th style="text-align:left;">Відповідальна особа (контакти)</th>'
-            + "".join(f"<th>{q}</th>" for q in QUARTERS)
-            + "</tr>"
-        )
-        st.markdown(
-            '<div style="max-height:420px;overflow-y:auto;border:1px solid '
-            '#e2e8f0;border-radius:10px;">'
-            '<table style="width:100%;border-collapse:collapse;font-size:12.5px;">'
-            f'<thead style="position:sticky;top:0;background:#0f172a;color:#fff;">'
-            f"{_co_head}</thead><tbody>"
-            + "".join(_co_html_rows)
-            + "</tbody></table></div>",
-            unsafe_allow_html=True,
+            _co_display_rows.append({
+                "Код": code,
+                "Захід": name,
+                "Головний виконавець": _main_label,
+                "Відповідальна особа (контакти)": _contact_txt,
+                **{f"{q} квартал": re.sub(r"<[^>]+>", "", c) for q, c in zip(QUARTERS, cells)},
+            })
+        render_readonly_table(
+            pd.DataFrame(_co_display_rows),
+            height=420,
+            min_width=1550,
+            empty_message="Заходів немає.",
         )
     st.markdown("</div>", unsafe_allow_html=True)
 

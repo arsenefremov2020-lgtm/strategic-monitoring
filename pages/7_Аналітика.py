@@ -26,6 +26,9 @@ from core.strategic_data import load_strat_matrix as core_load_strat_matrix
 from core import monitoring_data
 from core import statuses as core_statuses
 from core import operational
+from core import dashboard_metrics
+from core import periods as core_periods
+from core.closeouts import append_confirmed_closeout_facts
 from core.errors import show_warning
 from core.stage4 import (
     build_approval_speed_analytics,
@@ -360,8 +363,8 @@ def get_task_code(code):
 
 
 def quarter_to_number(q):
-    text = raw_value(q).replace(" квартал", "")
-    return {"I": 1, "II": 2, "III": 3, "IV": 4, "1": 1, "2": 2, "3": 3, "4": 4}.get(text, 1)
+    """Business parser shared with Dashboard; invalid data is an explicit error."""
+    return core_periods.quarter_to_number_strict(q)
 
 
 def parse_period(value):
@@ -404,28 +407,10 @@ def to_number(value):
 
 
 def status_score(status):
-    """ЄДИНА шкала — core.statuses (правки П5/К5, стандарт моделі МіО)."""
-    score = core_statuses.status_score(status)
-    return 0 if score is None else score
-
+    return dashboard_metrics.status_score(status)
 
 def plan_fact_percent(actual, target):
-    actual_num = to_number(actual)
-    target_num = to_number(target)
-    actual_text = normalize_text(actual)
-    target_text = normalize_text(target)
-
-    if actual_num is not None and target_num is not None and target_num != 0:
-        return round(min((actual_num / target_num) * 100, 150), 2)
-
-    if target_text in ["так", "yes"] or actual_text in ["так", "ні", "yes", "no"]:
-        if actual_text in ["так", "yes"]:
-            return 100
-        if actual_text in ["ні", "no"]:
-            return 0
-
-    return None
-
+    return dashboard_metrics.plan_fact_percent(actual, target)
 
 def deviation_label(value):
     sign = "+" if value > 0 else ""
@@ -441,12 +426,7 @@ def deviation_card_class(value):
 
 
 def traffic_light(score):
-    if score >= 70:
-        return "У графіку"
-    if score >= 35:
-        return "Потребує уваги"
-    return "Відстає"
-
+    return dashboard_metrics.traffic_light(score)
 
 def get_indicator_type(row):
     unit = normalize_text(row.get("unit", ""))
@@ -531,41 +511,13 @@ def base_measures(strat_df):
 
 
 def is_active_for_period(row, year, quarter):
-    selected_period_num = int(year) * 10 + quarter_to_number(quarter)
-    target_col = f"target_{year}"
-
-    has_target_for_year = True
-    if target_col in row:
-        has_target_for_year = not is_empty_or_nd(row.get(target_col, ""))
-
-    start_num = row.get("start_num", None)
-    end_num = row.get("end_num", None)
-
-    starts_ok = pd.isna(start_num) or start_num is None or start_num <= selected_period_num
-    ends_ok = pd.isna(end_num) or end_num is None or end_num >= selected_period_num
-
-    return bool(has_target_for_year and starts_ok and ends_ok)
-
+    selected_period_num = core_periods.period_number(year, quarter)
+    return core_periods.get_period_state(
+        row.get("start_num"), row.get("end_num"), selected_period_num
+    ) == "active"
 
 def latest_approved_records(requests_df, year, quarter):
-    if requests_df.empty:
-        return pd.DataFrame(columns=["strat_code"])
-
-    data = requests_df.copy()
-    data = data[
-        (data["year"].astype(str).str.strip() == str(year))
-        & (data["quarter"].astype(str).str.strip() == str(quarter))
-        & (data["approval_status"].astype(str).str.strip() == "Погоджено")
-    ].copy()
-
-    if data.empty:
-        return data
-
-    data["submitted_at_sort"] = pd.to_datetime(data["submitted_at"], errors="coerce")
-    data = data.sort_values(["strat_code", "submitted_at_sort"], na_position="first")
-    data = data.groupby("strat_code", as_index=False).tail(1)
-    return data
-
+    return dashboard_metrics.latest_approved_records(requests_df, year, quarter)
 
 def prepare_period_slice(measures, requests_df, year, quarter):
     active = measures[measures.apply(lambda row: is_active_for_period(row, year, quarter), axis=1)].copy()
@@ -576,7 +528,7 @@ def prepare_period_slice(measures, requests_df, year, quarter):
     active["report_quarter"] = quarter
     active["report_quarter_num"] = quarter_to_number(quarter)
     active["report_period"] = f"{year} {quarter} квартал"
-    active["expected_progress"] = active["report_quarter_num"] * 25
+    active["expected_progress"] = dashboard_metrics.expected_completion_for_quarter(quarter_to_number(quarter))
 
     period_requests = latest_approved_records(requests_df, year, quarter)
 
@@ -598,25 +550,37 @@ def prepare_period_slice(measures, requests_df, year, quarter):
     active["progress_text"] = active["progress_text"].fillna("")
     active["submitted_at"] = active["submitted_at"].fillna("")
 
-    active["status_score"] = active["status"].apply(status_score)
-    active["plan_fact_percent"] = active.apply(lambda r: plan_fact_percent(r["numeric_value"], r["selected_target"]), axis=1)
+    active["status_display"] = active["status"].map(dashboard_metrics.status_display)
+    active["status_score"] = active["status"].map(dashboard_metrics.status_score)
+    active["plan_fact_percent"] = active.apply(
+        lambda r: dashboard_metrics.plan_fact_percent(r["numeric_value"], r["selected_target"]), axis=1
+    )
     active["performance_score"] = active.apply(
-        lambda r: r["plan_fact_percent"] if pd.notna(r["plan_fact_percent"]) else r["status_score"],
+        lambda r: dashboard_metrics.performance_score(r["status"], r["numeric_value"], r["selected_target"]),
         axis=1
     )
+    active["expected_progress"] = dashboard_metrics.expected_completion_for_quarter(quarter_to_number(quarter))
     if is_period_locked(year, quarter):
-        # Заблокований квартал залишається у плані, але не бере участі
-        # у знаменнику/середньому відсотка виконання.
+        # Same Dashboard contract: locked periods are present but excluded.
         active["status_score"] = float("nan")
         active["performance_score"] = float("nan")
         active["expected_progress"] = float("nan")
-    active["period_deviation"] = active["performance_score"] - active["expected_progress"]
-    active["traffic_light"] = active["performance_score"].apply(traffic_light)
+    active["period_deviation"] = active.apply(
+        lambda r: (r["performance_score"] - r["expected_progress"])
+        if pd.notna(r["performance_score"]) and pd.notna(r["expected_progress"]) else float("nan"),
+        axis=1,
+    )
+    active["traffic_light"] = active["performance_score"].map(dashboard_metrics.traffic_light)
     if is_period_locked(year, quarter):
         active["traffic_light"] = core_statuses.ST_NOTYET
     active["has_submission"] = active["status"] != "Не подано"
-    active["has_text_risk"] = active["risks"].astype(str).str.strip() != ""
-    active["is_problem_status"] = active["status"].isin(["Потребує уваги", "Прострочено", "Не розпочато", "Не подано"])
+    _risk_empty = {"", "—", "-", "немає", "відсутні", "відсутній", "не виявлено"}
+    active["has_text_risk"] = active["risks"].astype(str).str.strip().str.casefold().map(lambda v: v not in _risk_empty)
+    active["is_problem_status"] = active.apply(
+        lambda r: dashboard_metrics.is_problem(
+            r.get("status"), r.get("performance_score"), has_risk=bool(r.get("has_text_risk"))
+        ), axis=1
+    )
 
     return active
 
@@ -671,7 +635,7 @@ def build_metrics(active):
     tasks = active["task_code"].nunique() if total else 0
     no_data = int((active["status"] == "Не подано").sum()) if total else 0
     completed = int((active["status"] == "Виконано").sum()) if total else 0
-    problem = int((active["is_problem_status"] | (active["period_deviation"] < -25)).sum()) if total else 0
+    problem = int(active["is_problem_status"].fillna(False).sum()) if total else 0
 
     return {
         "total_rows": total,
@@ -753,7 +717,7 @@ def render_year_over_year_block(yoy_comparison):
         st.markdown("</div>", unsafe_allow_html=True)
         return
 
-    st.dataframe(yoy_comparison, use_container_width=True, hide_index=True)
+    render_readonly_table(yoy_comparison)
 
     chart_data = yoy_comparison[yoy_comparison["Показник"].isin([
         "Покриття моніторингом", "Рівень виконання СП", "Очікуваний темп", "Відхилення"
@@ -1305,6 +1269,11 @@ if analytics_data_mode == operational.MODE_OPERATIONAL and not requests_df.empty
 else:
     st.caption("✅ Аналітика розраховується за офіційно погодженими даними.")
 
+# Підтверджені ручні закриття — той самий фактичний шар, що й на Dashboard.
+# Broken materialisation не приховує факт: беремо його з closeout_requests,
+# але ніколи не вигадуємо статус «Виконано».
+requests_df = ensure_request_columns(append_confirmed_closeout_facts(requests_df))
+
 measures_all = base_measures(strat_df)
 
 if measures_all.empty:
@@ -1443,11 +1412,11 @@ with _an_a:
             "tasks": list(selected_task_labels or []),
             "product_types": list(selected_product_types or []),
         }
-        st.rerun()
+        pass  # no explicit rerun: the triggering user action completes in this run
 with _an_b:
     if st.button("Скинути параметри", use_container_width=True, key="analytics_reset_filters_v19"):
         st.session_state["analytics_filters_applied_v19"] = _an_defaults.copy()
-        st.rerun()
+        pass  # no explicit rerun: the triggering user action completes in this run
 with _an_c:
     st.caption("Аналітичні графіки, таблиці та експорти перебудовуються після застосування параметрів.")
 
@@ -1822,7 +1791,7 @@ _top_returned = return_analytics["top_requests"]
 if _top_returned.empty:
     st.info("Заявок із поверненнями у поточному зрізі немає.")
 else:
-    st.dataframe(_top_returned.head(20), use_container_width=True, hide_index=True)
+    render_readonly_table(_top_returned.head(20))
 st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown(
@@ -1847,21 +1816,13 @@ with _speed_left:
     if approval_speed["stage_average"].empty:
         st.info("Для розрахунку часу на ланках недостатньо завершених переходів.")
     else:
-        st.dataframe(
-            approval_speed["stage_average"],
-            use_container_width=True,
-            hide_index=True,
-        )
+        render_readonly_table(approval_speed["stage_average"])
 with _speed_right:
     st.markdown("**Заявки, що зараз очікують найдовше**")
     if approval_speed["hanging"].empty:
         st.info("У поточному зрізі немає заявок на активних ланках погодження.")
     else:
-        st.dataframe(
-            approval_speed["hanging"].head(20),
-            use_container_width=True,
-            hide_index=True,
-        )
+        render_readonly_table(approval_speed["hanging"].head(20))
 st.markdown('</div>', unsafe_allow_html=True)
 
 
@@ -1974,22 +1935,22 @@ with tab1:
         "ССП", "Заступник Міністра", "Планове значення", "Фактичне значення", "Статус",
         "Виконання, %", "Очікуваний темп, %", "Відхилення, в.п.", "Оцінка темпу"
     ]
-    st.dataframe(show_active[[c for c in cols if c in show_active.columns]], use_container_width=True, hide_index=True)
+    render_readonly_table(show_active[[c for c in cols if c in show_active.columns]])
 
 with tab2:
-    st.dataframe(goal_progress, use_container_width=True, hide_index=True)
+    render_readonly_table(goal_progress)
 
 with tab3:
-    st.dataframe(task_progress, use_container_width=True, hide_index=True)
+    render_readonly_table(task_progress)
 
 with tab4:
-    st.dataframe(dep_progress, use_container_width=True, hide_index=True)
+    render_readonly_table(dep_progress)
 
 with tab5:
-    st.dataframe(product_progress, use_container_width=True, hide_index=True)
+    render_readonly_table(product_progress)
 
 with tab6:
-    st.dataframe(period_requests, use_container_width=True, hide_index=True)
+    render_readonly_table(period_requests)
 
 st.markdown("</div>", unsafe_allow_html=True)
 

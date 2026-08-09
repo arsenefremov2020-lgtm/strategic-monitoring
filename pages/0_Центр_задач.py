@@ -163,6 +163,7 @@ my_requests = requests_df[
 ] if not requests_df.empty else pd.DataFrame()
 
 total_tasks = 0
+task_source_errors: list[str] = []
 
 # ------------------------------------------------------------
 # 1) ПОВЕРНУТІ НА ДООПРАЦЮВАННЯ (усі ролі, що подають)
@@ -172,8 +173,7 @@ if role in (ROLE_SSP, ROLE_UNIT_HEAD, ROLE_SSP_DEPUTY, ROLE_SSP_HEAD):
     returned_rows = []
     if not my_requests.empty:
         _ret = my_requests[
-            my_requests["approval_status"].astype(str).str.strip()
-            == "Повернуто на доопрацювання"
+            my_requests["approval_status"].map(schemes.is_returned)
         ]
         for _, r in _ret.iterrows():
             d = _days_since(r.get("submitted_at"))
@@ -265,7 +265,7 @@ if role in (ROLE_UNIT_HEAD, ROLE_SSP_DEPUTY, ROLE_SSP_HEAD):
                 mine = (s_email and s_email == my_email) or (
                     not s_email and clean(stage.get("role")) == role
                 )
-            elif approval == "Очікує: Керівник ССП" and role == ROLE_SSP_HEAD:
+            elif schemes.waiting_stage_for_status(approval) == "manager" and role == ROLE_SSP_HEAD:
                 mine = True
             if mine:
                 d = _days_since(r.get("submitted_at"))
@@ -291,7 +291,7 @@ if role == ROLE_SSP_HEAD:
     try:
         _co = (
             supabase.table("closeout_requests")
-            .select("id, strat_code, year, quarter, head_status")
+            .select("id, strat_code, period_year, period_quarter, head_status")
             .execute()
         )
         _co_df = pd.DataFrame(_co.data or [])
@@ -314,11 +314,12 @@ if role == ROLE_SSP_HEAD:
                 head_rows.append(
                     f"Ручне закриття № {clean(c.get('id'))} — захід "
                     f"<b>{clean(c.get('strat_code'))}</b> "
-                    f"({clean(c.get('quarter'))} кв. {clean(c.get('year'))}) — "
+                    f"({clean(c.get('period_quarter'))} кв. {clean(c.get('period_year'))}) — "
                     f"підтвердити або оскаржити"
                 )
-    except Exception:
-        pass
+    except Exception as exc:
+        task_source_errors.append(f"Ручні закриття керівника ССП: {exc}")
+        st.error("Не вдалося прочитати джерело ручних закриттів для керівника ССП.")
     total_tasks += len(head_rows)
     _task_section(
         "🔏", "Ручні закриття — очікують вашої реакції", head_rows,
@@ -338,7 +339,7 @@ if role == ROLE_ADMIN:
     if scoped is not None and not scoped.empty:
         for _, r in scoped.iterrows():
             approval = clean(r.get("approval_status"))
-            if approval == "Очікує погодження":
+            if schemes.waiting_stage_for_status(approval) == "coordinator":
                 d = _days_since(r.get("submitted_at"))
                 line = (
                     f"Заявка № {clean(r.get('id'))} — захід "
@@ -371,7 +372,7 @@ if role == ROLE_SUPER_ADMIN:
     try:
         _co = (
             supabase.table("closeout_requests")
-            .select("id, strat_code, year, quarter, approval_status, "
+            .select("id, strat_code, period_year, period_quarter, approval_status, "
                     "dispute_status, admin_email")
             .execute()
         )
@@ -381,7 +382,7 @@ if role == ROLE_SUPER_ADMIN:
                 sa_close.append(
                     f"Закриття № {clean(c.get('id'))} — захід "
                     f"<b>{clean(c.get('strat_code'))}</b> "
-                    f"({clean(c.get('quarter'))} кв. {clean(c.get('year'))}) "
+                    f"({clean(c.get('period_quarter'))} кв. {clean(c.get('period_year'))}) "
                     f"від {clean(c.get('admin_email'))}"
                 )
             if clean(c.get("dispute_status")) == "На розгляді":
@@ -390,8 +391,9 @@ if role == ROLE_SUPER_ADMIN:
                     f"<b>{clean(c.get('strat_code'))}</b> — остаточне рішення "
                     f"за супер-адміном"
                 )
-    except Exception:
-        pass
+    except Exception as exc:
+        task_source_errors.append(f"Ручні закриття супер-адміна: {exc}")
+        st.error("Не вдалося прочитати джерело ручних закриттів для супер-адміна.")
 
     sa_waiting = []
     if not requests_df.empty:
@@ -434,7 +436,15 @@ if role == ROLE_SUPER_ADMIN:
 # Підсумок
 # ------------------------------------------------------------
 
-if total_tasks == 0:
+if task_source_errors:
+    st.markdown(
+        '<div class="card" style="border-color:#F59E0B;">'
+        '<div style="font-size:15px;font-weight:800;color:#92400E;">'
+        'Не всі джерела задач вдалося прочитати. Зелений стан «усі задачі опрацьовано» не показується.</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+elif total_tasks == 0:
     st.markdown(
         '<div class="card" style="text-align:center;">'
         '<div style="font-size:28px;">🎉</div>'

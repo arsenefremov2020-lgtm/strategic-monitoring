@@ -13,7 +13,7 @@ from core.data_types import (
 )
 from core.db import fetch_all, get_supabase_client
 from core.errors import log_cosmetic_error, show_incident, show_warning
-from core.ui import load_css, prepare_human_log_table, render_request_timeline
+from core.ui import load_css, prepare_human_log_table, render_readonly_table, render_request_timeline
 from core.notifications import render_notifications_panel
 from core.config import FILE_PATH, SHEET_NAME
 from core.excel_loader import read_excel_sheet
@@ -32,7 +32,7 @@ from core.access import (
 )
 from core import approval_schemes as schemes
 from core import notify_events
-from core.closeouts import load_manual_closeouts
+from core.closeouts import load_manual_closeouts, load_manual_closeout_records, closeout_integrity_issues
 from core.stage5 import failed_notifications_last_30_days
 from core.stage4 import format_kyiv_datetime, quarter_to_roman
 from core.archive import create_archive_snapshot, format_kyiv as format_archive_kyiv
@@ -42,6 +42,7 @@ from core.validation import (
     is_yes_no_unit,
     status_value_conflict,
     validate_fact_value_for_target,
+    validation_errors_for_record,
 )
 from config.roles import ROLE_ADMIN, ROLE_SUPER_ADMIN
 from core.access import filter_actions_for_user
@@ -1256,63 +1257,17 @@ def _sort_by_ssp(frame: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def _render_html_table(headers: list[str], rows: list[list], empty_message: str = "Записів немає."):
-    """Єдиний HTML-рендер таблиць через глобальні класи assets/app.css."""
+def _render_html_table(headers, rows, empty_message="Записів немає."):
+    """Read-only table in the single Home-page visual standard."""
     if not rows:
         st.info(empty_message)
         return
-    header_html = "".join(f"<th>{_esc(str(header))}</th>" for header in headers)
-    body_html = "".join(
-        "<tr>" + "".join(f"<td>{_html_cell(value)}</td>" for value in row) + "</tr>"
-        for row in rows
+    render_readonly_table(
+        pd.DataFrame(rows, columns=headers),
+        height=325,
+        compact=False,
+        empty_message=empty_message,
     )
-    st.markdown(
-        '<div class="myreq-table-scroll"><table class="myreq-html-table">'
-        f"<thead><tr>{header_html}</tr></thead><tbody>{body_html}</tbody>"
-        "</table></div>",
-        unsafe_allow_html=True,
-    )
-
-
-@st.cache_data(show_spinner=False)
-def load_initial_submitters(request_ids: tuple[int, ...]) -> dict[int, dict]:
-    """Один масовий запит найперших версій для всіх потрібних заявок."""
-    ids = sorted({int(request_id) for request_id in request_ids if request_id is not None})
-    if not ids:
-        return {}
-    try:
-        rows = fetch_all(
-            "monitoring_request_versions",
-            "request_id,version_number,created_at,responsible_person,phone",
-            filters=[("in_", "request_id", ids)],
-            order=[("request_id", False), ("version_number", False), ("created_at", False)],
-        )
-    except Exception as exc:
-        log_cosmetic_error("Масове завантаження перших версій заявок", exc)
-        return {}
-    versions = pd.DataFrame(rows)
-    if versions.empty or "request_id" not in versions.columns:
-        return {}
-    versions["_request_id"] = pd.to_numeric(versions["request_id"], errors="coerce")
-    versions["_version_number"] = pd.to_numeric(
-        versions.get("version_number"), errors="coerce"
-    )
-    versions["_created_at"] = pd.to_datetime(
-        versions.get("created_at"), errors="coerce", utc=True
-    )
-    versions = versions.dropna(subset=["_request_id"]).sort_values(
-        ["_request_id", "_version_number", "_created_at"],
-        ascending=[True, True, True],
-        na_position="last",
-    )
-    first_rows = versions.groupby("_request_id", sort=False).head(1)
-    return {
-        int(row["_request_id"]): {
-            "responsible_person": clean(row.get("responsible_person")),
-            "phone": clean(row.get("phone")),
-        }
-        for _, row in first_rows.iterrows()
-    }
 
 
 def _build_strat_row_lookup(frame: pd.DataFrame) -> dict[str, dict]:
@@ -1610,11 +1565,41 @@ def _reconcile_confirmed_closeout(
             for row in linked_rows
             if _quarter_number(row.get("quarter")) == source_quarter
         ]
+        if not keep_ids:
+            raise RuntimeError(
+                "Не знайдено матеріалізовану заявку основного кварталу ручного закриття."
+            )
+
+        # P0-04: спочатку фіксуємо валідний зв'язок closeout -> source request.
+        # Якщо очищення зайвих серверних рядків перерветься, closeout все одно
+        # не залишиться з ID уже видалених заявок. Наступний повторний запуск
+        # безпечно дочистить зайві рядки за кодом/періодом.
+        _sync_closeout_request_ids(int(closeout_id), keep_ids)
+
         unwanted_ids = sorted(set(linked_ids) - set(keep_ids))
+        # Додатково підхоплюємо залишки попереднього часткового reconciliation,
+        # які вже не перелічені у materialized_request_ids.
+        orphan_candidates = fetch_all(
+            "monitoring_requests",
+            "id,quarter,scheme_label",
+            filters=[
+                ("eq", "strat_code", clean(closeout_record.get("strat_code"))),
+                ("eq", "year", int(year)),
+                ("neq", "approval_status", "Відкликано"),
+            ],
+        )
+        for candidate in orphan_candidates:
+            q = _quarter_number(candidate.get("quarter"))
+            if (
+                q is not None
+                and q != source_quarter
+                and clean(candidate.get("scheme_label")) == "Ручне закриття"
+            ):
+                unwanted_ids.append(int(candidate["id"]))
+        unwanted_ids = sorted(set(unwanted_ids) - set(keep_ids))
         if unwanted_ids:
             # monitoring_logs і monitoring_request_versions мають ON DELETE CASCADE.
             supabase.table("monitoring_requests").delete().in_("id", unwanted_ids).execute()
-        _sync_closeout_request_ids(int(closeout_id), keep_ids)
         return []
 
     base_row = rows_by_quarter.get(source_quarter)
@@ -1654,24 +1639,49 @@ def _reconcile_confirmed_closeout(
                 order=("id", True),
             )
             if other_rows:
-                raise RuntimeError(
-                    f"За {_period_label(year, target_quarter)} уже існує офіційна заявка №"
-                    f"{other_rows[0].get('id')}; автоматичне перенесення не може її замінити."
+                candidate = other_rows[0]
+                if clean(candidate.get("scheme_label")) == "Ручне закриття":
+                    # Ідемпотентне відновлення після часткового попереднього запуску:
+                    # рядок уже створений саме ручним закриттям, тому приймаємо
+                    # його замість створення дубля і знову прив'язуємо до closeout.
+                    existing_row = candidate
+                    request_id = int(candidate["id"])
+                else:
+                    raise RuntimeError(
+                        f"За {_period_label(year, target_quarter)} уже існує офіційна заявка №"
+                        f"{candidate.get('id')}; автоматичне перенесення не може її замінити."
+                    )
+            else:
+                request_id = _insert_carried_request(
+                    base_row,
+                    quarter=target_quarter,
+                    source_quarter=source_quarter,
+                    closeout_id=int(closeout_id),
+                    reason=reason,
                 )
-            request_id = _insert_carried_request(
-                base_row,
-                quarter=target_quarter,
-                source_quarter=source_quarter,
-                closeout_id=int(closeout_id),
-                reason=reason,
-            )
+                existing_row = {"id": request_id, "quarter": target_quarter}
             all_ids.append(request_id)
-            existing_row = {"id": request_id, "quarter": target_quarter}
+            # Зв'язок оновлюється після КОЖНОГО успішно створеного/відновленого
+            # рядка. Навіть якщо наступний квартал впаде, уже записані ID не биті.
+            _sync_closeout_request_ids(int(closeout_id), all_ids)
         _mark_request_as_carry(
             int(existing_row["id"]), source_quarter, year, reason,
         )
 
+    all_ids = sorted(set(int(value) for value in all_ids))
     _sync_closeout_request_ids(int(closeout_id), all_ids)
+
+    # Фінальний інваріант: кожен ID, записаний у closeout, реально існує.
+    linked_after = fetch_all(
+        "monitoring_requests",
+        "id",
+        filters=[("in_", "id", all_ids)],
+    ) if all_ids else []
+    existing_ids = {int(row["id"]) for row in linked_after if row.get("id") is not None}
+    if existing_ids != set(all_ids):
+        raise RuntimeError(
+            "Матеріалізацію ручного закриття не завершено: частина пов'язаних заявок відсутня."
+        )
     return carried_quarters
 
 
@@ -2268,7 +2278,7 @@ def _render_closeout_superadmin_case(record) -> None:
             load_closeout_requests.clear()
             load_manual_closeouts.clear()
             monitoring_data.invalidate_monitoring_cache()
-            st.rerun()
+            pass  # no explicit rerun: the triggering user action completes in this run
         except TransitionRejected as exc:
             st.error(exc.message)
         except Exception as exc:
@@ -3208,17 +3218,15 @@ def _render_locked_correction_mode(source_df: pd.DataFrame):
                 errors.append("Обґрунтування коригування є обов'язковим.")
             locked_unit = clean(locked_strat.get("unit"))
             if clean(sa_locked_value):
-                value_ok, value_error = validate_fact_value_for_target(
-                    sa_locked_value, locked_unit, locked_target, locked_future_targets,
-                )
-                if not value_ok:
-                    errors.append(value_error)
-            conflict_error = status_value_conflict(
-                sa_locked_status, sa_locked_value, locked_target, locked_unit,
-                locked_code, locked_future_targets,
-            )
-            if conflict_error:
-                errors.append(conflict_error)
+                errors.extend(validation_errors_for_record(
+                    object_kind=locked_row.get("object_kind") or "measure",
+                    status=sa_locked_status,
+                    value=sa_locked_value,
+                    target=locked_target,
+                    unit=locked_unit,
+                    code=locked_code,
+                    future_targets=locked_future_targets,
+                ))
 
             if errors:
                 for error in errors:
@@ -3266,7 +3274,7 @@ def _render_locked_correction_mode(source_df: pd.DataFrame):
                         f"Заявку ID {int(locked_request_id)} скориговано. Вона залишається остаточно закритою."
                     )
                     monitoring_data.invalidate_monitoring_cache()
-                    st.rerun()
+                    pass  # no explicit rerun: the triggering user action completes in this run
                 except TransitionRejected as exc:
                     st.error(exc.message)
                 except Exception as exc:
@@ -3280,7 +3288,7 @@ def _render_locked_correction_mode(source_df: pd.DataFrame):
             key=f"dismiss_sa_locked_correction_notice_{int(locked_request_id)}",
         ):
             st.session_state.pop("sa_locked_correction_notice", None)
-            st.rerun()
+            pass  # no explicit rerun: the triggering user action completes in this run
 
 
 # ТЗ-правка (09.07.2026, п.3): панель «Сповіщення погодження» прибрано з адмінки.
@@ -3324,7 +3332,7 @@ if (
         key="dismiss_superadmin_closeout_decision_notice",
     ):
         st.session_state.pop("superadmin_closeout_decision_notice", None)
-        st.rerun()
+        pass  # no explicit rerun: the triggering user action completes in this run
 
 if (
     admin_work_mode == "Основний режим координатора"
@@ -3336,7 +3344,7 @@ if (
         key="dismiss_superadmin_request_decision_notice",
     ):
         st.session_state.pop("superadmin_request_decision_notice", None)
-        st.rerun()
+        pass  # no explicit rerun: the triggering user action completes in this run
 
 if _is_superadmin_current and admin_work_mode == "Основний режим координатора":
     with st.expander(
@@ -3407,6 +3415,18 @@ if admin_work_mode == "Ручне закриття заходів":
     )
 
     closeout_df = load_closeout_requests()
+
+    # P0-02: не приховуємо підтверджене ручне закриття з розірваною
+    # матеріалізацією. Це лише діагностика; ремонт даних виконується окремим SQL.
+    if is_super_admin_user(current_user):
+        _closeout_integrity = closeout_integrity_issues(load_manual_closeout_records())
+        if not _closeout_integrity.empty:
+            _broken_codes = ", ".join(sorted(set(_closeout_integrity["strat_code"].astype(str))))
+            st.error(
+                "Виявлено підтверджені ручні закриття без коректної матеріалізованої "
+                f"заявки: {_broken_codes}. Вони потребують звірки даних; система не "
+                "буде маскувати цей стан як звичайну заявку на розгляді."
+            )
 
     if is_admin_user(current_user):
         st.caption(
@@ -3507,7 +3527,7 @@ if admin_work_mode == "Ручне закриття заходів":
                     key="dismiss_closeout_submit_notice",
                 ):
                     st.session_state.pop("closeout_submit_notice", None)
-                    st.rerun()
+                    pass  # no explicit rerun: the triggering user action completes in this run
 
             if co_submit:
                 form_errors = []
@@ -3603,7 +3623,7 @@ if admin_work_mode == "Ручне закриття заходів":
                         load_closeout_requests.clear()
                         load_manual_closeouts.clear()
                         monitoring_data.invalidate_monitoring_cache()
-                        st.rerun()
+                        pass  # no explicit rerun: the triggering user action completes in this run
                     except TransitionRejected as exc:
                         st.error(exc.message)
                     except Exception as exc:
@@ -3723,7 +3743,7 @@ if admin_work_mode == "Ручне закриття заходів":
                                 )
                             st.session_state["closeout_submit_notice"] = decision_notice
                             monitoring_data.invalidate_monitoring_cache()
-                            st.rerun()
+                            pass  # no explicit rerun: the triggering user action completes in this run
                         except TransitionRejected as exc:
                             st.error(exc.message)
                         except Exception as exc:
@@ -3802,7 +3822,7 @@ if admin_work_mode == "Ручне закриття заходів":
                             load_manual_closeouts.clear()
                             st.success("Закриття лишено чинним; заявку (якщо була) повернуто подавачу.")
                             monitoring_data.invalidate_monitoring_cache()
-                            st.rerun()
+                            pass  # no explicit rerun: the triggering user action completes in this run
                         except Exception as exc:
                             show_incident(exc, context="Збереження рішення щодо розбіжності ручного закриття")
                 with _i2:
@@ -3822,7 +3842,7 @@ if admin_work_mode == "Ручне закриття заходів":
                             load_manual_closeouts.clear()
                             st.success("Закриття скасовано. Подана заявка проходить звичайну схему погодження.")
                             monitoring_data.invalidate_monitoring_cache()
-                            st.rerun()
+                            pass  # no explicit rerun: the triggering user action completes in this run
                         except Exception as exc:
                             show_incident(exc, context="Скасування ручного закриття під час вирішення розбіжності")
 
@@ -3849,7 +3869,7 @@ if admin_work_mode == "Ручне закриття заходів":
                         load_manual_closeouts.clear()
                         st.success("Закриття відкликано.")
                         monitoring_data.invalidate_monitoring_cache()
-                        st.rerun()
+                        pass  # no explicit rerun: the triggering user action completes in this run
                     except Exception as exc:
                         show_incident(exc, context="Відкликання підтвердженого ручного закриття")
 
@@ -4302,7 +4322,7 @@ if _is_conflict and _req_kind != "indicator":
                     )
                 )
                 monitoring_data.invalidate_monitoring_cache()
-                st.rerun()
+                pass  # no explicit rerun: the triggering user action completes in this run
             except TransitionRejected as exc:
                 st.error(exc.message)
             except Exception as exc:
@@ -4330,7 +4350,7 @@ if _is_conflict and _req_kind != "indicator":
                               approval_status, approval_status, clean(_dispute_note))
                     st.warning("Розбіжність зафіксовано та передано супер-адміну.")
                     monitoring_data.invalidate_monitoring_cache()
-                    st.rerun()
+                    pass  # no explicit rerun: the triggering user action completes in this run
                 except Exception as exc:
                     show_incident(exc, context="Фіксація розбіжності з ручним закриттям")
 
@@ -4456,17 +4476,15 @@ def _regulator_edit_errors(values: dict) -> list[str]:
         if edit_year is not None else []
     )
     if clean(values.get("numeric_value")):
-        value_ok, value_error = validate_fact_value_for_target(
-            values.get("numeric_value"), _unit, target_year_val, future_targets,
-        )
-        if not value_ok:
-            errors.append(value_error)
-    conflict_error = status_value_conflict(
-        values.get("status"), values.get("numeric_value"), target_year_val,
-        _unit, selected_code, future_targets,
-    )
-    if conflict_error:
-        errors.append(conflict_error)
+        errors.extend(validation_errors_for_record(
+            object_kind=selected_row.get("object_kind") or "measure",
+            status=values.get("status"),
+            value=values.get("numeric_value"),
+            target=target_year_val,
+            unit=_unit,
+            code=selected_code,
+            future_targets=future_targets,
+        ))
     return list(dict.fromkeys(error for error in errors if error))
 
 
@@ -4513,7 +4531,7 @@ def _finish_notice(text: str) -> None:
         "на наступну заявку. Перегляньте її дані з початку."
     )
     monitoring_data.invalidate_monitoring_cache()
-    st.rerun()
+    pass  # no explicit rerun: the triggering user action completes in this run
 
 
 # Координатор може швидко виправити власну щойно погоджену заявку,
@@ -4886,7 +4904,7 @@ if st.session_state.get("adm_last_decision_notice"):
     st.success(st.session_state["adm_last_decision_notice"])
     if st.button("Зрозуміло, приховати це повідомлення", key="adm_dismiss_decision_notice"):
         st.session_state.pop("adm_last_decision_notice", None)
-        st.rerun()
+        pass  # no explicit rerun: the triggering user action completes in this run
 
 
 

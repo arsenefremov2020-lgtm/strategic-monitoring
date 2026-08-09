@@ -9,7 +9,9 @@ from core.errors import log_cosmetic_error, log_exception
 from core.config import FILE_PATH, SHEET_NAME
 from core.excel_loader import read_excel_sheet
 from core import operational
-from core.closeouts import load_manual_closeouts
+from core import approval_schemes as schemes
+from core.periods import period_number as core_period_number
+from core.closeouts import append_confirmed_closeout_facts, load_manual_closeouts
 from core.period_locks import apply_locked_status, is_period_locked
 from datetime import datetime
 from html import escape
@@ -21,7 +23,7 @@ from core.strategic_data import load_strat_matrix as core_load_strat_matrix
 from core import monitoring_data
 from config.roles import ROLE_SSP, ROLE_SSP_HEAD, ROLE_UNIT_HEAD, ROLE_SSP_DEPUTY, ROLE_ADMIN, ROLE_SUPER_ADMIN, ENABLE_PERSONAL_CABINETS
 from core.access import filter_actions_for_user, filter_requests_for_user
-from core.ui import render_scope_toggle, render_auto_refresh_notice
+from core.ui import render_scope_toggle
 from core.versioning import load_versions
 from core.stage4 import (
     build_measure_card_pdf,
@@ -37,7 +39,6 @@ from core.stage4 import (
 
 current_user = page_setup("Картка заходу", page_name="Картка заходу")
 card_target = get_card_target()
-render_auto_refresh_notice("Картка заходу", minutes=5)
 current_role = current_user.get("role")
 can_view_submission_history = (
     not ENABLE_PERSONAL_CABINETS or current_role in [ROLE_ADMIN, ROLE_SUPER_ADMIN]
@@ -942,11 +943,11 @@ def get_task_label(row):
 
 
 def get_quarter_css(approval):
-    if approval == "Погоджено":
+    if schemes.is_approved(approval):
         return "q-approved"
-    if approval == "Очікує погодження":
+    if schemes.is_waiting(approval):
         return "q-waiting"
-    if approval == "Повернуто на доопрацювання":
+    if schemes.is_returned(approval):
         return "q-returned"
     return "q-empty"
 
@@ -1418,8 +1419,11 @@ if card_data_mode == operational.MODE_OPERATIONAL and not measure_requests.empty
     measure_requests, card_auto_list = operational.apply_operational_mode(measure_requests, _tgt_map)
     measure_requests = apply_locked_status(measure_requests, status_col="status")
 
-# Ручне закриття цього заходу (офіційне, показується завжди поза period_locks)
+# Ручне закриття цього заходу (офіційне). Shared closeout resolver гарантує,
+# що badge, headline і факт походять з одного й того самого фактичного стану.
 _card_closeouts = load_manual_closeouts()
+measure_requests = append_confirmed_closeout_facts(measure_requests, include_incomplete=True)
+
 card_closed_periods = sorted(
     f"{q} кв. {y}" for (c, y, q) in _card_closeouts
     if c == selected_code and not is_period_locked(y, q)
@@ -1428,37 +1432,42 @@ card_closed_periods = sorted(
 has_monitoring = not measure_requests.empty
 
 approved_requests = pd.DataFrame()
+_snapshot_period = core_period_number(card_link_year, card_link_quarter)
+_snapshot_requests = measure_requests.copy()
+if not _snapshot_requests.empty:
+    _snapshot_requests["_period_number"] = _snapshot_requests.apply(
+        lambda r: core_period_number(r.get("year"), r.get("quarter")), axis=1
+    )
+    _snapshot_requests = _snapshot_requests[_snapshot_requests["_period_number"] <= _snapshot_period].copy()
 
-if has_monitoring and "approval_status" in measure_requests.columns:
-    approved_requests = measure_requests[
-        (measure_requests["approval_status"].astype(str) == "Погоджено")
-        & ~measure_requests.apply(lambda r: is_period_locked(r.get("year"), r.get("quarter")), axis=1)
+if not _snapshot_requests.empty and "approval_status" in _snapshot_requests.columns:
+    approved_requests = _snapshot_requests[
+        (_snapshot_requests["approval_status"].astype(str) == "Погоджено")
+        & ~_snapshot_requests.apply(lambda r: is_period_locked(r.get("year"), r.get("quarter")), axis=1)
     ].copy()
 
 latest_request = None
 
-if has_monitoring and "submitted_at" in measure_requests.columns:
-    latest_request = measure_requests.sort_values("submitted_at", ascending=False).iloc[0]
-elif has_monitoring:
-    latest_request = measure_requests.iloc[0]
+if not _snapshot_requests.empty and "submitted_at" in _snapshot_requests.columns:
+    latest_request = _snapshot_requests.sort_values(["_period_number", "submitted_at"], ascending=[False, False]).iloc[0]
+elif not _snapshot_requests.empty:
+    latest_request = _snapshot_requests.sort_values("_period_number", ascending=False).iloc[0]
 
 latest_approved = None
 
 if not approved_requests.empty and "submitted_at" in approved_requests.columns:
-    latest_approved = approved_requests.sort_values("submitted_at", ascending=False).iloc[0]
+    latest_approved = approved_requests.sort_values(["_period_number", "submitted_at"], ascending=[False, False]).iloc[0]
 elif not approved_requests.empty:
     latest_approved = approved_requests.iloc[0]
 
-# Build execution_statuses from approved requests across quarters
-execution_statuses = []
-if has_monitoring and "status" in measure_requests.columns:
-    _unlocked_requests = measure_requests[
-        ~measure_requests.apply(lambda r: is_period_locked(r.get("year"), r.get("quarter")), axis=1)
-    ]
-    execution_statuses = _unlocked_requests["status"].dropna().tolist()
+# Headline execution uses the same approved/operational effective snapshot as the fact.
+execution_statuses = approved_requests["status"].dropna().tolist() if not approved_requests.empty and "status" in approved_requests.columns else []
 
-target_value = selected_measure.get("target_2026", "")
-latest_actual = latest_approved.get("numeric_value", "") if latest_approved is not None else ""
+target_value = selected_measure.get(f"target_{card_link_year}", "")
+if latest_approved is not None:
+    latest_actual = clean(latest_approved.get("numeric_value", "")) or clean(latest_approved.get("value_text", ""))
+else:
+    latest_actual = ""
 unit_value = clean(selected_measure.get("unit", ""))
 
 progress_percent, exec_status = compute_measure_progress(
@@ -1470,10 +1479,10 @@ if progress_percent is None:
 else:
     display_progress = float(progress_percent)
 
-total_requests = len(measure_requests)
-approved_count = len(measure_requests[measure_requests["approval_status"] == "Погоджено"]) if has_monitoring and "approval_status" in measure_requests.columns else 0
-returned_count = len(measure_requests[measure_requests["approval_status"] == "Повернуто на доопрацювання"]) if has_monitoring and "approval_status" in measure_requests.columns else 0
-waiting_count = len(measure_requests[measure_requests["approval_status"] == "Очікує погодження"]) if has_monitoring and "approval_status" in measure_requests.columns else 0
+total_requests = len(_snapshot_requests)
+approved_count = int(_snapshot_requests["approval_status"].map(schemes.is_approved).sum()) if not _snapshot_requests.empty and "approval_status" in _snapshot_requests.columns else 0
+returned_count = int(_snapshot_requests["approval_status"].map(schemes.is_returned).sum()) if not _snapshot_requests.empty and "approval_status" in _snapshot_requests.columns else 0
+waiting_count = int(_snapshot_requests["approval_status"].map(schemes.is_waiting).sum()) if not _snapshot_requests.empty and "approval_status" in _snapshot_requests.columns else 0
 
 co_executor_first = split_first_executor(selected_measure.get("co_executor", ""))
 deputy_minister = get_deputy_minister_by_ssp(selected_measure.get("department", ""))
@@ -1593,7 +1602,7 @@ render_html('</div>')
 # ============================================================
 
 k1, k2, k3, k4, k5 = st.columns(5)
-k1.metric("План 2026", clean(selected_measure.get("target_2026", "")) or "—")
+k1.metric(f"План {card_link_year}", clean(selected_measure.get(f"target_{card_link_year}", "")) or "—")
 k2.metric("Останнє фактичне значення, подане ССП", clean(latest_actual) or "—")
 
 if exec_status == "Втратило актуальність":
@@ -1786,13 +1795,14 @@ if view_mode in ["Огляд", "Квартальна динаміка"]:
     line_facts = []
     line_plans = []
 
-    plan_num_val = to_number(clean(selected_measure.get("target_2026", "")))
+    plan_num_val = to_number(clean(selected_measure.get(f"target_{card_link_year}", "")))
 
     for q in quarters:
         q_data = pd.DataFrame()
         if has_monitoring and "quarter" in measure_requests.columns:
             q_data = measure_requests[
-                measure_requests["quarter"].astype(str) == q
+                (measure_requests["year"].astype(str) == str(card_link_year))
+                & (measure_requests["quarter"].apply(quarter_to_roman) == q)
             ].copy()
 
         if q_data.empty:
@@ -1809,7 +1819,7 @@ if view_mode in ["Огляд", "Квартальна динаміка"]:
                 latest_q = q_data.iloc[0]
 
             approval = clean(latest_q.get("approval_status", ""))
-            value = clean(latest_q.get("numeric_value", ""))
+            value = clean(latest_q.get("numeric_value", "")) or clean(latest_q.get("value_text", ""))
             status = clean(latest_q.get("status", ""))
             submitted = clean(latest_q.get("submitted_at", ""))
             if is_period_locked(card_link_year, q):
@@ -1842,7 +1852,7 @@ if view_mode in ["Огляд", "Квартальна динаміка"]:
                 <div class="quarter-bar-outer">
                     <div class="quarter-bar-inner" style="width:{q_pct}%;background:{bar_color_css};"></div>
                 </div>
-                <div class="quarter-plan">План 2026: {display_value(selected_measure.get("target_2026", ""))}</div>
+                <div class="quarter-plan">План {card_link_year}: {display_value(selected_measure.get(f"target_{card_link_year}", ""))}</div>
                 <div class="quarter-plan">Статус виконання: {escape(status) if status else "—"}</div>
                 <div class="quarter-plan">Дата подання: {escape(submitted[:10]) if submitted else "—"}</div>
                 <div class="quarter-status">{escape(approval) if approval else "Не подано"}</div>
@@ -1862,7 +1872,7 @@ if view_mode in ["Огляд", "Квартальна динаміка"]:
             x=line_labels,
             y=[plan_num_val] * 4,
             mode="lines+markers",
-            name="Плановий показник 2026",
+            name=f"Плановий показник {card_link_year}",
             line=dict(width=2, dash="dash"),
             connectgaps=False,
         ))
@@ -1912,11 +1922,8 @@ if can_view_submission_history and view_mode in ["Огляд", "Історія �
             "Рік", "Квартал", "Статус виконання", "Статус погодження",
             "Фактичне значення", "Відповідальна особа", "Дата подання", "Коментар",
         ]]
-        st.dataframe(
-            style_status_columns(human_history, ["Статус виконання", "Статус погодження"]),
-            use_container_width=True,
-            hide_index=True,
-        )
+        render_readonly_table(style_status_columns(human_history, ["Статус виконання", "Статус погодження"]),
+            use_container_wid)
 
         if not measure_logs.empty:
             with st.expander("Історія погодження заходу"):
@@ -1931,11 +1938,8 @@ if can_view_submission_history and view_mode in ["Огляд", "Історія �
                 st.info("Для цієї заявки збережених версій поки що немає.")
             else:
                 human_versions = human_versions_table(focused_versions)
-                st.dataframe(
-                    style_status_columns(human_versions, ["Статус виконання", "Статус погодження"]),
-                    use_container_width=True,
-                    hide_index=True,
-                )
+                render_readonly_table(style_status_columns(human_versions, ["Статус виконання", "Статус погодження"]),
+                    use_conta)
                 with st.expander("Порівняти дві версії заявки", expanded=False):
                     render_version_comparison(
                         focused_versions,

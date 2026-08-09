@@ -13,6 +13,7 @@ from config.users import get_active_users
 from config.roles import ROLE_ADMIN, ROLE_SSP, ROLE_SSP_HEAD
 from core.access import normalize_ssp_index
 from core import exports as core_exports
+from core import approval_schemes as schemes
 from core.errors import show_warning
 
 page_setup("Журнал дій", page_name="Журнал дій")
@@ -761,7 +762,7 @@ def display_notifications_table(df):
     show = show.rename(columns=rename_map)
     cols = ["ID", "Дата відправки", "Email отримувача", "Роль отримувача", "Тип сповіщення", "Пов'язаний ключ", "Тема", "Текст/прев'ю", "Статус", "Помилка"]
     available = [c for c in cols if c in show.columns]
-    st.dataframe(show[available], use_container_width=True, hide_index=True)
+    render_readonly_table(show[available])
     return show[available]
 
 
@@ -832,7 +833,7 @@ def display_logs_table(filtered):
 
     available = [c for c in cols if c in show.columns]
 
-    st.dataframe(show[available], use_container_width=True, hide_index=True)
+    render_readonly_table(show[available])
 
     return show[available]
 
@@ -906,7 +907,7 @@ def display_requests_table(df):
     ]
 
     available = [c for c in cols if c in show.columns]
-    st.dataframe(show[available], use_container_width=True, hide_index=True)
+    render_readonly_table(show[available])
 
     return show[available]
 
@@ -971,7 +972,7 @@ def display_versions_table(versions_df, selected_departments, selected_years, se
         st.info("За обраними параметрами версій заявок не знайдено.")
         return pd.DataFrame()
 
-    st.dataframe(show[available], use_container_width=True, hide_index=True)
+    render_readonly_table(show[available])
     return show[available]
 
 
@@ -1165,11 +1166,11 @@ with _j1:
             "approval": list(selected_approval_statuses or ["Усі"]),
             "search": search,
         }
-        st.rerun()
+        pass  # no explicit rerun: the triggering user action completes in this run
 with _j2:
     if st.button("Скинути параметри", use_container_width=True, key="journal_reset_filters_v19"):
         st.session_state["journal_filters_applied_v19"] = _j_defaults.copy()
-        st.rerun()
+        pass  # no explicit rerun: the triggering user action completes in this run
 with _j3:
     st.caption("Журнал показує зміни за застосованими параметрами; email-сповіщення вмикаються окремим перемикачем.")
 _j_applied = st.session_state.get("journal_filters_applied_v19", _j_defaults.copy())
@@ -1283,12 +1284,24 @@ try:
     _stale_src = requests_df.copy()
     if not _stale_src.empty and "approval_status" in _stale_src.columns:
         _stale_src = _stale_src[
-            _stale_src["approval_status"].astype(str).str.startswith("Очікує")
-        ]
+            _stale_src["approval_status"].map(schemes.is_waiting)
+        ].copy()
         if not _stale_src.empty and "submitted_at" in _stale_src.columns:
-            _stale_src["_ts"] = pd.to_datetime(
-                _stale_src["submitted_at"], errors="coerce", utc=True
-            )
+            def _stage_started_at(row):
+                request_id = pd.to_numeric(pd.Series([row.get("id")]), errors="coerce").iloc[0]
+                current_status = str(row.get("approval_status") or "").strip()
+                if pd.notna(request_id) and not logs_df.empty and {"request_id", "new_status", "changed_at_dt"}.issubset(logs_df.columns):
+                    matching = logs_df[
+                        (pd.to_numeric(logs_df["request_id"], errors="coerce") == int(request_id))
+                        & (logs_df["new_status"].astype(str).str.strip() == current_status)
+                    ]
+                    if not matching.empty:
+                        ts = pd.to_datetime(matching["changed_at_dt"], errors="coerce", utc=True).dropna()
+                        if not ts.empty:
+                            return ts.max()
+                return pd.to_datetime(row.get("submitted_at"), errors="coerce", utc=True)
+
+            _stale_src["_ts"] = _stale_src.apply(_stage_started_at, axis=1)
             _stale_src["Днів в очікуванні"] = _stale_src["_ts"].map(
                 lambda t: (_stale_now - t.to_pydatetime()).days
                 if pd.notna(t) else None
@@ -1314,12 +1327,10 @@ try:
                 _stale_cols = ["№ заявки", "Код заходу", "ССП", "Рік",
                                "Квартал", "Статус погодження",
                                "Днів в очікуванні"]
-                st.dataframe(
-                    _stale_show[[c for c in _stale_cols
+                render_readonly_table(_stale_show[[c for c in _stale_cols
                                  if c in _stale_show.columns]]
                     .sort_values("Днів в очікуванні", ascending=False),
-                    use_container_width=True, hide_index=True,
-                )
+             )
                 st.markdown('</div>', unsafe_allow_html=True)
 except Exception as exc:
     show_warning(

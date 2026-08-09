@@ -148,6 +148,8 @@ def render_readonly_table(
     formatters: dict[str, Callable[[Any], Any]] | None = None,
     row_class_fn: Callable[[pd.Series, int], str] | None = None,
     show_index: bool = False,
+    column_widths: dict[str, int | str] | None = None,
+    scroll_columns: list[str] | set[str] | tuple[str, ...] | None = None,
 ) -> None:
     """Єдиний HTML-стандарт для НЕінтерактивних таблиць системи.
 
@@ -176,12 +178,30 @@ def render_readonly_table(
 
     formatter = value_formatter or (lambda value: "—" if pd.isna(value) or value is None or str(value).strip() == "" else str(value))
     formatters = formatters or {}
+    column_widths = {str(key): value for key, value in (column_widths or {}).items()}
+    scroll_columns = {str(value) for value in (scroll_columns or [])}
     columns = [str(c) for c in frame.columns]
     display_column_count = len(columns) + (1 if show_index else 0)
     if min_width is None:
         min_width = max(900, min(5600, 165 * max(1, display_column_count)))
     row_pad = "6px 8px" if compact else "8px 10px"
     font_size = 12 if compact else 13
+
+    def _column_css_width(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, (int, float)):
+            return f"{max(1, int(value))}px"
+        text = str(value).strip()
+        return text if text else ""
+
+    col_parts = []
+    if show_index:
+        col_parts.append("<col style='width:54px'>")
+    for col in columns:
+        width = _column_css_width(column_widths.get(col))
+        col_parts.append(f"<col style='width:{escape(width)}'>" if width else "<col>")
+    colgroup = "<colgroup>" + "".join(col_parts) + "</colgroup>"
 
     css = f"""
     <style>
@@ -193,6 +213,7 @@ def render_readonly_table(
     table.readonly-table tr:nth-child(odd) {{ background:#FFFFFF; }}
     table.readonly-table .readonly-cell {{ display:block; max-height:{int(max_cell_height)}px; overflow:hidden; }}
     table.readonly-table .readonly-cell:hover {{ overflow:auto; }}
+    table.readonly-table .readonly-cell-scroll {{ overflow:auto !important; scrollbar-width:thin; padding-right:2px; }}
     table.readonly-table td.rt-approved {{ color:#0C713A; font-weight:850; }}
     table.readonly-table td.rt-returned, table.readonly-table td.rt-notdone {{ color:#B3261E; font-weight:850; }}
     table.readonly-table td.rt-review {{ color:#032A63; font-weight:850; }}
@@ -226,14 +247,18 @@ def render_readonly_table(
                 shown = str(raw) if raw is not None else "—"
             status_class = _readonly_status_class(shown)
             safe_shown = escape(str(shown)).replace("\n", "<br>")
+            span_class = (
+                "readonly-cell readonly-cell-scroll"
+                if str(col) in scroll_columns else "readonly-cell"
+            )
             cells.append(
-                f"<td class='{status_class}'><span class='readonly-cell'>{safe_shown}</span></td>"
+                f"<td class='{status_class}'><span class='{span_class}'>{safe_shown}</span></td>"
             )
         class_attr = f" class='{escape(row_class)}'" if row_class else ""
         rows.append(f"<tr{class_attr}>" + "".join(cells) + "</tr>")
     html = css + (
         "<div class='readonly-table-scroll'><table class='readonly-table'>"
-        f"<thead><tr>{head}</tr></thead><tbody>{''.join(rows)}</tbody></table></div>"
+        f"{colgroup}<thead><tr>{head}</tr></thead><tbody>{''.join(rows)}</tbody></table></div>"
     )
     st.markdown(html, unsafe_allow_html=True)
 

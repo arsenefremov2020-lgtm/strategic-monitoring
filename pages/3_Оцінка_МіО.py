@@ -16,7 +16,7 @@ from core.strategic_data import load_strat_matrix as core_load_strat_matrix, mea
 from core import monitoring_data
 from core import statuses as core_statuses
 from core.text_utils import names_match, normalize_name
-from core.ui import load_css
+from core.ui import load_css, render_readonly_table
 from core.excel_loader import read_excel_sheet
 from core import operational
 from core.closeouts import load_manual_closeouts, load_manual_closeout_records, manual_closeout_record_index

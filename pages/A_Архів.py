@@ -14,6 +14,7 @@ from core.archive import (
 from core.db import fetch_all, get_supabase_client
 from core.errors import show_incident
 from core.page_setup import page_setup, render_footer
+from core.ui import render_readonly_table
 
 
 page_setup("Архів", page_name="Архів")

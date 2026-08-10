@@ -4,7 +4,7 @@ from core.period_locks import apply_locked_status
 from core.timeutils import now_kyiv
 from core.data_types import normalise_monitoring_frame
 from core.db import fetch_all, get_supabase_client
-from core.ui import load_css, render_request_timeline
+from core.ui import load_css, render_readonly_table, render_request_timeline
 from datetime import datetime, date, timedelta
 from io import BytesIO
 import re

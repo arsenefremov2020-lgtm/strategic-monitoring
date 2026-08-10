@@ -10,7 +10,7 @@ from core.period_locks import exclude_locked_periods, is_period_locked
 from core.timeutils import now_kyiv
 from core.db import fetch_all, get_supabase_client
 from core.deputies import DEPUTY_MINISTER_BY_SSP
-from core.ui import load_css
+from core.ui import load_css, render_readonly_table
 from core.config import FILE_PATH, SHEET_NAME
 from core.excel_loader import read_excel_sheet
 from core.exports import fig_png_bytes

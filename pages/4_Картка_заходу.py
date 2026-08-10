@@ -4,7 +4,7 @@ import plotly.graph_objects as go
 from core.timeutils import now_kyiv
 from core.db import fetch_all, get_supabase_client
 from core.deputies import DEPUTY_MINISTER_BY_SSP
-from core.ui import load_css, render_request_timeline
+from core.ui import load_css, render_readonly_table, render_request_timeline
 from core.errors import log_cosmetic_error, log_exception
 from core.config import FILE_PATH, SHEET_NAME
 from core.excel_loader import read_excel_sheet

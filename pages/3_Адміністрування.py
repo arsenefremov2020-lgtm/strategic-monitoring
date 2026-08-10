@@ -2079,6 +2079,57 @@ def _render_request_detail_cards(
     }
 
 
+@st.cache_data(show_spinner=False)
+def load_initial_submitters(request_ids):
+    """Load the first immutable version for each request in one query.
+
+    Admin tables need both the original submitter and their phone number; the
+    current monitoring_requests row may have been edited later, so the first
+    version is the authoritative source for these two display fields.
+    """
+    ids = sorted({
+        int(request_id)
+        for request_id in request_ids
+        if request_id is not None and str(request_id).strip()
+    })
+    if not ids:
+        return {}
+    try:
+        rows = fetch_all(
+            "monitoring_request_versions",
+            "request_id,version_number,created_at,responsible_person,phone",
+            filters=[("in_", "request_id", ids)],
+            order=[("request_id", False), ("version_number", False), ("created_at", False)],
+        )
+    except Exception as exc:
+        log_cosmetic_error("Масове завантаження перших версій в Адмініструванні", exc)
+        return {}
+
+    versions = pd.DataFrame(rows)
+    if versions.empty or "request_id" not in versions.columns:
+        return {}
+    versions["_request_id"] = pd.to_numeric(versions["request_id"], errors="coerce")
+    versions["_version_number"] = pd.to_numeric(
+        versions.get("version_number"), errors="coerce"
+    )
+    versions["_created_at"] = pd.to_datetime(
+        versions.get("created_at"), errors="coerce", utc=True
+    )
+    versions = versions.dropna(subset=["_request_id"]).sort_values(
+        ["_request_id", "_version_number", "_created_at"],
+        ascending=[True, True, True],
+        na_position="last",
+    )
+    first_rows = versions.groupby("_request_id", sort=False).head(1)
+    return {
+        int(row["_request_id"]): {
+            "responsible_person": clean(row.get("responsible_person")),
+            "phone": clean(row.get("phone")),
+        }
+        for _, row in first_rows.iterrows()
+    }
+
+
 def _initial_submitter_for_request(record) -> tuple[str, str]:
     try:
         request_id = int(float(str(record.get("id"))))

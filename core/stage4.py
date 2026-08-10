@@ -17,6 +17,7 @@ import streamlit as st
 
 from core import approval_schemes as schemes
 from core.timeutils import KYIV_TZ, now_kyiv
+from core.ui import render_readonly_table
 
 WAITING_STATUS_LABELS = {
     schemes.STATUS_COORDINATOR_REVIEW: "Координатор",
@@ -652,7 +653,24 @@ def build_return_analytics(logs_df: pd.DataFrame, requests_df: pd.DataFrame) -> 
             "top_requests": pd.DataFrame(columns=["ID заявки", "Код заходу", "Період", "ССП", "Кількість повернень"]),
         }
 
-    returns = returns.merge(req, on="request_id", how="left")
+    # monitoring_logs may already contain request-level fields such as
+    # strat_code. Merging them directly with the request lookup creates
+    # *_x/*_y columns and makes the later groupby fail with KeyError.
+    # For workflow analytics the request row is the canonical source of
+    # period/department/code metadata, while the log remains the source of
+    # the return event itself.
+    request_metadata = [
+        "department", "strat_code", "year", "quarter", "responsible_person",
+        "approval_status", "submitted_at", "chain_stage", "approval_chain",
+    ]
+    returns = returns.drop(
+        columns=[column for column in request_metadata if column in returns.columns],
+        errors="ignore",
+    ).merge(req, on="request_id", how="left")
+    for column in ["department", "strat_code", "year", "quarter"]:
+        if column not in returns.columns:
+            returns[column] = ""
+
     returns["Ланка, що повернула"] = returns.apply(_stage_from_actor, axis=1)
     returns["ССП"] = returns["department"].apply(lambda x: clean(x) or "Не визначено")
     by_department = (

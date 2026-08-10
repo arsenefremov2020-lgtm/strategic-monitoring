@@ -1922,8 +1922,9 @@ if can_view_submission_history and view_mode in ["Огляд", "Історія �
             "Рік", "Квартал", "Статус виконання", "Статус погодження",
             "Фактичне значення", "Відповідальна особа", "Дата подання", "Коментар",
         ]]
-        render_readonly_table(style_status_columns(human_history, ["Статус виконання", "Статус погодження"]),
-            use_container_wid)
+        render_readonly_table(
+            style_status_columns(human_history, ["Статус виконання", "Статус погодження"])
+        )
 
         if not measure_logs.empty:
             with st.expander("Історія погодження заходу"):
@@ -1938,8 +1939,9 @@ if can_view_submission_history and view_mode in ["Огляд", "Історія �
                 st.info("Для цієї заявки збережених версій поки що немає.")
             else:
                 human_versions = human_versions_table(focused_versions)
-                render_readonly_table(style_status_columns(human_versions, ["Статус виконання", "Статус погодження"]),
-                    use_conta)
+                render_readonly_table(
+                    style_status_columns(human_versions, ["Статус виконання", "Статус погодження"])
+                )
                 with st.expander("Порівняти дві версії заявки", expanded=False):
                     render_version_comparison(
                         focused_versions,

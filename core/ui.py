@@ -305,7 +305,13 @@ def render_readonly_table(
         "<div class='readonly-table-scroll'><table class='readonly-table'>"
         f"{colgroup}<thead><tr>{head}</tr></thead><tbody>{''.join(rows)}</tbody></table></div>"
     )
-    st.markdown(html, unsafe_allow_html=True)
+    # st.html is the dedicated Streamlit renderer for trusted application HTML.
+    # It is more robust than routing a large table through the Markdown parser
+    # (large locked tables could otherwise appear as literal <div>/<table> text).
+    if hasattr(st, "html"):
+        st.html(html)
+    else:  # compatibility fallback for older Streamlit releases
+        st.markdown(html, unsafe_allow_html=True)
 
 
 def render_own_ssp_badge(user: dict | None, *, label: str = "Ваш ССП") -> None:

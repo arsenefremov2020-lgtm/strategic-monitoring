@@ -29,7 +29,10 @@ from core.dashboard_filters import (  # noqa: E402
     filter_measures,
     stable_cohort_codes,
 )
-from core.dashboard_risk import numeric_trajectory, risk_level, attach_risk, yes_no_trajectory, attention_mask  # noqa: E402
+from core.dashboard_risk import (  # noqa: E402
+    numeric_trajectory, risk_level, attach_risk, yes_no_trajectory, attention_mask,
+    RISK_COLORS, RISK_ORDER,
+)
 
 
 def approx(actual, expected, tol=0.02):
@@ -392,8 +395,25 @@ def test_page_integration_contracts():
     assert "dashboard_periods_v2.selected_reporting_period(selected_years, selected_quarters)" in app
     assert "Оцінка через виконання завдань стратегічної цілі." in app
     assert "Розрахунок виконання — станом на" in app
-    assert "Застосувати фільтри" in app and "Застосувати фільтри" in dashboard
+    assert "Застосувати фільтри" in app
+    assert "Застосувати загальні фільтри" in dashboard
+    assert "Скинути загальні фільтри" in dashboard
     assert "Стан виконання" in dashboard and "Порівняння результатів" in dashboard and "Динаміка виконання" in dashboard and "Фінансування" in dashboard
+
+    # Common filters and section-period applied state are intentionally separate.
+    for state_key in [
+        "dash_snapshot_period_applied_v1", "dash_breakdown_period_applied_v1",
+        "dash_dynamics_period_applied_v1", "dash_finance_period_applied_v1",
+    ]:
+        assert state_key in dashboard
+    assert "dashboard_snapshot_period_form_v1" in dashboard
+    assert 'f"dashboard_{section_key}_period_form_v1"' in dashboard
+    assert '_render_period_range_panel(\n        "breakdown"' in dashboard
+    assert '_render_period_range_panel(\n        "dynamics"' in dashboard
+    assert "dashboard_finance_period_form_v1" in dashboard
+    assert dashboard.count('"Застосувати параметри"') >= 3
+    assert dashboard.count('"Скинути параметри"') >= 3
+
     # Comparison/dynamics use explicit start/end pairs, never independent years×quarters.
     assert "dash_breakdown_start_period" in dashboard and "dash_breakdown_end_period" in dashboard
     assert "dash_dynamics_start_period" in dashboard and "dash_dynamics_end_period" in dashboard
@@ -405,13 +425,19 @@ def test_page_integration_contracts():
         "_render_multi_period_panel", "dashboard_breakdowns_v2.period_pairs",
     ]:
         assert legacy not in dashboard, legacy
-    assert "st.error(_period_range_error)" in dashboard
-    assert "except ValueError as exc" in dashboard
-    # J/K defaults: I quarter of current reporting year through current reporting period.
+    assert "dash_breakdown_period_error" in dashboard
+    assert "dash_dynamics_period_error" in dashboard
+    assert "Початок періоду не може бути пізніше за кінець періоду." in dashboard
+
+    # Defaults: I quarter of current reporting year through current reporting period.
     assert '_default_range_start_period = (_default_reporting_year, "I")' in dashboard
     assert '_default_range_end_period = (_default_reporting_year, _default_reporting_quarter)' in dashboard
     assert 'def _reset_dashboard_common_filters_v21' in dashboard
-    assert 'st.session_state["dash_common_filters_applied_v21"] = _dash_common_defaults.copy()' in dashboard
+    assert 'def _reset_dashboard_snapshot_period_v1' in dashboard
+    assert 'def _reset_dashboard_breakdown_period_v1' in dashboard
+    assert 'def _reset_dashboard_dynamics_period_v1' in dashboard
+    assert 'def _reset_dashboard_finance_period_v1' in dashboard
+
     # Finance is annual-only and automatically resolves execution context.
     assert '"dash_finance_year"' in dashboard
     assert "latest_reporting_period_in_year" in dashboard
@@ -674,6 +700,235 @@ def test_management_conclusion_thresholds():
     assert q4["title"].startswith("Підсумок року")
 
 
+
+def test_live_ui_data_regressions():
+    """Regression coverage for the live Streamlit UX/data issues (A-R)."""
+    import ast
+    import re
+    from types import SimpleNamespace
+    from core import dashboard_periods as dashboard_periods_v2
+    from core import dashboard_risk as dashboard_risk_v2
+    from core.dashboard_breakdowns import (
+        build_period_results,
+        execution_forecast_diagnostics,
+        execution_forecast_matrix,
+    )
+
+    dashboard_path = ROOT / "pages" / "2_Dashboard.py"
+    dashboard = dashboard_path.read_text(encoding="utf-8")
+    tree = ast.parse(dashboard)
+
+    # Execute only pure/callback function definitions from the production page;
+    # importing the whole Streamlit page would execute UI side effects.
+    wanted_functions = {
+        "clean", "strip_code_from_name", "_normalise_period_pair",
+        "_apply_dashboard_common_filters_v21", "_reset_dashboard_common_filters_v21",
+        "_apply_dashboard_snapshot_period_v1", "_reset_dashboard_snapshot_period_v1",
+        "_apply_dashboard_breakdown_period_v1", "_reset_dashboard_breakdown_period_v1",
+        "_apply_dashboard_dynamics_period_v1", "_reset_dashboard_dynamics_period_v1",
+        "_apply_dashboard_finance_period_v1", "_reset_dashboard_finance_period_v1",
+        "_dashboard_archive_reporting_period", "_format_summary_number", "_format_percent",
+        "_format_table_number", "_short_summary_label", "_task_chart_label",
+        "_goal_change_label", "_high_risk_groups", "_high_risk_insight_text",
+    }
+    selected_defs = [
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name in wanted_functions
+    ]
+
+    state = {
+        "dash_data_source_mode": "confirmed",
+        "dash_presentation_mode": False,
+        "dash_department_indices": [], "dash_goals": [], "dash_tasks": [],
+        "dash_product_types": [], "dash_deputies": [], "dash_statuses": [],
+        "dash_financing": [], "dash_kpkvk": [],
+        # Draft values deliberately differ from the currently applied section state.
+        "dash_snapshot_year": 2026, "dash_snapshot_quarter": "IV",
+        "dash_breakdown_start_period": (2026, "I"), "dash_breakdown_end_period": (2026, "II"),
+        "dash_dynamics_start_period": (2026, "I"), "dash_dynamics_end_period": (2026, "II"),
+        "dash_finance_year": 2027,
+        "dash_snapshot_period_applied_v1": {"year": 2026, "quarter": "III"},
+        "dash_breakdown_period_applied_v1": {"start_period": (2026, "I"), "end_period": (2026, "III")},
+        "dash_dynamics_period_applied_v1": {"start_period": (2026, "I"), "end_period": (2026, "III")},
+        "dash_finance_period_applied_v1": {"year": 2026},
+        "dash_breakdown_period_error": "", "dash_dynamics_period_error": "",
+    }
+    fake_st = SimpleNamespace(session_state=state)
+    period_options = dashboard_periods_v2.reporting_period_range(2026, "I", 2028, "IV")
+    env = {
+        "pd": pd, "re": re, "st": fake_st,
+        "dashboard_periods_v2": dashboard_periods_v2,
+        "dashboard_risk_v2": dashboard_risk_v2,
+        "quarter_to_roman": dashboard_periods_v2.quarter_to_roman,
+        "_reporting_period_options": period_options,
+        "_default_reporting_year": 2026, "_default_reporting_quarter": "III",
+        "_default_range_start_period": (2026, "I"), "_default_range_end_period": (2026, "III"),
+        "_snapshot_period_default": {"year": 2026, "quarter": "III"},
+        "_breakdown_period_default": {"start_period": (2026, "I"), "end_period": (2026, "III")},
+        "_dynamics_period_default": {"start_period": (2026, "I"), "end_period": (2026, "III")},
+        "_finance_period_default": {"year": 2026},
+        "_dash_common_defaults": {
+            "data_source_mode": "confirmed", "presentation_mode": False,
+            "department_indices": [], "goals": [], "tasks": [], "product_types": [],
+            "deputies": [], "statuses": [], "financing": [], "kpkvk": [],
+        },
+        "_dashboard_common_widget_defaults": {
+            "dash_data_source_mode": "confirmed", "dash_presentation_mode": False,
+            "dash_department_indices": [], "dash_goals": [], "dash_tasks": [],
+            "dash_product_types": [], "dash_deputies": [], "dash_statuses": [],
+            "dash_financing": [], "dash_kpkvk": [],
+        },
+        "operational": SimpleNamespace(MODE_CONFIRMED="confirmed"),
+    }
+    exec(compile(ast.Module(body=selected_defs, type_ignores=[]), str(dashboard_path), "exec"), env)
+
+    # A/B + live UX scenario: top Apply/Reset cannot touch section period state.
+    before_sections = {
+        key: dict(state[key]) for key in [
+            "dash_snapshot_period_applied_v1", "dash_breakdown_period_applied_v1",
+            "dash_dynamics_period_applied_v1", "dash_finance_period_applied_v1",
+        ]
+    }
+    env["_apply_dashboard_common_filters_v21"]()
+    for key, expected in before_sections.items():
+        assert state[key] == expected
+    assert state["dash_snapshot_period_applied_v1"]["quarter"] == "III"  # draft widget is IV
+    env["_reset_dashboard_common_filters_v21"]()
+    for key, expected in before_sections.items():
+        assert state[key] == expected
+
+    # C/D: snapshot local Apply/Reset changes only snapshot state.
+    other_before = dict(state["dash_breakdown_period_applied_v1"])
+    env["_apply_dashboard_snapshot_period_v1"]()
+    assert state["dash_snapshot_period_applied_v1"] == {"year": 2026, "quarter": "IV"}
+    assert state["dash_breakdown_period_applied_v1"] == other_before
+    env["_reset_dashboard_snapshot_period_v1"]()
+    assert state["dash_snapshot_period_applied_v1"] == {"year": 2026, "quarter": "III"}
+    assert state["dash_snapshot_quarter"] == "III"
+
+    # E: comparison range is isolated; invalid range preserves previous applied value.
+    state["dash_breakdown_start_period"] = (2026, "II")
+    state["dash_breakdown_end_period"] = (2026, "III")
+    env["_apply_dashboard_breakdown_period_v1"]()
+    assert state["dash_breakdown_period_applied_v1"] == {
+        "start_period": (2026, "II"), "end_period": (2026, "III")
+    }
+    previous_breakdown = dict(state["dash_breakdown_period_applied_v1"])
+    state["dash_breakdown_start_period"] = (2027, "I")
+    state["dash_breakdown_end_period"] = (2026, "IV")
+    env["_apply_dashboard_breakdown_period_v1"]()
+    assert state["dash_breakdown_period_applied_v1"] == previous_breakdown
+    assert "Початок періоду" in state["dash_breakdown_period_error"]
+    env["_reset_dashboard_breakdown_period_v1"]()
+    assert state["dash_breakdown_period_applied_v1"] == env["_breakdown_period_default"]
+
+    # F/G: dynamics and finance have their own isolated Apply/Reset.
+    state["dash_dynamics_start_period"] = (2026, "II")
+    state["dash_dynamics_end_period"] = (2026, "III")
+    env["_apply_dashboard_dynamics_period_v1"]()
+    assert state["dash_dynamics_period_applied_v1"] == {
+        "start_period": (2026, "II"), "end_period": (2026, "III")
+    }
+    env["_reset_dashboard_dynamics_period_v1"]()
+    assert state["dash_dynamics_period_applied_v1"] == env["_dynamics_period_default"]
+    state["dash_finance_year"] = 2027
+    env["_apply_dashboard_finance_period_v1"]()
+    assert state["dash_finance_period_applied_v1"] == {"year": 2027}
+    env["_reset_dashboard_finance_period_v1"]()
+    assert state["dash_finance_period_applied_v1"] == {"year": 2026}
+
+    # H/I: ambiguous legacy archive and incompatible formula never become v2 overrides.
+    archive_period = env["_dashboard_archive_reporting_period"]
+    ambiguous_row = {"year": 2026, "quarter": 3, "reason": "захотілося"}
+    assert archive_period(ambiguous_row, {"dashboard_formula_version": "dashboard-execution-v2"}) is None
+    assert archive_period(
+        {"reason": "II квартал 2026"},
+        {"dashboard_formula_version": "dashboard-execution-v1"},
+    ) is None
+    assert archive_period(
+        {"reason": "II квартал 2026"},
+        {"dashboard_formula_version": "dashboard-execution-v2"},
+    ) == (2026, "II")
+    assert "report_quarter = anchor_quarter - 1" not in dashboard
+    assert "Legacy snapshots store the anchor quarter" not in dashboard
+
+    # J/K: real Q2 data remains non-zero and supplies Q3 previous-fact trajectory/matrix.
+    strat = pd.DataFrame([measure("live", 100)])
+    live_requests = pd.DataFrame([
+        request("live", 1, 20, rid=1), request("live", 2, 50, rid=2), request("live", 3, 70, rid=3),
+    ])
+    # The ambiguous archive above produces no key, therefore no period-source override.
+    results = build_period_results(
+        strat, live_requests, [(2026, "I"), (2026, "II"), (2026, "III")],
+        locked_periods=set(), period_sources={},
+    )
+    approx(results[(2026, "II")]["execution_by_measures"], 50)
+    approx(results[(2026, "II")]["coverage"], 100)
+    q3_snapshot = results[(2026, "III")]["snapshot"]
+    matrix = execution_forecast_matrix(q3_snapshot, group_col="department")
+    diagnostics = execution_forecast_diagnostics(q3_snapshot, group_col="department")
+    assert not matrix.empty
+    assert diagnostics["numeric_current_count"] == 1
+    assert diagnostics["numeric_with_previous_fact_count"] == 1
+    assert diagnostics["numeric_forecast_count"] == 1
+    assert diagnostics["groups_in_matrix"] == 1
+
+    # L: qualitative risk is explained as qualitative, never as a missing percent forecast.
+    qualitative = pd.DataFrame([{
+        "code": "qual", "goal_code": "4", "strategic_goal": "Ціль 4",
+        "risk_level": "Високий ризик", "forecast_attainment_pct": None,
+        "pace_sufficiency_pct": None,
+    }])
+    grouped = env["_high_risk_groups"](qualitative, ["goal_code", "strategic_goal"])
+    assert int(grouped.iloc[0]["risk_measure_count"]) == 1
+    assert int(grouped.iloc[0]["numeric_forecast_count"]) == 0
+    assert int(grouped.iloc[0]["qualitative_risk_count"]) == 1
+    qualitative_text = env["_high_risk_insight_text"]("Ціль 4", grouped.iloc[0])
+    assert "якісними статусами" in qualitative_text
+    assert "числовий прогноз" in qualitative_text and "не застосовується" in qualitative_text
+    assert "н/д%" not in qualitative_text and "н/д%" not in dashboard
+    assert env["_format_percent"](None) == "н/д"
+    mixed = pd.DataFrame([
+        {"code": "num", "goal_code": "4", "strategic_goal": "Ціль 4",
+         "risk_level": "Високий ризик", "forecast_attainment_pct": 61.4,
+         "pace_sufficiency_pct": 52.1},
+        {"code": "qual", "goal_code": "4", "strategic_goal": "Ціль 4",
+         "risk_level": "Критичний ризик", "forecast_attainment_pct": None,
+         "pace_sufficiency_pct": None},
+    ])
+    mixed_group = env["_high_risk_groups"](mixed, ["goal_code", "strategic_goal"]).iloc[0]
+    mixed_text = env["_high_risk_insight_text"]("Ціль 4", mixed_group)
+    assert "числовий прогноз доступний для 1" in mixed_text
+    assert "61.4%" in mixed_text and "від необхідного темпу" in mixed_text
+
+    # M: canonical risk colors are distinct and shared by all risk visualizations.
+    assert RISK_COLORS["Критичний ризик"] == "#DC4A4A"
+    assert RISK_COLORS["Високий ризик"] == "#FF7A45"
+    assert RISK_COLORS["Критичний ризик"] != RISK_COLORS["Високий ризик"]
+    assert RISK_ORDER == ["Критичний ризик", "Високий ризик", "Середній ризик", "Низький ризик"]
+    assert "RISK_COLORS = dashboard_risk_v2.RISK_COLORS" in dashboard
+    assert 'category_orders={"auto_risk": RISK_ORDER}' in dashboard
+
+    # N/O/P: presentation labels and management tables are display-only, max 2 decimals.
+    task_label = env["_task_chart_label"]("1.1", "1.1. Назва")
+    assert task_label.count("1.1") == 1 and task_label.endswith("Назва")
+    assert env["_format_table_number"](66.6666666667, 2) == "66.67"
+    assert env["_format_table_number"](48.2777777777, 2) == "48.28"
+    assert env["_format_table_number"](None, 2) == "—"
+    assert "_ssp_display_numeric_columns" in dashboard and "_deputy_display_numeric_columns" in dashboard
+    assert "formatters={" in dashboard
+    assert "y=-0.52" in dashboard and "b=170" in dashboard and "height=445" in dashboard
+
+    # Q/R: goal-change axis contains code+name and hover contains start/latest/change.
+    goal_label = env["_goal_change_label"]("1", "1. Розвиток конкурентної економіки")
+    assert goal_label.startswith("1 — Розвиток конкурентної економіки")
+    for fragment in ["Початок:", "Кінець:", "Зміна:", "start_by_tasks", "latest_by_tasks"]:
+        assert fragment in dashboard
+    assert 'goals_change["_sort"] = goals_change["goal_code"].apply(code_sort_key)' in dashboard
+    assert 'automargin=True' in dashboard
+    assert "Додатне значення = покращення; від’ємне = погіршення" in dashboard
+
+
 def test_feature_preservation_contracts():
     """Static integration checks inspect executable structure/calls, not only labels."""
     import ast
@@ -702,7 +957,7 @@ def test_feature_preservation_contracts():
         "operational.apply_operational_mode", "append_confirmed_closeout_facts", "render_scope_toggle",
         "dashboard_breakdowns_v2.aggregate_objects", "dashboard_breakdowns_v2.ssp_summary",
         "dashboard_breakdowns_v2.deputy_summary", "dashboard_breakdowns_v2.execution_forecast_matrix",
-        "dashboard_risk_v2.attention_mask",
+        "dashboard_breakdowns_v2.execution_forecast_diagnostics", "dashboard_risk_v2.attention_mask",
     ]
     for name in required_call_fragments:
         assert any(call.endswith(name) or call == name for call in calls), name
@@ -801,6 +1056,7 @@ def main():
         test_finance_four_categories,
         test_management_conclusion_thresholds,
         test_page_integration_contracts,
+        test_live_ui_data_regressions,
         test_feature_preservation_contracts,
         test_risk_thresholds,
     ]

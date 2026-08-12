@@ -237,9 +237,30 @@ def test_q1_and_yes_no():
     assert q1["forecast_kind"] == "preliminary"
     approx(q1["forecast_year"], 80)
     approx(q1["forecast_attainment_pct"], 80)
+    assert q1["risk_level"] is None
+    assert q1["preliminary_attention"] is True
     assert "одним квартальним" in q1["forecast_explanation"]
 
-    from core.dashboard_risk import yes_no_trajectory
+    # Q1 qualitative status is an attention signal, never a standard risk category.
+    qualitative = pd.DataFrame([{
+        "code": "qual", "year": 2026, "quarter": "I", "period_state": "active",
+        "monitoring_conducted": True, "yes_no": False, "numeric": False,
+        "status": "Не виконано", "execution_score": 0.0, "result_achieved": False,
+    }])
+    qualitative_risk = attach_risk(qualitative).iloc[0]
+    assert pd.isna(qualitative_risk["risk_level"]) or qualitative_risk["risk_level"] is None
+    assert qualitative_risk["forecast_kind"] == "preliminary"
+    assert bool(qualitative_risk["preliminary_attention"])
+
+    # Q1 yes/no near its deadline may warn, but never becomes High/Critical risk.
+    approaching_q1 = yes_no_trajectory(
+        "ні", selected_year=2026, selected_quarter="I", deadline="II квартал 2026"
+    )
+    assert approaching_q1["risk_level"] is None
+    assert approaching_q1["forecast_kind"] == "preliminary"
+    assert approaching_q1["preliminary_attention"]
+    assert "наближається" in approaching_q1["deadline_warning"]
+
     early = yes_no_trajectory("ні", selected_year=2026, selected_quarter="II", deadline="IV квартал 2026")
     assert early["risk_level"] is None
     approaching = yes_no_trajectory("ні", selected_year=2026, selected_quarter="III", deadline="IV квартал 2026")
@@ -292,12 +313,66 @@ def test_multi_period_aggregation_and_locked_gap():
 
 
 def test_current_reporting_period():
-    from core.dashboard_periods import current_reporting_period
-    rows=[request("p",1,10,rid=1),request("p",2,20,rid=2)]
-    inherited=request("p",3,"так",status="Виконано",rid=3); inherited["_auto_inherited"]=True
-    df=pd.DataFrame([*rows,inherited])
-    assert current_reporting_period(df,locked_periods=set()) == (2026,"II")
-    assert current_reporting_period(df,locked_periods={("2026",2)}) == (2026,"I")
+    from core.dashboard_periods import (
+        current_reporting_period, latest_reporting_period_in_year,
+        monitoring_conducted, reporting_period_range,
+    )
+
+    # A/F: Aug 12 calendar ceiling is Q3; a future Q4 row cannot move the default.
+    q1_q4 = pd.DataFrame([
+        request("p", 1, 10, rid=1), request("p", 2, 20, rid=2),
+        request("p", 3, 30, rid=3), request("p", 4, 40, rid=4),
+    ])
+    assert current_reporting_period(
+        q1_q4, locked_periods=set(), as_of="2026-08-12"
+    ) == (2026, "III")
+    assert latest_reporting_period_in_year(
+        q1_q4, 2026, locked_periods=set(), as_of="2026-08-12"
+    ) == (2026, "III")
+
+    # B: when data only exists through Q2, Q2 remains current even during Q3.
+    q1_q2 = q1_q4[q1_q4["quarter"].isin([1, 2])].copy()
+    assert current_reporting_period(
+        q1_q2, locked_periods=set(), as_of="2026-08-12"
+    ) == (2026, "II")
+
+    # C: opening Q4 on the calendar does not invent Q4 if reporting exists only through Q3.
+    q1_q3 = q1_q4[q1_q4["quarter"].isin([1, 2, 3])].copy()
+    assert current_reporting_period(
+        q1_q3, locked_periods=set(), as_of="2026-10-01"
+    ) == (2026, "III")
+
+    # D/E: period_locks is the only blocker; Q1/Q2 2026 are valid when unlocked.
+    assert current_reporting_period(
+        q1_q2, locked_periods={("2026", 2)}, as_of="2026-08-12"
+    ) == (2026, "I")
+    assert monitoring_conducted(2026, "I", locked_periods=set()) is True
+    assert monitoring_conducted(2026, "II", locked_periods=set()) is True
+
+    # Synthetic inherited records and invalid period labels are never candidates.
+    inherited = request("p", 3, "так", status="Виконано", rid=10)
+    inherited["_auto_inherited"] = True
+    invalid = request("p", 1, 10, rid=11); invalid["quarter"] = "невідомий"
+    mixed = pd.DataFrame([*q1_q2.to_dict("records"), inherited, invalid])
+    assert current_reporting_period(
+        mixed, locked_periods=set(), as_of="2026-08-12"
+    ) == (2026, "II")
+
+    # No requests: fallback is the latest non-future unlocked calendar period.
+    assert current_reporting_period(
+        pd.DataFrame(), locked_periods=set(), as_of="2026-08-12"
+    ) == (2026, "III")
+
+    # G/H/I: explicit cross-year range is chronological and never Cartesian.
+    exact = reporting_period_range(2026, "IV", 2027, "II")
+    assert exact == [(2026, "IV"), (2027, "I"), (2027, "II")]
+    assert len(exact) == 3
+    try:
+        reporting_period_range(2027, "II", 2026, "IV")
+    except ValueError as exc:
+        assert str(exc) == "Початок періоду не може бути пізніше за кінець періоду."
+    else:
+        raise AssertionError("invalid reporting range must be rejected")
 
 
 def test_page_integration_contracts():
@@ -313,10 +388,35 @@ def test_page_integration_contracts():
     assert "def calculate_completion" not in app
     assert "def calculate_completion" not in dashboard
     assert "hierarchy_for_period" in app and "build_period_results" in dashboard
+    assert "dashboard_periods_v2.current_reporting_period(monitoring_df)" in app
+    assert "dashboard_periods_v2.selected_reporting_period(selected_years, selected_quarters)" in app
     assert "Оцінка через виконання завдань стратегічної цілі." in app
     assert "Розрахунок виконання — станом на" in app
     assert "Застосувати фільтри" in app and "Застосувати фільтри" in dashboard
     assert "Стан виконання" in dashboard and "Порівняння результатів" in dashboard and "Динаміка виконання" in dashboard and "Фінансування" in dashboard
+    # Comparison/dynamics use explicit start/end pairs, never independent years×quarters.
+    assert "dash_breakdown_start_period" in dashboard and "dash_breakdown_end_period" in dashboard
+    assert "dash_dynamics_start_period" in dashboard and "dash_dynamics_end_period" in dashboard
+    assert "_render_period_range_panel" in dashboard and "reporting_period_range" in dashboard
+    for legacy in [
+        "dash_breakdown_years", "dash_breakdown_quarters",
+        "dash_dynamics_years", "dash_dynamics_quarters",
+        "dash_finance_quarter", "applied_finance_quarter", "finance_quarter",
+        "_render_multi_period_panel", "dashboard_breakdowns_v2.period_pairs",
+    ]:
+        assert legacy not in dashboard, legacy
+    assert "st.error(_period_range_error)" in dashboard
+    assert "except ValueError as exc" in dashboard
+    # J/K defaults: I quarter of current reporting year through current reporting period.
+    assert '_default_range_start_period = (_default_reporting_year, "I")' in dashboard
+    assert '_default_range_end_period = (_default_reporting_year, _default_reporting_quarter)' in dashboard
+    assert 'def _reset_dashboard_common_filters_v21' in dashboard
+    assert 'st.session_state["dash_common_filters_applied_v21"] = _dash_common_defaults.copy()' in dashboard
+    # Finance is annual-only and automatically resolves execution context.
+    assert '"dash_finance_year"' in dashboard
+    assert "latest_reporting_period_in_year" in dashboard
+    assert "Фінансові показники за обраний рік." in dashboard
+    assert "Станом на квартал" not in dashboard
     assert "Виконання завдань" in dashboard
     assert "Структура статусів виконання" in dashboard
     assert "Прогнозована вірогідність" not in all_changed
@@ -441,6 +541,29 @@ def test_multi_period_group_summaries_and_matrix():
     assert execution_forecast_matrix(q4).empty
 
 
+def test_q1_risk_summary_and_matrix_are_preliminary():
+    from core.dashboard_breakdowns import build_period_results, execution_forecast_matrix
+    from core.dashboard_risk import risk_summary
+    strat = pd.DataFrame([
+        {**measure("q1-matrix", 100), "resp_main": "ССП 5"}
+    ])
+    req = pd.DataFrame([request("q1-matrix", 1, 20, rid=1)])
+    result = build_period_results(
+        strat, req, [(2026, "I")], locked_periods=set()
+    )[(2026, "I")]
+    row = result["snapshot"].iloc[0]
+    assert row["forecast_kind"] == "preliminary" and pd.isna(row["risk_level"])
+    summary = risk_summary(result["snapshot"])
+    assert summary["share_high_critical_risk"] is None
+    assert summary["share_without_substantial_risk"] is None
+    assert summary["preliminary_forecast_count"] == 1
+    assert summary["preliminary_attention_count"] == 1
+    matrix = execution_forecast_matrix(result["snapshot"])
+    assert not matrix.empty
+    assert matrix["preliminary"].all()
+    assert set(matrix["risk_level"]) == {"Попередній прогноз"}
+
+
 def test_finance_four_categories():
     from core.dashboard_finance import classify_finance_sources, build_finance_frame, finance_kpis
     rows = [
@@ -457,34 +580,96 @@ def test_finance_four_categories():
     assert "Державний бюджет" in classify_finance_sources({"budget_2026_approved": 1.2})
     assert "Небюджетні / інші" in classify_finance_sources({"other_2026_plan": 0.3})
 
-    snap = pd.DataFrame([{**measure("fin", 100), "execution_score": 50.0, "budget_2026_approved": 2.0}])
-    fin = build_finance_frame(
-        snap, 2026,
-        fin_index={("fin", "2026"): {"kpkvk": "1201010", "other_source": "", "plan_bln": 2.0, "fact_bln": 1.0}},
-    )
-    assert len(fin) == 1
-    approx(fin.iloc[0]["financial_execution_pct"], 50)
-    kpis = finance_kpis(fin)
+    # T/U: finance identity is exactly (code, year), never code+year+quarter.
+    fin_index = {
+        ("fin", "2026"): {
+            "kpkvk": "1201010", "other_source": "",
+            "plan_bln": 2.0, "fact_bln": 1.0,
+        }
+    }
+    snap_q2 = pd.DataFrame([{
+        **measure("fin", 100), "execution_score": 50.0, "budget_2026_approved": 2.0
+    }])
+    snap_q3 = snap_q2.copy(); snap_q3["execution_score"] = 75.0
+    fin_q2 = build_finance_frame(snap_q2, 2026, fin_index=fin_index)
+    fin_q3 = build_finance_frame(snap_q3, 2026, fin_index=fin_index)
+    assert len(fin_q2) == len(fin_q3) == 1
+    approx(fin_q2.iloc[0]["plan_bln"], 2)
+    approx(fin_q2.iloc[0]["fact_bln"], 1)
+    approx(fin_q2.iloc[0]["financial_execution_pct"], 50)
+    # V: annual financial values do not change when reporting execution context changes.
+    for field in ["plan_bln", "fact_bln", "financial_execution_pct"]:
+        approx(fin_q2.iloc[0][field], fin_q3.iloc[0][field])
+    assert fin_q2.iloc[0]["elasticity"] != fin_q3.iloc[0]["elasticity"]
+    future = snap_q2.copy(); future["execution_score"] = pd.NA
+    future_fin = build_finance_frame(future, 2026, fin_index=fin_index)
+    approx(future_fin.iloc[0]["plan_bln"], 2)
+    approx(future_fin.iloc[0]["fact_bln"], 1)
+    assert future_fin.iloc[0]["elasticity"] is None
+    kpis = finance_kpis(fin_q2)
     approx(kpis["financial_execution_pct"], 50)
 
 
 def test_management_conclusion_thresholds():
-    from core.dashboard_risk import management_conclusion
-    def frame(q, risks):
+    from core.dashboard_risk import management_conclusion, COVERAGE_GATE_MIN
+    assert COVERAGE_GATE_MIN == 70.0
+
+    def frame(q, high_count=0, total=10):
+        risks = ["Високий ризик"] * high_count + ["Низький ризик"] * (total - high_count)
         return pd.DataFrame([
-            {"quarter":q, "execution_score":80, "result_achieved":False,
-             "risk_level":risk, "forecast_attainment_pct":80, "pace_sufficiency_pct":90}
+            {
+                "quarter": q, "execution_score": 80, "result_achieved": False,
+                "risk_level": risk, "forecast_attainment_pct": 80,
+                "pace_sufficiency_pct": 90, "forecast_kind": "trajectory",
+            }
             for risk in risks
         ])
-    q1 = management_conclusion(frame("I", ["Низький ризик"]), execution_by_measures=40, execution_by_goals=45, coverage=90)
-    assert q1["title"] == "Початковий стан реалізації"
-    controlled = management_conclusion(frame("II", ["Низький ризик"]*9+["Високий ризик"]), execution_by_measures=70, execution_by_goals=72, coverage=90)
-    assert controlled["severity"] == "low"
-    attention = management_conclusion(frame("III", ["Низький ризик"]*7+["Високий ризик"]*3), execution_by_measures=70, execution_by_goals=72, coverage=90)
-    assert attention["severity"] == "medium"
-    severe = management_conclusion(frame("III", ["Низький ризик"]*5+["Критичний ризик"]*5), execution_by_measures=70, execution_by_goals=72, coverage=90)
-    assert severe["severity"] == "high"
-    q4f = frame("IV", [None]*10); q4f.loc[:7,"result_achieved"] = True
+
+    # L + coverage None: gate is evaluated before any risk verdict.
+    insufficient = management_conclusion(
+        frame("II", 0), execution_by_measures=70, execution_by_goals=72, coverage=69
+    )
+    assert insufficient["title"] == "Недостатньо даних для управлінського висновку"
+    missing_cov = management_conclusion(
+        frame("II", 0), execution_by_measures=70, execution_by_goals=72, coverage=None
+    )
+    assert missing_cov["title"] == "Недостатньо даних для управлінського висновку"
+
+    # M/N/O: 70% coverage unlocks exactly the agreed 15/35 problem-share thresholds.
+    controlled = management_conclusion(
+        frame("II", 1), execution_by_measures=70, execution_by_goals=72, coverage=70
+    )
+    assert controlled["title"] == "Реалізація переважно контрольована"
+    for fragment in [
+        "Покриття", "високий + критичний ризик", "без суттєвого ризику",
+        "середнє прогнозоване досягнення", "середня достатність темпу",
+    ]:
+        assert fragment in controlled["explanation"]
+    risk_source = (ROOT / "core" / "dashboard_risk.py").read_text(encoding="utf-8")
+    assert "coverage >= 80" not in risk_source and "coverage > 80" not in risk_source
+    attention = management_conclusion(
+        frame("II", 2), execution_by_measures=70, execution_by_goals=72, coverage=70
+    )
+    assert attention["title"] == "Потрібна увага до окремих напрямів"
+    severe = management_conclusion(
+        frame("II", 4), execution_by_measures=70, execution_by_goals=72, coverage=70
+    )
+    assert severe["title"] == "Суттєвий ризик недосягнення результатів"
+
+    # Q1 remains preliminary and Q4 remains final, both coverage-aware.
+    q1 = frame("I", 0)
+    q1["risk_level"] = None; q1["forecast_kind"] = "preliminary"
+    q1["preliminary_attention"] = False
+    q1_low = management_conclusion(q1, execution_by_measures=40, execution_by_goals=45, coverage=69)
+    assert q1_low["title"] == "Початковий стан реалізації" and "нижче" in q1_low["explanation"]
+    q1_ok = management_conclusion(q1, execution_by_measures=40, execution_by_goals=45, coverage=70)
+    assert q1_ok["title"] == "Початковий стан реалізації"
+    assert "Попередній прогноз сформовано" in q1_ok["explanation"]
+    assert "високого/критичного ризику" not in q1_ok["explanation"]
+    q4f = frame("IV", 0); q4f["risk_level"] = None; q4f["forecast_kind"] = "final"
+    q4f.loc[:7, "result_achieved"] = True
+    q4_low = management_conclusion(q4f, execution_by_measures=80, execution_by_goals=82, coverage=69)
+    assert q4_low["title"] == "Підсумок року: недостатньо даних для повної оцінки"
     q4 = management_conclusion(q4f, execution_by_measures=80, execution_by_goals=82, coverage=100)
     assert q4["title"].startswith("Підсумок року")
 
@@ -552,6 +737,8 @@ def test_feature_preservation_contracts():
     assert "Таймлайн" in dashboard or "дедлайн" in dashboard.lower()
     assert "Структура джерел фінансування" in dashboard
     assert "core_exports.build_main_monitoring_export" in app
+    assert "dashboard_execution_v2.hierarchy_for_period" in app
+    assert "_home_task_score_map" in app and "_home_goal_score_map" in app
     assert "indicator_row_matches_search" in app and "row_matches_search" in app
     assert "render_scope_toggle(\"app\"" in app
     # Old management formulas/terminology are gone from the page.
@@ -561,16 +748,16 @@ def test_feature_preservation_contracts():
 
 
 
-def test_archive_source_override_and_system_nonmonitoring():
+def test_archive_source_override_and_unlocked_2026():
     from core.dashboard_breakdowns import build_period_results
     from core.dashboard_periods import monitoring_conducted
 
-    # Production semantics preserve the historical no-monitoring periods.
-    assert monitoring_conducted(2026, "I") is False
-    assert monitoring_conducted(2026, "II") is False
+    # Q1/Q2 2026 are ordinary reporting periods when period_locks does not lock them.
+    assert monitoring_conducted(2026, "I", locked_periods=set()) is True
+    assert monitoring_conducted(2026, "II", locked_periods=set()) is True
 
-    # Archive inputs are recalculated with the same v2 core and are also used
-    # for the immediate previous-quarter trajectory observation.
+    # Archive inputs are recalculated with the same v2 core and Q2 may use Q1
+    # as its immediate previous observation now that Q1 is not hardcoded away.
     strat = pd.DataFrame([measure("arch", 100)])
     current_req = pd.DataFrame([
         request("arch", 1, 99, rid=1),
@@ -591,6 +778,7 @@ def test_archive_source_override_and_system_nonmonitoring():
     approx(results[(2026, "I")]["execution_by_measures"], 20)
     q2 = results[(2026, "II")]["snapshot"].iloc[0]
     approx(q2["current_increment"], 30)
+    assert q2["forecast_kind"] == "trajectory"
 
 
 def main():
@@ -604,11 +792,12 @@ def main():
         test_attach_risk_uses_previous_quarter,
         test_multi_period_aggregation_and_locked_gap,
         test_current_reporting_period,
-        test_archive_source_override_and_system_nonmonitoring,
+        test_archive_source_override_and_unlocked_2026,
         test_review_methodology_edge_cases,
         test_locked_observation_excluded_from_future_risk_history,
         test_stable_cohort_previous_current_consistency,
         test_multi_period_group_summaries_and_matrix,
+        test_q1_risk_summary_and_matrix_are_preliminary,
         test_finance_four_categories,
         test_management_conclusion_thresholds,
         test_page_integration_contracts,

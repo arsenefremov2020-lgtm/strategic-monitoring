@@ -1458,24 +1458,23 @@ _default_reporting_year, _default_reporting_quarter = dashboard_periods_v2.curre
 if _default_reporting_year not in years_options:
     _default_reporting_year = years_options[-1]
 _default_reporting_quarter = quarter_to_roman(_default_reporting_quarter)
-_default_reporting_qnum = quarter_to_number(_default_reporting_quarter)
-_default_range_quarters = quarters_options[:_default_reporting_qnum]
+_default_range_start_period = (_default_reporting_year, "I")
+_default_range_end_period = (_default_reporting_year, _default_reporting_quarter)
+_reporting_period_options = dashboard_periods_v2.reporting_period_range(
+    years_options[0], "I", years_options[-1], "IV"
+)
 
 _period_widget_defaults = {
     "dash_snapshot_year": _default_reporting_year,
     "dash_snapshot_quarter": _default_reporting_quarter,
-    "dash_breakdown_years": [_default_reporting_year],
-    "dash_breakdown_quarters": list(_default_range_quarters),
-    "dash_dynamics_years": [_default_reporting_year],
-    "dash_dynamics_quarters": list(_default_range_quarters),
+    "dash_breakdown_start_period": _default_range_start_period,
+    "dash_breakdown_end_period": _default_range_end_period,
+    "dash_dynamics_start_period": _default_range_start_period,
+    "dash_dynamics_end_period": _default_range_end_period,
     "dash_finance_year": _default_reporting_year,
-    "dash_finance_quarter": _default_reporting_quarter,
 }
 for _period_key, _period_default in _period_widget_defaults.items():
-    st.session_state.setdefault(
-        _period_key,
-        list(_period_default) if isinstance(_period_default, list) else _period_default,
-    )
+    st.session_state.setdefault(_period_key, _period_default)
 
 _dash_common_defaults = {
     "data_source_mode": operational.MODE_CONFIRMED,
@@ -1490,15 +1489,26 @@ _dash_common_defaults = {
     "kpkvk": [],
     "snapshot_year": _default_reporting_year,
     "snapshot_quarter": _default_reporting_quarter,
-    "breakdown_years": [_default_reporting_year],
-    "breakdown_quarters": list(_default_range_quarters),
-    "dynamics_years": [_default_reporting_year],
-    "dynamics_quarters": list(_default_range_quarters),
+    "breakdown_start_period": _default_range_start_period,
+    "breakdown_end_period": _default_range_end_period,
+    "dynamics_start_period": _default_range_start_period,
+    "dynamics_end_period": _default_range_end_period,
     "finance_year": _default_reporting_year,
-    "finance_quarter": _default_reporting_quarter,
 }
-if "dash_common_filters_applied_v20" not in st.session_state:
-    st.session_state["dash_common_filters_applied_v20"] = _dash_common_defaults.copy()
+if "dash_common_filters_applied_v21" not in st.session_state:
+    st.session_state["dash_common_filters_applied_v21"] = _dash_common_defaults.copy()
+
+
+def _normalise_period_pair(value, fallback):
+    try:
+        year, quarter = value
+        pair = (int(year), quarter_to_roman(quarter))
+        if pair in _reporting_period_options:
+            return pair
+    except (TypeError, ValueError):
+        pass
+    return fallback
+
 
 _dashboard_common_widget_defaults = {
     "dash_data_source_mode": operational.MODE_CONFIRMED,
@@ -1516,8 +1526,43 @@ for _widget_key, _widget_default in _dashboard_common_widget_defaults.items():
     st.session_state.setdefault(_widget_key, _widget_default)
 
 
-def _apply_dashboard_common_filters_v20():
-    st.session_state["dash_common_filters_applied_v20"] = {
+def _apply_dashboard_common_filters_v21():
+    previous = st.session_state.get(
+        "dash_common_filters_applied_v21", _dash_common_defaults.copy()
+    )
+    breakdown_start = _normalise_period_pair(
+        st.session_state.get("dash_breakdown_start_period"),
+        previous.get("breakdown_start_period", _default_range_start_period),
+    )
+    breakdown_end = _normalise_period_pair(
+        st.session_state.get("dash_breakdown_end_period"),
+        previous.get("breakdown_end_period", _default_range_end_period),
+    )
+    dynamics_start = _normalise_period_pair(
+        st.session_state.get("dash_dynamics_start_period"),
+        previous.get("dynamics_start_period", _default_range_start_period),
+    )
+    dynamics_end = _normalise_period_pair(
+        st.session_state.get("dash_dynamics_end_period"),
+        previous.get("dynamics_end_period", _default_range_end_period),
+    )
+
+    range_errors = []
+    try:
+        dashboard_periods_v2.reporting_period_range(*breakdown_start, *breakdown_end)
+    except ValueError as exc:
+        range_errors.append(str(exc))
+        breakdown_start = previous.get("breakdown_start_period", _default_range_start_period)
+        breakdown_end = previous.get("breakdown_end_period", _default_range_end_period)
+    try:
+        dashboard_periods_v2.reporting_period_range(*dynamics_start, *dynamics_end)
+    except ValueError as exc:
+        range_errors.append(str(exc))
+        dynamics_start = previous.get("dynamics_start_period", _default_range_start_period)
+        dynamics_end = previous.get("dynamics_end_period", _default_range_end_period)
+
+    st.session_state["dash_period_range_error"] = range_errors[0] if range_errors else ""
+    st.session_state["dash_common_filters_applied_v21"] = {
         "data_source_mode": st.session_state.get(
             "dash_data_source_mode", operational.MODE_CONFIRMED
         ),
@@ -1537,25 +1582,25 @@ def _apply_dashboard_common_filters_v20():
         "financing": list(st.session_state.get("dash_financing", []) or []),
         "kpkvk": list(st.session_state.get("dash_kpkvk", []) or []),
         "snapshot_year": int(st.session_state.get("dash_snapshot_year", _default_reporting_year)),
-        "snapshot_quarter": st.session_state.get("dash_snapshot_quarter", _default_reporting_quarter),
-        "breakdown_years": list(st.session_state.get("dash_breakdown_years", [_default_reporting_year]) or [_default_reporting_year]),
-        "breakdown_quarters": list(st.session_state.get("dash_breakdown_quarters", _default_range_quarters) or _default_range_quarters),
-        "dynamics_years": list(st.session_state.get("dash_dynamics_years", [_default_reporting_year]) or [_default_reporting_year]),
-        "dynamics_quarters": list(st.session_state.get("dash_dynamics_quarters", _default_range_quarters) or _default_range_quarters),
+        "snapshot_quarter": quarter_to_roman(
+            st.session_state.get("dash_snapshot_quarter", _default_reporting_quarter)
+        ),
+        "breakdown_start_period": breakdown_start,
+        "breakdown_end_period": breakdown_end,
+        "dynamics_start_period": dynamics_start,
+        "dynamics_end_period": dynamics_end,
         "finance_year": int(st.session_state.get("dash_finance_year", _default_reporting_year)),
-        "finance_quarter": st.session_state.get("dash_finance_quarter", _default_reporting_quarter),
     }
 
 
-def _reset_dashboard_common_filters_v20():
-    st.session_state["dash_common_filters_applied_v20"] = _dash_common_defaults.copy()
+def _reset_dashboard_common_filters_v21():
+    st.session_state["dash_common_filters_applied_v21"] = _dash_common_defaults.copy()
+    st.session_state["dash_period_range_error"] = ""
     for _widget_key, _widget_default in {**_dashboard_common_widget_defaults, **_period_widget_defaults}.items():
-        st.session_state[_widget_key] = (
-            list(_widget_default) if isinstance(_widget_default, list) else _widget_default
-        )
+        st.session_state[_widget_key] = _widget_default
 
 
-with st.form("dashboard_common_filters_form_v20"):
+with st.form("dashboard_common_filters_form_v21"):
     st.markdown(
         '<div class="filter-title">Параметри відбору</div>',
         unsafe_allow_html=True,
@@ -1716,19 +1761,23 @@ with st.form("dashboard_common_filters_form_v20"):
             "Застосувати фільтри",
             type="primary",
             use_container_width=True,
-            on_click=_apply_dashboard_common_filters_v20,
+            on_click=_apply_dashboard_common_filters_v21,
         )
     with _reset_col:
         st.form_submit_button(
             "Скинути фільтри",
             use_container_width=True,
-            on_click=_reset_dashboard_common_filters_v20,
+            on_click=_reset_dashboard_common_filters_v21,
         )
+
+_period_range_error = st.session_state.get("dash_period_range_error", "")
+if _period_range_error:
+    st.error(_period_range_error)
 
 render_scope_toggle("Dashboard", current_user)
 
 _dash_applied = st.session_state.get(
-    "dash_common_filters_applied_v20", _dash_common_defaults.copy()
+    "dash_common_filters_applied_v21", _dash_common_defaults.copy()
 )
 data_source_mode = _dash_applied.get(
     "data_source_mode", operational.MODE_CONFIRMED
@@ -1746,12 +1795,19 @@ selected_financing = list(_dash_applied.get("financing", []) or [])
 selected_kpkvk = list(_dash_applied.get("kpkvk", []) or [])
 applied_snapshot_year = int(_dash_applied.get("snapshot_year", _default_reporting_year))
 applied_snapshot_quarter = quarter_to_roman(_dash_applied.get("snapshot_quarter", _default_reporting_quarter))
-applied_breakdown_years = list(_dash_applied.get("breakdown_years", [_default_reporting_year]) or [_default_reporting_year])
-applied_breakdown_quarters = list(_dash_applied.get("breakdown_quarters", _default_range_quarters) or _default_range_quarters)
-applied_dynamics_years = list(_dash_applied.get("dynamics_years", [_default_reporting_year]) or [_default_reporting_year])
-applied_dynamics_quarters = list(_dash_applied.get("dynamics_quarters", _default_range_quarters) or _default_range_quarters)
+applied_breakdown_start_period = _normalise_period_pair(
+    _dash_applied.get("breakdown_start_period"), _default_range_start_period
+)
+applied_breakdown_end_period = _normalise_period_pair(
+    _dash_applied.get("breakdown_end_period"), _default_range_end_period
+)
+applied_dynamics_start_period = _normalise_period_pair(
+    _dash_applied.get("dynamics_start_period"), _default_range_start_period
+)
+applied_dynamics_end_period = _normalise_period_pair(
+    _dash_applied.get("dynamics_end_period"), _default_range_end_period
+)
 applied_finance_year = int(_dash_applied.get("finance_year", _default_reporting_year))
-applied_finance_quarter = quarter_to_roman(_dash_applied.get("finance_quarter", _default_reporting_quarter))
 
 # Ці фільтри свідомо не входять до нової спільної панелі.
 selected_measures = []
@@ -1839,81 +1895,64 @@ def _render_single_period_panel():
         )
         year_col, quarter_col = st.columns(2)
         with year_col:
-            st.markdown(
-                '<div class="filter-field-label">Рік</div>',
-                unsafe_allow_html=True,
-            )
-            selected_year = st.selectbox(
-                "Рік моментного зрізу",
-                years_options,
-                key="dash_snapshot_year",
+            st.markdown('<div class="filter-field-label">Рік</div>', unsafe_allow_html=True)
+            st.selectbox(
+                "Рік моментного зрізу", years_options, key="dash_snapshot_year",
                 label_visibility="collapsed",
             )
         with quarter_col:
-            st.markdown(
-                '<div class="filter-field-label">Квартал</div>',
-                unsafe_allow_html=True,
-            )
-            selected_quarter = st.selectbox(
-                "Квартал моментного зрізу",
-                quarters_options,
-                key="dash_snapshot_quarter",
+            st.markdown('<div class="filter-field-label">Квартал</div>', unsafe_allow_html=True)
+            st.selectbox(
+                "Квартал моментного зрізу", quarters_options, key="dash_snapshot_quarter",
                 label_visibility="collapsed",
             )
-    return [applied_snapshot_year], [applied_snapshot_quarter]
+    return [(applied_snapshot_year, applied_snapshot_quarter)]
 
 
-def _render_multi_period_panel(section_key, years_key, quarters_key):
+def _period_option_label(value):
+    year, quarter = value
+    return f"{quarter} кв. {year}"
+
+
+def _render_period_range_panel(section_key, start_key, end_key, applied_start, applied_end):
     with st.container(border=True, key=f"dashboard_{section_key}_period_panel"):
         st.markdown(
             '<div class="filter-subtitle dashboard-filter-subtitle">Період секції</div>',
             unsafe_allow_html=True,
         )
-        year_col, quarter_col = st.columns(2)
-        with year_col:
-            st.markdown(
-                '<div class="filter-field-label">Роки</div>',
-                unsafe_allow_html=True,
+        start_col, end_col = st.columns(2)
+        with start_col:
+            st.markdown('<div class="filter-field-label">Початок періоду</div>', unsafe_allow_html=True)
+            st.selectbox(
+                f"Початок періоду {section_key}", _reporting_period_options,
+                format_func=_period_option_label, key=start_key, label_visibility="collapsed",
             )
-            selected_years_local = st.multiselect(
-                f"Роки секції {section_key}",
-                years_options,
-                key=years_key,
-                placeholder="Усі роки",
-                label_visibility="collapsed",
+        with end_col:
+            st.markdown('<div class="filter-field-label">Кінець періоду</div>', unsafe_allow_html=True)
+            st.selectbox(
+                f"Кінець періоду {section_key}", _reporting_period_options,
+                format_func=_period_option_label, key=end_key, label_visibility="collapsed",
             )
-        with quarter_col:
-            st.markdown(
-                '<div class="filter-field-label">Квартали</div>',
-                unsafe_allow_html=True,
-            )
-            selected_quarters_local = st.multiselect(
-                f"Квартали секції {section_key}",
-                quarters_options,
-                key=quarters_key,
-                placeholder="Усі квартали",
-                label_visibility="collapsed",
-            )
-    if section_key == "breakdown":
-        return list(applied_breakdown_years), list(applied_breakdown_quarters)
-    return list(applied_dynamics_years), list(applied_dynamics_quarters)
+    return dashboard_periods_v2.reporting_period_range(*applied_start, *applied_end)
 
 
 def _render_finance_period_panel():
     with st.container(border=True, key="dashboard_finance_period_panel"):
-        st.markdown('<div class="filter-subtitle dashboard-filter-subtitle">Період секції</div>', unsafe_allow_html=True)
-        year_col, quarter_col = st.columns(2)
-        with year_col:
-            st.markdown('<div class="filter-field-label">Рік</div>', unsafe_allow_html=True)
-            st.selectbox("Рік фінансування", years_options, key="dash_finance_year", label_visibility="collapsed")
-        with quarter_col:
-            st.markdown('<div class="filter-field-label">Станом на квартал</div>', unsafe_allow_html=True)
-            st.selectbox("Квартал фінансування", quarters_options, key="dash_finance_quarter", label_visibility="collapsed")
-    return [applied_finance_year], [applied_finance_quarter]
+        st.markdown(
+            '<div class="filter-subtitle dashboard-filter-subtitle">Рік фінансування</div>',
+            unsafe_allow_html=True,
+        )
+        st.selectbox(
+            "Рік фінансування", years_options, key="dash_finance_year",
+            label_visibility="collapsed",
+        )
+        st.caption("Фінансові показники за обраний рік.")
+    return applied_finance_year
 
 
-def _build_dashboard_context(years_for_calc, quarters_for_calc):
-    """Build one Dashboard context entirely from shared v2 calculations."""
+
+def _build_dashboard_context(pairs_for_calc):
+    """Build one Dashboard context from an explicit chronological period list."""
     filtered_strat = dashboard_filters_v2.filter_measures(
         measures_all,
         ssp=selected_department_indices,
@@ -1929,7 +1968,10 @@ def _build_dashboard_context(years_for_calc, quarters_for_calc):
     if filtered_strat is None or filtered_strat.empty:
         return None
 
-    pairs = dashboard_breakdowns_v2.period_pairs(years_for_calc, quarters_for_calc)
+    pairs = sorted(
+        {(int(year), quarter_to_roman(quarter)) for year, quarter in (pairs_for_calc or [])},
+        key=lambda pair: core_period_number(pair[0], pair[1]),
+    )
     if not pairs:
         return None
     period_results = dashboard_breakdowns_v2.build_period_results(
@@ -2067,7 +2109,7 @@ def _build_dashboard_context(years_for_calc, quarters_for_calc):
         dep_progress = pd.DataFrame()
 
     return {
-        "years_for_calc": list(years_for_calc), "quarters_for_calc": list(quarters_for_calc),
+        "pairs_for_calc": list(pairs),
         "period_results": period_results, "active_raw": active_raw, "active_period_rows": active_period_rows,
         "active": active, "snapshot_label": snapshot_label, "dynamics_label": dynamics_label,
         "snapshot_period_number": snapshot_period_number, "snapshot_quarter_num": snapshot_quarter_num,
@@ -2122,7 +2164,7 @@ def _finance_amount_text(value, digits=6):
     return text.replace("-", "−")
 
 
-def _prepare_dashboard_finance_measures(active_rows, period_rows, year):
+def _prepare_dashboard_finance_measures(active_rows, year):
     """UI adapter over ``core.dashboard_finance``; one row per measure/year."""
     if active_rows is None or active_rows.empty or "code" not in active_rows.columns:
         return pd.DataFrame()
@@ -2427,14 +2469,14 @@ def _apply_archived_closeouts(requests, closeouts):
 
 def _archive_locked_periods(payload):
     """Period-lock state frozen inside one immutable archive payload."""
-    locked = set(dashboard_periods_v2.SYSTEM_MONITORING_NOT_CONDUCTED)
+    locked = set()
     rows = payload.get("period_locks") if isinstance(payload, dict) else None
     if not isinstance(rows, list):
         return locked
     for row in rows:
         try:
             if bool(row.get("locked")):
-                locked.add((str(int(row.get("year"))), int(row.get("quarter"))))
+                locked.add((str(int(row.get("year"))), quarter_to_number(row.get("quarter"))))
         except (TypeError, ValueError):
             continue
     return locked
@@ -2499,48 +2541,96 @@ def _build_period_source_overrides(pairs):
 
 
 
+def _build_finance_context(finance_year):
+    """Annual finance plus latest valid monitoring state inside the selected year."""
+    latest_pair = dashboard_periods_v2.latest_reporting_period_in_year(
+        requests_df, int(finance_year)
+    )
+    if latest_pair is not None:
+        context = _build_dashboard_context([latest_pair])
+        if context is not None:
+            context["finance_reporting_pair"] = latest_pair
+            return context
+        # A status filter can legitimately leave no cohort in the latest slice.
+        if selected_statuses:
+            return None
+
+    filtered_strat = dashboard_filters_v2.filter_measures(
+        measures_all,
+        ssp=selected_department_indices,
+        goals=selected_goals,
+        tasks=selected_tasks,
+        measure_codes=selected_measures,
+        product_types=selected_product_types,
+        deputies=selected_deputies,
+        sources=selected_sources,
+        financing=selected_financing,
+        kpkvk=selected_kpkvk,
+    )
+    if filtered_strat is None or filtered_strat.empty:
+        return None
+    annual_rows = filtered_strat.drop_duplicates(subset=["code"], keep="first").copy()
+    annual_rows["execution_score"] = pd.NA
+    annual_rows["performance_score"] = pd.NA
+    annual_rows["status"] = "н/д"
+    annual_rows["status_display"] = "н/д"
+    annual_rows["submitted"] = False
+    annual_rows["risk_level"] = None
+    annual_rows["goal_code"] = annual_rows.get("parent_goal_code", "")
+    annual_rows["strategic_goal"] = annual_rows.get("parent_goal_name", "")
+    annual_rows["department"] = annual_rows.get("resp_main", annual_rows.get("department", ""))
+    return {
+        "active": annual_rows,
+        "active_period_rows": pd.DataFrame(),
+        "finance_reporting_pair": None,
+        "snapshot_label": f"{int(finance_year)} рік",
+    }
+
+
 _snapshot_description = "Що маємо на кінець обраного кварталу?"
 _breakdown_description = "Де виконання вище, а де нижче за обраний період?"
 _dynamics_description = "Як змінювалися результати від кварталу до кварталу?"
-_finance_description = "Фінансові показники за один рік станом на один обраний квартал."
+_finance_description = "Фінансові показники за обраний рік."
 
 if presentation_mode:
     _render_dashboard_section_intro("Стан виконання", _snapshot_description)
-    snapshot_years, snapshot_quarters = _render_single_period_panel()
-    snapshot_context = _build_dashboard_context(snapshot_years, snapshot_quarters)
+    snapshot_pairs = _render_single_period_panel()
+    snapshot_context = _build_dashboard_context(snapshot_pairs)
     if snapshot_context is None:
         st.warning("Немає заходів, що відповідають усім застосованим параметрам відбору.")
         render_footer()
         st.stop()
     _activate_dashboard_context(snapshot_context)
-    selected_years = snapshot_years
-    selected_quarters = snapshot_quarters
+    selected_years = [snapshot_pairs[0][0]]
+    selected_quarters = [snapshot_pairs[0][1]]
     breakdown_context = dynamics_context = finance_context = None
 else:
     _render_dashboard_section_intro("Стан виконання", _snapshot_description)
-    snapshot_years, snapshot_quarters = _render_single_period_panel()
+    snapshot_pairs = _render_single_period_panel()
     snapshot_content = st.container(key="dashboard_snapshot_content")
 
     _render_dashboard_section_intro("Порівняння результатів", _breakdown_description)
-    breakdown_years, breakdown_quarters = _render_multi_period_panel(
-        "breakdown", "dash_breakdown_years", "dash_breakdown_quarters"
+    breakdown_pairs = _render_period_range_panel(
+        "breakdown", "dash_breakdown_start_period", "dash_breakdown_end_period",
+        applied_breakdown_start_period, applied_breakdown_end_period,
     )
     breakdown_content = st.container(key="dashboard_breakdown_content")
 
     _render_dashboard_section_intro("Динаміка виконання", _dynamics_description)
-    dynamics_years, dynamics_quarters = _render_multi_period_panel(
-        "dynamics", "dash_dynamics_years", "dash_dynamics_quarters"
+    dynamics_pairs = _render_period_range_panel(
+        "dynamics", "dash_dynamics_start_period", "dash_dynamics_end_period",
+        applied_dynamics_start_period, applied_dynamics_end_period,
     )
     dynamics_content = st.container(key="dashboard_dynamics_content")
 
     _render_dashboard_section_intro("Фінансування", _finance_description)
-    finance_years, finance_quarters = _render_finance_period_panel()
+    selected_finance_year = _render_finance_period_panel()
     finance_content = st.container(key="dashboard_finance_content")
 
-    snapshot_context = _build_dashboard_context(snapshot_years, snapshot_quarters)
-    breakdown_context = _build_dashboard_context(breakdown_years, breakdown_quarters)
-    dynamics_context = _build_dashboard_context(dynamics_years, dynamics_quarters)
-    finance_context = _build_dashboard_context(finance_years, finance_quarters)
+    snapshot_context = _build_dashboard_context(snapshot_pairs)
+    breakdown_context = _build_dashboard_context(breakdown_pairs)
+    dynamics_context = _build_dashboard_context(dynamics_pairs)
+    finance_context = _build_finance_context(selected_finance_year)
 
     for _context, _container in [
         (snapshot_context, snapshot_content), (breakdown_context, breakdown_content),
@@ -2550,8 +2640,8 @@ else:
             with _container:
                 st.warning("Немає заходів, що відповідають усім застосованим параметрам відбору.")
 
-    selected_years = snapshot_years
-    selected_quarters = snapshot_quarters
+    selected_years = [snapshot_pairs[0][0]]
+    selected_quarters = [snapshot_pairs[0][1]]
 
 snapshot_monitoring_available = bool(
     snapshot_context is not None and snapshot_context.get("monitoring_conducted", True)
@@ -2592,7 +2682,7 @@ if presentation_mode:
                         ("Виконання за стратегічними цілями, %", f"{_format_summary_number(goal_execution)}%"),
                         ("Покриття моніторингом, %", f"{_format_summary_number(coverage)}%"),
                         (("Результатів досягнуто, %" if snapshot_quarter_num == 4 else "Високий + критичний ризик, %"),
-                         f"{_format_summary_number(snapshot_context.get('period_results', {}).get((int(snapshot_years[0]), quarter_to_roman(snapshot_quarters[0])), {}).get('risk_summary', {}).get('share_results_achieved') if snapshot_quarter_num == 4 else risk_share)}%"),
+                         f"{_format_summary_number(snapshot_context.get('period_results', {}).get((int(snapshot_pairs[0][0]), quarter_to_roman(snapshot_pairs[0][1])), {}).get('risk_summary', {}).get('share_results_achieved') if snapshot_quarter_num == 4 else risk_share)}%"),
                     ]
                     _st_fig = _pdf_px.bar(
                         x=["Виконано", "Частково виконано", "Не виконано", "Не подано", "Не настав час", "Втратило актуальність"],
@@ -2684,7 +2774,9 @@ if presentation_mode:
     )
     count_medium = risk_map.get("Середній ризик", 0)
     count_low = risk_map.get("Низький ризик", 0)
+    _presentation_q1 = snapshot_quarter_num == 1
     _presentation_q4 = snapshot_quarter_num == 4
+    _pres_risk_share_value = risk_share
     if _presentation_q4:
         _assessed_final = active[active["execution_score"].notna()].copy()
         count_low = int(_assessed_final.get("result_achieved", pd.Series(False, index=_assessed_final.index)).fillna(False).astype(bool).sum())
@@ -2696,6 +2788,23 @@ if presentation_mode:
         _pres_risk_medium_label = "🟡 Частково виконано"
         _pres_risk_low_label = "🟢 Результат досягнуто"
         _pres_risk_share_label = "Не досягнуто"
+        _pres_risk_share_value = (count_high / total_active * 100.0) if total_active else None
+        _pres_fourth_label = "Результатів досягнуто"
+        _pres_fourth_value = count_low / len(_assessed_final) * 100.0 if len(_assessed_final) else 0.0
+    elif _presentation_q1:
+        _q1_summary = dashboard_risk_v2.risk_summary(active)
+        count_high = int(_q1_summary.get("preliminary_attention_count") or 0)
+        count_medium = int(_q1_summary.get("preliminary_forecast_count") or 0)
+        count_low = 0
+        _pres_risk_section = "Попередні сигнали I кварталу"
+        _pres_risk_title = "Попередній прогноз без стандартної категоризації ризику"
+        _pres_risk_high_label = "Сигнали уваги"
+        _pres_risk_medium_label = "Сформовано попередніх прогнозів"
+        _pres_risk_low_label = "Стандартних категорій ризику"
+        _pres_risk_share_label = "Попередніх сигналів уваги"
+        _pres_risk_share_value = (count_high / total_active * 100.0) if total_active else None
+        _pres_fourth_label = "Середнє попереднє досягнення"
+        _pres_fourth_value = float(_q1_summary.get("preliminary_forecast_average") or 0.0)
     else:
         _pres_risk_section = "Автоматична оцінка ризиків"
         _pres_risk_title = "Розподіл ризиків недосягнення"
@@ -2703,11 +2812,8 @@ if presentation_mode:
         _pres_risk_medium_label = "🟡 Середній ризик"
         _pres_risk_low_label = "🟢 Низький ризик"
         _pres_risk_share_label = "Частка з ризиком"
-    _pres_fourth_label = "Результатів досягнуто" if _presentation_q4 else "Частка без суттєвого ризику"
-    _pres_fourth_value = (
-        (count_low / len(_assessed_final) * 100.0 if _presentation_q4 and len(_assessed_final) else 0.0)
-        if _presentation_q4 else (float(low_risk_share) if low_risk_share is not None else 0.0)
-    )
+        _pres_fourth_label = "Частка без суттєвого ризику"
+        _pres_fourth_value = float(low_risk_share) if low_risk_share is not None else 0.0
 
     # filter context label
     filter_parts = []
@@ -2744,7 +2850,6 @@ if presentation_mode:
     pres_fin_year = _finance_selected_year(selected_years)
     pres_fin_measures = _prepare_dashboard_finance_measures(
         active,
-        active_period_rows,
         pres_fin_year,
     )
     pres_fin_total = len(pres_fin_measures)
@@ -3108,7 +3213,7 @@ if presentation_mode:
                 <div style="font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.3);margin-bottom:12px;">Загальний висновок системи</div>
                 <div style="font-size:15px;color:rgba(255,255,255,.7);line-height:1.7;">{conclusion_text}</div>
                 <div style="margin-top:16px;display:flex;gap:12px;flex-wrap:wrap;">
-                    <span style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:6px;padding:5px 12px;font-size:11px;color:rgba(255,255,255,.5);font-weight:600;">{_pres_risk_share_label}: {(_format_summary_number((count_high / total_active * 100) if total_active else None) if _presentation_q4 else _format_summary_number(risk_share))}%</span>
+                    <span style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:6px;padding:5px 12px;font-size:11px;color:rgba(255,255,255,.5);font-weight:600;">{_pres_risk_share_label}: {_format_summary_number(_pres_risk_share_value)}%</span>
                     <span style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:6px;padding:5px 12px;font-size:11px;color:rgba(255,255,255,.5);font-weight:600;">Без даних: {without_data} заходів</span>
                 </div>
             </div>
@@ -3303,7 +3408,7 @@ if snapshot_context is not None and snapshot_monitoring_available:
             )
             insight_count += 1
 
-        goal_drops = _goal_quarter_drop_signals(snapshot_years[0], snapshot_quarters[0])
+        goal_drops = _goal_quarter_drop_signals(snapshot_pairs[0][0], snapshot_pairs[0][1])
         for _, row in goal_drops.head(3).iterrows():
             goal_code = escape(clean(row.get("goal_code", "")) or "Без коду")
             drop = _format_summary_number(row.get("Падіння_вп"))
@@ -3342,7 +3447,7 @@ if snapshot_context is not None and snapshot_monitoring_available:
             st.caption("Наскільки збалансовано реалізуються стратегічні пріоритети?")
 
         _latest_risk_summary = snapshot_context.get("period_results", {}).get(
-            (int(snapshot_years[0]), quarter_to_roman(snapshot_quarters[0])), {}
+            (int(snapshot_pairs[0][0]), quarter_to_roman(snapshot_pairs[0][1])), {}
         ).get("risk_summary", {})
         _summary_items = [
             {"key":"coverage", "title":"Покриття моніторингом", "count": _format_summary_number(coverage) + "%", "percent":"Активні заходи з необхідним поданням", "color":"kpi-blue"},
@@ -3544,12 +3649,20 @@ if snapshot_context is not None and snapshot_monitoring_available:
     _activate_dashboard_context(snapshot_context)
     with snapshot_content:
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        if quarter_to_roman(snapshot_quarters[0]) == "IV":
+        if quarter_to_roman(snapshot_pairs[0][1]) == "IV":
             st.markdown('<div class="section-title">Підсумок року</div>', unsafe_allow_html=True)
             st.info("У IV кварталі прогнозний ризик не розраховується. Оцінка базується на фактичному річному результаті.")
         else:
             st.markdown('<div class="section-title">Автоматична оцінка ризиків</div>', unsafe_allow_html=True)
-            if risk_counts.empty:
+            if quarter_to_roman(snapshot_pairs[0][1]) == "I":
+                _q1_risk_summary = dashboard_risk_v2.risk_summary(active)
+                st.info(
+                    "I квартал — попередній прогноз. Стандартні категорії низького / середнього / високого / критичного ризику "
+                    "не застосовуються до появи другого квартального спостереження. "
+                    f"Сформовано прогнозів: {int(_q1_risk_summary.get('preliminary_forecast_count') or 0)}; "
+                    f"сигналів уваги: {int(_q1_risk_summary.get('preliminary_attention_count') or 0)}."
+                )
+            elif risk_counts.empty:
                 st.info("Недостатньо даних для прогнозної оцінки ризику.")
             else:
                 fig_risk_pie = px.pie(
@@ -3595,13 +3708,19 @@ if snapshot_context is not None and snapshot_monitoring_available:
     with snapshot_content:
         st.markdown("<hr class='vis-separator'>", unsafe_allow_html=True)
         st.markdown('<div class="section-title" style="margin-top:0;">Матриця виконання × прогноз</div>', unsafe_allow_html=True)
+        _matrix_preliminary = quarter_to_roman(snapshot_pairs[0][1]) == "I"
+        _matrix_color_text = (
+            "У I кварталі всі точки мають нейтральне попереднє оформлення; "
+            if _matrix_preliminary else "Колір — рівень ризику; "
+        )
         st.markdown(
             '<div class="section-subtitle">X — виконання річного плану; Y — прогнозоване досягнення річного плану. '
-            'Колір — рівень ризику; розмір — кількість заходів. Горизонтальна лінія Y=100% позначає прогнозоване досягнення плану.</div>',
+            + _matrix_color_text
+            + 'розмір — кількість заходів. Горизонтальна лінія Y=100% позначає прогнозоване досягнення плану.</div>',
             unsafe_allow_html=True,
         )
         matrix_df = execution_forecast_matrix.copy()
-        if quarter_to_roman(snapshot_quarters[0]) == "IV":
+        if quarter_to_roman(snapshot_pairs[0][1]) == "IV":
             st.info("IV квартал — підсумок року. Прогнозна матриця більше не застосовується.")
         elif matrix_df.empty:
             st.info("Недостатньо валідних числових прогнозних даних для побудови матриці.")
@@ -3613,11 +3732,11 @@ if snapshot_context is not None and snapshot_monitoring_available:
                 color_discrete_map={
                     "Низький ризик":"#118847", "Середній ризик":"#F4B400",
                     "Високий ризик":"#FF7A45", "Критичний ризик":"#DC4A4A",
-                    "Не оцінюється":"#8A96A8",
+                    "Не оцінюється":"#8A96A8", "Попередній прогноз":"#8A96A8",
                 },
                 labels={"execution":"Виконання річного плану, %",
                         "forecast_attainment":"Прогнозоване досягнення річного плану, %",
-                        "risk_level":"Ризик", "group_size":"Заходів", "group":"ССП"},
+                        "risk_level":"Оцінка", "group_size":"Заходів", "group":"ССП"},
                 hover_data={"execution": ":.1f", "forecast_attainment": ":.1f", "group_size":True, "preliminary":True},
             )
             fig_matrix.add_hline(y=100, line_dash="dash", line_color="#61708A", annotation_text="Річний план 100%")
@@ -3627,8 +3746,8 @@ if snapshot_context is not None and snapshot_monitoring_available:
                                      yaxis=dict(ticksuffix="%", showgrid=True, gridcolor="#F7F9FC"))
             apply_safe_plotly_layout(fig_matrix, has_legend=True)
             render_plotly_chart(fig_matrix, use_container_width=True)
-            if quarter_to_roman(snapshot_quarters[0]) == "I":
-                st.caption("Попередній прогноз: сформовано лише за одним квартальним спостереженням.")
+            if quarter_to_roman(snapshot_pairs[0][1]) == "I":
+                st.caption("Попередній прогноз: сформовано лише за одним квартальним спостереженням. Стандартні категорії ризику в I кварталі не застосовуються.")
 
 
 # ============================================================
@@ -3761,12 +3880,11 @@ if dynamics_context is not None:
         )
 
         q_num_map = {"I": 1, "II": 2, "III": 3, "IV": 4}
-        selected_deadline_periods = sorted({
+        selected_deadline_periods = [
             int(year) * 10 + q_num_map[quarter]
-            for year in dynamics_years
-            for quarter in dynamics_quarters
+            for year, quarter in dynamics_pairs
             if quarter in q_num_map
-        })
+        ]
 
         def end_num_to_label(n):
             y = int(n) // 10
@@ -3880,10 +3998,9 @@ if dynamics_context is not None:
 if finance_context is not None:
     _activate_dashboard_context(finance_context)
     with finance_content:
-        finance_year = _finance_selected_year(finance_years)
+        finance_year = int(selected_finance_year)
         fin_measures = _prepare_dashboard_finance_measures(
             active,
-            active_period_rows,
             finance_year,
         )
         fin_total = len(fin_measures)
@@ -3903,16 +4020,23 @@ if finance_context is not None:
         ).dropna()
         fin_budget_sum = float(fin_budget_values.sum()) if not fin_budget_values.empty else None
         fin_budget_count = len(fin_budget_rows)
-        finance_year_note = (
-            f"Для фінансових сум використано останній обраний рік — {finance_year}."
-            if False
-            else f"Фінансові суми наведено за {finance_year} рік."
-        )
+        finance_reporting_pair = finance_context.get("finance_reporting_pair")
+        if finance_reporting_pair is None:
+            finance_year_note = (
+                f"Фінансові план і факт наведено за {finance_year} рік; "
+                "звітний зріз виконання за цей рік ще відсутній, тому стан виконання та еластичність — н/д."
+            )
+        else:
+            _finance_report_year, _finance_report_quarter = finance_reporting_pair
+            finance_year_note = (
+                f"Фінансові план і факт наведено за {finance_year} рік; для порівняння зі станом виконання "
+                f"використано останній доступний звітний зріз цього року — {_finance_report_quarter} квартал."
+            )
 
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
         st.markdown('<div class="section-title">💰 Фінансування заходів</div>', unsafe_allow_html=True)
         st.markdown(
-            f'<div class="section-subtitle">{snapshot_label} · {finance_year_note} '
+            f'<div class="section-subtitle">{finance_year_note} '
             'Планові обсяги — зі стратегічної матриці; фактичне освоєння — з єдиного фінансового модуля.</div>',
             unsafe_allow_html=True,
         )
@@ -4197,17 +4321,16 @@ if finance_context is not None:
 if finance_context is not None:
     _activate_dashboard_context(finance_context)
     with finance_content:
-        finance_year = _finance_selected_year(finance_years)
+        finance_year = int(selected_finance_year)
         fin_measures = _prepare_dashboard_finance_measures(
             active,
-            active_period_rows,
             finance_year,
         )
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
         st.markdown('<div class="section-title">Таблиця заходів: фінансові дані</div>', unsafe_allow_html=True)
         st.markdown(
             f'<div class="section-subtitle">Фінансові відомості за {finance_year} рік; '
-            'факт та еластичність з’являються після внесення файлу фактичного освоєння.</div>',
+            'план і факт є річними, а стан виконання та еластичність використовують останній доступний звітний зріз цього року.</div>',
             unsafe_allow_html=True,
         )
         financed_table_rows = fin_measures[
@@ -4820,11 +4943,12 @@ def _render_indicator_trajectory_section():
 def _render_dash_auto_summary():
     try:
         _q_order = ["I", "II", "III", "IV"]
-        _cur_years = sorted(int(y) for y in (years_for_calc or []))
-        _cur_quarters = [q for q in _q_order if q in (quarters_for_calc or [])]
-        if not _cur_years or not _cur_quarters:
+        _context_pairs = sorted(
+            list(pairs_for_calc or []), key=lambda pair: core_period_number(pair[0], pair[1])
+        )
+        if not _context_pairs:
             return
-        _cy, _cq = _cur_years[-1], _cur_quarters[-1]
+        _cy, _cq = _context_pairs[-1]
         _cq_i = _q_order.index(_cq)
         if _cq_i > 0:
             _py, _pq = _cy, _q_order[_cq_i - 1]
@@ -4920,6 +5044,7 @@ if dynamics_context is not None:
         st.markdown('</div>', unsafe_allow_html=True)
 
 if snapshot_context is not None and snapshot_monitoring_available:
+    _activate_dashboard_context(snapshot_context)
     _render_dash_auto_summary()
 
 render_footer()

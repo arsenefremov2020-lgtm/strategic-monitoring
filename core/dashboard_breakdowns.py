@@ -12,6 +12,7 @@ from core.dashboard_risk import attach_risk, risk_summary
 
 
 def period_pairs(years: Iterable[Any], quarters: Iterable[Any]) -> list[tuple[int, str]]:
+    """Legacy Cartesian compatibility helper. Dashboard UI must pass explicit pairs."""
     pairs = set()
     for year in years or []:
         for quarter in quarters or []:
@@ -270,15 +271,19 @@ def execution_forecast_matrix(snapshot: pd.DataFrame, *, group_col: str = "depar
         forecast = pd.to_numeric(group.get("forecast_attainment_pct"), errors="coerce").dropna()
         if execution.empty or forecast.empty:
             continue
+        preliminary = quarter_to_roman(group["quarter"].iloc[0]) == "I"
         levels = group.get("risk_level", pd.Series(index=group.index, dtype=object)).dropna()
         risk = None
-        for candidate in ["Критичний ризик", "Високий ризик", "Середній ризик", "Низький ризик"]:
-            if candidate in set(levels):
-                risk = candidate; break
+        if not preliminary:
+            for candidate in ["Критичний ризик", "Високий ризик", "Середній ризик", "Низький ризик"]:
+                if candidate in set(levels):
+                    risk = candidate
+                    break
         rows.append({
             "group": clean(group_name), "execution": float(execution.mean()),
-            "forecast_attainment": float(forecast.mean()), "risk_level": risk or "Не оцінюється",
+            "forecast_attainment": float(forecast.mean()),
+            "risk_level": "Попередній прогноз" if preliminary else (risk or "Не оцінюється"),
             "group_size": int(group["code"].nunique()),
-            "preliminary": quarter_to_roman(group["quarter"].iloc[0]) == "I",
+            "preliminary": preliminary,
         })
     return pd.DataFrame(rows)

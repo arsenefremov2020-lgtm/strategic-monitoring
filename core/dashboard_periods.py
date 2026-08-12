@@ -13,15 +13,12 @@ from typing import Any, Iterable
 import pandas as pd
 
 from core.periods import period_number, quarter_key, quarter_to_roman
+from core.timeutils import now_kyiv
 
 EXCLUDED_EXECUTION_STATUSES = {"Не настав час", "Втратило актуальність"}
 APPROVED_STATUS = "Погоджено"
 QUARTER_NUM = {"I": 1, "II": 2, "III": 3, "IV": 4}
 QUARTER_ROMAN = {1: "I", 2: "II", 3: "III", 4: "IV"}
-
-# Historical reporting periods in which monitoring was not conducted.
-# Kept centrally so UI pages and trajectory history cannot diverge.
-SYSTEM_MONITORING_NOT_CONDUCTED = {("2026", 1), ("2026", 2)}
 
 
 def clean(value: Any) -> str:
@@ -126,12 +123,10 @@ def monitoring_conducted(
     if not q_num or not year_key:
         return False
 
-    # ``locked_periods=None`` means production/system semantics: historical
-    # non-monitoring periods plus live period_locks.  Passing an explicit set
-    # is a pure-calculation override used by archive reconstruction/tests.
+    # ``period_locks`` is the only centralized mechanism that disables
+    # monitoring. Passing an explicit set keeps archive reconstruction/tests
+    # pure while production reads the live lock table.
     if locked_periods is None:
-        if (year_key, q_num) in SYSTEM_MONITORING_NOT_CONDUCTED:
-            return False
         try:
             from core.period_locks import is_period_locked
             return not is_period_locked(year, quarter)
@@ -282,14 +277,57 @@ def make_period_context(
     )
 
 
-def current_reporting_period(
-    requests_df: pd.DataFrame | None = None,
+def reporting_period_range(
+    start_year: Any,
+    start_quarter: Any,
+    end_year: Any,
+    end_quarter: Any,
+) -> list[tuple[int, str]]:
+    """Return an inclusive chronological reporting-quarter range.
+
+    Year and quarter are treated as one period identity. The helper never
+    creates a Cartesian product and never silently swaps an invalid range.
+    """
+    start_y = int(float(start_year))
+    end_y = int(float(end_year))
+    start_q = QUARTER_NUM[quarter_to_roman(start_quarter)]
+    end_q = QUARTER_NUM[quarter_to_roman(end_quarter)]
+    start_num = start_y * 10 + start_q
+    end_num = end_y * 10 + end_q
+    if start_num > end_num:
+        raise ValueError("Початок періоду не може бути пізніше за кінець періоду.")
+
+    result: list[tuple[int, str]] = []
+    year, quarter = start_y, start_q
+    while (year * 10 + quarter) <= end_num:
+        result.append((year, QUARTER_ROMAN[quarter]))
+        quarter += 1
+        if quarter > 4:
+            year += 1
+            quarter = 1
+    return result
+
+
+def _calendar_ceiling(as_of: Any = None) -> tuple[int, int]:
+    moment = pd.Timestamp(now_kyiv() if as_of is None else as_of)
+    if pd.isna(moment):
+        raise ValueError(f"Invalid as_of value: {as_of!r}")
+    return int(moment.year), _quarter_from_month(int(moment.month))
+
+
+def latest_reporting_period_in_year(
+    requests_df: pd.DataFrame | None,
+    year: int,
     *,
     locked_periods: Iterable[tuple[Any, Any]] | None = None,
-    fallback_year: int | None = None,
-    fallback_quarter: int | None = None,
-) -> tuple[int, str]:
-    """Latest real unlocked reporting period, with a completed-quarter fallback."""
+    as_of: Any = None,
+) -> tuple[int, str] | None:
+    """Latest real, unlocked reporting period with data inside one year.
+
+    Future quarters are excluded by the Kyiv-calendar ceiling. Unlike the
+    system fallback, this helper does not invent a reporting quarter when the
+    selected finance year has no reporting data.
+    """
     if locked_periods is None:
         try:
             from core.period_locks import load_locked_periods
@@ -297,16 +335,71 @@ def current_reporting_period(
         except Exception:
             locked_periods = set()
 
+    selected_year = int(year)
+    calendar_year, calendar_quarter = _calendar_ceiling(as_of)
+    if selected_year > calendar_year:
+        return None
+    ceiling_q = 4 if selected_year < calendar_year else calendar_quarter
+
+    if requests_df is None or requests_df.empty:
+        return None
+    data = _prepare_requests(requests_df, approved_only=False)
+    candidates: list[int] = []
+    for _, row in data.iterrows():
+        row_period = pd.to_numeric(pd.Series([row.get("_period")]), errors="coerce").iloc[0]
+        if pd.isna(row_period):
+            continue
+        row_period = int(row_period)
+        row_year, row_quarter = row_period // 10, row_period % 10
+        if (
+            row_year == selected_year
+            and row_quarter in QUARTER_ROMAN
+            and row_quarter <= ceiling_q
+            and monitoring_conducted(row_year, row_quarter, locked_periods)
+        ):
+            candidates.append(int(row_quarter))
+    if not candidates:
+        return None
+    quarter = max(candidates)
+    return selected_year, QUARTER_ROMAN[quarter]
+
+
+def current_reporting_period(
+    requests_df: pd.DataFrame | None = None,
+    *,
+    locked_periods: Iterable[tuple[Any, Any]] | None = None,
+    fallback_year: int | None = None,
+    fallback_quarter: int | None = None,
+    as_of: Any = None,
+) -> tuple[int, str]:
+    """Latest real unlocked reporting period not later than today in Kyiv.
+
+    Monitoring rows from future calendar quarters can never move the default
+    reporting period forward. If no real reporting rows exist, the fallback is
+    the latest non-future, unlocked quarter.
+    """
+    if locked_periods is None:
+        try:
+            from core.period_locks import load_locked_periods
+            locked_periods = load_locked_periods()
+        except Exception:
+            locked_periods = set()
+
+    calendar_year, calendar_quarter = _calendar_ceiling(as_of)
+    calendar_ceiling = calendar_year * 10 + calendar_quarter
+
     candidates: list[tuple[int, int]] = []
     if requests_df is not None and not requests_df.empty:
         data = _prepare_requests(requests_df, approved_only=False)
         for _, row in data.iterrows():
-            try:
-                y = int(float(row.get("year")))
-                q = QUARTER_NUM.get(quarter_to_roman(row.get("quarter")))
-            except Exception:
+            row_period = pd.to_numeric(pd.Series([row.get("_period")]), errors="coerce").iloc[0]
+            if pd.isna(row_period):
                 continue
-            if q and monitoring_conducted(y, q, locked_periods):
+            candidate_num = int(row_period)
+            y, q = candidate_num // 10, candidate_num % 10
+            if q not in QUARTER_ROMAN or candidate_num > calendar_ceiling:
+                continue
+            if monitoring_conducted(y, q, locked_periods):
                 candidates.append((y, q))
     if candidates:
         y, q = max(candidates)
@@ -314,14 +407,11 @@ def current_reporting_period(
 
     if fallback_year is not None and fallback_quarter is not None:
         y, q = int(fallback_year), int(fallback_quarter)
+        if y * 10 + q > calendar_ceiling:
+            y, q = calendar_year, calendar_quarter
     else:
-        from datetime import datetime as _dt
-        now = _dt.now()
-        current_q = _quarter_from_month(now.month)
-        if current_q == 1:
-            y, q = now.year - 1, 4
-        else:
-            y, q = now.year, current_q - 1
+        y, q = calendar_year, calendar_quarter
+
     while not monitoring_conducted(y, q, locked_periods):
         q -= 1
         if q < 1:

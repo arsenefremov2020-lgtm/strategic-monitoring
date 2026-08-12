@@ -259,6 +259,7 @@ def deputy_summary(results: dict) -> pd.DataFrame:
 def execution_forecast_matrix(snapshot: pd.DataFrame, *, group_col: str = "department") -> pd.DataFrame:
     """Group data for the Execution × Forecast matrix.
 
+    Only measures with a valid numeric forecast contribute to a matrix point.
     Q4 returns an empty frame because forecast is no longer applicable.
     """
     if snapshot is None or snapshot.empty or quarter_to_roman(snapshot["quarter"].iloc[0]) == "IV":
@@ -267,12 +268,14 @@ def execution_forecast_matrix(snapshot: pd.DataFrame, *, group_col: str = "depar
         return pd.DataFrame()
     rows = []
     for group_name, group in snapshot.groupby(group_col, dropna=False):
-        execution = pd.to_numeric(group["execution_score"], errors="coerce").dropna()
-        forecast = pd.to_numeric(group.get("forecast_attainment_pct"), errors="coerce").dropna()
-        if execution.empty or forecast.empty:
+        eligible = group.copy()
+        eligible["_execution_num"] = pd.to_numeric(eligible.get("execution_score"), errors="coerce")
+        eligible["_forecast_num"] = pd.to_numeric(eligible.get("forecast_attainment_pct"), errors="coerce")
+        eligible = eligible[eligible["_execution_num"].notna() & eligible["_forecast_num"].notna()].copy()
+        if eligible.empty:
             continue
-        preliminary = quarter_to_roman(group["quarter"].iloc[0]) == "I"
-        levels = group.get("risk_level", pd.Series(index=group.index, dtype=object)).dropna()
+        preliminary = quarter_to_roman(eligible["quarter"].iloc[0]) == "I"
+        levels = eligible.get("risk_level", pd.Series(index=eligible.index, dtype=object)).dropna()
         risk = None
         if not preliminary:
             for candidate in ["Критичний ризик", "Високий ризик", "Середній ризик", "Низький ризик"]:
@@ -280,10 +283,57 @@ def execution_forecast_matrix(snapshot: pd.DataFrame, *, group_col: str = "depar
                     risk = candidate
                     break
         rows.append({
-            "group": clean(group_name), "execution": float(execution.mean()),
-            "forecast_attainment": float(forecast.mean()),
+            "group": clean(group_name),
+            "execution": float(eligible["_execution_num"].mean()),
+            "forecast_attainment": float(eligible["_forecast_num"].mean()),
             "risk_level": "Попередній прогноз" if preliminary else (risk or "Не оцінюється"),
-            "group_size": int(group["code"].nunique()),
+            "group_size": int(eligible["code"].nunique()),
             "preliminary": preliminary,
         })
     return pd.DataFrame(rows)
+
+
+def execution_forecast_diagnostics(snapshot: pd.DataFrame, *, group_col: str = "department") -> dict[str, int]:
+    """Explain how many measures can actually enter the forecast matrix.
+
+    Submission coverage and matrix eligibility are deliberately separated: a
+    measure needs a numeric current fact/annual target and, in Q2-Q3, a valid
+    previous-quarter fact before a forecast exists.
+    """
+    empty = {
+        "total_assessed": 0,
+        "numeric_current_count": 0,
+        "numeric_with_previous_fact_count": 0,
+        "numeric_forecast_count": 0,
+        "groups_in_matrix": 0,
+    }
+    if snapshot is None or snapshot.empty:
+        return empty
+
+    data = snapshot.copy()
+    code = data.get("code", pd.Series(data.index.astype(str), index=data.index)).astype(str)
+    assessed_mask = pd.to_numeric(data.get("execution_score"), errors="coerce").notna()
+    numeric_mask = data.get("numeric", pd.Series(False, index=data.index)).fillna(False).astype(bool)
+    numeric_current_mask = numeric_mask & assessed_mask
+    forecast_mask = numeric_current_mask & pd.to_numeric(
+        data.get("forecast_attainment_pct"), errors="coerce"
+    ).notna()
+
+    quarter = quarter_to_roman(data.get("quarter", pd.Series([""])).iloc[0])
+    if quarter in {"II", "III"}:
+        previous_mask = numeric_current_mask & pd.to_numeric(
+            data.get("current_increment"), errors="coerce"
+        ).notna()
+    elif quarter == "I":
+        previous_mask = pd.Series(False, index=data.index)
+    else:
+        previous_mask = pd.Series(False, index=data.index)
+
+    matrix = execution_forecast_matrix(data, group_col=group_col)
+    return {
+        "total_assessed": int(code[assessed_mask].nunique()),
+        "numeric_current_count": int(code[numeric_current_mask].nunique()),
+        "numeric_with_previous_fact_count": int(code[previous_mask].nunique()),
+        "numeric_forecast_count": int(code[forecast_mask].nunique()),
+        "groups_in_matrix": int(len(matrix)),
+    }

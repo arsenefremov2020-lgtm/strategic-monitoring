@@ -8,7 +8,15 @@ import pandas as pd
 from core.dashboard_execution import NO_VALUES, YES_VALUES, to_number
 from core.dashboard_periods import clean, parse_measure_period, period_number, quarter_to_roman, valid_observation_history
 
-RISK_LABELS = ["Низький ризик", "Середній ризик", "Високий ризик", "Критичний ризик"]
+RISK_ORDER = ["Критичний ризик", "Високий ризик", "Середній ризик", "Низький ризик"]
+RISK_COLORS = {
+    "Критичний ризик": "#DC4A4A",
+    "Високий ризик": "#FF7A45",
+    "Середній ризик": "#F4B400",
+    "Низький ризик": "#118847",
+    "Не оцінюється": "#8A96A8",
+}
+RISK_LABELS = list(RISK_ORDER)
 RISKY_LEVELS = {"Високий ризик", "Критичний ризик"}
 PROBLEM_SHARE_CONTROLLED_MAX = 15.0
 PROBLEM_SHARE_ATTENTION_MAX = 35.0

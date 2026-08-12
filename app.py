@@ -11,10 +11,12 @@ from core.text_utils import (
     raw_value, clean_value, strip_leading_code,
 )
 from core import statuses as core_statuses
-from core.period_locks import all_periods_locked, is_period_locked
+from core.period_locks import is_period_locked
 from core.periods import quarter_to_roman
 from core.timeutils import now_kyiv
 from core import monitoring_data
+from core import dashboard_periods as dashboard_periods_v2
+from core import dashboard_execution as dashboard_execution_v2
 from core import exports as core_exports
 from core.strategic_data import load_strat_matrix as core_load_strat_matrix
 from core.access import (
@@ -1004,18 +1006,6 @@ def count_filtered_status(filtered_measures, status_name):
     return len(filtered_measures[filtered_measures["monitoring_status"] == status_name])
 
 
-def calculate_completion(filtered_measures, years=None, quarters=None):
-    if filtered_measures.empty:
-        return 0, 0
-    if years is not None and quarters is not None and all_periods_locked(years, quarters):
-        return 0, 0
-
-    done_count = len(filtered_measures[filtered_measures.get("execution_status", pd.Series(index=filtered_measures.index, dtype=str)) == "Виконано"])
-    total_count = len(filtered_measures)
-
-    percent = round((done_count / total_count) * 100, 2) if total_count else 0
-
-    return done_count, percent
 
 
 # ------------------------------------------------------------
@@ -1247,7 +1237,6 @@ def render_measure_table(measures, monitoring_df, quarter_data, selected_years, 
             <th class="col-code" rowspan="3">Код цілі</th>
             <th class="col-code" rowspan="3">Код завдання</th>
         """
-
     html = f"""
     <div class="table-scroll measures-scroll">
     <table class="custom-table" style="min-width:{5350 + (220 if show_context_codes else 0)}px;">
@@ -1651,7 +1640,7 @@ st.markdown(
             <div class="info-card-title">Інструкція по роботі з системою</div>
             <div>
                 1. Оберіть параметри фільтрації із випадних списків: індекс самостійного структурного підрозділу, звітний період та необхідний режим перегляду даних.<br>
-                2. Система автоматично застосує обрані параметри та відобразить відповідні дані.<br>
+                2. Оберіть необхідні параметри та натисніть «Застосувати фільтри».<br>
                 3. Розгорніть відповідні блоки та перегляньте усі відомості щодо стратегічних цілей, завдань та заходів.<br>
                 4. Для переходу до внесення відомостей натисніть зелену кнопку.
             </div>
@@ -1796,7 +1785,7 @@ with st.form("main_filters_form"):
     apply_col, reset_col = st.columns([1, 1])
     with apply_col:
         st.form_submit_button(
-            "Застосувати параметри відбору",
+            "Застосувати фільтри",
             use_container_width=True,
             on_click=apply_main_filters_form,
         )
@@ -1867,6 +1856,39 @@ filtered_measures = apply_measure_filters(
     search_query,
     strat_df=df,
 )
+
+# Shared execution period for Goal/Task headers. When the user has explicitly
+# selected periods, use the chronologically latest selected pair; with untouched
+# empty period widgets, use the system current reporting period rather than
+# silently treating future quarters of the year as reported.
+if selected_years_raw or selected_quarters_raw:
+    _home_reporting_period = dashboard_periods_v2.selected_reporting_period(selected_years, selected_quarters)
+else:
+    _home_reporting_period = dashboard_periods_v2.current_reporting_period(monitoring_df)
+if _home_reporting_period is None:
+    _home_reporting_period = dashboard_periods_v2.current_reporting_period(monitoring_df)
+_home_reporting_year, _home_reporting_quarter = _home_reporting_period
+_home_hierarchy = dashboard_execution_v2.hierarchy_for_period(
+    filtered_measures,
+    monitoring_df,
+    _home_reporting_year,
+    _home_reporting_quarter,
+)
+_home_snapshot = _home_hierarchy.get("snapshot", pd.DataFrame())
+_home_task_scores = _home_hierarchy.get("task_scores", pd.DataFrame())
+_home_goal_scores = _home_hierarchy.get("goal_scores", pd.DataFrame())
+_home_task_score_map = {
+    raw_value(row.get("task_code")): row.get("execution")
+    for _, row in _home_task_scores.iterrows()
+}
+_home_goal_score_map = {
+    raw_value(row.get("goal_code")): row.get("by_tasks")
+    for _, row in _home_goal_scores.iterrows()
+}
+_home_done_count = int(
+    _home_snapshot.get("status_display", pd.Series(index=_home_snapshot.index, dtype=str))
+    .astype(str).eq("Виконано").sum()
+) if not _home_snapshot.empty else 0
 
 # Індикатори Цілей/Завдань — повноцінна частина ієрархії Головної.
 # Вони фільтруються власними релевантними параметрами (ССП, Ціль, пошук),
@@ -1944,7 +1966,7 @@ visible_tasks = tasks_all[
     tasks_all["code"].astype(str).str.strip().isin(filtered_task_codes)
 ].copy()
 
-done_count, completion_percent = calculate_completion(filtered_measures, selected_years, selected_quarters)
+done_count = _home_done_count
 
 approved_filtered = count_filtered_status(filtered_measures, "Погоджено")
 waiting_filtered = count_filtered_status(filtered_measures, "На розгляді")
@@ -1979,6 +2001,10 @@ st.caption(
     f"ССП: {ssp_label}. "
     f"Параметри: {selected_status_mode}. "
     f"Заходів із ризиками: {risk_count}."
+)
+st.caption(
+    f"Розрахунок виконання — станом на {_home_reporting_quarter} квартал "
+    f"{_home_reporting_year} року."
 )
 
 # ------------------------------------------------------------
@@ -2051,10 +2077,10 @@ for _, goal in visible_goals.iterrows():
     if goal_filtered_measures.empty and not goal_indicators and tasks.empty:
         continue
 
-    goal_done, goal_percent = calculate_completion(
-        goal_filtered_measures, selected_years, selected_quarters
+    goal_percent = _home_goal_score_map.get(goal_code)
+    goal_percent_label = (
+        f"{float(goal_percent):.1f}%" if goal_percent is not None and pd.notna(goal_percent) else "н/д"
     )
-    goal_percent_label = f"{goal_percent}%" if not goal_filtered_measures.empty else "н/д"
 
     goal_label = (
         f"{goal_code} {goal_name} | "
@@ -2064,8 +2090,9 @@ for _, goal in visible_goals.iterrows():
     )
 
     with st.expander(goal_label, expanded=st.session_state.expand_all_goals):
-        if not goal_filtered_measures.empty:
-            st.progress(min(goal_percent / 100, 1.0))
+        if goal_percent is not None and pd.notna(goal_percent):
+            st.progress(min(max(float(goal_percent), 0.0) / 100, 1.0))
+        st.caption("Оцінка через виконання завдань стратегічної цілі.")
 
         if goal_indicators:
             st.markdown(
@@ -2099,10 +2126,10 @@ for _, goal in visible_goals.iterrows():
             if task_measures.empty and not task_indicators:
                 continue
 
-            task_done, task_percent = calculate_completion(
-                task_measures, selected_years, selected_quarters
+            task_percent = _home_task_score_map.get(task_code)
+            task_percent_label = (
+                f"{float(task_percent):.1f}%" if task_percent is not None and pd.notna(task_percent) else "н/д"
             )
-            task_percent_label = f"{task_percent}%" if not task_measures.empty else "н/д"
 
             task_label = (
                 f"{task_code} {task_name} | "
@@ -2111,6 +2138,8 @@ for _, goal in visible_goals.iterrows():
             )
 
             with st.expander(task_label, expanded=st.session_state.expand_all_goals):
+                if task_percent is not None and pd.notna(task_percent):
+                    st.progress(min(max(float(task_percent), 0.0) / 100, 1.0))
                 if task_indicators:
                     st.markdown(
                         '<div class="section-title">Індикатори досягнення завдання</div>',

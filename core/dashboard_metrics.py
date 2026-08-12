@@ -1,57 +1,34 @@
-"""Shared calculation primitives for Dashboard-derived analytical views.
+"""Backward-compatible primitives for Dashboard execution v2.
 
-This module is the single source for basic execution scoring used by the
-Dashboard and Analytics. It deliberately does **not** contain or replace any
-formula from pages/3_Оцінка_МіО.py: MіО remains a separate methodology.
+Business formulas live in the specialized ``dashboard_*`` modules.  This file
+keeps small compatibility helpers used by archive/older analytical code and
+routes KPI snapshots to the v2 single source of truth.
 """
-
 from __future__ import annotations
 
-import re
 from typing import Any
 
 import pandas as pd
 
 from core import statuses as core_statuses
-from core.periods import quarter_key
-
-QUARTER_FRACTIONS = {1: 0.25, 2: 0.50, 3: 0.75, 4: 1.00}
-
-
-def clean(value: Any) -> str:
-    if value is None:
-        return ""
-    try:
-        if pd.isna(value):
-            return ""
-    except (TypeError, ValueError):
-        pass
-    text = str(value).strip()
-    return "" if text.lower() in {"nan", "none", "null"} else text
+from core.dashboard_execution import (
+    DASHBOARD_FORMULA_VERSION,
+    normalize_status,
+    numeric_attainment,
+    plan_scores,
+    score_measure,
+    to_number,
+    build_quarter_snapshot,
+)
+from core.dashboard_periods import clean, latest_approved_exact_period
 
 
 def normalize_text(value: Any) -> str:
     return clean(value).lower().replace("і", "i")
 
 
-def to_number(value: Any) -> float | None:
-    text = clean(value).replace("\u00a0", " ").replace(" ", "").replace(",", ".")
-    match = re.search(r"[-+]?\d+(?:\.\d+)?", text)
-    if not match:
-        return None
-    try:
-        return float(match.group(0))
-    except ValueError:
-        return None
-
-
 def status_display(status: Any) -> str:
-    """Dashboard execution display semantics.
-
-    Missing submission intentionally remains a zero-performing state on the
-    Dashboard, as required by the management methodology, but submission
-    coverage is still tracked separately by the caller.
-    """
+    """Legacy display primitive retained for non-v2 external callers."""
     raw = clean(status)
     if raw in {"", "Не подано"}:
         return "Не виконано"
@@ -68,29 +45,30 @@ def status_score(status: Any) -> float | None:
 
 
 def plan_fact_percent(actual: Any, target: Any) -> float | None:
-    actual_num = to_number(actual)
-    target_num = to_number(target)
-    actual_text = normalize_text(actual)
-    target_text = normalize_text(target)
-    if actual_num is not None and target_num is not None and target_num != 0:
-        return round(min((actual_num / target_num) * 100, 100), 2)
-    yes = {"так", "yes"}
-    no = {"нi", "ні", "no"}
-    if target_text in yes or actual_text in yes | no:
-        if actual_text in yes:
-            return 100.0
-        if actual_text in no:
-            return 0.0
-    return None
+    _raw, execution = numeric_attainment(actual, target)
+    if execution is not None:
+        return round(float(execution), 2)
+    scored = score_measure("", actual, target)
+    return scored.get("execution_score") if scored.get("yes_no") else None
 
 
 def is_quantitative_plan_fact(actual: Any, target: Any) -> bool:
-    actual_num = to_number(actual)
-    target_num = to_number(target)
-    return actual_num is not None and target_num is not None and target_num != 0
+    fact = to_number(actual)
+    plan = to_number(target)
+    return fact is not None and plan not in (None, 0)
+
+
+# Legacy compatibility only.  Dashboard v2 never uses these quarter fractions
+# for execution, risk, forecast or management conclusions.
+QUARTER_FRACTIONS = {1: 0.25, 2: 0.50, 3: 0.75, 4: 1.00}
 
 
 def traffic_light(score: Any) -> str:
+    """Legacy display helper retained for external callers.
+
+    It is intentionally not used by Dashboard v2 as an "on track / behind"
+    assessment; risk is calculated in ``core.dashboard_risk``.
+    """
     if score is None or pd.isna(score):
         return "⚪ Не оцінюється"
     score = float(score)
@@ -102,6 +80,7 @@ def traffic_light(score: Any) -> str:
 
 
 def expected_completion_for_quarter(quarter_num: Any) -> float:
+    """Legacy compatibility helper; not a Dashboard v2 normative target."""
     try:
         q = int(quarter_num)
     except (TypeError, ValueError):
@@ -110,48 +89,19 @@ def expected_completion_for_quarter(quarter_num: Any) -> float:
 
 
 def deviation_for_period(completion: Any, quarter_num: Any) -> float:
-    expected = expected_completion_for_quarter(quarter_num)
-    return round(float(completion or 0) - expected, 2)
-
+    """Legacy compatibility helper; Dashboard v2 does not consume it."""
+    return round(float(completion or 0) - expected_completion_for_quarter(quarter_num), 2)
 
 def latest_approved_records(requests_df: pd.DataFrame, year: Any, quarter: Any) -> pd.DataFrame:
-    """One final-approved measure request per code for an exact period."""
-    if requests_df is None or requests_df.empty:
-        return pd.DataFrame(columns=["strat_code"])
-    data = requests_df.copy()
-    for col in ["id", "year", "quarter", "strat_code", "approval_status", "submitted_at", "object_kind"]:
-        if col not in data.columns:
-            data[col] = ""
-    data = data[
-        (pd.to_numeric(data["year"], errors="coerce") == int(year))
-        & (data["quarter"].map(quarter_key) == quarter_key(quarter))
-        & (data["approval_status"].astype(str).str.strip() == "Погоджено")
-        & (data["object_kind"].fillna("measure").astype(str).str.strip().str.lower() != "indicator")
-    ].copy()
-    if data.empty:
-        return data
-    data["_submitted_sort"] = pd.to_datetime(data["submitted_at"], errors="coerce", utc=True)
-    data["_id_sort"] = pd.to_numeric(data["id"], errors="coerce").fillna(-1)
-    return (
-        data.sort_values(["strat_code", "_submitted_sort", "_id_sort"], na_position="first")
-        .groupby("strat_code", as_index=False, sort=False)
-        .tail(1)
-        .drop(columns=["_submitted_sort", "_id_sort"])
-    )
+    return latest_approved_exact_period(requests_df, int(year), quarter)
 
 
 def performance_score(status: Any, actual: Any, target: Any) -> float | None:
-    ratio = plan_fact_percent(actual, target)
-    return ratio if ratio is not None else status_score(status)
+    return score_measure(status, actual, target).get("execution_score")
 
 
 def is_problem(status: Any, performance: Any, *, has_risk: bool = False) -> bool:
-    """Shared basic problem flag for analytical views.
-
-    Mirrors the Dashboard's management threshold: missing data, an explicit
-    risk, or performance below 75% requires attention. Non-assessable statuses
-    are not labelled problematic solely because their score is missing.
-    """
+    """Legacy compatibility flag; Dashboard v2 never uses it for conclusions/risk."""
     display = status_display(status)
     if display in {"Не настав час", "Втратило актуальність"}:
         return bool(has_risk)
@@ -163,8 +113,6 @@ def is_problem(status: Any, performance: Any, *, has_risk: bool = False) -> bool
         return False
     return float(performance) < 75
 
-DASHBOARD_FORMULA_VERSION = "dashboard-execution-v1"
-
 
 def build_period_kpi_snapshot(
     strat_df: pd.DataFrame,
@@ -172,99 +120,17 @@ def build_period_kpi_snapshot(
     year: int,
     quarter: Any,
 ) -> dict[str, Any]:
-    """Freeze the Dashboard execution/coverage KPI for one exact period.
-
-    The function intentionally contains only the stable primitives needed by
-    the historical line.  It does not import the Streamlit page and therefore
-    can be used by the archive job.  Missing submissions keep the Dashboard's
-    conservative score of zero, while non-assessable statuses are excluded.
-    """
-    from core import periods as core_periods
-
-    if strat_df is None or strat_df.empty:
-        return {
-            "year": int(year),
-            "quarter": core_periods.quarter_to_roman(quarter),
-            "execution": 0.0,
-            "coverage": 0.0,
-            "formula_version": DASHBOARD_FORMULA_VERSION,
-            "population_size": 0,
-        }
-
-    measures = strat_df[strat_df.get("object_type", "").astype(str) == "measure"].copy()
-    if measures.empty:
-        return {
-            "year": int(year),
-            "quarter": core_periods.quarter_to_roman(quarter),
-            "execution": 0.0,
-            "coverage": 0.0,
-            "formula_version": DASHBOARD_FORMULA_VERSION,
-            "population_size": 0,
-        }
-
-    selected_period = core_periods.period_number(year, quarter)
-    measures["_active"] = measures.apply(
-        lambda row: core_periods.get_period_state(
-            core_periods.parse_period(row.get("measure_start_date", row.get("start_period", ""))),
-            core_periods.parse_period(row.get("measure_end_date", row.get("end_period", ""))),
-            selected_period,
-        ) == "active",
-        axis=1,
-    )
-    active = measures[measures["_active"]].copy()
-    if active.empty:
-        return {
-            "year": int(year),
-            "quarter": core_periods.quarter_to_roman(quarter),
-            "execution": 0.0,
-            "coverage": 0.0,
-            "formula_version": DASHBOARD_FORMULA_VERSION,
-            "population_size": 0,
-        }
-
-    period_requests = latest_approved_records(requests_df, year, quarter)
-    request_cols = [
-        col for col in ["strat_code", "status", "numeric_value", "value_text"]
-        if col in period_requests.columns
-    ]
-    merged = active.merge(
-        period_requests[request_cols] if request_cols else pd.DataFrame(columns=["strat_code"]),
-        left_on="code",
-        right_on="strat_code",
-        how="left",
-    )
-    if "status" not in merged.columns:
-        merged["status"] = ""
-    merged["_submitted"] = merged["strat_code"].notna()
-    merged["status"] = merged["status"].fillna("Не подано")
-    target_col = f"target_{int(year)}"
-    merged["_target"] = merged[target_col] if target_col in merged.columns else ""
-    if "numeric_value" not in merged.columns:
-        merged["numeric_value"] = None
-    if "value_text" not in merged.columns:
-        merged["value_text"] = None
-    merged["_actual"] = merged.apply(
-        lambda row: row.get("numeric_value")
-        if clean(row.get("numeric_value"))
-        else row.get("value_text"),
-        axis=1,
-    )
-    merged["_display"] = merged["status"].map(status_display)
-    merged["_assessed"] = ~merged["_display"].isin({"Не настав час", "Втратило актуальність"})
-    merged["_performance"] = merged.apply(
-        lambda row: performance_score(row.get("status"), row.get("_actual"), row.get("_target")),
-        axis=1,
-    )
-    assessed = merged[merged["_assessed"]].copy()
-    execution = 0.0 if assessed.empty else round(
-        pd.to_numeric(assessed["_performance"], errors="coerce").fillna(0).mean(), 2
-    )
-    coverage = round(float(merged["_submitted"].sum()) / len(merged) * 100, 2) if len(merged) else 0.0
+    """Archive-compatible KPI payload calculated by the v2 shared methodology."""
+    snapshot = build_quarter_snapshot(strat_df, requests_df, year, quarter)
+    scores = plan_scores(snapshot)
     return {
         "year": int(year),
-        "quarter": core_periods.quarter_to_roman(quarter),
-        "execution": float(execution),
-        "coverage": float(coverage),
+        "quarter": str(quarter),
+        "execution": scores.get("execution_by_measures"),
+        "execution_by_measures": scores.get("execution_by_measures"),
+        "execution_by_goals": scores.get("execution_by_goals"),
+        "coverage": scores.get("coverage"),
         "formula_version": DASHBOARD_FORMULA_VERSION,
-        "population_size": int(len(merged)),
+        "population_size": int(len(snapshot)),
+        "assessed_measure_count": int(scores.get("assessed_measure_count") or 0),
     }

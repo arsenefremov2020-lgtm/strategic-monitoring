@@ -1,4 +1,4 @@
-"""Quarter-period semantics for Dashboard execution v2.
+"""Quarter-period semantics for Dashboard execution v3.
 
 This module is the single source of truth for reporting-period applicability.
 It contains no Streamlit code and performs no writes.

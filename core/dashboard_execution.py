@@ -1,4 +1,4 @@
-"""Execution scoring and hierarchy for Dashboard execution v2."""
+"""Execution scoring and hierarchy for Dashboard execution v3."""
 from __future__ import annotations
 
 import math
@@ -15,9 +15,11 @@ from core.dashboard_periods import (
     make_period_context,
     parse_measure_period,
     period_state,
+    quarter_to_roman,
 )
+from core.dashboard_filters import main_ssp_deputy, main_ssp_index
 
-DASHBOARD_FORMULA_VERSION = "dashboard-execution-v2"
+DASHBOARD_FORMULA_VERSION = "dashboard-execution-v3"
 STATUS_SCORE = {
     "Виконано": 100.0,
     "Частково виконано": 75.0,
@@ -144,7 +146,13 @@ def build_quarter_snapshot(
     locked_periods: Iterable[tuple[Any, Any]] | None = None,
     approved_only: bool = True,
 ) -> pd.DataFrame:
-    """Single source of truth for one reporting quarter."""
+    """Single source of truth for one reporting quarter under v3 semantics.
+
+    Active measures without a current-quarter submission retain the latest
+    confirmed result from the *same year* for execution, while their reporting
+    status remains ``Не подано`` and coverage is penalized. That carried result
+    is never treated as a new trajectory observation.
+    """
     ctx = make_period_context(year, quarter, locked_periods=locked_periods)
     measures = _measure_rows(strat_df)
     if measures.empty:
@@ -169,21 +177,50 @@ def build_quarter_snapshot(
         if state == "future":
             continue
 
+        exact_record = exact.get(code) if ctx.monitoring_conducted else None
+        historical_record = carried.get(code) if ctx.monitoring_conducted else None
         record = None
+        carry_forward = False
+        carry_forward_kind = ""
+        submitted_current_period = False
+        has_previous_confirmed_result = False
+
         if ctx.monitoring_conducted:
             if state == "active":
-                record = exact.get(code)
+                if exact_record is not None:
+                    record = exact_record
+                    submitted_current_period = True
+                elif historical_record is not None:
+                    # Quarterly monitoring facts are annual cumulative/YTD
+                    # observations. Never carry an active result across years.
+                    try:
+                        historical_year = int(float(historical_record.get("year")))
+                    except (TypeError, ValueError):
+                        historical_year = None
+                    if historical_year == ctx.year:
+                        record = historical_record
+                        carry_forward = True
+                        carry_forward_kind = "active_previous_result"
+                        has_previous_confirmed_result = True
             elif state == "ended":
-                record = carried.get(code)
-        submitted = record is not None
-        status = normalize_status(record.get("status") if record is not None else "Не подано")
+                record = historical_record
+                if record is not None:
+                    carry_forward = True
+                    carry_forward_kind = "ended_final"
+                    has_previous_confirmed_result = True
+
+        has_monitoring_data = record is not None
+        effective_result_status = normalize_status(record.get("status") if record is not None else "Не подано")
+        reporting_status = effective_result_status
+        if state == "active" and not submitted_current_period and ctx.monitoring_conducted:
+            reporting_status = "Не подано"
         fact = actual_value(record)
         target = measure.get(target_col, "")
-        carry_forward = state == "ended" and submitted
 
         period_quality_issue = state == "unknown_period"
         final_missing_result = state == "ended" and record is None and ctx.monitoring_conducted
-        missing_required_submission = state == "active" and record is None and ctx.monitoring_conducted
+        missing_required_submission = state == "active" and not submitted_current_period and ctx.monitoring_conducted
+        management_zero_due_to_missing_data = bool(missing_required_submission and record is None)
 
         if not ctx.monitoring_conducted:
             score = {"execution_score": None, "raw_attainment_pct": None, "numeric": False,
@@ -191,32 +228,47 @@ def build_quarter_snapshot(
                      "data_quality_conflict": False, "data_quality_message": ""}
             assessed = coverage_eligible = risk_eligible = False
         elif state == "unknown_period":
-            status = "Не визначено"
+            reporting_status = "Не визначено"
             score = {"execution_score": None, "raw_attainment_pct": None, "numeric": False,
                      "yes_no": False, "result_achieved": False,
                      "data_quality_conflict": True,
                      "data_quality_message": "Не вдалося визначити період застосовності заходу."}
             assessed = coverage_eligible = risk_eligible = False
+        elif missing_required_submission and record is not None:
+            # Keep the last confirmed same-year result for management execution,
+            # but do not pretend that the current quarter was submitted.
+            score = score_measure(effective_result_status, fact, target)
+            assessed = score.get("execution_score") is not None
+            coverage_eligible, risk_eligible = True, False
         elif missing_required_submission:
-            status = "Не подано"
+            # No confirmed result exists in the current year. Management
+            # assessment uses 0 so missing data cannot inflate aggregates.
             score = {"execution_score": 0.0, "raw_attainment_pct": None, "numeric": False,
                      "yes_no": False, "result_achieved": False,
                      "data_quality_conflict": False, "data_quality_message": ""}
-            assessed, coverage_eligible, risk_eligible = True, True, True
+            assessed, coverage_eligible, risk_eligible = True, True, False
         elif final_missing_result:
-            status = "Не подано"
+            reporting_status = "Не подано"
             score = {"execution_score": 0.0, "raw_attainment_pct": None, "numeric": False,
                      "yes_no": False, "result_achieved": False,
                      "data_quality_conflict": True,
-                     "data_quality_message": "Захід завершився без жодного валідного фінального результату."}
+                     "data_quality_message": "Захід завершився без жодного валідного підтвердженого результату."}
             assessed, coverage_eligible, risk_eligible = True, False, False
         else:
-            score = score_measure(status, fact, target)
+            score = score_measure(effective_result_status, fact, target)
             assessed = score.get("execution_score") is not None
             coverage_eligible = state == "active"
             # ended/Q4 outcomes are final, not forecast-risk observations
-            risk_eligible = assessed and state == "active" and status not in EXCLUDED_EXECUTION_STATUSES
+            risk_eligible = assessed and state == "active" and reporting_status not in EXCLUDED_EXECUTION_STATUSES
 
+        main_ssp = main_ssp_index(measure)
+        deputy = main_ssp_deputy(measure)
+        source_year = None
+        if record is not None and clean(record.get("year")):
+            try:
+                source_year = int(float(record.get("year")))
+            except (TypeError, ValueError):
+                source_year = None
         out = measure.to_dict()
         out.update({
             "code": code,
@@ -226,14 +278,24 @@ def build_quarter_snapshot(
             "department": clean(measure.get("resp_main", measure.get("department"))),
             "department_co_1": clean(measure.get("resp_co_1", measure.get("department_co_1"))),
             "department_co_2": clean(measure.get("resp_co_2", measure.get("department_co_2"))),
+            "main_ssp": main_ssp,
+            "deputy_minister_by_ssp": deputy,
             "start_period": measure.get("measure_start_date", measure.get("start_period", "")),
             "end_period": measure.get("measure_end_date", measure.get("end_period", "")),
             "year": ctx.year, "quarter": ctx.quarter, "period_number": ctx.period_num,
             "period_label": f"{ctx.year} {ctx.quarter}",
             "period_state": state, "monitoring_conducted": ctx.monitoring_conducted,
-            "submitted": bool(submitted), "has_monitoring_data": bool(submitted),
-            "carry_forward": bool(carry_forward), "status": status,
-            "status_display": status,
+            # ``submitted`` means current-quarter submission, not existence of
+            # any historical effective result.
+            "submitted": bool(submitted_current_period),
+            "submitted_current_period": bool(submitted_current_period),
+            "has_monitoring_data": bool(has_monitoring_data),
+            "has_previous_confirmed_result": bool(has_previous_confirmed_result),
+            "carry_forward": bool(carry_forward),
+            "carry_forward_kind": carry_forward_kind,
+            "status": reporting_status,
+            "status_display": reporting_status,
+            "effective_result_status": effective_result_status,
             "actual": fact, "fact_value": fact, "annual_target": target,
             "selected_target": target,
             "execution_score": score.get("execution_score"),
@@ -246,6 +308,7 @@ def build_quarter_snapshot(
             "data_quality_message": score.get("data_quality_message", ""),
             "period_data_quality_issue": bool(period_quality_issue),
             "missing_required_submission": bool(missing_required_submission),
+            "management_zero_due_to_missing_data": management_zero_due_to_missing_data,
             "final_missing_result": bool(final_missing_result),
             "attention_signal": bool(period_quality_issue or missing_required_submission or final_missing_result or score.get("data_quality_conflict", False)),
             "assessed": bool(assessed), "included_in_assessment": bool(assessed),
@@ -254,17 +317,19 @@ def build_quarter_snapshot(
             "risks_text": clean(record.get("risks")) if record is not None else "",
             "risks": clean(record.get("risks")) if record is not None else "",
             "progress_text": clean(record.get("progress_text")) if record is not None else "",
-            "approval_status": record.get("approval_status") if record is not None else "",
+            # Current approval status is intentionally blank for stale carry.
+            "approval_status": exact_record.get("approval_status") if exact_record is not None else "",
+            "effective_approval_status": record.get("approval_status") if record is not None else "",
             "request_submitted_at": record.get("submitted_at") if record is not None else None,
             "request_id": record.get("id") if record is not None else None,
+            "current_request_id": exact_record.get("id") if exact_record is not None else None,
             "source_request_id": record.get("id") if record is not None else None,
-            "source_year": record.get("year") if record is not None else None,
-            "source_quarter": record.get("quarter") if record is not None else None,
+            "source_year": source_year,
+            "source_quarter": quarter_to_roman(record.get("quarter")) if record is not None else None,
             "formula_version": DASHBOARD_FORMULA_VERSION,
         })
         rows.append(out)
     return pd.DataFrame(rows)
-
 
 def _safe_mean(values: pd.Series | Iterable[Any]) -> float | None:
     series = pd.to_numeric(pd.Series(values if isinstance(values, pd.Series) else list(values)), errors="coerce").dropna()

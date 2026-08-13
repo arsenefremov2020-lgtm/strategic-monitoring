@@ -1,4 +1,4 @@
-"""Pure filtering and stable-cohort helpers for Dashboard execution v2."""
+"""Pure filtering and stable-cohort helpers for Dashboard execution v3."""
 from __future__ import annotations
 
 import re
@@ -8,17 +8,40 @@ import pandas as pd
 
 from core.dashboard_finance import classify_finance_sources
 from core.dashboard_periods import clean
+from core.deputies import get_deputy_for_ssp
+
+UNASSIGNED_DEPUTY = "Заступника не визначено"
 
 
 def split_ssp(value: Any) -> set[str]:
     return set(re.findall(r"\d+", clean(value)))
 
 
+def main_ssp_index(row: pd.Series | dict[str, Any]) -> str:
+    """Return the single canonical SSP index of the main executor.
+
+    ``resp_main`` is authoritative in the strategic matrix. ``department`` is
+    the normalized fallback used by already-built snapshots. Coexecutors are
+    intentionally ignored for all management analytics.
+    """
+    # Snapshots/analytical copies may carry an explicit canonical ``main_ssp``
+    # for a selected multi-period range. Prefer it over period-local metadata.
+    raw = clean(row.get("main_ssp")) or clean(row.get("resp_main")) or clean(row.get("department"))
+    match = re.search(r"\d+", raw)
+    return match.group(0) if match else ""
+
+
+def main_ssp_deputy(row: pd.Series | dict[str, Any]) -> str:
+    """Canonical Deputy Minister derived only from the main SSP."""
+    ssp = main_ssp_index(row)
+    deputy = get_deputy_for_ssp(ssp) if ssp else ""
+    return clean(deputy) or UNASSIGNED_DEPUTY
+
+
 def measure_ssp_memberships(row: pd.Series | dict[str, Any]) -> set[str]:
-    result: set[str] = set()
-    for col in ["resp_main", "resp_co_1", "resp_co_2", "department", "department_co_1", "department_co_2"]:
-        result |= split_ssp(row.get(col, ""))
-    return result
+    """Backward-compatible API returning at most the single main SSP."""
+    ssp = main_ssp_index(row)
+    return {ssp} if ssp else set()
 
 
 def filter_measures(
@@ -43,7 +66,7 @@ def filter_measures(
 
     wanted_ssp = {clean(v) for v in (ssp or []) if clean(v)}
     if wanted_ssp:
-        data = data[data.apply(lambda r: bool(measure_ssp_memberships(r) & wanted_ssp), axis=1)].copy()
+        data = data[data.apply(lambda r: main_ssp_index(r) in wanted_ssp, axis=1)].copy()
 
     def _isin(col: str, values: Iterable[Any] | None) -> None:
         nonlocal data
@@ -52,8 +75,12 @@ def filter_measures(
             data = data[data[col].map(clean).isin(wanted)].copy()
 
     _isin("parent_goal_code", goals); _isin("parent_task_code", tasks); _isin("code", measure_codes)
-    _isin("product_type", product_types); _isin("deputy_minister_raw", deputies)
+    _isin("product_type", product_types)
     _isin("status", statuses); _isin("budget_kpkvk", kpkvk)
+
+    wanted_deputies = {clean(v) for v in (deputies or []) if clean(v)}
+    if wanted_deputies:
+        data = data[data.apply(lambda row: main_ssp_deputy(row) in wanted_deputies, axis=1)].copy()
 
     wanted_sources = {clean(v) for v in (sources or []) if clean(v)}
     if wanted_sources:
@@ -96,15 +123,14 @@ def apply_stable_cohort(snapshot: pd.DataFrame, codes: Iterable[Any]) -> pd.Data
 
 
 def expand_ssp_rows(snapshot: pd.DataFrame, selected_ssp: Iterable[Any] | None = None) -> pd.DataFrame:
-    """One row per measure×SSP for organizational charts only."""
+    """One organizational row per measure, assigned to the main SSP only."""
     if snapshot is None or snapshot.empty:
         return pd.DataFrame()
     wanted = {clean(v) for v in (selected_ssp or []) if clean(v)}
     rows = []
     for _, row in snapshot.iterrows():
-        memberships = measure_ssp_memberships(row)
-        if wanted:
-            memberships &= wanted
-        for ssp in sorted(memberships, key=lambda x: int(x) if x.isdigit() else 9999):
-            out = row.to_dict(); out["ssp"] = ssp; rows.append(out)
+        ssp = main_ssp_index(row)
+        if not ssp or (wanted and ssp not in wanted):
+            continue
+        out = row.to_dict(); out["ssp"] = ssp; rows.append(out)
     return pd.DataFrame(rows)

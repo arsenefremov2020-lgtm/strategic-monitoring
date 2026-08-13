@@ -1,4 +1,4 @@
-"""Trajectory, forecast, risk and management conclusion for Dashboard v2."""
+"""Trajectory, forecast, risk and management conclusion for Dashboard v3."""
 from __future__ import annotations
 
 from typing import Any, Iterable
@@ -224,6 +224,12 @@ def attach_risk(snapshot: pd.DataFrame, previous_snapshot: pd.DataFrame | None =
             risk = _empty_risk(row, "Моніторинг у цьому періоді не проводився.")
         elif state == "unknown_period":
             risk = _empty_risk(row, "Ризик не оцінюється до визначення періоду застосовності заходу.")
+        elif bool(row.get("missing_required_submission", False)):
+            risk = _empty_risk(
+                row,
+                "Актуальне подання за поточний квартал відсутнє; прогнозна траєкторія за цей квартал не оцінюється.",
+            )
+            risk["forecast_kind"] = "missing_submission"
         elif state == "ended" or bool(row.get("final_missing_result", False)):
             risk = _empty_risk(row, "Захід завершено; прогнозний ризик не розраховується.")
             fact, target = to_number(row.get("actual")), to_number(row.get("annual_target"))
@@ -243,7 +249,12 @@ def attach_risk(snapshot: pd.DataFrame, previous_snapshot: pd.DataFrame | None =
         elif bool(row.get("numeric", False)):
             prev = previous_by_code.get(clean(row.get("code")))
             prev_fact = None
-            if prev is not None and clean(prev.get("period_state")) != "unknown_period":
+            if (
+                prev is not None
+                and clean(prev.get("period_state")) != "unknown_period"
+                and bool(prev.get("submitted_current_period", prev.get("submitted", False)))
+                and not bool(prev.get("missing_required_submission", False))
+            ):
                 prev_fact = prev.get("actual")
             risk = numeric_trajectory(row.get("actual"), row.get("annual_target"), row.get("quarter"), previous_fact=prev_fact)
             risk["deadline_warning"] = ""; risk["final_outcome"] = (
@@ -282,10 +293,13 @@ def attach_risk(snapshot: pd.DataFrame, previous_snapshot: pd.DataFrame | None =
         if q == "I":
             risk["risk_level"] = None
         if q == "IV":
+            # Q4 suppresses predictive-risk outputs, but it must not rewrite
+            # non-final semantics (notably a missing current submission) into
+            # a fabricated final observation. Numeric/yes-no/qualitative rows
+            # with a real Q4 observation already set ``forecast_kind=final``
+            # in their dedicated branches above.
             risk["risk_level"] = None
             risk["forecast_attainment_pct"] = None
-            if risk.get("forecast_kind") != "final":
-                risk["forecast_kind"] = "final"
         out.update(risk)
         out["auto_risk"] = risk.get("risk_level") or "Не оцінюється"
         out["risk_reason"] = risk.get("risk_explanation") or risk.get("forecast_explanation") or ""
@@ -355,7 +369,7 @@ def risk_summary(snapshot_with_risk: pd.DataFrame) -> dict[str, Any]:
 
 
 def attention_mask(snapshot_with_risk: pd.DataFrame) -> pd.Series:
-    """v2 selection for the preserved 'Проблемні заходи' block."""
+    """v3 selection for the preserved 'Проблемні заходи' block."""
     if snapshot_with_risk is None or snapshot_with_risk.empty:
         return pd.Series(False, index=getattr(snapshot_with_risk, "index", []), dtype=bool)
     data = snapshot_with_risk
@@ -387,6 +401,19 @@ def management_conclusion(
     q = quarter_to_roman(snapshot_with_risk["quarter"].iloc[0])
     rsum = risk_summary(snapshot_with_risk)
     cov = to_number(coverage)
+    missing_submission_count = int(
+        snapshot_with_risk.get(
+            "missing_required_submission", pd.Series(False, index=snapshot_with_risk.index)
+        ).fillna(False).astype(bool).sum()
+    )
+    q4_evidence_note = (
+        f"У {missing_submission_count} активних заходів актуальне подання за IV квартал відсутнє; "
+        "їх управлінська оцінка виконання спирається на останній підтверджений результат поточного року "
+        "або на management-zero за повної відсутності підтверджених даних. "
+        "Для цих заходів фінальна прогнозна траєкторія не формується."
+        if missing_submission_count
+        else "Фінальний висновок базується на фактичних річних результатах."
+    )
 
     # Coverage is checked before any risk/final-outcome verdict.
     if cov is None or cov < COVERAGE_GATE_MIN:
@@ -409,8 +436,8 @@ def management_conclusion(
             title = "Підсумок року: недостатньо даних для повної оцінки"
             explanation = (
                 f"Покриття моніторингом — {coverage_text}, що нижче {COVERAGE_GATE_MIN:.0f}%. "
-                f"Доступне виконання за заходами — {_fmt(execution_by_measures)}, за стратегічними цілями — {_fmt(execution_by_goals)}; "
-                "фактичні річні результати наведено лише в межах наявних даних."
+                f"Доступне виконання за заходами — {_fmt(execution_by_measures)}, за стратегічними цілями — {_fmt(execution_by_goals)}. "
+                + q4_evidence_note
             )
         else:
             title = "Недостатньо даних для управлінського висновку"
@@ -447,7 +474,7 @@ def management_conclusion(
         return {
             "title": title,
             "explanation": (
-                f"Покриття — {_fmt(cov)}. Фінальний висновок базується на фактичних річних результатах. "
+                f"Покриття — {_fmt(cov)}. {q4_evidence_note} "
                 f"Частка оцінених заходів без досягнутого результату — {_fmt(nonachieved_share)}; "
                 f"виконання за заходами — {_fmt(execution_by_measures)}, за цілями — {_fmt(execution_by_goals)}."
             ),

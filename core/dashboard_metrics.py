@@ -1,8 +1,8 @@
-"""Backward-compatible primitives for Dashboard execution v2.
+"""Backward-compatible primitives for Dashboard execution v3.
 
 Business formulas live in the specialized ``dashboard_*`` modules.  This file
 keeps small compatibility helpers used by archive/older analytical code and
-routes KPI snapshots to the v2 single source of truth.
+routes KPI snapshots to the v3 single source of truth.
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def normalize_text(value: Any) -> str:
 
 
 def status_display(status: Any) -> str:
-    """Legacy display primitive retained for non-v2 external callers."""
+    """Legacy display primitive retained for non-v3 external callers."""
     raw = clean(status)
     if raw in {"", "Не подано"}:
         return "Не виконано"
@@ -58,7 +58,7 @@ def is_quantitative_plan_fact(actual: Any, target: Any) -> bool:
     return fact is not None and plan not in (None, 0)
 
 
-# Legacy compatibility only.  Dashboard v2 never uses these quarter fractions
+# Legacy compatibility only.  Dashboard v3 never uses these quarter fractions
 # for execution, risk, forecast or management conclusions.
 QUARTER_FRACTIONS = {1: 0.25, 2: 0.50, 3: 0.75, 4: 1.00}
 
@@ -66,7 +66,7 @@ QUARTER_FRACTIONS = {1: 0.25, 2: 0.50, 3: 0.75, 4: 1.00}
 def traffic_light(score: Any) -> str:
     """Legacy display helper retained for external callers.
 
-    It is intentionally not used by Dashboard v2 as an "on track / behind"
+    It is intentionally not used by Dashboard v3 as an "on track / behind"
     assessment; risk is calculated in ``core.dashboard_risk``.
     """
     if score is None or pd.isna(score):
@@ -80,7 +80,7 @@ def traffic_light(score: Any) -> str:
 
 
 def expected_completion_for_quarter(quarter_num: Any) -> float:
-    """Legacy compatibility helper; not a Dashboard v2 normative target."""
+    """Legacy compatibility helper; not a Dashboard v3 normative target."""
     try:
         q = int(quarter_num)
     except (TypeError, ValueError):
@@ -89,7 +89,7 @@ def expected_completion_for_quarter(quarter_num: Any) -> float:
 
 
 def deviation_for_period(completion: Any, quarter_num: Any) -> float:
-    """Legacy compatibility helper; Dashboard v2 does not consume it."""
+    """Legacy compatibility helper; Dashboard v3 does not consume it."""
     return round(float(completion or 0) - expected_completion_for_quarter(quarter_num), 2)
 
 def latest_approved_records(requests_df: pd.DataFrame, year: Any, quarter: Any) -> pd.DataFrame:
@@ -101,7 +101,7 @@ def performance_score(status: Any, actual: Any, target: Any) -> float | None:
 
 
 def is_problem(status: Any, performance: Any, *, has_risk: bool = False) -> bool:
-    """Legacy compatibility flag; Dashboard v2 never uses it for conclusions/risk."""
+    """Legacy compatibility flag; Dashboard v3 never uses it for conclusions/risk."""
     display = status_display(status)
     if display in {"Не настав час", "Втратило актуальність"}:
         return bool(has_risk)
@@ -120,7 +120,7 @@ def build_period_kpi_snapshot(
     year: int,
     quarter: Any,
 ) -> dict[str, Any]:
-    """Archive-compatible KPI payload calculated by the v2 shared methodology."""
+    """Archive-compatible KPI payload calculated by the v3 shared methodology."""
     snapshot = build_quarter_snapshot(strat_df, requests_df, year, quarter)
     scores = plan_scores(snapshot)
     return {

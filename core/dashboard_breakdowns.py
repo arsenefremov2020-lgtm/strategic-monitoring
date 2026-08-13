@@ -1,4 +1,4 @@
-"""Multi-period and organizational aggregations for Dashboard execution v2."""
+"""Multi-period and organizational aggregations for Dashboard execution v3."""
 from __future__ import annotations
 
 from typing import Any, Iterable
@@ -6,7 +6,9 @@ from typing import Any, Iterable
 import pandas as pd
 
 from core.dashboard_execution import hierarchy_for_period, plan_scores
-from core.dashboard_filters import apply_stable_cohort, expand_ssp_rows, stable_cohort_codes
+from core.dashboard_filters import (
+    apply_stable_cohort, expand_ssp_rows, main_ssp_deputy, main_ssp_index, stable_cohort_codes,
+)
 from core.dashboard_periods import clean, period_number, quarter_to_roman
 from core.dashboard_risk import attach_risk, risk_summary
 
@@ -27,7 +29,7 @@ def _previous_quarter_snapshot(
     strat_df, requests_df, year: int, quarter: str, *, locked_periods=None, cohort_codes=None
 ):
     qnum = {"I": 1, "II": 2, "III": 3, "IV": 4}[quarter_to_roman(quarter)]
-    # V2 trajectory is within-year; Q1 is preliminary and needs no previous fact.
+    # V3 trajectory is within-year; Q1 is preliminary and needs no previous fact.
     if qnum <= 1:
         return None
     prev_q = {1: "I", 2: "II", 3: "III", 4: "IV"}[qnum - 1]
@@ -52,7 +54,7 @@ def build_period_results(
 
     ``period_sources`` optionally supplies immutable archive inputs for exact
     periods. Each value may contain ``strat_df``, ``requests_df`` and
-    ``locked_periods``. This keeps archive/history on the same v2 formulas
+    ``locked_periods``. This keeps archive/history on the same v3 formulas
     without making the calculation core depend on archive storage.
 
     When a status filter is active, its cohort is frozen from the latest
@@ -186,10 +188,81 @@ def _group_period_metrics(group: pd.DataFrame) -> dict[str, Any]:
     }
 
 
+def canonical_ssp_ownership(results: dict) -> dict[str, str]:
+    """Latest available main-SSP ownership for each code in a selected range.
+
+    Ownership is range-level metadata, not a measure-quarter metric. Once the
+    latest owner is known, every historical row of that code in the same
+    analysis range is attributed to that owner.
+    """
+    ownership: dict[str, tuple[int, str]] = {}
+    for (year, quarter), item in sorted(results.items(), key=lambda kv: period_number(*kv[0])):
+        snap = item.get("snapshot")
+        if snap is None or snap.empty:
+            continue
+        pnum = period_number(year, quarter)
+        for _, row in snap.iterrows():
+            code = clean(row.get("code"))
+            ssp = main_ssp_index(row)
+            if code and ssp:
+                ownership[code] = (pnum, ssp)
+    return {code: value[1] for code, value in ownership.items()}
+
+
+def _canonicalize_snapshot_ownership(
+    snapshot: pd.DataFrame, ownership: dict[str, str]
+) -> pd.DataFrame:
+    """Apply range-level ownership to a snapshot without mutating source data."""
+    if snapshot is None or snapshot.empty:
+        return snapshot.copy() if hasattr(snapshot, "copy") else pd.DataFrame()
+    data = snapshot.copy()
+    codes = data.get("code", pd.Series("", index=data.index)).map(clean)
+    data["main_ssp"] = codes.map(ownership).fillna(
+        data.apply(main_ssp_index, axis=1)
+    )
+    data["deputy_minister_by_ssp"] = data.apply(main_ssp_deputy, axis=1)
+    return data
+
+
+def filter_results_by_ssp(
+    results: dict[tuple[int, str], dict[str, Any]],
+    selected_ssp: Iterable[Any] | None,
+) -> dict[tuple[int, str], dict[str, Any]]:
+    """Filter already-built v3 period results by main SSP only.
+
+    Stable-status cohorting, archive source selection and risk attachment happen
+    before this filter. Re-aggregating the filtered snapshots therefore keeps
+    display results on exactly the same calculation/source context as the base
+    portfolio used for SSP weights.
+    """
+    wanted = {clean(v) for v in (selected_ssp or []) if clean(v)}
+    if not wanted:
+        return results
+    ownership = canonical_ssp_ownership(results)
+    output: dict[tuple[int, str], dict[str, Any]] = {}
+    for key, item in results.items():
+        snap = _canonicalize_snapshot_ownership(item.get("snapshot"), ownership)
+        if snap is None or snap.empty:
+            filtered = snap.copy() if hasattr(snap, "copy") else pd.DataFrame()
+        else:
+            filtered = snap[snap["main_ssp"].map(clean).isin(wanted)].copy()
+        scores = plan_scores(filtered)
+        output[key] = {
+            **item,
+            "snapshot": filtered,
+            **scores,
+            "risk_summary": risk_summary(filtered),
+        }
+    return output
+
+
 def ssp_period_frame(results: dict, selected_ssp: Iterable[Any] | None = None) -> pd.DataFrame:
+    """One period metric row per canonical main SSP across the selected range."""
     rows = []
+    ownership = canonical_ssp_ownership(results)
     for (year, quarter), item in results.items():
-        expanded = expand_ssp_rows(item["snapshot"], selected_ssp)
+        snapshot = _canonicalize_snapshot_ownership(item["snapshot"], ownership)
+        expanded = expand_ssp_rows(snapshot, selected_ssp)
         if expanded.empty:
             continue
         for ssp, group in expanded.groupby("ssp"):
@@ -235,26 +308,119 @@ def _summarize_group_frame(frame: pd.DataFrame, group_col: str) -> pd.DataFrame:
     return pd.DataFrame(rows).sort_values("average", ascending=False, na_position="last")
 
 
-def ssp_summary(results: dict, selected_ssp: Iterable[Any] | None = None) -> pd.DataFrame:
-    return _summarize_group_frame(ssp_period_frame(results, selected_ssp), "ssp")
+def _assessed_portfolio_ownership(results: dict) -> pd.DataFrame:
+    """Assessed unique codes with deterministic latest ownership in the range."""
+    ownership = canonical_ssp_ownership(results)
+    assessed_codes: set[str] = set()
+    for item in results.values():
+        snap = item.get("snapshot")
+        if snap is None or snap.empty:
+            continue
+        assessed = snap.get(
+            "included_in_assessment", pd.Series(False, index=snap.index)
+        ).fillna(False).astype(bool)
+        assessed_codes.update(
+            clean(code) for code in snap.loc[assessed, "code"].tolist() if clean(code)
+        )
+    rows = [
+        {"code": code, "ssp": ownership.get(code) or "Не визначено"}
+        for code in sorted(assessed_codes)
+    ]
+    return pd.DataFrame(rows, columns=["code", "ssp"])
+
+
+def ssp_portfolio_weights(results: dict) -> pd.DataFrame:
+    """Unique-measure portfolio weight by main SSP across the selected range."""
+    ownership = _assessed_portfolio_ownership(results)
+    if ownership.empty:
+        return pd.DataFrame(columns=["ssp", "portfolio_measure_count", "portfolio_weight_pct"])
+    total = int(ownership["code"].nunique())
+    counts = ownership.groupby("ssp", dropna=False)["code"].nunique().reset_index(name="portfolio_measure_count")
+    counts["portfolio_weight_pct"] = counts["portfolio_measure_count"] / total * 100.0 if total else None
+    return counts
+
+
+def _ssp_impact_metrics(base_results: dict) -> pd.DataFrame:
+    """Portfolio weight plus normalized deficit/risk concentration contributions."""
+    period_frame = ssp_period_frame(base_results)
+    summary = _summarize_group_frame(period_frame, "ssp")
+    weights = ssp_portfolio_weights(base_results)
+    if weights.empty:
+        return pd.DataFrame(columns=[
+            "ssp", "portfolio_weight_pct", "underperformance_contribution_pct", "risk_contribution_pct"
+        ])
+    if summary.empty:
+        impact = weights.copy()
+        impact["underperformance_contribution_pct"] = None
+        impact["risk_contribution_pct"] = None
+        return impact
+
+    impact = summary.merge(weights, on="ssp", how="outer")
+    avg = pd.to_numeric(impact.get("average"), errors="coerce")
+    weight = pd.to_numeric(impact.get("portfolio_weight_pct"), errors="coerce")
+    impact["deficit_mass"] = weight * (100.0 - avg).clip(lower=0.0)
+    total_deficit = float(impact["deficit_mass"].sum(min_count=1)) if impact["deficit_mass"].notna().any() else 0.0
+    if total_deficit > 0:
+        impact["underperformance_contribution_pct"] = impact["deficit_mass"] / total_deficit * 100.0
+    else:
+        impact["underperformance_contribution_pct"] = None
+
+    latest_key = max(base_results, key=lambda key: period_number(*key)) if base_results else None
+    latest_q = quarter_to_roman(latest_key[1]) if latest_key else ""
+    if latest_q in {"II", "III"}:
+        latest_risk = pd.to_numeric(impact.get("risk_high_critical_latest"), errors="coerce")
+        impact["risk_mass"] = weight * latest_risk
+        total_risk = float(impact["risk_mass"].sum(min_count=1)) if impact["risk_mass"].notna().any() else 0.0
+        if total_risk > 0:
+            impact["risk_contribution_pct"] = impact["risk_mass"] / total_risk * 100.0
+        else:
+            impact["risk_contribution_pct"] = None
+    else:
+        impact["risk_mass"] = None
+        impact["risk_contribution_pct"] = None
+    return impact
+
+
+def ssp_summary(
+    results: dict,
+    selected_ssp: Iterable[Any] | None = None,
+    *,
+    base_results: dict | None = None,
+) -> pd.DataFrame:
+    """SSP resultativity plus base-portfolio weight and contribution context."""
+    display = _summarize_group_frame(ssp_period_frame(results, selected_ssp), "ssp")
+    if display.empty:
+        return display
+    impact = _ssp_impact_metrics(base_results if base_results is not None else results)
+    if impact.empty:
+        for column in ["portfolio_weight_pct", "underperformance_contribution_pct", "risk_contribution_pct"]:
+            display[column] = None
+        return display
+    keep = [
+        "ssp", "portfolio_weight_pct", "underperformance_contribution_pct", "risk_contribution_pct",
+        "portfolio_measure_count",
+    ]
+    return display.merge(impact[[c for c in keep if c in impact.columns]], on="ssp", how="left")
 
 
 def deputy_period_frame(results: dict) -> pd.DataFrame:
+    """Aggregate by Deputy derived from canonical range-level main SSP ownership."""
     rows = []
+    ownership = canonical_ssp_ownership(results)
     for (year, quarter), item in results.items():
         snap = item.get("snapshot")
-        if snap is None or snap.empty or "deputy_minister_raw" not in snap.columns:
+        if snap is None or snap.empty:
             continue
-        for deputy, group in snap.groupby("deputy_minister_raw", dropna=False):
-            deputy = clean(deputy)
-            if deputy:
-                rows.append({"deputy": deputy, "year": year, "quarter": quarter, **_group_period_metrics(group)})
+        data = _canonicalize_snapshot_ownership(snap, ownership)
+        data["_deputy_main"] = data.apply(main_ssp_deputy, axis=1)
+        for deputy, group in data.groupby("_deputy_main", dropna=False):
+            deputy = clean(deputy) or "Заступника не визначено"
+            rows.append({"deputy": deputy, "year": year, "quarter": quarter, **_group_period_metrics(group)})
     return pd.DataFrame(rows)
 
 
 def deputy_summary(results: dict) -> pd.DataFrame:
     return _summarize_group_frame(deputy_period_frame(results), "deputy")
-
 
 def execution_forecast_matrix(snapshot: pd.DataFrame, *, group_col: str = "department") -> pd.DataFrame:
     """Group data for the Execution × Forecast matrix.
@@ -314,7 +480,10 @@ def execution_forecast_diagnostics(snapshot: pd.DataFrame, *, group_col: str = "
     code = data.get("code", pd.Series(data.index.astype(str), index=data.index)).astype(str)
     assessed_mask = pd.to_numeric(data.get("execution_score"), errors="coerce").notna()
     numeric_mask = data.get("numeric", pd.Series(False, index=data.index)).fillna(False).astype(bool)
-    numeric_current_mask = numeric_mask & assessed_mask
+    current_submission_mask = data.get(
+        "submitted_current_period", data.get("submitted", pd.Series(False, index=data.index))
+    ).fillna(False).astype(bool)
+    numeric_current_mask = numeric_mask & assessed_mask & current_submission_mask
     forecast_mask = numeric_current_mask & pd.to_numeric(
         data.get("forecast_attainment_pct"), errors="coerce"
     ).notna()

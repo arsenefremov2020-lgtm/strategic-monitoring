@@ -21,7 +21,14 @@ from core import dashboard_breakdowns as dashboard_breakdowns_v3
 from core import dashboard_periods as dashboard_periods_v3
 from core import dashboard_sources as dashboard_sources_v3
 from core import monitoring_data, operational
-from core.access import filter_actions_for_user, filter_requests_for_user
+from core.access import (
+    filter_actions_for_user,
+    filter_requests_for_user,
+    is_admin_user,
+    is_guest_user,
+    is_scope_override_active,
+    is_super_admin_user,
+)
 from core.closeouts import append_confirmed_closeout_facts, load_manual_closeouts
 from core.config import FILE_PATH
 from core.dashboard_execution import to_number
@@ -398,7 +405,8 @@ def load_kpkvk_reference():
 
 
 def load_requests():
-    data = monitoring_data.measures_only(monitoring_data.load_monitoring_requests())
+    # Scope is resolved before measure-only filtering, exactly as on Dashboard.
+    data = monitoring_data.load_monitoring_requests()
     if not data.empty and "submitted_at" in data.columns:
         data = data.sort_values("submitted_at", ascending=False)
     return data
@@ -427,6 +435,65 @@ def _snapshot_row(results, year: int, quarter: str):
 
 
 # -----------------------------------------------------------------------------
+# Draft -> applied Card filter state. These helpers contain no business
+# calculation; they only keep the seven existing UI parameters deterministic.
+# -----------------------------------------------------------------------------
+CARD_FILTER_FIELDS = (
+    "goal", "task", "measure_code", "keyword", "year", "quarter", "data_source_mode"
+)
+CARD_APPLIED_STATE_KEY = "card_filters_applied_v1"
+CARD_URL_SIGNATURE_KEY = "card_last_hydrated_query_signature_v1"
+CARD_RESET_REQUEST_KEY = "card_reset_requested_v1"
+
+_CARD_DRAFT_KEYS = {
+    "goal": "card_goal_draft_v1",
+    "task": "card_task_draft_v1",
+    "measure_code": "card_measure_draft_v1",
+    "keyword": "card_keyword_draft_v1",
+    "year": "card_year_draft_v1",
+    "quarter": "card_quarter_draft_v1",
+    "data_source_mode": "card_data_source_draft_v1",
+}
+
+
+def _card_filter_payload(goal, task, measure_code, keyword, year, quarter, data_source_mode):
+    return {
+        "goal": goal,
+        "task": task,
+        "measure_code": clean(measure_code),
+        "keyword": clean(keyword),
+        "year": int(year),
+        "quarter": quarter_to_roman(quarter),
+        "data_source_mode": data_source_mode,
+    }
+
+
+def _card_reset_payload(measure_code, year, quarter, confirmed_mode):
+    return _card_filter_payload(
+        "Усі стратегічні цілі", "Усі завдання", measure_code, "",
+        year, quarter, confirmed_mode,
+    )
+
+
+def _card_query_signature(code, year, quarter):
+    code = clean(code)
+    quarter = quarter_to_roman(quarter)
+    year = clean(year)
+    return f"{code}|{year}|{quarter}" if code and year and quarter else ""
+
+
+def _set_card_draft_state(filters):
+    for field in CARD_FILTER_FIELDS:
+        st.session_state[_CARD_DRAFT_KEYS[field]] = filters[field]
+
+
+def _set_card_applied_and_draft(filters):
+    payload = {field: filters[field] for field in CARD_FILTER_FIELDS}
+    st.session_state[CARD_APPLIED_STATE_KEY] = payload
+    _set_card_draft_state(payload)
+
+
+# -----------------------------------------------------------------------------
 # Header and source data
 # -----------------------------------------------------------------------------
 render_html('<div class="ua-line"></div>')
@@ -447,27 +514,55 @@ render_html(f"""
 
 df = load_strat_matrix()
 kpkvk_reference = load_kpkvk_reference()
-requests_df = load_requests()
+all_requests_df = load_requests()
 
 goals = df[df["object_type"].astype(str).str.strip().eq("goal")].copy()
 tasks = df[df["object_type"].astype(str).str.strip().eq("task")].copy()
-measures = df[df["object_type"].astype(str).str.strip().eq("measure")].copy()
-all_measures_for_access = measures.copy()
+all_measures = df[df["object_type"].astype(str).str.strip().eq("measure")].copy()
 
-# Preserve current access-control semantics; main-SSP analytics does not redefine permissions.
-measures = filter_actions_for_user(measures, current_user, page_key="Картка заходу")
-requests_df = filter_requests_for_user(requests_df, current_user, ssp_columns=["department"], page_key="Картка заходу")
+# Card analytical visibility is intentionally identical to Dashboard. Scope
+# toggle remains an immediate access-control state and is not part of Apply.
+_card_full_scope = (
+    is_guest_user(current_user)
+    or is_admin_user(current_user)
+    or is_super_admin_user(current_user)
+    or is_scope_override_active("Картка заходу")
+)
 
-_target_code = clean(card_target.get("code"))
-if _target_code:
-    _exists_anywhere = bool(all_measures_for_access["code"].astype(str).str.strip().eq(_target_code).any())
-    _exists_in_scope = bool(measures["code"].astype(str).str.strip().eq(_target_code).any())
+if _card_full_scope:
+    scoped_requests_df = all_requests_df.copy()
+    measures = all_measures.copy()
+else:
+    scoped_requests_df = filter_requests_for_user(
+        all_requests_df,
+        current_user,
+        ssp_columns=["department"],
+        page_key="Картка заходу",
+    )
+    measures = filter_actions_for_user(
+        all_measures,
+        current_user,
+        page_key="Картка заходу",
+    )
+
+requests_df = monitoring_data.measures_only(scoped_requests_df)
+
+# An explicit URL to an inaccessible measure is rejected. Same-session fallback
+# targets are merely defaults and may safely fall back after a scope change.
+url_code = _query_param_text("code")
+url_year = _query_param_text("year")
+url_quarter = quarter_to_roman(_query_param_text("quarter"))
+if url_code:
+    _exists_anywhere = bool(all_measures["code"].astype(str).str.strip().eq(url_code).any())
+    _exists_in_scope = bool(measures["code"].astype(str).str.strip().eq(url_code).any())
     if _exists_anywhere and not _exists_in_scope:
         st.error("У вас немає доступу до картки цього заходу.")
         render_footer(); st.stop()
     if not _exists_anywhere:
         st.warning("Захід із посилання не знайдено. Відкрито доступний перелік заходів.")
-        card_target = {"code": "", "year": "", "quarter": ""}
+        url_code = ""
+        url_year = ""
+        url_quarter = ""
 
 if measures.empty:
     st.warning("Заходів у стратегічній матриці не знайдено.")
@@ -477,16 +572,113 @@ measures["goal_code"] = measures["code"].apply(get_goal_code)
 measures["task_code"] = measures["code"].apply(get_task_code)
 tasks["goal_code"] = tasks["code"].apply(get_goal_code)
 
+# Shared reporting period drives Reset/defaults.
+locked_periods = load_locked_periods()
+default_year, default_quarter = dashboard_periods_v3.current_reporting_period(
+    requests_df, locked_periods=locked_periods
+)
+default_year = int(default_year)
+default_quarter = quarter_to_roman(default_quarter)
+quarter_options = ["I", "II", "III", "IV"]
+
+year_options = {2026, 2027, 2028, default_year}
+if not requests_df.empty and "year" in requests_df.columns:
+    for value in requests_df["year"].tolist():
+        try:
+            year_options.add(int(float(value)))
+        except (TypeError, ValueError):
+            pass
+year_options = sorted(year_options)
+
+first_accessible_code = clean(measures.iloc[0].get("code"))
+default_filters = _card_reset_payload(
+    first_accessible_code, default_year, default_quarter, operational.MODE_CONFIRMED
+)
+
+# Reset is executed before widget creation on the rerun, so draft widget state
+# and applied state change together without mutating already-instantiated widgets.
+if st.session_state.pop(CARD_RESET_REQUEST_KEY, False):
+    _set_card_applied_and_draft(default_filters)
+
+# Initial same-session fallback is used only when this page has no applied state.
+if CARD_APPLIED_STATE_KEY not in st.session_state:
+    fallback_code = clean(card_target.get("code"))
+    if not measures["code"].astype(str).str.strip().eq(fallback_code).any():
+        fallback_code = first_accessible_code
+    fallback_year = clean(card_target.get("year"))
+    try:
+        initial_year = int(float(fallback_year)) if fallback_year else default_year
+    except (TypeError, ValueError):
+        initial_year = default_year
+    initial_quarter = quarter_to_roman(card_target.get("quarter")) or default_quarter
+    if initial_quarter not in quarter_options:
+        initial_quarter = default_quarter
+    year_options = sorted(set(year_options) | {initial_year})
+    _set_card_applied_and_draft(
+        _card_reset_payload(
+            fallback_code, initial_year, initial_quarter, operational.MODE_CONFIRMED
+        )
+    )
+
+# Explicit query params hydrate draft+applied exactly once per query signature.
+# The same URL therefore cannot overwrite a later Apply/Reset on every rerun.
+query_signature = _card_query_signature(url_code, url_year, url_quarter)
+_url_hydrated_now = False
+if query_signature and query_signature != st.session_state.get(CARD_URL_SIGNATURE_KEY, ""):
+    try:
+        explicit_year = int(float(url_year))
+    except (TypeError, ValueError):
+        explicit_year = None
+    if (
+        explicit_year is not None
+        and url_quarter in quarter_options
+        and measures["code"].astype(str).str.strip().eq(url_code).any()
+    ):
+        year_options = sorted(set(year_options) | {explicit_year})
+        _set_card_applied_and_draft(
+            _card_reset_payload(
+                url_code, explicit_year, url_quarter, operational.MODE_CONFIRMED
+            )
+        )
+        st.session_state[CARD_URL_SIGNATURE_KEY] = query_signature
+        _url_hydrated_now = True
+
+# Scope changes are immediate. Never retain an applied measure that is no longer
+# visible under the new access state; keep the current period/source where valid.
+applied = dict(st.session_state[CARD_APPLIED_STATE_KEY])
+accessible_codes = set(measures["code"].astype(str).str.strip())
+if clean(applied.get("measure_code")) not in accessible_codes:
+    safe_filters = _card_filter_payload(
+        "Усі стратегічні цілі",
+        "Усі завдання",
+        first_accessible_code,
+        "",
+        applied.get("year", default_year),
+        applied.get("quarter", default_quarter),
+        applied.get("data_source_mode", operational.MODE_CONFIRMED),
+    )
+    _set_card_applied_and_draft(safe_filters)
+    applied = safe_filters
+
+# Ensure all seven draft keys exist before their widgets are instantiated.
+for field in CARD_FILTER_FIELDS:
+    st.session_state.setdefault(_CARD_DRAFT_KEYS[field], applied[field])
+
 
 # -----------------------------------------------------------------------------
-# Measure selection — same access/path concept as the existing Card.
+# Draft measure selection. Dependent options react immediately, but no value in
+# this block is used by the analytical content until Apply is pressed.
 # -----------------------------------------------------------------------------
 render_html('<div class="card"><div class="card-title">Вибір заходу</div><div class="card-subtitle">Оберіть стратегічну ціль, завдання та конкретний захід.</div><div class="filter-panel">')
 f1, f2, f3, f4, f5 = st.columns([1.1, 1.1, 1.5, 1.05, 1.05])
 
 goal_options = ["Усі стратегічні цілі"] + [f"{row['code']} — {row['name']}" for _, row in goals.iterrows()]
+if st.session_state[_CARD_DRAFT_KEYS["goal"]] not in goal_options:
+    st.session_state[_CARD_DRAFT_KEYS["goal"]] = "Усі стратегічні цілі"
 with f1:
-    selected_goal_label = st.selectbox("Стратегічна ціль", goal_options, index=0)
+    selected_goal_label = st.selectbox(
+        "Стратегічна ціль", goal_options, key=_CARD_DRAFT_KEYS["goal"]
+    )
 if selected_goal_label == "Усі стратегічні цілі":
     filtered_tasks, filtered_measures = tasks.copy(), measures.copy()
 else:
@@ -495,14 +687,24 @@ else:
     filtered_measures = measures[measures["goal_code"] == selected_goal_code].copy()
 
 task_options = ["Усі завдання"] + [f"{row['code']} — {row['name']}" for _, row in filtered_tasks.iterrows()]
+if st.session_state[_CARD_DRAFT_KEYS["task"]] not in task_options:
+    st.session_state[_CARD_DRAFT_KEYS["task"]] = "Усі завдання"
 with f2:
-    selected_task_label = st.selectbox("Завдання", task_options, index=0)
+    selected_task_label = st.selectbox(
+        "Завдання", task_options, key=_CARD_DRAFT_KEYS["task"]
+    )
 if selected_task_label != "Усі завдання":
     selected_task_code_filter = selected_task_label.split("—")[0].strip()
-    filtered_measures = filtered_measures[filtered_measures["task_code"] == selected_task_code_filter].copy()
+    filtered_measures = filtered_measures[
+        filtered_measures["task_code"] == selected_task_code_filter
+    ].copy()
 
 with f4:
-    keyword = st.text_input("За ключовими словами", value="", placeholder="Введіть слово або код")
+    keyword = st.text_input(
+        "За ключовими словами",
+        placeholder="Введіть слово або код",
+        key=_CARD_DRAFT_KEYS["keyword"],
+    )
 with f5:
     st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
     render_scope_toggle("Картка заходу", current_user)
@@ -517,82 +719,128 @@ if clean(keyword):
     )
     filtered_measures = filtered_measures[mask].copy()
 
-if filtered_measures.empty:
-    render_html("</div></div>"); st.warning("За обраними фільтрами заходів не знайдено."); render_footer(); st.stop()
-
-measure_options = [f"{row['code']} — {row['name']}" for _, row in filtered_measures.iterrows()]
-_target_measure_index = next((idx for idx, label in enumerate(measure_options) if label.split("—")[0].strip() == clean(card_target.get("code"))), 0)
-with f3:
-    selected_option = st.selectbox("Захід", measure_options, index=_target_measure_index)
+measure_code_options = filtered_measures["code"].astype(str).str.strip().tolist()
+draft_measure_valid = bool(measure_code_options)
+if draft_measure_valid:
+    if st.session_state[_CARD_DRAFT_KEYS["measure_code"]] not in measure_code_options:
+        st.session_state[_CARD_DRAFT_KEYS["measure_code"]] = measure_code_options[0]
+    measure_name_map = filtered_measures.set_index(
+        filtered_measures["code"].astype(str).str.strip()
+    )["name"].to_dict()
+    with f3:
+        st.selectbox(
+            "Захід",
+            measure_code_options,
+            key=_CARD_DRAFT_KEYS["measure_code"],
+            format_func=lambda code: f"{code} — {measure_name_map.get(code, '')}",
+        )
+else:
+    with f3:
+        st.selectbox(
+            "Захід", [""], index=0, disabled=True,
+            format_func=lambda _value: "За фільтрами заходів не знайдено",
+        )
+    st.warning("За поточними draft-фільтрами заходів не знайдено. Попередній застосований аналітичний зріз збережено.")
 render_html("</div></div>")
 
-selected_code = selected_option.split("—")[0].strip()
-selected_measure = measures[measures["code"].astype(str).str.strip().eq(selected_code)].iloc[0]
-goal_code, task_code = get_goal_code(selected_code), get_task_code(selected_code)
+# Period/source widgets are draft parameters too.
+if st.session_state[_CARD_DRAFT_KEYS["year"]] not in year_options:
+    year_options = sorted(set(year_options) | {int(st.session_state[_CARD_DRAFT_KEYS["year"]])})
+if st.session_state[_CARD_DRAFT_KEYS["quarter"]] not in quarter_options:
+    st.session_state[_CARD_DRAFT_KEYS["quarter"]] = default_quarter
+if st.session_state[_CARD_DRAFT_KEYS["data_source_mode"]] not in operational.MODE_OPTIONS:
+    st.session_state[_CARD_DRAFT_KEYS["data_source_mode"]] = operational.MODE_CONFIRMED
+
+render_html('<div class="card"><div class="card-title">Період оцінки</div><div class="card-subtitle">Рік, квартал і джерело даних визначають аналітичний зріз. Пряме посилання відповідає вже застосованому зрізу.</div>')
+p1, p2, p3, p4 = st.columns([.8, .8, 1.6, 1.5])
+with p1:
+    st.selectbox("Рік", year_options, key=_CARD_DRAFT_KEYS["year"])
+with p2:
+    st.selectbox("Квартал", quarter_options, key=_CARD_DRAFT_KEYS["quarter"])
+with p3:
+    st.radio(
+        "Джерело даних", operational.MODE_OPTIONS, horizontal=True,
+        key=_CARD_DRAFT_KEYS["data_source_mode"], help=operational.MODE_HELP,
+    )
+with p4:
+    st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+    applied_for_link = st.session_state[CARD_APPLIED_STATE_KEY]
+    render_copy_card_link(
+        applied_for_link["measure_code"],
+        applied_for_link["year"],
+        applied_for_link["quarter"],
+        key=f"copy_card_{applied_for_link['measure_code']}_{applied_for_link['year']}_{applied_for_link['quarter']}",
+    )
+render_html('</div>')
+
+button_apply, button_reset, _button_spacer = st.columns([1, 1, 2])
+with button_apply:
+    apply_clicked = st.button(
+        "Застосувати параметри", type="primary", use_container_width=True,
+        key="card_apply_filters_v1",
+    )
+with button_reset:
+    reset_clicked = st.button(
+        "Скинути параметри", type="secondary", use_container_width=True,
+        key="card_reset_filters_v1",
+    )
+
+if apply_clicked:
+    draft_code = clean(st.session_state.get(_CARD_DRAFT_KEYS["measure_code"]))
+    if not draft_measure_valid or draft_code not in set(measure_code_options):
+        st.warning("Неможливо застосувати параметри: за поточними фільтрами немає доступного заходу. Попередній аналітичний зріз збережено.")
+    else:
+        new_applied = _card_filter_payload(
+            st.session_state[_CARD_DRAFT_KEYS["goal"]],
+            st.session_state[_CARD_DRAFT_KEYS["task"]],
+            draft_code,
+            st.session_state[_CARD_DRAFT_KEYS["keyword"]],
+            st.session_state[_CARD_DRAFT_KEYS["year"]],
+            st.session_state[_CARD_DRAFT_KEYS["quarter"]],
+            st.session_state[_CARD_DRAFT_KEYS["data_source_mode"]],
+        )
+        st.session_state[CARD_APPLIED_STATE_KEY] = new_applied
+        st.rerun()
+
+if reset_clicked:
+    st.session_state[CARD_RESET_REQUEST_KEY] = True
+    st.rerun()
+
+if _url_hydrated_now:
+    hydrated = st.session_state[CARD_APPLIED_STATE_KEY]
+    st.info(
+        f"Картку відкрито за прямим посиланням: {hydrated['quarter']} квартал "
+        f"{hydrated['year']} року."
+    )
+
+# -----------------------------------------------------------------------------
+# APPLIED CONTENT START — every analytical/process/PDF input below this point
+# is derived from the single page-level applied state, never from draft widgets.
+# -----------------------------------------------------------------------------
+applied = dict(st.session_state[CARD_APPLIED_STATE_KEY])
+applied_measure_code = clean(applied["measure_code"])
+applied_year = int(applied["year"])
+applied_quarter = quarter_to_roman(applied["quarter"])
+applied_data_source_mode = applied["data_source_mode"]
+
+selected_code = applied_measure_code
+card_link_year = applied_year
+card_link_quarter = applied_quarter
+card_data_mode = applied_data_source_mode
+
+selected_measure = measures[
+    measures["code"].astype(str).str.strip().eq(applied_measure_code)
+].iloc[0]
+goal_code, task_code = get_goal_code(applied_measure_code), get_task_code(applied_measure_code)
 goal_row = df[(df["object_type"].astype(str).eq("goal")) & (df["code"].astype(str).str.strip().eq(goal_code))]
 task_row = df[(df["object_type"].astype(str).eq("task")) & (df["code"].astype(str).str.strip().eq(task_code))]
 goal_name = strip_leading_code(goal_row.iloc[0]["name"], goal_code) if not goal_row.empty else ""
 task_name = strip_leading_code(task_row.iloc[0]["name"], task_code) if not task_row.empty else ""
 
-
-# -----------------------------------------------------------------------------
-# Period assessment. Explicit URL year/quarter wins; otherwise use Dashboard v3
-# current_reporting_period rather than a hard-coded historical default.
-# -----------------------------------------------------------------------------
-locked_periods = load_locked_periods()
-default_year, default_quarter = dashboard_periods_v3.current_reporting_period(requests_df, locked_periods=locked_periods)
-_link_request_rows = requests_df[requests_df["strat_code"].astype(str).str.strip().eq(selected_code)].copy() if not requests_df.empty and "strat_code" in requests_df.columns else pd.DataFrame()
-
-year_options = {2026, 2027, 2028, int(default_year)}
-if not _link_request_rows.empty and "year" in _link_request_rows.columns:
-    for value in _link_request_rows["year"].tolist():
-        try: year_options.add(int(float(value)))
-        except (TypeError, ValueError): pass
-url_code = _query_param_text("code")
-url_year = _query_param_text("year")
-url_quarter = quarter_to_roman(_query_param_text("quarter"))
-explicit_url_period = bool(url_code == selected_code and url_year and url_quarter in ["I", "II", "III", "IV"])
-try:
-    explicit_url_year = int(float(url_year)) if explicit_url_period else None
-except (TypeError, ValueError):
-    explicit_url_year = None
-    explicit_url_period = False
-
-fallback_year = clean(card_target.get("year"))
-try:
-    selected_default_year = explicit_url_year if explicit_url_period else (int(float(fallback_year)) if fallback_year else int(default_year))
-except (TypeError, ValueError):
-    selected_default_year = int(default_year)
-year_options.add(selected_default_year)
-year_options = sorted(year_options)
-fallback_quarter = quarter_to_roman(card_target.get("quarter"))
-selected_default_quarter = url_quarter if explicit_url_period else (fallback_quarter or default_quarter)
-quarter_options = ["I", "II", "III", "IV"]
-
-year_widget_key = f"card_year_{selected_code}"
-quarter_widget_key = f"card_quarter_{selected_code}"
-if explicit_url_period:
-    # Streamlit widget state otherwise wins over a newly opened explicit URL in
-    # the same session. Synchronise before widget creation so URL parameters win.
-    st.session_state[year_widget_key] = selected_default_year
-    st.session_state[quarter_widget_key] = selected_default_quarter
-
-render_html('<div class="card"><div class="card-title">Період оцінки</div><div class="card-subtitle">Рік, квартал і джерело даних визначають аналітичний зріз. Пряме посилання зберігає обраний захід і період.</div>')
-p1, p2, p3, p4 = st.columns([.8, .8, 1.6, 1.5])
-with p1:
-    card_link_year = st.selectbox("Рік", year_options, index=year_options.index(selected_default_year), key=year_widget_key)
-with p2:
-    card_link_quarter = st.selectbox("Квартал", quarter_options, index=quarter_options.index(selected_default_quarter), key=quarter_widget_key)
-with p3:
-    card_data_mode = st.radio("Джерело даних", operational.MODE_OPTIONS, horizontal=True, key=f"card_data_source_mode_{selected_code}", help=operational.MODE_HELP)
-with p4:
-    st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-    render_copy_card_link(selected_code, card_link_year, card_link_quarter, key=f"copy_card_{selected_code}_{card_link_year}_{card_link_quarter}")
-render_html('</div>')
-
-if explicit_url_period:
-    st.info(f"Картку відкрито за прямим посиланням: {card_link_quarter} квартал {card_link_year} року.")
-
+selected_measure_requests = requests_df[
+    requests_df["strat_code"].astype(str).str.strip().eq(applied_measure_code)
+].copy() if not requests_df.empty and "strat_code" in requests_df.columns else pd.DataFrame()
+_link_request_rows = selected_measure_requests
 
 # -----------------------------------------------------------------------------
 # Raw/process history and analytical requests are intentionally separate.

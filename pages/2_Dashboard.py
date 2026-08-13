@@ -4,7 +4,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 from core.timeutils import now_kyiv
 from core.db import get_supabase_client, fetch_all
-from core.deputies import DEPUTY_MINISTER_BY_SSP
 from core.page_setup import page_setup, render_footer
 from core.strategic_data import load_strat_matrix as core_load_strat_matrix
 from core import monitoring_data
@@ -14,6 +13,7 @@ from core import dashboard_risk as dashboard_risk_v2
 from core import dashboard_breakdowns as dashboard_breakdowns_v2
 from core import dashboard_filters as dashboard_filters_v2
 from core import dashboard_finance as dashboard_finance_v2
+from core.dashboard_execution import DASHBOARD_FORMULA_VERSION
 from core.periods import parse_period as core_parse_period
 from core.periods import period_number as core_period_number
 from core.periods import quarter_to_number_strict as core_quarter_to_number_strict
@@ -995,12 +995,9 @@ def unique_clean_values(series):
 
 
 def get_all_department_values(row):
-    values = []
-    for col in ["department", "department_co_1", "department_co_2"]:
-        value = clean(row.get(col, ""))
-        if value:
-            values.append(value)
-    return values
+    """Dashboard organizational ownership: main executor only."""
+    value = clean(row.get("department")) or clean(row.get("resp_main"))
+    return [value] if value else []
 
 
 def split_department_indices(value):
@@ -1018,21 +1015,19 @@ def ssp_sort_value(value):
 
 
 def get_deputy_minister_by_main_ssp(value):
-    """Повертає заступника Міністра за індексом головного виконавця."""
-    indices = split_department_indices(value)
-    if not indices:
-        return ""
-    return DEPUTY_MINISTER_BY_SSP.get(indices[0], "")
+    """Compatibility wrapper over the shared main-SSP deputy resolver."""
+    return dashboard_filters_v2.main_ssp_deputy({"department": value})
 
 
 def add_deputy_by_ssp_column(df):
-    """Додає службову колонку з заступником за головним Індексом ССП."""
+    """Attach canonical main SSP and its Deputy Minister for UI options."""
     data = df.copy()
     if data.empty:
+        data["main_ssp"] = ""
         data["deputy_minister_by_ssp"] = ""
         return data
-    data["deputy_minister_by_ssp"] = data["department"].apply(get_deputy_minister_by_main_ssp)
-    data["deputy_minister_by_ssp"] = data["deputy_minister_by_ssp"].replace("", "Не визначено")
+    data["main_ssp"] = data.apply(dashboard_filters_v2.main_ssp_index, axis=1)
+    data["deputy_minister_by_ssp"] = data.apply(dashboard_filters_v2.main_ssp_deputy, axis=1)
     return data
 
 
@@ -1247,7 +1242,7 @@ def _period_number_to_text(period_num):
 # ─── Plotly theme helper ───────────────────────────────────────────────────────
 CHART_COLORS = ["#005BBB", "#00A8A8", "#4D8DFF", "#FF7A45", "#1E9E57", "#F4B400", "#8A96A8", "#032A63"]
 
-# Canonical risk palette and order live in the shared v2 risk module.
+# Canonical risk palette and order live in the shared v3 risk module.
 RISK_COLORS = dashboard_risk_v2.RISK_COLORS
 RISK_ORDER = dashboard_risk_v2.RISK_ORDER
 
@@ -1410,15 +1405,7 @@ years_options = [2026, 2027, 2028]
 quarters_options = ["I", "II", "III", "IV"]
 
 department_indices_options = sorted(
-    set(
-        re.findall(
-            r"\d+",
-            " | ".join(
-                measures_all[["department", "department_co_1", "department_co_2"]]
-                .fillna("").astype(str).agg(" | ".join, axis=1).tolist()
-            )
-        )
-    ),
+    {clean(value) for value in measures_all.get("main_ssp", pd.Series(dtype=str)).tolist() if clean(value)},
     key=lambda x: int(x) if x.isdigit() else 9999,
 )
 
@@ -2085,10 +2072,16 @@ def _render_finance_period_panel():
 
 
 def _build_dashboard_context(pairs_for_calc):
-    """Build one Dashboard context from an explicit chronological period list."""
-    filtered_strat = dashboard_filters_v2.filter_measures(
+    """Build one Dashboard context with a pre-SSP base portfolio.
+
+    All content/source/status filters are applied before the SSP denominator is
+    established. The optional SSP filter is then applied to the already-built
+    v3 period results, so portfolio weight cannot collapse to 100% merely
+    because a user selected one SSP.
+    """
+    base_filtered_strat = dashboard_filters_v2.filter_measures(
         measures_all,
-        ssp=selected_department_indices,
+        ssp=None,
         goals=selected_goals,
         tasks=selected_tasks,
         measure_codes=selected_measures,
@@ -2098,7 +2091,7 @@ def _build_dashboard_context(pairs_for_calc):
         financing=selected_financing,
         kpkvk=selected_kpkvk,
     )
-    if filtered_strat is None or filtered_strat.empty:
+    if base_filtered_strat is None or base_filtered_strat.empty:
         return None
 
     pairs = sorted(
@@ -2107,27 +2100,33 @@ def _build_dashboard_context(pairs_for_calc):
     )
     if not pairs:
         return None
-    period_results = dashboard_breakdowns_v2.build_period_results(
-        filtered_strat,
+
+    base_period_results = dashboard_breakdowns_v2.build_period_results(
+        base_filtered_strat,
         requests_df,
         pairs,
         stable_statuses=selected_statuses,
-        period_sources=_build_period_source_overrides(pairs),
+        period_sources=_build_period_source_overrides(pairs, ssp_filter=None),
     )
-    if not period_results:
+    if not base_period_results:
         return None
+    period_results = (
+        dashboard_breakdowns_v2.filter_results_by_ssp(base_period_results, selected_department_indices)
+        if selected_department_indices
+        else base_period_results
+    )
 
     latest_key = max(period_results, key=lambda key: core_period_number(key[0], key[1]))
     latest_result = period_results[latest_key]
     active = latest_result["snapshot"].copy()
+    if active.empty:
+        return None
     active_period_rows = pd.concat(
         [item["snapshot"] for _, item in sorted(period_results.items(), key=lambda kv: core_period_number(kv[0][0], kv[0][1]))],
         ignore_index=True,
         sort=False,
     )
     active_raw = active_period_rows.copy()
-    if active.empty:
-        return None
 
     snapshot_label = f"Станом на {_period_number_to_text(core_period_number(*latest_key))}"
     first_key = min(period_results, key=lambda key: core_period_number(key[0], key[1]))
@@ -2140,7 +2139,11 @@ def _build_dashboard_context(pairs_for_calc):
     monitoring_ok = bool(active.get("monitoring_conducted", pd.Series([True])).iloc[0])
 
     total_active = int(active["code"].nunique())
-    submitted_count = int(active.get("submitted", pd.Series(False, index=active.index)).fillna(False).astype(bool).sum())
+    current_submitted_mask = active.get(
+        "submitted_current_period",
+        active.get("submitted", pd.Series(False, index=active.index)),
+    ).fillna(False).astype(bool)
+    submitted_count = int(current_submitted_mask.sum())
     coverage = latest_result.get("coverage")
     completion = latest_result.get("execution_by_measures")
     goal_execution = latest_result.get("execution_by_goals")
@@ -2196,7 +2199,6 @@ def _build_dashboard_context(pairs_for_calc):
         .groupby("risk_level").size().reset_index(name="Кількість").rename(columns={"risk_level": "auto_risk"})
     )
 
-    # Existing rendering names remain available, but values come from shared hierarchy.
     goal_progress = goal_scores_shared.rename(columns={
         "goal_name": "strategic_goal",
         "by_tasks": "Виконання",
@@ -2212,11 +2214,12 @@ def _build_dashboard_context(pairs_for_calc):
         goal_progress["За_заходами"] = goal_scores_shared["by_measures"].values
         goal_progress["За_завданнями"] = goal_scores_shared["by_tasks"].values
 
-    # Multi-period shared analytical frames.
     plan_comparison = dashboard_breakdowns_v2.aggregate_plan(period_results)
     goal_comparison = dashboard_breakdowns_v2.aggregate_objects(period_results, object_type="goal")
     task_comparison = dashboard_breakdowns_v2.aggregate_objects(period_results, object_type="task")
-    ssp_comparison = dashboard_breakdowns_v2.ssp_summary(period_results, selected_department_indices or None)
+    ssp_comparison = dashboard_breakdowns_v2.ssp_summary(
+        period_results, base_results=base_period_results
+    )
     deputy_comparison = dashboard_breakdowns_v2.deputy_summary(period_results)
     dynamics_shared = dashboard_breakdowns_v2.dynamics_frame(period_results)
     execution_forecast_matrix = dashboard_breakdowns_v2.execution_forecast_matrix(active, group_col="department")
@@ -2224,7 +2227,6 @@ def _build_dashboard_context(pairs_for_calc):
         active, group_col="department"
     )
 
-    # Latest-period SSP frame retained for current presentation and status charts.
     dep_active = explode_departments(active)
     if not dep_active.empty:
         dep_progress = (
@@ -2246,6 +2248,7 @@ def _build_dashboard_context(pairs_for_calc):
 
     return {
         "pairs_for_calc": list(pairs),
+        "base_period_results": base_period_results,
         "period_results": period_results, "active_raw": active_raw, "active_period_rows": active_period_rows,
         "active": active, "snapshot_label": snapshot_label, "dynamics_label": dynamics_label,
         "snapshot_period_number": snapshot_period_number, "snapshot_quarter_num": snapshot_quarter_num,
@@ -2548,16 +2551,17 @@ def _high_risk_insight_text(subject, row):
 
 
 def _missing_data_by_department(active):
-    """Return departments ranked by the number of measures without submitted data."""
+    """Rank main SSPs by active measures missing the current-quarter submission."""
     columns = ["ssp_department", "Заходів_без_даних"]
     if active is None or active.empty:
         return pd.DataFrame(columns=columns)
 
     departments = explode_departments(active)
-    if departments.empty or "status" not in departments.columns:
+    if departments.empty or "missing_required_submission" not in departments.columns:
         return pd.DataFrame(columns=columns)
 
-    missing = departments[departments["status"] == "Не подано"].copy()
+    missing_mask = departments["missing_required_submission"].fillna(False).astype(bool)
+    missing = departments[missing_mask].copy()
     if missing.empty:
         return pd.DataFrame(columns=columns)
 
@@ -2596,7 +2600,7 @@ def _goal_quarter_drop_signals(year, quarter, minimum_drop=10.0):
     pairs = [(int(year), prev_q), (int(year), quarter_to_roman(quarter))]
     results = dashboard_breakdowns_v2.build_period_results(
         filtered_strat, requests_df, pairs, stable_statuses=selected_statuses,
-        period_sources=_build_period_source_overrides(pairs),
+        period_sources=_build_period_source_overrides(pairs, ssp_filter=selected_department_indices),
     )
     comparison = dashboard_breakdowns_v2.aggregate_objects(results, object_type="goal")
     if comparison.empty:
@@ -2617,7 +2621,7 @@ def _goal_quarter_drop_signals(year, quarter, minimum_drop=10.0):
 
 
 def _dashboard_archive_reporting_period(row, payload):
-    """Return an explicit v2 reporting period or ``None`` for ambiguous archives.
+    """Return an explicit v3 reporting period or ``None`` for ambiguous archives.
 
     Legacy anchor-quarter inference is intentionally unsupported: archive Q3
     must never become a synthetic Q2 source merely because the archive was
@@ -2625,7 +2629,7 @@ def _dashboard_archive_reporting_period(row, payload):
     """
     if not isinstance(payload, dict):
         return None
-    expected_formula = "dashboard-execution-v2"
+    expected_formula = DASHBOARD_FORMULA_VERSION
     formula = str(payload.get("dashboard_formula_version") or "").strip()
     if formula and formula != expected_formula:
         return None
@@ -2655,7 +2659,7 @@ def _dashboard_archive_reporting_period(row, payload):
 
 @st.cache_data(ttl=300, show_spinner=False)
 def _load_dashboard_archive_payloads():
-    """Immutable v2-compatible snapshots keyed only by explicit reporting period."""
+    """Immutable v3-compatible snapshots keyed only by explicit reporting period."""
     try:
         rows = fetch_all(
             "archive_snapshots",
@@ -2734,8 +2738,8 @@ def _archive_locked_periods(payload):
     return locked
 
 
-def _build_period_source_overrides(pairs):
-    """Use immutable archive payloads as inputs, but always recalculate with v2.
+def _build_period_source_overrides(pairs, *, ssp_filter=None):
+    """Use immutable archive payloads as inputs, but always recalculate with v3.
 
     Selected periods and their immediate previous quarters are included so
     trajectory/risk never mixes an archived current fact with mutable history.
@@ -2760,7 +2764,7 @@ def _build_period_source_overrides(pairs):
             continue
         archived_strat = dashboard_filters_v2.filter_measures(
             archived_strat,
-            ssp=selected_department_indices,
+            ssp=ssp_filter,
             goals=selected_goals,
             tasks=selected_tasks,
             measure_codes=selected_measures,
@@ -3475,7 +3479,7 @@ if presentation_mode:
             <div class="pres-slide-num">06 / 07</div>
             <div class="pres-section-label">Увага керівництва</div>
             <div class="pres-slide-h2">Топ-5 проблемних заходів</div>
-            <div class="pres-slide-hsub">V2 attention signals: ризик, відсутність подання, final failure або конфлікт даних · {period_label}</div>
+            <div class="pres-slide-hsub">V3 attention signals: ризик, відсутність подання, final failure або конфлікт даних · {period_label}</div>
             <div style="margin-top:28px;max-width:860px;">
                 {top5_html}
             </div>
@@ -3545,7 +3549,9 @@ if snapshot_context is not None and snapshot_monitoring_available:
         _selected_kpi = render_kpi_grid(_main_kpi_items, interactive=True, query_key="kpi")
 
         if data_source_mode == operational.MODE_OPERATIONAL:
-            _approved_detail = active[active.get("has_monitoring_data", False).fillna(False)].copy()
+            # Detail must match the KPI count: only a real current-quarter
+            # effective submission has passed the coordinator in this period.
+            _approved_detail = active[current_submitted_mask].copy()
         else:
             _approved_detail = active[
                 active.get("approval_status", pd.Series(index=active.index, dtype=str))
@@ -3803,6 +3809,12 @@ if breakdown_context is not None:
     with breakdown_content:
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
         st.markdown('<div class="section-title">Рейтинг самостійних структурних підрозділів</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="section-subtitle"><b>Результативність ССП</b> — наскільки виконаний портфель заходів, за які цей ССП є головним виконавцем?<br>'
+            '<b>Вага ССП у портфелі</b> — яку частину аналізованого портфеля становлять заходи цього ССП?<br>'
+            '<b>Вплив на загальне недовиконання</b> — яку частину загального відставання формує цей ССП з урахуванням масштабу його портфеля?</div>',
+            unsafe_allow_html=True,
+        )
         ssp_cmp = ssp_comparison.copy()
         if ssp_cmp.empty:
             render_no_chart_data()
@@ -3814,29 +3826,54 @@ if breakdown_context is not None:
                 "latest": "Останнє виконання, %", "change": "Зміна, в.п.",
                 "average_coverage": "Середнє покриття, %", "latest_coverage": "Останнє покриття, %",
                 "risk_high_critical_latest": "Високий + критичний ризик, %",
+                "portfolio_weight_pct": "Вага портфеля, %",
+                "underperformance_contribution_pct": "Частка у загальному недовиконанні, %",
+                "risk_contribution_pct": "Частка у загальній концентрації ризику, %",
             })
             _ssp_display_numeric_columns = [
                 "Середнє виконання, %", "Останнє виконання, %", "Зміна, в.п.",
                 "Середнє покриття, %", "Останнє покриття, %",
-                "Високий + критичний ризик, %",
+                "Високий + критичний ризик, %", "Вага портфеля, %",
+                "Частка у загальному недовиконанні, %",
+                "Частка у загальній концентрації ризику, %",
             ]
             render_dashboard_table(
                 rank_display[["Місце", "Самостійний структурний підрозділ", "Середнє виконання, %",
                               "Останнє виконання, %", "Зміна, в.п.", "Середнє покриття, %",
-                              "Останнє покриття, %", "Високий + критичний ризик, %"]],
+                              "Останнє покриття, %", "Високий + критичний ризик, %",
+                              "Вага портфеля, %", "Частка у загальному недовиконанні, %",
+                              "Частка у загальній концентрації ризику, %"]],
                 hide_index=True,
                 formatters={
                     column: (lambda value: _format_table_number(value, 2))
                     for column in _ssp_display_numeric_columns
                 },
             )
-            st.caption("Ризик у рейтингу — станом на останній вибраний звітний квартал; між кварталами він не усереднюється.")
+            st.caption(
+                "Ризик у рейтингу — станом на останній вибраний звітний квартал; між кварталами він не усереднюється. "
+                "Вага та внески розраховані для базового портфеля до застосування ССП-фільтра."
+            )
 
             ssp_plot = ssp_cmp.copy(); ssp_plot["ssp"] = ssp_plot["ssp"].astype(str)
             fig_ssp = go.Figure()
+            _ssp_hover = pd.DataFrame({
+                "change": ssp_plot["change"].map(
+                    lambda value: "—" if pd.isna(value) else f"{float(value):+.1f} в.п."
+                ),
+                "weight": ssp_plot["portfolio_weight_pct"].map(
+                    lambda value: "—" if pd.isna(value) else f"{float(value):.1f}%"
+                ),
+                "underperformance": ssp_plot["underperformance_contribution_pct"].map(
+                    lambda value: "—" if pd.isna(value) else f"{float(value):.1f}%"
+                ),
+            }).to_numpy()
             fig_ssp.add_trace(go.Bar(x=ssp_plot["ssp"], y=ssp_plot["average"], name="Середнє", marker_color="#005BBB",
-                                     customdata=ssp_plot["change"],
-                                     hovertemplate="Середнє: %{y:.1f}%<br>Зміна: %{customdata:+.1f} в.п.<extra></extra>"))
+                                     customdata=_ssp_hover,
+                                     hovertemplate=(
+                                         "Середнє: %{y:.1f}%<br>Зміна: %{customdata[0]}<br>"
+                                         "Вага портфеля: %{customdata[1]}<br>"
+                                         "Частка у загальному недовиконанні: %{customdata[2]}<extra></extra>"
+                                     )))
             fig_ssp.add_trace(go.Scatter(x=ssp_plot["ssp"], y=ssp_plot["latest"], name="Останнє",
                                          mode="markers", marker=dict(size=10, symbol="diamond", color="#F4B400"),
                                          hovertemplate="Останнє: %{y:.1f}%<extra></extra>"))
@@ -3938,6 +3975,7 @@ if breakdown_context is not None:
     with breakdown_content:
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
         st.markdown('<div class="section-title" style="margin-top:0;">Структура ризиків за самостійними структурними підрозділами</div>', unsafe_allow_html=True)
+        st.caption("Кожен захід віднесено лише до ССП — головного виконавця; співвиконавці не дублюють ризик.")
         stacked = dep_active.groupby(["ssp_department", "auto_risk"]).size().reset_index(name="Кількість") if not dep_active.empty else pd.DataFrame()
         stacked_vis = stacked[stacked["auto_risk"] != "Не оцінюється"].copy() if not stacked.empty else pd.DataFrame()
         if stacked_vis.empty:
@@ -4699,7 +4737,7 @@ if finance_context is not None:
         )
         st.markdown("</div>", unsafe_allow_html=True)
 
-# Проблемні заходи — v2 attention signals, not an execution <75 threshold.
+# Проблемні заходи — v3 attention signals, not an execution <75 threshold.
 if breakdown_context is not None:
     _activate_dashboard_context(breakdown_context)
     with breakdown_content:
@@ -4707,7 +4745,7 @@ if breakdown_context is not None:
             problem_mask = dashboard_risk_v2.attention_mask(active)
             risk_table = active.loc[problem_mask].copy()
             if risk_table.empty:
-                st.success("Заходів із суттєвими v2 attention signals за обраний період не виявлено.")
+                st.success("Заходів із суттєвими v3 attention signals за обраний період не виявлено.")
             else:
                 def _attention_reason(row):
                     parts = []
@@ -4738,7 +4776,7 @@ if breakdown_context is not None:
                 )
                 st.caption("Для I кварталу прогнозні risk signals є попередніми; для IV кварталу показуються фінальні результати, а не прогнозний ризик.")
 
-# Повна таблиця заходів у зрізі — shared v2 fields.
+# Повна таблиця заходів у зрізі — shared v3 fields.
 if breakdown_context is not None:
     _activate_dashboard_context(breakdown_context)
     with breakdown_content:
@@ -4780,15 +4818,17 @@ if breakdown_context is not None:
 with st.expander("Методологія розрахунку"):
     st.markdown("""
     <div class="methodology-box">
-    <strong>Quarter snapshot</strong> є єдиним джерелом розрахунків Dashboard. Майбутні заходи не входять у population; активні використовують тільки дані поточного кварталу; завершені можуть переносити останній валідний погоджений результат. Якщо період застосовності визначити неможливо, захід має explicit state <em>unknown period</em> і не отримує автоматично 0%.<br><br>
+    <strong>Quarter snapshot</strong> є єдиним джерелом розрахунків Dashboard. Майбутні заходи не входять у population. Для активного заходу точне подання вибраного кварталу має пріоритет; якщо його немає, execution зберігає останній підтверджений результат <em>лише в межах того самого року</em>, але поточний статус лишається «Не подано» і coverage погіршується. Якщо в поточному році підтверджених даних не було взагалі, для управлінської оцінки застосовується 0% з окремим signal відсутності даних — це не вважається відомим фізичним фактом. Завершений захід переносить останній підтверджений результат як фінальний і не потребує нового квартального подання.<br><br>
 
-    <strong>Виконання заходу.</strong> Для числових plan/fact використовується факт / річний план × 100 зі стелею 100% для execution score; raw attainment зберігається окремо. Для якісних результатів: «Виконано» = 100%, «Частково виконано» = 75%, «Не виконано» = 0%; «Не настав час» та «Втратило актуальність» виключаються. Активний захід без обов'язкового поточного подання отримує 0%, але coverage показується окремо. Завершений захід без жодного валідного фінального результату також отримує 0% та окремий data-quality signal.<br><br>
+    <strong>Виконання заходу.</strong> Для числових plan/fact використовується факт / річний план × 100 зі стелею 100% для execution score; raw attainment понад 100% зберігається окремо. Для якісних результатів: «Виконано» = 100%, «Частково виконано» = 75%, «Не виконано» = 0%; «Не настав час» та «Втратило актуальність» виключаються. Для active carry-forward reporting status і effective result навмисно розділені: «Не подано» описує відсутність актуального подання, а execution — останній підтверджений накопичений результат.<br><br>
 
     <strong>Дві оцінки Стратегічного плану.</strong> «За заходами» — середнє execution score оцінених заходів. «За стратегічними цілями» — ієрархічна оцінка measure → task → goal → plan. Для кожної стратегічної цілі Dashboard окремо показує оцінку за заходами та за завданнями.<br><br>
 
-    <strong>Прогноз і темп</strong> застосовуються лише там, де є достатня числова історія. У I кварталі прогноз є попереднім. У II–III кварталах використовується безпосередньо попередній валідний квартал; locked / monitoring-not-conducted observation повністю виключається з history. Від'ємний приріст зберігається як signal, але прогноз річного факту не може бути нижчим за 0. У IV кварталі прогнозний ризик не розраховується — показується підсумок року за фактичним результатом.<br><br>
+    <strong>ССП та заступник Міністра.</strong> Для управлінської аналітики кожен захід належить лише ССП — головному виконавцю; співвиконавці не дублюють execution або risk. Вага ССП — частка унікальних оцінених заходів цього головного ССП у базовому відфільтрованому портфелі до застосування ССП-фільтра. Вплив на загальне недовиконання та концентрацію High/Critical risk показуються окремо від результативності й не утворюють composite rating.<br><br>
 
-    <strong>Ризик</strong> визначається за прогнозованим досягненням річного плану: понад 85% — низький; 51–85% — середній; 20–менше 51% — високий; менше 20% — критичний. Ризик у multi-period розрізах показується станом на останній вибраний квартал і не усереднюється між кварталами.<br><br>
+    <strong>Прогноз і темп</strong> застосовуються лише до реального поточного спостереження. Перенесений historical result не створює нового increment, forecast, pace або standard risk. У I кварталі прогноз є попереднім. У II–III кварталах використовується безпосередньо попередній валідний квартал; locked / monitoring-not-conducted observation повністю виключається з history. Від'ємний приріст зберігається як signal, але прогноз річного факту не може бути нижчим за 0. У IV кварталі прогнозний ризик не розраховується — показується підсумок року за фактичним результатом.<br><br>
+
+    <strong>Ризик</strong> визначається за прогнозованим досягненням річного плану: понад 85% — низький; 51–85% — середній; 20–менше 51% — високий; менше 20% — критичний. Відсутність актуального подання є окремим attention signal, а не вигаданим trajectory risk. Ризик у multi-period розрізах показується станом на останній вибраний квартал і не усереднюється між кварталами.<br><br>
 
     <strong>Порівняння результатів.</strong> Average — середнє готових квартальних KPI з однаковою вагою кварталів; Latest — останній валідний вибраний квартал; Change — Latest мінус earliest comparable. Якщо використано status filter, cohort фіксується за останнім вибраним кварталом і той самий набір кодів використовується для попередніх кварталів, average та change.<br><br>
 
@@ -5298,7 +5338,7 @@ def _render_dash_auto_summary():
         _summary_pairs = [(_py, _pq), (_cy, _cq)]
         _summary_results = dashboard_breakdowns_v2.build_period_results(
             _filtered_strat, requests_df, _summary_pairs, stable_statuses=selected_statuses,
-            period_sources=_build_period_source_overrides(_summary_pairs),
+            period_sources=_build_period_source_overrides(_summary_pairs, ssp_filter=selected_department_indices),
         )
         _prev = _summary_results.get((_py, _pq), {}).get("snapshot", pd.DataFrame())
         _current_for_summary = _summary_results.get((_cy, _cq), {}).get("snapshot", active)

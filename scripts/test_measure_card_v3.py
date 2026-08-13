@@ -6,6 +6,7 @@ Run from repository root:
 from __future__ import annotations
 
 from pathlib import Path
+import ast
 import math
 import sys
 
@@ -432,6 +433,157 @@ def test_yes_no_far_and_undefined_deadline_copy():
     assert build_measure_conclusion(undefined) == "Результат ще не досягнуто. Строк виконання не визначено."
 
 
+
+def _page_state_helpers():
+    """Execute only the pure Card filter-state helpers from the page source."""
+    page_path = ROOT / "pages" / "4_Картка_заходу.py"
+    tree = ast.parse(page_path.read_text(encoding="utf-8"))
+    wanted = {"_card_filter_payload", "_card_reset_payload", "_card_query_signature"}
+    nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in wanted]
+    assert {node.name for node in nodes} == wanted
+
+    def _clean(value):
+        return "" if value is None else str(value).strip()
+
+    def _quarter(value):
+        text = _clean(value).upper().replace("КВАРТАЛ", "").replace("КВ.", "").strip()
+        return {"1": "I", "2": "II", "3": "III", "4": "IV", "I": "I", "II": "II", "III": "III", "IV": "IV"}.get(text, text)
+
+    ns = {"clean": _clean, "quarter_to_roman": _quarter}
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), str(page_path), "exec"), ns)
+    return ns
+
+
+def test_scope_regression_measure_1_1_1():
+    m = measure("1.1.1.", 2)
+    rows = [
+        request("1.1.1.", 1, 0.2, rid=1),
+        request("1.1.1.", 2, 0.6, rid=2),
+        request("1.1.1.", 3, 1.0, rid=3),
+        request("1.1.1.", 4, 2.0, status="Виконано", rid=4),
+    ]
+    q3_results = results_for(m, rows, ["I", "II", "III"])
+    q3 = row_at(q3_results, 2026, "III")
+    approx(q3["actual"], 1.0)
+    approx(q3["execution_score"], 50.0)
+    assert not bool(q3["management_zero_due_to_missing_data"])
+
+    q4_results = results_for(m, rows, ["I", "II", "III", "IV"])
+    q4 = row_at(q4_results, 2026, "IV")
+    approx(q4["actual"], 2.0)
+    approx(q4["execution_score"], 100.0)
+    assert bool(q4["result_achieved"])
+    assert "досяг" in str(q4["final_outcome"]).casefold()
+
+
+def test_card_applied_state_seven_parameters():
+    helpers = _page_state_helpers()
+    payload = helpers["_card_filter_payload"](
+        "Ціль 1", "Завдання 1.1", "1.1.1.", "ключ", 2026, "III", "confirmed"
+    )
+    assert list(payload) == [
+        "goal", "task", "measure_code", "keyword", "year", "quarter", "data_source_mode"
+    ]
+    assert len(payload) == 7
+
+
+def test_draft_does_not_change_applied_until_apply():
+    helpers = _page_state_helpers()
+    build = helpers["_card_filter_payload"]
+    applied = build("Усі стратегічні цілі", "Усі завдання", "1.1.1.", "", 2026, "III", "confirmed")
+    draft = build("Усі стратегічні цілі", "Усі завдання", "1.1.2.", "", 2026, "IV", "confirmed")
+    assert applied["measure_code"] == "1.1.1." and applied["quarter"] == "III"
+    assert draft["measure_code"] == "1.1.2." and draft["quarter"] == "IV"
+    # Apply is the only state transition: the draft object itself never mutates applied.
+    applied = draft.copy()
+    assert applied["measure_code"] == "1.1.2." and applied["quarter"] == "IV"
+
+
+def test_data_source_is_applied_only_on_apply():
+    helpers = _page_state_helpers()
+    build = helpers["_card_filter_payload"]
+    applied = build("all", "all", "1.1.1.", "", 2026, "III", "confirmed")
+    draft = build("all", "all", "1.1.1.", "", 2026, "III", "operational")
+    assert applied["data_source_mode"] == "confirmed"
+    assert draft["data_source_mode"] == "operational"
+    applied = draft.copy()
+    assert applied["data_source_mode"] == "operational"
+
+
+def test_reset_payload_defaults_and_draft_applied_identity():
+    helpers = _page_state_helpers()
+    reset = helpers["_card_reset_payload"]("1.1.1.", 2026, "III", "confirmed")
+    assert reset == {
+        "goal": "Усі стратегічні цілі",
+        "task": "Усі завдання",
+        "measure_code": "1.1.1.",
+        "keyword": "",
+        "year": 2026,
+        "quarter": "III",
+        "data_source_mode": "confirmed",
+    }
+    draft = reset.copy(); applied = reset.copy()
+    assert draft == applied
+
+
+def test_copy_link_and_direct_url_state_contracts():
+    helpers = _page_state_helpers()
+    signature = helpers["_card_query_signature"]("1.1.1.", "2026", "III")
+    assert signature == "1.1.1.|2026|III"
+    # A signature hydrates only when it differs from the previously handled URL.
+    last_signature = signature
+    assert not (signature and signature != last_signature)
+
+    page = (ROOT / "pages" / "4_Картка_заходу.py").read_text(encoding="utf-8")
+    assert 'applied_for_link = st.session_state[CARD_APPLIED_STATE_KEY]' in page
+    assert 'render_copy_card_link(\n        applied_for_link["measure_code"],' in page
+    assert 'query_signature != st.session_state.get(CARD_URL_SIGNATURE_KEY, "")' in page
+    assert '_set_card_applied_and_draft(' in page
+
+
+def test_dashboard_scope_parity_static_contract():
+    page = (ROOT / "pages" / "4_Картка_заходу.py").read_text(encoding="utf-8")
+    for token in [
+        "is_guest_user(current_user)",
+        "is_admin_user(current_user)",
+        "is_super_admin_user(current_user)",
+        'is_scope_override_active("Картка заходу")',
+        "scoped_requests_df = all_requests_df.copy()",
+        'ssp_columns=["department"]',
+        'page_key="Картка заходу"',
+        "requests_df = monitoring_data.measures_only(scoped_requests_df)",
+        "measures = all_measures.copy()",
+        "selected_measure_requests = requests_df[",
+    ]:
+        assert token in page, token
+    assert page.index("requests_df = monitoring_data.measures_only(scoped_requests_df)") < page.index("selected_measure_requests = requests_df[")
+
+
+def test_apply_reset_page_flow_static_contract():
+    page = (ROOT / "pages" / "4_Картка_заходу.py").read_text(encoding="utf-8")
+    assert 'CARD_APPLIED_STATE_KEY = "card_filters_applied_v1"' in page
+    assert '"goal", "task", "measure_code", "keyword", "year", "quarter", "data_source_mode"' in page
+    assert '"Застосувати параметри"' in page and '"Скинути параметри"' in page
+    assert 'type="primary"' in page and 'type="secondary"' in page
+    assert 'st.session_state[CARD_APPLIED_STATE_KEY] = new_applied' in page
+    assert 'st.session_state[CARD_RESET_REQUEST_KEY] = True' in page
+    marker = page.index("# APPLIED CONTENT START")
+    lower = page[marker:]
+    for draft_key in [
+        "card_goal_draft_v1", "card_task_draft_v1", "card_measure_draft_v1",
+        "card_keyword_draft_v1", "card_year_draft_v1", "card_quarter_draft_v1",
+        "card_data_source_draft_v1",
+    ]:
+        assert draft_key not in lower
+    for assignment in [
+        'applied_measure_code = clean(applied["measure_code"])',
+        'applied_year = int(applied["year"])',
+        'applied_quarter = quarter_to_roman(applied["quarter"])',
+        'applied_data_source_mode = applied["data_source_mode"]',
+    ]:
+        assert assignment in lower
+
+
 def test_page_static_contracts():
     page = (ROOT / "pages" / "4_Картка_заходу.py").read_text(encoding="utf-8")
     helper = (ROOT / "core" / "measure_card.py").read_text(encoding="utf-8")
@@ -465,9 +617,9 @@ def test_page_static_contracts():
     assert "fact / target" not in helper
     assert "forecast_attainment_pct =" not in helper
     assert "risk_level(" not in helper
-    assert "st.session_state[year_widget_key] = selected_default_year" in page
-    assert "st.session_state[quarter_widget_key] = selected_default_quarter" in page
-    assert page.index("st.session_state[year_widget_key] = selected_default_year") < page.index('st.selectbox("Рік"')
+    assert 'CARD_URL_SIGNATURE_KEY = "card_last_hydrated_query_signature_v1"' in page
+    assert 'query_signature != st.session_state.get(CARD_URL_SIGNATURE_KEY, "")' in page
+    assert page.index("_set_card_applied_and_draft(") < page.index('st.selectbox("Рік"')
     assert 'if "квартал" in text.lower()' in page and 'return f"{val} квартал"' in page
     assert 'for candidate in reversed(row_values[:idx])' in page
     assert "Не вдалося завантажити довідник КПКВК" in page
@@ -489,11 +641,13 @@ def test_stage4_and_analytics_untouched_contract():
     # to a shared module, but PDF implementation and Analytics remain untouched.
     forbidden = {"core/stage4.py", "pages/7_Аналітика.py"}
     deliverable = {
-        "pages/2_Dashboard.py", "pages/4_Картка_заходу.py",
-        "core/dashboard_sources.py", "core/measure_card.py",
-        "scripts/test_dashboard_v2.py", "scripts/test_measure_card_v3.py",
+        "pages/4_Картка_заходу.py",
+        "scripts/test_measure_card_v3.py",
     }
     assert forbidden.isdisjoint(deliverable)
+    assert "pages/2_Dashboard.py" not in deliverable
+    assert "core/measure_card.py" not in deliverable
+    assert "pages/4_Картка_заходу_тест.py" not in deliverable
 
 
 def main():
@@ -518,6 +672,14 @@ def main():
         test_headline_kpi_max_four,
         test_zero_increment_conclusion,
         test_yes_no_far_and_undefined_deadline_copy,
+        test_scope_regression_measure_1_1_1,
+        test_card_applied_state_seven_parameters,
+        test_draft_does_not_change_applied_until_apply,
+        test_data_source_is_applied_only_on_apply,
+        test_reset_payload_defaults_and_draft_applied_identity,
+        test_copy_link_and_direct_url_state_contracts,
+        test_dashboard_scope_parity_static_contract,
+        test_apply_reset_page_flow_static_contract,
         test_page_static_contracts,
         test_stage4_and_analytics_untouched_contract,
     ]

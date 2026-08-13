@@ -38,6 +38,7 @@ from core.dashboard_risk import (  # noqa: E402
     numeric_trajectory, risk_level, attach_risk, yes_no_trajectory, attention_mask,
     RISK_COLORS, RISK_ORDER,
 )
+from core.dashboard_sources import archive_reporting_period  # noqa: E402
 
 
 def approx(actual, expected, tol=0.02):
@@ -735,7 +736,7 @@ def test_live_ui_data_regressions():
         "_apply_dashboard_breakdown_period_v1", "_reset_dashboard_breakdown_period_v1",
         "_apply_dashboard_dynamics_period_v1", "_reset_dashboard_dynamics_period_v1",
         "_apply_dashboard_finance_period_v1", "_reset_dashboard_finance_period_v1",
-        "_dashboard_archive_reporting_period", "_format_summary_number", "_format_percent",
+        "_format_summary_number", "_format_percent",
         "_format_table_number", "_short_summary_label", "_task_chart_label",
         "_goal_change_label", "_high_risk_groups", "_high_risk_insight_text",
     }
@@ -847,7 +848,7 @@ def test_live_ui_data_regressions():
     assert state["dash_finance_period_applied_v1"] == {"year": 2026}
 
     # H/I: ambiguous legacy archive and incompatible formula never become v3 overrides.
-    archive_period = env["_dashboard_archive_reporting_period"]
+    archive_period = archive_reporting_period
     ambiguous_row = {"year": 2026, "quarter": 3, "reason": "захотілося"}
     assert archive_period(ambiguous_row, {"dashboard_formula_version": "dashboard-execution-v2"}) is None
     assert archive_period(
@@ -1300,11 +1301,15 @@ def test_stage1_v3_dashboard_source_contracts():
     dashboard = (ROOT / "pages" / "2_Dashboard.py").read_text(encoding="utf-8")
     filters = (ROOT / "core" / "dashboard_filters.py").read_text(encoding="utf-8")
     execution = (ROOT / "core" / "dashboard_execution.py").read_text(encoding="utf-8")
+    sources = (ROOT / "core" / "dashboard_sources.py").read_text(encoding="utf-8")
 
     assert 'DASHBOARD_FORMULA_VERSION = "dashboard-execution-v3"' in execution
-    assert 'expected_formula = DASHBOARD_FORMULA_VERSION' in dashboard
-    assert 'expected_formula = "dashboard-execution-v2"' not in dashboard
+    assert 'expected_formula = DASHBOARD_FORMULA_VERSION' in sources
+    assert 'expected_formula = "dashboard-execution-v2"' not in sources
     assert "dashboard-execution-v3" not in dashboard  # page must not duplicate the version literal
+    assert "dashboard_sources_v3.build_period_source_overrides" in dashboard
+    assert "def _dashboard_archive_reporting_period" not in dashboard
+    assert "def _load_dashboard_archive_payloads" not in dashboard
 
     # Base portfolio is built without SSP and display results are filtered afterwards.
     assert "base_period_results" in dashboard

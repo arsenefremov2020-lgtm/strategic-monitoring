@@ -500,7 +500,6 @@ def base_measures(strat_df):
     measures["end_num"] = measures["end_period"].apply(parse_period)
     measures["ssp_index"] = measures["resp_main"].apply(extract_ssp_index)
     measures["deputy_minister"] = measures["resp_main"].apply(get_deputy_minister_by_main_ssp)
-    measures["indicator_type"] = measures.apply(get_indicator_type, axis=1)
     return measures
 
 

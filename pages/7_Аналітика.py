@@ -895,6 +895,38 @@ def generate_analytical_text(active, filters, metrics, goal_progress, dep_progre
 # Export
 # ============================================================
 
+def _excel_safe_value(value):
+    """Convert structured/missing Python values to Excel-safe scalar values."""
+    if isinstance(value, dict):
+        return "; ".join(f"{key}: {item}" for key, item in value.items())
+
+    if isinstance(value, (list, tuple, set)):
+        return "; ".join(str(item) for item in value)
+
+    if value is None:
+        return ""
+
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+
+    return value
+
+
+def _excel_safe_frame(df):
+    """Prepare a DataFrame for xlsxwriter without changing analytical values."""
+    if df is None:
+        return pd.DataFrame()
+
+    result = df.copy()
+
+    for column in result.columns:
+        result[column] = result[column].map(_excel_safe_value)
+
+    return result
+
 def create_excel_report(active, period_requests, goal_progress, dep_progress, task_progress, product_progress, status_counts, period_dynamics, yoy_comparison, metrics, filters):
     output = BytesIO()
 
@@ -952,6 +984,10 @@ def create_excel_report(active, period_requests, goal_progress, dep_progress, ta
         "Статуси": status_counts,
         "Рік до року": yoy_comparison,
         "Реєстр заявок": period_requests,
+    }
+    _sheets = {
+        sheet_name: _excel_safe_frame(frame)
+        for sheet_name, frame in _sheets.items()
     }
     output = BytesIO(core_exports.write_styled_excel(_sheets, freeze_first_col=1))
     output.seek(0)

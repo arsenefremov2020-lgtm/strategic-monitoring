@@ -22,12 +22,18 @@ from docx.shared import Pt, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 from core.page_setup import page_setup, render_footer
+from core.access import is_super_admin_user
 from core.strategic_data import load_strat_matrix as core_load_strat_matrix
 from core import monitoring_data
 from core import statuses as core_statuses
 from core import operational
-from core import dashboard_metrics
 from core import periods as core_periods
+from core.dashboard_breakdowns import (
+    build_period_results, aggregate_plan, aggregate_objects, dynamics_frame,
+    ssp_summary, deputy_summary, filter_results_by_ssp,
+)
+from core.dashboard_execution import plan_scores
+from core.dashboard_risk import attention_mask, risk_summary
 from core.closeouts import append_confirmed_closeout_facts
 from core.errors import show_warning
 from core.stage4 import (
@@ -44,6 +50,10 @@ from core.stage4 import (
 
 current_user = page_setup("Аналітика", page_name="Аналітика")
 
+# Production Analytics is a super-admin-only surface. Guard before analytical data access.
+if not is_super_admin_user(current_user):
+    st.error("У вас немає доступу до розділу «Аналітика».")
+    st.stop()
 
 supabase = get_supabase_client()
 # ============================================================
@@ -406,37 +416,21 @@ def to_number(value):
         return None
 
 
-def status_score(status):
-    return dashboard_metrics.status_score(status)
-
-def plan_fact_percent(actual, target):
-    return dashboard_metrics.plan_fact_percent(actual, target)
-
 def deviation_label(value):
-    sign = "+" if value > 0 else ""
-    return f"{sign}{round(value, 2)} в.п."
+    if value is None or pd.isna(value):
+        return "—"
+    sign = "+" if float(value) > 0 else ""
+    return f"{sign}{round(float(value), 2)} в.п."
 
 
 def deviation_card_class(value):
+    if value is None or pd.isna(value):
+        return "alert-blue"
     if value >= 0:
         return "alert-green"
     if value >= -15:
         return "alert-yellow"
     return "alert-red"
-
-
-def traffic_light(score):
-    return dashboard_metrics.traffic_light(score)
-
-def get_indicator_type(row):
-    unit = normalize_text(row.get("unit", ""))
-    if "так/нi" in unit or ("так" in unit and "нi" in unit):
-        return "Так/ні"
-    if "%" in unit or "відсот" in unit:
-        return "Відсотковий"
-    if any(x in unit for x in ["грн", "дол", "євро", "eur", "usd"]):
-        return "Фінансовий"
-    return "Кількісний"
 
 
 def concise_list(values, limit=5):
@@ -516,84 +510,81 @@ def is_active_for_period(row, year, quarter):
         row.get("start_num"), row.get("end_num"), selected_period_num
     ) == "active"
 
-def latest_approved_records(requests_df, year, quarter):
-    return dashboard_metrics.latest_approved_records(requests_df, year, quarter)
+def _snapshot_rows_from_period_results(results):
+    parts = []
+    for (year, quarter), result in results.items():
+        snap = result.get("snapshot")
+        if snap is None or snap.empty:
+            continue
+        part = snap.copy()
+        part["report_year"] = int(year)
+        part["report_quarter"] = quarter
+        part["report_quarter_num"] = quarter_to_number(quarter)
+        part["report_period"] = f"{year} {quarter} квартал"
+        part["task_name"] = part.get("parent_task_name", pd.Series("", index=part.index)).astype(str)
+        part["ssp_index"] = part.get("main_ssp", "").astype(str)
+        part["deputy_minister"] = part.get("deputy_minister_by_ssp", "").astype(str)
+        part["numeric_value"] = part.get("actual", "")
+        part["has_submission"] = part.get("submitted", False).fillna(False).astype(bool)
+        part["is_problem_status"] = attention_mask(part).reindex(part.index, fill_value=False).astype(bool)
+        parts.append(part)
+    return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
 
-def prepare_period_slice(measures, requests_df, year, quarter):
-    active = measures[measures.apply(lambda row: is_active_for_period(row, year, quarter), axis=1)].copy()
 
-    target_col = f"target_{year}"
-    active["selected_target"] = active[target_col] if target_col in active.columns else ""
-    active["report_year"] = int(year)
-    active["report_quarter"] = quarter
-    active["report_quarter_num"] = quarter_to_number(quarter)
-    active["report_period"] = f"{year} {quarter} квартал"
-    active["expected_progress"] = dashboard_metrics.expected_completion_for_quarter(quarter_to_number(quarter))
-
-    period_requests = latest_approved_records(requests_df, year, quarter)
-
-    merge_cols = [
-        "strat_code", "status", "numeric_value", "risks", "progress_text", "submitted_at",
-        "responsible_person", "phone", "email", "file_names", "file_urls", "admin_comment"
-    ]
-    for col in merge_cols:
-        if col not in period_requests.columns:
-            period_requests[col] = ""
-
-    active = active.merge(period_requests[merge_cols], left_on="code", right_on="strat_code", how="left")
-
-    active["status"] = active["status"].fillna("Не подано").replace("", "Не подано")
-    if is_period_locked(year, quarter):
-        active["status"] = core_statuses.ST_NOTYET
-    active["numeric_value"] = active["numeric_value"].fillna("")
-    active["risks"] = active["risks"].fillna("")
-    active["progress_text"] = active["progress_text"].fillna("")
-    active["submitted_at"] = active["submitted_at"].fillna("")
-
-    active["status_display"] = active["status"].map(dashboard_metrics.status_display)
-    active["status_score"] = active["status"].map(dashboard_metrics.status_score)
-    active["plan_fact_percent"] = active.apply(
-        lambda r: dashboard_metrics.plan_fact_percent(r["numeric_value"], r["selected_target"]), axis=1
-    )
-    active["performance_score"] = active.apply(
-        lambda r: dashboard_metrics.performance_score(r["status"], r["numeric_value"], r["selected_target"]),
-        axis=1
-    )
-    active["expected_progress"] = dashboard_metrics.expected_completion_for_quarter(quarter_to_number(quarter))
-    if is_period_locked(year, quarter):
-        # Same Dashboard contract: locked periods are present but excluded.
-        active["status_score"] = float("nan")
-        active["performance_score"] = float("nan")
-        active["expected_progress"] = float("nan")
-    active["period_deviation"] = active.apply(
-        lambda r: (r["performance_score"] - r["expected_progress"])
-        if pd.notna(r["performance_score"]) and pd.notna(r["expected_progress"]) else float("nan"),
-        axis=1,
-    )
-    active["traffic_light"] = active["performance_score"].map(dashboard_metrics.traffic_light)
-    if is_period_locked(year, quarter):
-        active["traffic_light"] = core_statuses.ST_NOTYET
-    active["has_submission"] = active["status"] != "Не подано"
-    _risk_empty = {"", "—", "-", "немає", "відсутні", "відсутній", "не виявлено"}
-    active["has_text_risk"] = active["risks"].astype(str).str.strip().str.casefold().map(lambda v: v not in _risk_empty)
-    active["is_problem_status"] = active.apply(
-        lambda r: dashboard_metrics.is_problem(
-            r.get("status"), r.get("performance_score"), has_risk=bool(r.get("has_text_risk"))
-        ), axis=1
-    )
-
-    return active
+def prepare_analysis_context(strat_df, requests_df, years, quarters):
+    """Keep canonical period results available through the Analytics aggregation layer."""
+    pairs = [(int(year), quarter) for year in (years or []) for quarter in (quarters or [])]
+    results = build_period_results(strat_df, requests_df, pairs)
+    return results, _snapshot_rows_from_period_results(results)
 
 
 def prepare_analysis_data(strat_df, requests_df, years, quarters):
-    measures = base_measures(strat_df)
-    parts = []
-    for year in years:
-        for quarter in quarters:
-            parts.append(prepare_period_slice(measures, requests_df, year, quarter))
-    if not parts:
-        return pd.DataFrame()
-    return pd.concat(parts, ignore_index=True)
+    """Compatibility detail frame; portfolio/hierarchy metrics use period_results instead."""
+    return prepare_analysis_context(strat_df, requests_df, years, quarters)[1]
+
+
+def _rebuild_filtered_results(results, row_filter):
+    output = {}
+    for key, item in results.items():
+        snap = item.get("snapshot")
+        filtered = row_filter(snap.copy()) if snap is not None and not snap.empty else pd.DataFrame()
+        scores = plan_scores(filtered)
+        output[key] = {**item, "snapshot": filtered, **scores, "risk_summary": risk_summary(filtered)}
+    return output
+
+
+def build_analytics_result_context(results, selected_ssp, selected_deputies, selected_goals, selected_tasks, selected_product_types):
+    """Return (base_results, display_results); SSP selection never rewrites its base denominator."""
+    def _row_filter(snap):
+        data = snap.copy()
+        if selected_goals:
+            data = data[data["goal_code"].astype(str).isin(set(map(str, selected_goals)))]
+        if selected_tasks:
+            data = data[data["task_code"].astype(str).isin(set(map(str, selected_tasks)))]
+        if selected_product_types:
+            data = data[data["product_type"].astype(str).isin(set(map(str, selected_product_types)))]
+        return data
+
+    base_results = _rebuild_filtered_results(results, _row_filter)
+    if selected_deputies:
+        wanted_ssp = [str(k) for k, v in DEPUTY_MINISTER_BY_SSP.items() if str(v) in set(map(str, selected_deputies))]
+        base_results = filter_results_by_ssp(base_results, wanted_ssp)
+    display_results = filter_results_by_ssp(base_results, selected_ssp) if selected_ssp else base_results
+    return base_results, display_results
+
+
+def filter_analysis_period_results(results, selected_ssp, selected_deputies, selected_goals, selected_tasks, selected_product_types):
+    """Compatibility wrapper returning the display calculation context."""
+    return build_analytics_result_context(
+        results, selected_ssp, selected_deputies, selected_goals, selected_tasks, selected_product_types
+    )[1]
+
+
+def format_pct(value):
+    if value is None or pd.isna(value):
+        return "—"
+    number = float(value)
+    return f"{int(number)}%" if number.is_integer() else f"{number:.1f}%"
 
 
 def apply_dimension_filters(data, selected_ssp, selected_deputies, selected_goals, selected_tasks, selected_product_types):
@@ -623,79 +614,50 @@ def apply_dimension_filters(data, selected_ssp, selected_deputies, selected_goal
 # ============================================================
 
 def build_metrics(active):
+    """Descriptive counts only; canonical execution/coverage are injected from shared summaries."""
     total = len(active)
-    submitted = int(active["has_submission"].sum()) if total else 0
-    coverage = round(submitted / total * 100, 2) if total else 0
-    completion_base = exclude_locked_periods(active, year_col="report_year", quarter_col="report_quarter")
-    completion = round(completion_base["performance_score"].mean(), 2) if not completion_base.empty else 0
-    expected = round(completion_base["expected_progress"].mean(), 2) if not completion_base.empty else 0
-    deviation = round(completion - expected, 2)
+    submitted = int(active.get("submitted", pd.Series(False, index=active.index)).fillna(False).astype(bool).sum()) if total else 0
     unique_measures = active["code"].nunique() if total else 0
     goals = active["goal_code"].nunique() if total else 0
     tasks = active["task_code"].nunique() if total else 0
-    no_data = int((active["status"] == "Не подано").sum()) if total else 0
-    completed = int((active["status"] == "Виконано").sum()) if total else 0
-    problem = int(active["is_problem_status"].fillna(False).sum()) if total else 0
-
+    no_data = int(active.get("missing_required_submission", pd.Series(False, index=active.index)).fillna(False).astype(bool).sum()) if total else 0
+    completed = int(active.get("result_achieved", pd.Series(False, index=active.index)).fillna(False).astype(bool).sum()) if total else 0
+    problem = int(active.get("is_problem_status", pd.Series(False, index=active.index)).fillna(False).astype(bool).sum()) if total else 0
     return {
-        "total_rows": total,
-        "unique_measures": unique_measures,
-        "submitted": submitted,
-        "coverage": coverage,
-        "completion": completion,
-        "expected": expected,
-        "deviation": deviation,
-        "goals": goals,
-        "tasks": tasks,
-        "no_data": no_data,
-        "completed": completed,
-        "problem": problem,
+        "total_rows": total, "unique_measures": unique_measures, "submitted": submitted,
+        "coverage": None, "completion": None,
+        "goals": goals, "tasks": tasks, "no_data": no_data, "completed": completed, "problem": problem,
     }
 
-
-
-def build_year_over_year_comparison(data):
-    """Build year-to-year comparison using the same calculation base as analytics metrics."""
-    if data.empty or "report_year" not in data.columns:
+def build_year_over_year_comparison(period_results):
+    """Year-to-year comparison from canonical period-level portfolio aggregates."""
+    if not period_results:
         return pd.DataFrame()
-
-    rows = []
     by_year = {}
-    for year, group in data.groupby("report_year"):
-        by_year[int(year)] = build_metrics(group)
-
-    years = sorted(by_year.keys())
+    for year in sorted({key[0] for key in period_results}):
+        subset = {key: value for key, value in period_results.items() if key[0] == year}
+        plan = aggregate_plan(subset)
+        rows = _snapshot_rows_from_period_results(subset)
+        metrics = build_metrics(rows)
+        metrics["completion"] = plan.get("execution_by_measures_average")
+        metrics["coverage"] = plan.get("coverage_average")
+        by_year[int(year)] = metrics
+    years = sorted(by_year)
     if len(years) < 2:
         return pd.DataFrame()
-
     indicators = [
-        ("Унікальні заходи", "unique_measures", "од."),
-        ("Записи захід-період", "total_rows", "од."),
-        ("Покриття моніторингом", "coverage", "%"),
-        ("Рівень виконання СП", "completion", "%"),
-        ("Очікуваний темп", "expected", "%"),
-        ("Відхилення", "deviation", "в.п."),
-        ("Без поданих погоджених даних", "no_data", "од."),
-        ("Виконано", "completed", "од."),
+        ("Унікальні заходи", "unique_measures", "од."), ("Записи захід-період", "total_rows", "од."),
+        ("Покриття моніторингом", "coverage", "%"), ("Рівень виконання СП", "completion", "%"),
+        ("Без поданих погоджених даних", "no_data", "од."), ("Виконано", "completed", "од."),
         ("Проблемні / ризикові", "problem", "од."),
     ]
-
-    for previous_year, current_year in zip(years[:-1], years[1:]):
-        previous = by_year[previous_year]
-        current = by_year[current_year]
-        for label, key, unit in indicators:
-            prev_value = previous.get(key, 0)
-            curr_value = current.get(key, 0)
-            change = round(curr_value - prev_value, 2)
-            rows.append({
-                "Період порівняння": f"{current_year} до {previous_year}",
-                "Показник": label,
-                "Попередній рік": prev_value,
-                "Поточний рік": curr_value,
-                "Зміна": change,
-                "Одиниця": unit,
-            })
-
+    rows=[]
+    for previous_year,current_year in zip(years[:-1],years[1:]):
+        previous,current=by_year[previous_year],by_year[current_year]
+        for label,key,unit in indicators:
+            prev_value,current_value=previous.get(key),current.get(key)
+            change = None if prev_value is None or current_value is None else round(float(current_value)-float(prev_value),2)
+            rows.append({"Період порівняння":f"{current_year} до {previous_year}","Показник":label,"Попередній рік":prev_value,"Поточний рік":current_value,"Зміна":change,"Одиниця":unit})
     return pd.DataFrame(rows)
 
 
@@ -720,7 +682,7 @@ def render_year_over_year_block(yoy_comparison):
     render_readonly_table(yoy_comparison)
 
     chart_data = yoy_comparison[yoy_comparison["Показник"].isin([
-        "Покриття моніторингом", "Рівень виконання СП", "Очікуваний темп", "Відхилення"
+        "Покриття моніторингом", "Рівень виконання СП"
     ])].copy()
     if not chart_data.empty:
         fig = px.bar(
@@ -737,97 +699,130 @@ def render_year_over_year_block(yoy_comparison):
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-def aggregate_goal_progress(active):
+def build_analytics_plan_summary(period_results):
+    return aggregate_plan(period_results)
+
+
+def _detail_counts(active, group_cols):
+    """Descriptive counts only. Execution, coverage and risk methodology stay in shared helpers."""
     if active.empty:
         return pd.DataFrame()
-    result = (
-        active.groupby(["goal_code", "strategic_goal"], dropna=False)
-        .agg(
-            Заходів_періодів=("code", "count"),
-            Унікальних_заходів=("code", "nunique"),
-            Виконання=("performance_score", "mean"),
-            Очікуваний_темп=("expected_progress", "mean"),
-            Подано=("has_submission", "sum"),
-            Без_даних=("status", lambda x: (x == "Не подано").sum()),
-            Проблемних=("is_problem_status", "sum"),
-        )
-        .reset_index()
+    rows = []
+    for keys, group in active.groupby(group_cols, dropna=False):
+        if not isinstance(keys, tuple):
+            keys = (keys,)
+        coverage_pop = group[group.get("coverage_eligible", pd.Series(False, index=group.index)).fillna(False).astype(bool)]
+        row = dict(zip(group_cols, keys))
+        row.update({
+            "Заходів_періодів": int(len(group)),
+            "Унікальних_заходів": int(group["code"].nunique()),
+            "Покриття_eligible": int(len(coverage_pop)),
+            "Подано": int(coverage_pop.get("submitted", pd.Series(False, index=coverage_pop.index)).fillna(False).astype(bool).sum()),
+            "Без_даних": int(group.get("missing_required_submission", pd.Series(False,index=group.index)).fillna(False).astype(bool).sum()),
+            "Проблемних": int(group.get("is_problem_status", pd.Series(False,index=group.index)).fillna(False).astype(bool).sum()),
+        })
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def _object_period_coverage(period_results, object_type):
+    """Average canonical per-period object coverage values; never row-weight measure-periods."""
+    frame_key = "goal_scores" if object_type == "goal" else "task_scores"
+    code_col = "goal_code" if object_type == "goal" else "task_code"
+    rows = []
+    for (year, quarter), result in period_results.items():
+        frame = result.get(frame_key)
+        if frame is None or frame.empty or "coverage" not in frame.columns:
+            continue
+        part = frame[[code_col, "coverage"]].copy()
+        part["year"] = year
+        part["quarter"] = quarter
+        rows.append(part)
+    if not rows:
+        return pd.DataFrame(columns=[code_col, "Покриття_%"])
+    data = pd.concat(rows, ignore_index=True)
+    data["coverage"] = pd.to_numeric(data["coverage"], errors="coerce")
+    return (
+        data.groupby(code_col, as_index=False)["coverage"]
+        .mean()
+        .rename(columns={"coverage": "Покриття_%"})
     )
-    result["Виконання"] = result["Виконання"].round(2)
-    result["Очікуваний_темп"] = result["Очікуваний_темп"].round(2)
-    result["Відхилення"] = (result["Виконання"] - result["Очікуваний_темп"]).round(2)
-    result["Покриття_%"] = (result["Подано"] / result["Заходів_періодів"] * 100).round(2)
-    return result
+
+def build_analytics_goal_summary(period_results, active):
+    shared = aggregate_objects(period_results, object_type="goal").rename(columns={
+        "goal_name":"strategic_goal", "average_by_tasks":"Виконання", "latest_by_tasks":"Останнє_виконання", "change_by_tasks":"Зміна"})
+    coverage = _object_period_coverage(period_results, "goal")
+    counts = _detail_counts(active, ["goal_code", "strategic_goal"])
+    if shared.empty:
+        return shared
+    return shared.merge(coverage, on="goal_code", how="left").merge(counts, on=["goal_code","strategic_goal"], how="left")
 
 
-def aggregate_dep_progress(active):
-    if active.empty:
-        return pd.DataFrame()
-    result = (
-        active.groupby(["ssp_index", "department", "deputy_minister"], dropna=False)
-        .agg(
-            Заходів_періодів=("code", "count"),
-            Унікальних_заходів=("code", "nunique"),
-            Виконання=("performance_score", "mean"),
-            Очікуваний_темп=("expected_progress", "mean"),
-            Подано=("has_submission", "sum"),
-            Без_даних=("status", lambda x: (x == "Не подано").sum()),
-            Проблемних=("is_problem_status", "sum"),
-        )
-        .reset_index()
-        .sort_values("ssp_index", key=lambda s: s.apply(lambda x: int(x) if str(x).isdigit() else 10_000))
+def build_analytics_task_summary(period_results, active):
+    shared = aggregate_objects(period_results, object_type="task").rename(columns={
+        "average_execution":"Виконання", "latest_execution":"Останнє_виконання", "change_execution":"Зміна"})
+    coverage = _object_period_coverage(period_results, "task")
+    counts = _detail_counts(active, ["goal_code", "task_code", "task_name"])
+    if shared.empty:
+        return shared
+    return (
+        shared.merge(coverage, on="task_code", how="left")
+        .merge(counts.drop(columns=["goal_code"], errors="ignore"), on=["task_code","task_name"], how="left")
     )
-    result["Виконання"] = result["Виконання"].round(2)
-    result["Очікуваний_темп"] = result["Очікуваний_темп"].round(2)
-    result["Відхилення"] = (result["Виконання"] - result["Очікуваний_темп"]).round(2)
-    result["Покриття_%"] = (result["Подано"] / result["Заходів_періодів"] * 100).round(2)
-    return result
 
 
-def aggregate_task_progress(active):
-    if active.empty:
-        return pd.DataFrame()
-    result = (
-        active.groupby(["goal_code", "task_code", "task_name"], dropna=False)
-        .agg(
-            Заходів_періодів=("code", "count"),
-            Унікальних_заходів=("code", "nunique"),
-            Виконання=("performance_score", "mean"),
-            Очікуваний_темп=("expected_progress", "mean"),
-            Подано=("has_submission", "sum"),
-            Без_даних=("status", lambda x: (x == "Не подано").sum()),
-        )
-        .reset_index()
-    )
-    result["Виконання"] = result["Виконання"].round(2)
-    result["Очікуваний_темп"] = result["Очікуваний_темп"].round(2)
-    result["Відхилення"] = (result["Виконання"] - result["Очікуваний_темп"]).round(2)
-    result["Покриття_%"] = (result["Подано"] / result["Заходів_періодів"] * 100).round(2)
-    return result.sort_values(["goal_code", "task_code"])
+def build_analytics_ssp_summary(period_results, active, base_results=None):
+    shared = ssp_summary(period_results, base_results=base_results if base_results is not None else period_results).rename(columns={"ssp":"ssp_index", "average":"Виконання", "latest":"Останнє_виконання", "change":"Зміна", "average_coverage":"Покриття_%"})
+    counts = _detail_counts(active, ["ssp_index", "department", "deputy_minister"])
+    if shared.empty:
+        return shared
+    output = shared.merge(counts, on="ssp_index", how="left")
+    return output
 
 
-def aggregate_product_progress(active):
-    if active.empty:
-        return pd.DataFrame()
-    result = (
-        active.groupby("product_type", dropna=False)
-        .agg(
-            Заходів_періодів=("code", "count"),
-            Унікальних_заходів=("code", "nunique"),
-            Виконання=("performance_score", "mean"),
-            Очікуваний_темп=("expected_progress", "mean"),
-            Подано=("has_submission", "sum"),
-            Без_даних=("status", lambda x: (x == "Не подано").sum()),
-        )
-        .reset_index()
-    )
-    result["product_type"] = result["product_type"].replace("", "н/д")
-    result["Виконання"] = result["Виконання"].round(2)
-    result["Очікуваний_темп"] = result["Очікуваний_темп"].round(2)
-    result["Відхилення"] = (result["Виконання"] - result["Очікуваний_темп"]).round(2)
-    result["Покриття_%"] = (result["Подано"] / result["Заходів_періодів"] * 100).round(2)
-    return result.sort_values("Заходів_періодів", ascending=False)
+def build_analytics_deputy_summary(period_results):
+    return deputy_summary(period_results)
 
+
+def build_analytics_dynamics(period_results):
+    frame = dynamics_frame(period_results)
+    if frame.empty: return pd.DataFrame()
+    exec_rows = frame[frame["series"] == "Виконання за заходами"].copy()
+    cov_rows = frame[frame["series"] == "Покриття"][["year","quarter","value"]].rename(columns={"value":"Покриття_%"})
+    exec_rows = exec_rows.rename(columns={"year":"report_year","quarter":"report_quarter","value":"Виконання"})
+    exec_rows["report_quarter_num"] = exec_rows["report_quarter"].map(quarter_to_number)
+    exec_rows["Період"] = exec_rows["report_year"].astype(str) + " " + exec_rows["report_quarter"].astype(str)
+    return exec_rows.merge(cov_rows, left_on=["report_year","report_quarter"], right_on=["year","quarter"], how="left").drop(columns=["year","quarter"], errors="ignore")
+
+
+def aggregate_product_progress(period_results, active):
+    if active.empty: return pd.DataFrame()
+    rows=[]
+    for product in sorted(active["product_type"].fillna("").astype(str).unique()):
+        subset=_rebuild_filtered_results(period_results, lambda snap, p=product: snap[snap["product_type"].fillna("").astype(str).eq(p)].copy())
+        plan=aggregate_plan(subset)
+        detail=active[active["product_type"].fillna("").astype(str).eq(product)]
+        counts=_detail_counts(detail,["product_type"]).iloc[0].to_dict() if not detail.empty else {}
+        rows.append({"product_type": product or "н/д", "Унікальних_заходів": int(detail["code"].nunique()), "Виконання": plan.get("execution_by_measures_average"), "Покриття_%": plan.get("coverage_average"), "Проблемних": counts.get("Проблемних",0), "Без_даних": counts.get("Без_даних",0)})
+    return pd.DataFrame(rows).sort_values("Унікальних_заходів", ascending=False)
+
+
+
+def filter_period_requests_to_active_cohort(requests, active, selected_years, selected_quarters):
+    """Registry/export cohort = selected periods intersect canonical active measure codes."""
+    if requests is None or requests.empty:
+        return requests.copy() if hasattr(requests, "copy") else pd.DataFrame()
+    active_codes = {
+        clean(code) for code in active.get("code", pd.Series(dtype=object)).tolist() if clean(code)
+    }
+    data = requests.copy()
+    data = data[
+        data["year"].astype(str).isin([str(y) for y in selected_years])
+        & data["quarter"].astype(str).isin([str(q) for q in selected_quarters])
+    ].copy()
+    if not active_codes:
+        return data.iloc[0:0].copy()
+    return data[data["strat_code"].map(clean).isin(active_codes)].copy()
 
 def aggregate_status(active):
     if active.empty:
@@ -835,32 +830,14 @@ def aggregate_status(active):
     return active.groupby("status").size().reset_index(name="Кількість").sort_values("Кількість", ascending=False)
 
 
-def aggregate_period_dynamics(active):
-    if active.empty:
-        return pd.DataFrame()
-    result = (
-        active.groupby(["report_year", "report_quarter", "report_quarter_num"], dropna=False)
-        .agg(
-            Заходів_періодів=("code", "count"),
-            Виконання=("performance_score", "mean"),
-            Очікуваний_темп=("expected_progress", "mean"),
-            Подано=("has_submission", "sum"),
-        )
-        .reset_index()
-        .sort_values(["report_year", "report_quarter_num"])
-    )
-    result["Період"] = result["report_year"].astype(str) + " " + result["report_quarter"].astype(str)
-    result["Виконання"] = result["Виконання"].round(2)
-    result["Очікуваний_темп"] = result["Очікуваний_темп"].round(2)
-    result["Відхилення"] = (result["Виконання"] - result["Очікуваний_темп"]).round(2)
-    result["Покриття_%"] = (result["Подано"] / result["Заходів_періодів"] * 100).round(2)
-    return result
+def _pct_text(value):
+    return format_pct(value)
 
 
 def generate_analytical_text(active, filters, metrics, goal_progress, dep_progress, task_progress, product_progress, status_counts, period_dynamics):
+    """Existing analytical note adapted to canonical execution, coverage and attention outputs."""
     years_text = ", ".join(map(str, filters["years"]))
     quarters_text = ", ".join(filters["quarters"])
-
     selected_scope = (
         f"роки: {years_text}; квартали: {quarters_text}; "
         f"самостійні структурні підрозділи: {filter_label(filters['ssp'], 'усі')}; "
@@ -869,101 +846,50 @@ def generate_analytical_text(active, filters, metrics, goal_progress, dep_progre
         f"завдання: {filter_label(filters['task_labels'], 'усі')}; "
         f"типи продукту: {filter_label(filters['product_types'], 'усі')}"
     )
-
     completion = metrics["completion"]
     coverage = metrics["coverage"]
-    deviation = metrics["deviation"]
-    expected = metrics["expected"]
+    general_assessment = (
+        "Рівень виконання за обраною вибіркою не оцінюється через відсутність оцінених результатів."
+        if completion is None else f"Канонічний рівень виконання за обраним зрізом: {format_pct(completion)}."
+    )
+    coverage_assessment = (
+        "Покриття моніторингом за обраною вибіркою не оцінюється."
+        if coverage is None else f"Канонічне покриття моніторингом: {format_pct(coverage)}."
+    )
 
-    if completion >= 70 and deviation >= -10:
-        general_assessment = (
-            "Загальний стан виконання можна оцінити як контрольований: середній фактичний рівень виконання близький до очікуваного квартального темпу або перевищує його."
-        )
-    elif completion >= 40:
-        general_assessment = (
-            "Стан виконання характеризується помірними відхиленнями: частина заходів рухається в межах очікуваного темпу, однак окремі напрями потребують додаткового управлінського контролю."
-        )
-    else:
-        general_assessment = (
-            "Стан виконання свідчить про суттєві відхилення від очікуваного темпу та потребує концентрації уваги на причинах затримок, неповного подання даних і недостатньої фактичної динаміки."
-        )
+    def _best_worst(frame, label_col):
+        valid = frame.dropna(subset=["Виконання"]) if not frame.empty and "Виконання" in frame.columns else pd.DataFrame()
+        if valid.empty:
+            return "н/д", "н/д"
+        best = valid.sort_values("Виконання", ascending=False).iloc[0]
+        worst = valid.sort_values("Виконання", ascending=True).iloc[0]
+        return (f"{best[label_col]} — {_pct_text(best['Виконання'])}", f"{worst[label_col]} — {_pct_text(worst['Виконання'])}")
 
-    if coverage >= 80:
-        coverage_assessment = "Інформаційна база є достатньою для формування узагальнених управлінських висновків."
-    elif coverage >= 40:
-        coverage_assessment = "Інформаційна база є частковою, тому окремі висновки варто інтерпретувати з урахуванням неповного покриття моніторингом."
-    else:
-        coverage_assessment = "Інформаційна база є недостатньою; це знижує точність оцінки та підвищує ризик викривлення загальної картини виконання."
+    best_goal_text, worst_goal_text = _best_worst(goal_progress, "goal_code")
+    best_dep_text, worst_dep_text = _best_worst(dep_progress, "department")
+    attention_goals = goal_progress.sort_values(["Проблемних", "Без_даних"], ascending=False).head(3) if not goal_progress.empty else pd.DataFrame()
+    attention_goal_text = concise_list([f"СЦ {r['goal_code']} — сигналів уваги {int(r['Проблемних'])}, без поточного подання {int(r['Без_даних'])}" for _, r in attention_goals.iterrows()], 3) if not attention_goals.empty else "н/д"
+    attention_tasks = task_progress.sort_values(["Проблемних", "Без_даних"], ascending=False).head(3) if not task_progress.empty else pd.DataFrame()
+    task_attention_text = concise_list([f"{r['task_code']} — {_pct_text(r['Виконання'])}, сигналів уваги {int(r['Проблемних'])}" for _, r in attention_tasks.iterrows()], 3) if not attention_tasks.empty else "н/д"
+    product_text = concise_list([f"{r['product_type']} — {int(r['Унікальних_заходів'])} заходів, виконання {_pct_text(r['Виконання'])}" for _, r in product_progress.head(4).iterrows()], 4) if not product_progress.empty else "н/д"
+    status_text = concise_list([f"{r['status']} — {int(r['Кількість'])}" for _, r in status_counts.iterrows()], 6) if not status_counts.empty else "н/д"
+    dynamics_text = concise_list([f"{r['Період']}: виконання {_pct_text(r['Виконання'])}, покриття {_pct_text(r['Покриття_%'])}" for _, r in period_dynamics.iterrows()], 6) if not period_dynamics.empty else "н/д"
 
-    best_goal_text = "н/д"
-    worst_goal_text = "н/д"
-    attention_goal_text = "н/д"
-    if not goal_progress.empty:
-        best_goal = goal_progress.sort_values(["Виконання", "Покриття_%"], ascending=False).iloc[0]
-        worst_goal = goal_progress.sort_values(["Виконання", "Покриття_%"], ascending=True).iloc[0]
-        attention_goal = goal_progress.sort_values(["Відхилення", "Без_даних"], ascending=[True, False]).iloc[0]
-        best_goal_text = f"СЦ {best_goal['goal_code']} — {round(best_goal['Виконання'], 1)}% виконання, покриття {round(best_goal['Покриття_%'], 1)}%"
-        worst_goal_text = f"СЦ {worst_goal['goal_code']} — {round(worst_goal['Виконання'], 1)}% виконання, покриття {round(worst_goal['Покриття_%'], 1)}%"
-        attention_goal_text = f"СЦ {attention_goal['goal_code']} — відхилення {deviation_label(attention_goal['Відхилення'])}, без даних {int(attention_goal['Без_даних'])}"
+    return f"""
+За результатами автоматизованого аналізу сформовано аналітичну довідку щодо стану виконання Стратегічного плану за обраним зрізом. Параметри аналізу: {selected_scope}. У масиві враховано {metrics['total_rows']} записів «захід-період», що відповідають {metrics['unique_measures']} унікальним заходам, {metrics['tasks']} завданням та {metrics['goals']} стратегічним цілям.
 
-    best_dep_text = "н/д"
-    worst_dep_text = "н/д"
-    if not dep_progress.empty:
-        best_dep = dep_progress.sort_values(["Виконання", "Покриття_%"], ascending=False).iloc[0]
-        worst_dep = dep_progress.sort_values(["Виконання", "Покриття_%"], ascending=True).iloc[0]
-        best_dep_text = f"{best_dep['department']} — {round(best_dep['Виконання'], 1)}%"
-        worst_dep_text = f"{worst_dep['department']} — {round(worst_dep['Виконання'], 1)}%, без даних {int(worst_dep['Без_даних'])}"
+Середній рівень виконання за канонічно оціненими результатами становить {_pct_text(completion)}. {general_assessment}
 
-    task_attention_text = "н/д"
-    if not task_progress.empty:
-        task_attention = task_progress.sort_values(["Відхилення", "Без_даних"], ascending=[True, False]).head(3)
-        task_attention_text = concise_list([
-            f"{row['task_code']} — {round(row['Виконання'], 1)}%, відхилення {deviation_label(row['Відхилення'])}"
-            for _, row in task_attention.iterrows()
-        ], limit=3)
+Покриття моніторингом становить {_pct_text(coverage)}. Відсутнє обов'язкове поточне подання за {metrics['no_data']} записами. {coverage_assessment}
 
-    product_text = "н/д"
-    if not product_progress.empty:
-        product_text = concise_list([
-            f"{row['product_type']} — {int(row['Унікальних_заходів'])} заходів, виконання {round(row['Виконання'], 1)}%"
-            for _, row in product_progress.head(4).iterrows()
-        ], limit=4)
+Динаміка за періодами: {dynamics_text}. Неоцінювані майбутні періоди та періоди без проведеного моніторингу не підміняються нульовим виконанням.
 
-    status_text = "н/д"
-    if not status_counts.empty:
-        status_text = concise_list([
-            f"{row['status']} — {int(row['Кількість'])}"
-            for _, row in status_counts.iterrows()
-        ], limit=6)
+За стратегічними цілями найвищий оцінений результат: {best_goal_text}; найнижчий: {worst_goal_text}. За канонічними сигналами ризику та якості даних уваги потребують: {attention_goal_text}.
 
-    dynamics_text = "н/д"
-    if not period_dynamics.empty:
-        dynamics_text = concise_list([
-            f"{row['Період']}: виконання {round(row['Виконання'], 1)}%, покриття {round(row['Покриття_%'], 1)}%, відхилення {deviation_label(row['Відхилення'])}"
-            for _, row in period_dynamics.iterrows()
-        ], limit=6)
+За завданнями першочергової уваги потребують: {task_attention_text}. У розрізі самостійних структурних підрозділів найвищий оцінений результат: {best_dep_text}; найнижчий: {worst_dep_text}.
 
-    text = f"""
-За результатами автоматизованого аналізу сформовано аналітичну довідку щодо стану виконання Стратегічного плану за обраним зрізом. Параметри аналізу: {selected_scope}. У межах відібраного масиву враховано {metrics['total_rows']} записів «захід-період», що відповідають {metrics['unique_measures']} унікальним заходам, {metrics['tasks']} завданням та {metrics['goals']} стратегічним цілям.
-
-Середній розрахунковий рівень виконання Стратегічного плану в обраному періоді становить {completion}%. Очікуваний темп для відповідних кварталів становить {expected}%, тому відхилення у звітному періоді дорівнює {deviation_label(deviation)}. {general_assessment}
-
-Покриття моніторингом становить {coverage}%: подано та погоджено дані за {metrics['submitted']} записами з {metrics['total_rows']}. Без поданих погоджених даних залишаються {metrics['no_data']} записів. {coverage_assessment}
-
-У динаміці за періодами картина є такою: {dynamics_text}. Цей блок показує, чи накопичується відставання протягом року, чи навпаки спостерігається поступове наближення до планового темпу виконання.
-
-У розрізі стратегічних цілей найвищий рівень виконання зафіксовано за напрямом {best_goal_text}. Найнижчий рівень виконання спостерігається за напрямом {worst_goal_text}. Окремої уваги потребує {attention_goal_text}, оскільки саме тут поєднуються відхилення від очікуваного темпу та/або неповнота моніторингових даних.
-
-У розрізі завдань першочергової уваги потребують: {task_attention_text}. Ці завдання доцільно використовувати як основу для точкової управлінської комунікації з відповідальними самостійними структурними підрозділами.
-
-У розрізі самостійних структурних підрозділів найкращий агрегований результат демонструє {best_dep_text}. Найнижчий показник зафіксовано у {worst_dep_text}. Такий розподіл може свідчити як про різну складність портфелів заходів, так і про відмінності у своєчасності подання та якості підтвердження результатів.
-
-За типами продукту структура портфеля виглядає так: {product_text}. За статусами виконання розподіл є таким: {status_text}. Це дозволяє відокремити проблеми фактичного виконання від проблем дисципліни моніторингу.
-
-З огляду на результати аналізу доцільно зосередити подальшу роботу на трьох напрямах: забезпечити повноту подання даних за заходами без погодженого моніторингу; уточнити причини відхилень у стратегічних цілях та завданнях із найнижчим темпом виконання; підготувати пропозиції щодо коригування строків, відповідальних виконавців або змісту заходів там, де фактичний прогрес системно не відповідає очікуваному квартальному темпу.
+За типами продукту: {product_text}. За статусами: {status_text}. Управлінську увагу доцільно спрямовувати на канонічні сигнали ризику, відсутні обов'язкові подання та напрями з низьким оціненим виконанням, не використовуючи штучний квартальний темп.
 """.strip()
-
-    return text
 
 
 # ============================================================
@@ -990,10 +916,8 @@ def create_excel_report(active, period_requests, goal_progress, dep_progress, ta
         "selected_target": "Планове значення",
         "numeric_value": "Фактичне значення",
         "status": "Статус",
-        "performance_score": "Виконання, %",
-        "expected_progress": "Очікуваний темп, %",
-        "period_deviation": "Відхилення, в.п.",
-        "traffic_light": "Оцінка темпу",
+        "execution_score": "Виконання, %",
+        "risk_level": "Рівень ризику",
         "progress_text": "Пояснення",
         "risks": "Ризики/відхилення",
     })
@@ -1002,8 +926,7 @@ def create_excel_report(active, period_requests, goal_progress, dep_progress, ta
         "Рік", "Квартал", "Код заходу", "Захід", "Код СЦ", "Стратегічна ціль",
         "Код завдання", "Завдання", "Тип продукту", "Самостійний структурний підрозділ",
         "Заступник Міністра", "Індикатор", "Одиниця виміру", "Планове значення",
-        "Фактичне значення", "Статус", "Виконання, %", "Очікуваний темп, %",
-        "Відхилення, в.п.", "Оцінка темпу", "Пояснення", "Ризики/відхилення"
+        "Фактичне значення", "Статус", "Виконання, %", "Рівень ризику", "Пояснення", "Ризики/відхилення"
     ]
 
     summary_df = pd.DataFrame([
@@ -1015,9 +938,8 @@ def create_excel_report(active, period_requests, goal_progress, dep_progress, ta
         ["Типи продукту", filter_label(filters["product_types"], "Усі")],
         ["Дата формування", now_kyiv().strftime("%d.%m.%Y %H:%M")],
         ["Унікальних заходів", metrics["unique_measures"]],
-        ["Покриття моніторингом", f"{metrics['coverage']}%"],
-        ["Виконання СП", f"{metrics['completion']}%"],
-        ["Відхилення", deviation_label(metrics["deviation"])],
+        ["Покриття моніторингом", format_pct(metrics["coverage"])],
+        ["Виконання СП", format_pct(metrics["completion"])],
     ], columns=["Показник", "Значення"])
 
     _sheets = {
@@ -1057,15 +979,14 @@ def build_report_charts(goal_progress, dep_progress, status_counts, period_dynam
     try:
         if period_dynamics is not None and not period_dynamics.empty:
             fig = _px_rep.line(
-                period_dynamics, x="Період", y=["Виконання", "Очікуваний_темп"],
+                period_dynamics, x="Період", y="Виконання",
                 markers=True, color_discrete_sequence=[_brand[0], _brand[4]],
-                title="Динаміка виконання та очікуваний темп, %",
+                title="Динаміка оціненого виконання, %",
             )
             fig.update_layout(legend_title_text="")
             png = fig_png_bytes(_style(fig), scale=2, width=1000, height=430)
             if png:
-                charts.append(("Рис. Динаміка рівня виконання СП у розрізі звітних періодів "
-                               "порівняно з очікуваним темпом", png))
+                charts.append(("Рис. Динаміка рівня виконання СП у розрізі звітних періодів", png))
 
         if status_counts is not None and not status_counts.empty:
             fig = _px_rep.pie(
@@ -1148,10 +1069,8 @@ def create_docx_report(text, metrics, filters, goal_progress, dep_progress, prod
     metric_rows = {
         "Унікальних заходів": metrics["unique_measures"],
         "Записів захід-період": metrics["total_rows"],
-        "Покриття моніторингом": f"{metrics['coverage']}%",
-        "Рівень виконання СП": f"{metrics['completion']}%",
-        "Очікуваний темп": f"{metrics['expected']}%",
-        "Відхилення": deviation_label(metrics["deviation"]),
+        "Покриття моніторингом": format_pct(metrics["coverage"]),
+        "Рівень виконання СП": format_pct(metrics["completion"]),
         "Без поданих погоджених даних": metrics["no_data"],
     }
 
@@ -1160,10 +1079,6 @@ def create_docx_report(text, metrics, filters, goal_progress, dep_progress, prod
         row[0].text = str(key)
         row[1].text = str(value)
 
-    if flex_note:
-        row = table.add_row().cells
-        row[0].text = "Виконання за обраною базою"
-        row[1].text = str(flex_note)
 
     document.add_paragraph("Аналітичний висновок").runs[0].bold = True
     for paragraph in text.split("\n\n"):
@@ -1178,7 +1093,7 @@ def create_docx_report(text, metrics, filters, goal_progress, dep_progress, prod
         document.add_paragraph("Графічні матеріали").runs[0].bold = True
         intro = document.add_paragraph(
             "Наведені нижче рисунки ілюструють та підтверджують викладені вище висновки: "
-            "динаміку виконання відносно очікуваного темпу, структуру портфеля за статусами "
+            "динаміку оціненого виконання, структуру портфеля за статусами "
             "та порівняльний рівень виконання у розрізі стратегічних цілей і ССП."
         )
         intro.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
@@ -1442,101 +1357,42 @@ selected_ssp_labels = [ssp_labels.get(x, x) for x in selected_ssp_indices]
 # Analysis dataset
 # ============================================================
 
-all_period_data = prepare_analysis_data(strat_df, requests_df, selected_years, selected_quarters)
-active = apply_dimension_filters(
-    all_period_data,
-    selected_ssp_indices,
-    selected_deputies,
-    selected_goal_codes,
-    selected_task_codes,
-    selected_product_types,
+base_period_results, all_period_data = prepare_analysis_context(strat_df, requests_df, selected_years, selected_quarters)
+ssp_base_period_results, period_results = build_analytics_result_context(
+    base_period_results, selected_ssp_indices, selected_deputies, selected_goal_codes, selected_task_codes, selected_product_types
 )
+active = _snapshot_rows_from_period_results(period_results)
 
 if active.empty:
     st.warning("За обраними параметрами активних заходів не знайдено.")
     render_footer()
     st.stop()
 
-period_requests = requests_df.copy()
-if not period_requests.empty:
-    period_requests = period_requests[
-        period_requests["year"].astype(str).isin([str(y) for y in selected_years])
-        & period_requests["quarter"].astype(str).isin([str(q) for q in selected_quarters])
-    ].copy()
-    if selected_ssp_indices:
-        period_requests["department_index"] = period_requests["department"].apply(extract_ssp_index)
-        period_requests = period_requests[period_requests["department_index"].astype(str).isin(set(selected_ssp_indices))]
-
-metrics = build_metrics(active)
-goal_progress = aggregate_goal_progress(active)
-dep_progress = aggregate_dep_progress(active)
-task_progress = aggregate_task_progress(active)
-product_progress = aggregate_product_progress(active)
-status_counts = aggregate_status(active)
-period_dynamics = aggregate_period_dynamics(active)
-
-# ============================================================
-# ГНУЧКИЙ РОЗРАХУНОК ВІДСОТКА ВИКОНАННЯ (правка №7)
-# ============================================================
-# Додатковий розріз: чисельник — заходи «Виконано» в аналітичній вибірці,
-# знаменник — на вибір. Основні показники сторінки не змінюються;
-# обрана база потрапляє в аналітичну довідку (DOCX).
-
-st.markdown('<div class="card"><div class="card-title">Гнучкий розрахунок відсотка виконання</div>', unsafe_allow_html=True)
-_flex_base = st.selectbox(
-    "База розрахунку (знаменник)",
-    [
-        "Поточна методологія (записи захід-період аналітичної вибірки)",
-        "Унікальні заходи аналітичної вибірки",
-        "Усі заходи Стратегічного плану (за всі роки)",
-        "Усі заходи обраних СЦ (за всі роки)",
-        "Лише записи з поданою звітністю",
-    ],
-    key="analytics_flex_base",
+period_requests = filter_period_requests_to_active_cohort(
+    requests_df, active, selected_years, selected_quarters
 )
-_flex_num = int((active["status"].astype(str) == "Виконано").sum()) if not active.empty and "status" in active.columns else 0
-_all_measures_count = int((strat_df["object_type"] == "measure").sum())
-if _flex_base.startswith("Поточна методологія"):
-    _flex_den = len(active)
-elif _flex_base.startswith("Унікальні"):
-    _flex_num = int(active[active["status"].astype(str) == "Виконано"]["code"].nunique()) if not active.empty else 0
-    _flex_den = int(active["code"].nunique()) if not active.empty else 0
-elif _flex_base.startswith("Усі заходи Стратегічного"):
-    _flex_den = _all_measures_count
-elif _flex_base.startswith("Усі заходи обраних СЦ"):
-    if not active.empty and "goal_code" in active.columns:
-        _gc = {str(g).split(".")[0] for g in active["goal_code"].astype(str).unique()}
-        _mm = strat_df[strat_df["object_type"] == "measure"]
-        _flex_den = int(_mm["code"].astype(str).apply(lambda c: str(c).split(".")[0] in _gc).sum())
-    else:
-        _flex_den = _all_measures_count
-else:
-    _flex_den = int(active["has_submission"].sum()) if not active.empty and "has_submission" in active.columns else 0
 
-_flex_pct = round(100.0 * _flex_num / _flex_den, 1) if _flex_den else 0.0
-flex_note_for_docx = f"{_flex_pct}% ({_flex_num} із {_flex_den}; база: {_flex_base})"
-_fc1, _fc2 = st.columns([1, 2.2])
-with _fc1:
-    st.metric("Виконання за обраною базою", f"{_flex_pct}%", f"{_flex_num} із {_flex_den}")
-with _fc2:
-    st.caption(
-        f"Чисельник: заходи/записи зі статусом «Виконано» ({_flex_num}). "
-        f"Знаменник: {_flex_base.lower()} ({_flex_den}). Обрана база фіксується "
-        f"в таблиці ключових показників аналітичної довідки DOCX."
-    )
-st.markdown("</div>", unsafe_allow_html=True)
+plan_summary = build_analytics_plan_summary(period_results)
+metrics = build_metrics(active)
+metrics["completion"] = plan_summary.get("execution_by_measures_average")
+metrics["coverage"] = plan_summary.get("coverage_average")
+goal_progress = build_analytics_goal_summary(period_results, active)
+dep_progress = build_analytics_ssp_summary(period_results, active, base_results=ssp_base_period_results)
+task_progress = build_analytics_task_summary(period_results, active)
+product_progress = aggregate_product_progress(period_results, active)
+status_counts = aggregate_status(active)
+period_dynamics = build_analytics_dynamics(period_results)
 
+# Canonical execution is provided by the shared Dashboard v3 aggregation layer.
 comparison_years = sorted(set(selected_years + [max(selected_years) - 1])) if selected_years else []
-yoy_source = prepare_analysis_data(strat_df, requests_df, comparison_years, selected_quarters) if comparison_years else pd.DataFrame()
-yoy_active = apply_dimension_filters(
-    yoy_source,
-    selected_ssp_indices,
-    selected_deputies,
-    selected_goal_codes,
-    selected_task_codes,
-    selected_product_types,
-) if not yoy_source.empty else pd.DataFrame()
-yoy_comparison = build_year_over_year_comparison(yoy_active)
+if comparison_years:
+    yoy_base_results, _ = prepare_analysis_context(strat_df, requests_df, comparison_years, selected_quarters)
+    _, yoy_results = build_analytics_result_context(
+        yoy_base_results, selected_ssp_indices, selected_deputies, selected_goal_codes, selected_task_codes, selected_product_types
+    )
+    yoy_comparison = build_year_over_year_comparison(yoy_results)
+else:
+    yoy_comparison = pd.DataFrame()
 
 filters = {
     "years": selected_years,
@@ -1566,27 +1422,28 @@ analytical_text = generate_analytical_text(
 # KPI cards
 # ============================================================
 
-dev_class = deviation_card_class(metrics["deviation"])
+_completion_label = format_pct(metrics["completion"])
+_coverage_label = format_pct(metrics["coverage"])
 st.markdown(
     f"""
 <div class="alert-grid">
     <div class="alert-card alert-blue">
         <div class="alert-title">Рівень виконання Стратегічного плану в обраному періоді</div>
-        <div class="alert-value">{metrics['completion']}%</div>
-        <div class="alert-note">Середній фактичний прогрес за відібраним масивом</div>
+        <div class="alert-value">{_completion_label}</div>
+        <div class="alert-note">Єдина методологія розрахунку; неоцінені періоди не підміняються 0%</div>
     </div>
-    <div class="alert-card {dev_class}">
-        <div class="alert-title">Відхилення у звітному періоді</div>
-        <div class="alert-value">{deviation_label(metrics['deviation'])}</div>
-        <div class="alert-note">Факт мінус очікуваний квартальний темп {metrics['expected']}%</div>
+    <div class="alert-card alert-red">
+        <div class="alert-title">Потребують управлінської уваги</div>
+        <div class="alert-value">{metrics['problem']}</div>
+        <div class="alert-note">Сигнали ризику та якості даних за єдиною методологією</div>
     </div>
     <div class="alert-card alert-yellow">
         <div class="alert-title">Покриття моніторингом</div>
-        <div class="alert-value">{metrics['coverage']}%</div>
-        <div class="alert-note">Погоджені дані: {metrics['submitted']} із {metrics['total_rows']}</div>
+        <div class="alert-value">{_coverage_label}</div>
+        <div class="alert-note">Покриття розраховано лише для заходів, що підлягають моніторингу</div>
     </div>
     <div class="alert-card alert-green">
-        <div class="alert-title">Активних заходів у вибірці</div>
+        <div class="alert-title">Заходів у вибірці</div>
         <div class="alert-value">{metrics['unique_measures']}</div>
         <div class="alert-note">Унікальні заходи; записів захід-період: {metrics['total_rows']}</div>
     </div>
@@ -1642,9 +1499,9 @@ with g1:
         fig = px.line(
             period_dynamics,
             x="Період",
-            y=["Виконання", "Очікуваний_темп"],
+            y="Виконання",
             markers=True,
-            title="Динаміка виконання проти очікуваного темпу",
+            title="Динаміка оціненого виконання",
             labels={"value": "Відсоток", "variable": "Показник"}
         )
         fig.update_layout(legend_title_text="Показник")
@@ -1657,7 +1514,7 @@ with g2:
             x="goal_code",
             y="Виконання",
             text="Виконання",
-            hover_data=["strategic_goal", "Унікальних_заходів", "Покриття_%", "Відхилення", "Без_даних"],
+            hover_data=["strategic_goal", "Унікальних_заходів", "Покриття_%", "Проблемних", "Без_даних"],
             title="Виконання за стратегічними цілями",
             labels={"goal_code": "Стратегічна ціль", "Виконання": "Виконання, %"}
         )
@@ -1674,7 +1531,7 @@ with g3:
             x="ССП",
             y="Виконання",
             text="Виконання",
-            hover_data=["deputy_minister", "Унікальних_заходів", "Покриття_%", "Відхилення", "Без_даних"],
+            hover_data=["deputy_minister", "Унікальних_заходів", "Покриття_%", "Проблемних", "Без_даних"],
             title="Виконання за самостійними структурними підрозділами",
             labels={"ССП": "ССП", "Виконання": "Виконання, %"}
         )
@@ -1688,7 +1545,7 @@ with g4:
             x="product_type",
             y="Унікальних_заходів",
             text="Унікальних_заходів",
-            hover_data=["Виконання", "Покриття_%", "Відхилення", "Без_даних"],
+            hover_data=["Виконання", "Покриття_%", "Проблемних", "Без_даних"],
             title="Структура заходів за типами продукту",
             labels={"product_type": "Тип продукту", "Унікальних_заходів": "Заходів"}
         )
@@ -1710,16 +1567,16 @@ with g5:
 
 with g6:
     if not task_progress.empty:
-        top_tasks = task_progress.sort_values("Відхилення", ascending=True).head(10).copy()
+        top_tasks = task_progress.sort_values(["Проблемних", "Без_даних"], ascending=False).head(10).copy()
         top_tasks["Завдання"] = top_tasks["task_code"].astype(str)
         fig = px.bar(
             top_tasks,
             x="Завдання",
-            y="Відхилення",
-            text="Відхилення",
+            y="Проблемних",
+            text="Проблемних",
             hover_data=["task_name", "Виконання", "Покриття_%", "Без_даних"],
-            title="Завдання з найбільшим відхиленням від очікуваного темпу",
-            labels={"Відхилення": "Відхилення, в.п."}
+            title="Завдання з найбільшою кількістю сигналів управлінської уваги",
+            labels={"Проблемних": "Сигнали уваги"}
         )
         st.plotly_chart(fig, use_container_width=True)
 
@@ -1862,7 +1719,7 @@ docx_file = create_docx_report(
     product_progress,
     status_counts=status_counts,
     period_dynamics=period_dynamics,
-    flex_note=flex_note_for_docx,
+    flex_note="",
 )
 
 e1, e2, e3 = st.columns(3)
@@ -1925,15 +1782,13 @@ with tab1:
         "selected_target": "Планове значення",
         "numeric_value": "Фактичне значення",
         "status": "Статус",
-        "performance_score": "Виконання, %",
-        "expected_progress": "Очікуваний темп, %",
-        "period_deviation": "Відхилення, в.п.",
-        "traffic_light": "Оцінка темпу",
+        "execution_score": "Виконання, %",
+        "risk_level": "Рівень ризику",
     })
     cols = [
         "Рік", "Квартал", "Код", "Захід", "Стратегічна ціль", "Завдання", "Тип продукту",
         "ССП", "Заступник Міністра", "Планове значення", "Фактичне значення", "Статус",
-        "Виконання, %", "Очікуваний темп, %", "Відхилення, в.п.", "Оцінка темпу"
+        "Виконання, %", "Рівень ризику"
     ]
     render_readonly_table(show_active[[c for c in cols if c in show_active.columns]])
 

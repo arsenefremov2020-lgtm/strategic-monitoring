@@ -487,6 +487,41 @@ if df.empty:
 
 
 # ============================================================
+# WORK MODE SWITCH — presentation-only placeholder for future workflow
+# ============================================================
+
+st.session_state.setdefault("my_requests_work_mode", "main")
+
+
+def _set_my_requests_work_mode(mode):
+    st.session_state.my_requests_work_mode = mode
+
+
+_mode_col1, _mode_col2 = st.columns(2)
+with _mode_col1:
+    st.button(
+        "Основний режим опрацювання заявок",
+        use_container_width=True,
+        type="primary" if st.session_state.my_requests_work_mode == "main" else "secondary",
+        on_click=_set_my_requests_work_mode,
+        args=("main",),
+    )
+with _mode_col2:
+    st.button(
+        "Розглянути вже погоджені заявки",
+        use_container_width=True,
+        type="primary" if st.session_state.my_requests_work_mode == "approved_test" else "secondary",
+        on_click=_set_my_requests_work_mode,
+        args=("approved_test",),
+    )
+
+st.caption(
+    "Режим «Розглянути вже погоджені заявки» є тестовим для подальшого "
+    "опрацювання функціоналу. Повноцінний функціонал буде додано пізніше."
+)
+
+
+# ============================================================
 # FILTERS
 # ============================================================
 
@@ -645,6 +680,7 @@ with st.expander("Перелік поданих відомостей", expanded=
         _coord_name, _coord_phone = _coordinator_details(_row)
         _table_rows.append({
             "ID заявки": clean(_row.get("id")) or "—",
+            "Захід": _strategic_object_name_by_code(_row.get("strat_code")) or "—",
             "Звітний період": _period_label(_row.get("year"), _row.get("quarter")),
             "Цільовий орієнтир": _target_for_record(_row) or "—",
             "Фактичне значення": _fact_for_record(_row) or "—",
@@ -661,8 +697,11 @@ with st.expander("Перелік поданих відомостей", expanded=
         empty_message="Поданих відомостей за вибраними фільтрами немає.",
         visual_style="signal",
         variant="standard",
+        table_width="100%",
+        column_widths={"Захід": 300},
         status_columns={"Статус виконання", "Статус погодження"},
-        scroll_columns={"Коментар координатора"},
+        scroll_columns={"Захід", "Коментар координатора"},
+        enforce_column_widths=True,
     )
 
 # ============================================================
@@ -1226,6 +1265,9 @@ with st.expander("Історія версій заявки", expanded=False):
         _version_rows = []
         for _, version_row in versions_df.sort_values("version_number", ascending=False).iterrows():
             _version_rows.append({
+                "Захід": _strategic_object_name_by_code(
+                    version_row.get("strat_code") or selected_row.get("strat_code")
+                ) or "—",
                 "Версія заявки": clean(version_row.get("version_number")) or "—",
                 "Дата створення": format_kyiv_datetime(version_row.get("created_at")),
                 "Ким створено": clean(version_row.get("created_by")) or "система",
@@ -1241,8 +1283,11 @@ with st.expander("Історія версій заявки", expanded=False):
         render_readonly_table(
             style_status_columns(versions_show, ["Статус погодження", "Статус виконання"]),
             visual_style="signal", variant="history",
+            table_width="100%",
+            column_widths={"Захід": 300},
             status_columns={"Статус погодження", "Статус виконання"},
-            scroll_columns={"Опис прогресу", "Ризики/проблеми/відхилення"},
+            scroll_columns={"Захід", "Опис прогресу", "Ризики/проблеми/відхилення"},
+            enforce_column_widths=True,
         )
 
 

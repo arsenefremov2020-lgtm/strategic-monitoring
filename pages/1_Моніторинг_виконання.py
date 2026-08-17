@@ -10,6 +10,8 @@ from core.deputies import DEPUTY_MINISTER_BY_SSP
 from core.ui import load_css, render_readonly_table
 from core.config import FILE_PATH, SHEET_NAME
 from core.excel_loader import read_excel_sheet
+from core.filters import get_source_options
+from config.npa_documents import CANONICAL_NPA_DOCUMENTS, normalize_for_match
 
 from core.page_setup import page_setup, render_footer
 
@@ -571,6 +573,47 @@ def clean_value(value):
     return escape(raw_value(value))
 
 
+_MONITORING_SOURCE_LABELS = tuple(dict.fromkeys([
+    *CANONICAL_NPA_DOCUMENTS,
+    *get_source_options(),
+]))
+
+
+def _monitoring_source_match_key(value):
+    """Presentation-only tolerant key matching Dashboard document-name display."""
+    normalized = normalize_for_match(raw_value(value))
+    return re.sub(r'["“”«»]', "", normalized)
+
+
+def _monitoring_source_display(value):
+    """Return canonical document labels without raw numbering, quotes or «(Ін)» prefixes."""
+    raw = raw_value(value)
+    if not raw:
+        return "—"
+    normalized = _monitoring_source_match_key(raw)
+    if not normalized:
+        return raw
+
+    matches = []
+    for label in _MONITORING_SOURCE_LABELS:
+        label_key = _monitoring_source_match_key(label)
+        if not label_key:
+            continue
+        position = normalized.find(label_key)
+        if position >= 0:
+            matches.append((position, -len(label_key), label))
+
+    if not matches:
+        return raw
+
+    matches.sort()
+    ordered = []
+    for _, _, label in matches:
+        if label not in ordered:
+            ordered.append(label)
+    return "; ".join(ordered)
+
+
 def is_empty_or_nd(value):
     text = raw_value(value).lower().replace(" ", "")
     return text in {"", "н.д.", "нд", "nan", "none", "-", "—"}
@@ -856,12 +899,8 @@ with st.expander("Контактна інформація відповідаль
 # ------------------------------------------------------------
 
 def render_start_chain(ssp_index, key_prefix):
-    """Показує автоматично визначену стартову ланку координатора."""
+    """Визначає стартову ланку погодження без окремого візуального блоку."""
     _ = key_prefix
-    st.markdown(
-        '<div class="table-title" style="margin-top:14px;">Схема погодження</div>',
-        unsafe_allow_html=True,
-    )
     chain = schemes.initial_chain(ssp_index)
     if not chain:
         st.error(
@@ -869,17 +908,6 @@ def render_start_chain(ssp_index, key_prefix):
             "Без координатора подання неможливе."
         )
         return "Координатор", [], False
-
-    coordinator = chain[0]
-    st.markdown(
-        f'<div style="background:#F7F9FC;border:1px solid #DCE4F0;'
-        f'border-radius:10px;padding:8px 12px;margin-bottom:6px;">'
-        f'<div style="font-size:10px;font-weight:800;letter-spacing:.04em;'
-        f'text-transform:uppercase;color:#61708A;">1. Координатор</div>'
-        f'<div style="font-size:13px;font-weight:700;color:#132238;">'
-        f'{escape(coordinator.get("name") or coordinator.get("email") or "")}</div></div>',
-        unsafe_allow_html=True,
-    )
     return schemes.scheme_label_for_chain(chain), chain, True
 
 
@@ -1832,24 +1860,6 @@ else:
         "_lock_label": st.column_config.TextColumn("_lock_label", width=1),
     }
 
-    # Редактор Streamlit малює таблицю на canvas, тому CSS-підсвітка клітинок
-    # неможлива технічно. Обов'язковість позначаємо маркерами 🔴/🟡 просто
-    # в заголовках колонок + кольоровою легендою перед таблицею.
-    st.markdown(
-        f"""
-        <div class="note-box" style="background:#F7F9FC;border:1px solid #DCE4F0;">
-            <b>Легенда обов'язковості полів:</b>
-            <span style="background:#FBE5E5;border:1px solid #DC4A4A;border-radius:8px;
-                  padding:2px 10px;margin:0 6px;font-weight:800;color:#DC4A4A;">🔴 Обов'язкові</span>
-            «{quarter_label}» (квартальне значення), «Статус виконання», «Опис прогресу» — без них подання не пройде
-            <span style="background:#FDF3D8;border:1px solid #F4B400;border-radius:8px;
-                  padding:2px 10px;margin:0 6px;font-weight:800;color:#8A6400;">🟡 Необов'язкові</span>
-            «Ризики / проблеми / відхилення», «Посилання на НПА»
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
     locked_measure_df = table_df[table_df["_locked"] == True].copy()
     editable_measure_df = table_df[table_df["_locked"] == False].copy()
     if not locked_measure_df.empty:
@@ -1857,39 +1867,75 @@ else:
         locked_cols = [c for c in display_cols if c != "Подати"]
         render_readonly_table(
             locked_measure_df[[c for c in locked_cols if c in locked_measure_df.columns]],
-            height=260, visual_style="signal", variant="standard",
+            height=260,
+            visual_style="signal",
+            variant="standard",
+            table_width="fit-columns",
+            column_widths={
+                "Код": 110,
+                "Захід": 300,
+                "Індикатор": 300,
+                "Національний\nрівень": 300,
+            },
+            scroll_columns={"Захід", "Індикатор", "Національний\nрівень"},
+            formatters={"Національний\nрівень": _monitoring_source_display},
+            enforce_column_widths=True,
         )
 
-    editor_table_df = add_editor_bottom_spacer(editable_measure_df)
-    _meas_scheme_prefix = (
-        f"meas_{normalize_key(selected_ssp_index)}_{selected_year}_{selected_quarter}"
-    )
-    measures_scheme_name, measures_chain, measures_scheme_ready = render_start_chain(
-        selected_ssp_index,
-        _meas_scheme_prefix,
-    )
+    edited_df = pd.DataFrame()
+    submit_clicked = False
+    measures_scheme_name = ""
+    measures_chain = []
+    measures_scheme_ready = True
 
-    with st.form(
-        f"measure_submission_form_{normalize_key(selected_ssp_index)}_{selected_year}_{selected_quarter}_{normalize_key(search_query)}",
-        clear_on_submit=False,
-    ):
-        with st.container(height=TABLE_CONTAINER_HEIGHT_PX):
-            edited_df = st.data_editor(
-                editor_table_df,
-                key=(
-                    f"monitoring_editor_{normalize_key(selected_ssp_index)}_{selected_year}_"
-                    f"{selected_quarter}_{normalize_key(search_query)}"
-                ),
-                use_container_width=True,
-                hide_index=True,
-                height=_visible_height,
-                row_height=80,
-                num_rows="fixed",
-                column_config=col_config,
-                column_order=display_cols,
-                disabled=always_disabled,
-            )
-        submit_clicked = st.form_submit_button("Подати на розгляд", use_container_width=True)
+    # Якщо всі доступні заходи вже подані/заблоковані, не показуємо порожній editor
+    # та кнопку подання. Read-only таблиця вище залишається доступною.
+    if not editable_measure_df.empty:
+        st.markdown(
+            f"""
+            <div class="note-box" style="background:#F7F9FC;border:1px solid #DCE4F0;">
+                <b>Легенда обов'язковості полів:</b>
+                <span style="background:#FBE5E5;border:1px solid #DC4A4A;border-radius:8px;
+                      padding:2px 10px;margin:0 6px;font-weight:800;color:#DC4A4A;">🔴 Обов'язкові</span>
+                «{quarter_label}» (квартальне значення), «Статус виконання», «Опис прогресу» — без них подання не пройде
+                <span style="background:#FDF3D8;border:1px solid #F4B400;border-radius:8px;
+                      padding:2px 10px;margin:0 6px;font-weight:800;color:#8A6400;">🟡 Необов'язкові</span>
+                «Ризики / проблеми / відхилення», «Посилання на НПА»
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        editor_table_df = add_editor_bottom_spacer(editable_measure_df)
+        _meas_scheme_prefix = (
+            f"meas_{normalize_key(selected_ssp_index)}_{selected_year}_{selected_quarter}"
+        )
+        measures_scheme_name, measures_chain, measures_scheme_ready = render_start_chain(
+            selected_ssp_index,
+            _meas_scheme_prefix,
+        )
+
+        with st.form(
+            f"measure_submission_form_{normalize_key(selected_ssp_index)}_{selected_year}_{selected_quarter}_{normalize_key(search_query)}",
+            clear_on_submit=False,
+        ):
+            with st.container(height=TABLE_CONTAINER_HEIGHT_PX):
+                edited_df = st.data_editor(
+                    editor_table_df,
+                    key=(
+                        f"monitoring_editor_{normalize_key(selected_ssp_index)}_{selected_year}_"
+                        f"{selected_quarter}_{normalize_key(search_query)}"
+                    ),
+                    use_container_width=True,
+                    hide_index=True,
+                    height=_visible_height,
+                    row_height=80,
+                    num_rows="fixed",
+                    column_config=col_config,
+                    column_order=display_cols,
+                    disabled=always_disabled,
+                )
+            submit_clicked = st.form_submit_button("Подати на розгляд", use_container_width=True)
 
 # Успішне подання показується під формою без додаткового rerun.
 render_submission_notice(dismissible=False, consume=True)

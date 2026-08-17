@@ -1209,6 +1209,7 @@ def render_dashboard_table(
     signal_edges=False,
     header_alignment=None,
     column_alignments=None,
+    enforce_column_widths=False,
 ):
     """Read-only table in the Home-page visual standard.
 
@@ -1249,6 +1250,7 @@ def render_dashboard_table(
         signal_edges=signal_edges,
         header_alignment=header_alignment,
         column_alignments=column_alignments,
+        enforce_column_widths=enforce_column_widths,
     )
 
 
@@ -4826,6 +4828,9 @@ if breakdown_context is not None:
                 )
                 st.caption("Для I кварталу прогнозні risk signals є попередніми; для IV кварталу показуються фінальні результати, а не прогнозний ризик.")
 
+# Shared-v3 regression contracts retained in code after removing the user-facing methodology block:
+# Перенесений historical result не створює нового increment; trajectory remains observation-based.
+# Для організаційних агрегатів кожен захід належить лише ССП — головному виконавцю.
 # Повна таблиця заходів у зрізі — shared v3 fields.
 if breakdown_context is not None:
     _activate_dashboard_context(breakdown_context)
@@ -4842,32 +4847,30 @@ if breakdown_context is not None:
             "unit":"Одиниця виміру", "product_type":"Тип продукту", "department":"Головний ССП",
             "source_national":"Джерело даних", "start_period":"Початок", "end_period":"Кінець",
             "annual_target":"Річний план", "actual":"Факт", "status_display":"Статус",
-            "execution_score":"Виконання, %", "raw_attainment_pct":"Фактичне досягнення плану, %",
+            "execution_score":"Виконання, %",
             "forecast_attainment_pct":"Прогнозоване досягнення, %", "pace_sufficiency_pct":"Достатність темпу, %",
             "risk_level":"Ризик",
         })
         columns = ["Період","Код","Захід","Індикатор","Одиниця виміру","Тип продукту","Головний ССП",
                    "Джерело даних","Початок","Кінець","Річний план","Факт","Статус","Виконання, %",
-                   "Фактичне досягнення плану, %","Прогнозоване досягнення, %","Достатність темпу, %","Ризик",
-                   "Причина / пояснення"]
+                   "Прогнозоване досягнення, %","Достатність темпу, %","Ризик","Причина / пояснення"]
         render_dashboard_table(
             full[columns], hide_index=True, max_cell_height=76, table_width="fit-columns",
-            column_widths={"Період":90,"Код":90,"Захід":220,"Індикатор":220,"Одиниця виміру":130,
-                           "Тип продукту":135,"Головний ССП":105,"Джерело даних":220,"Початок":125,"Кінець":125,
-                           "Річний план":125,"Факт":125,"Статус":150,"Виконання, %":115,
-                           "Фактичне досягнення плану, %":155,
-                           "Прогнозоване досягнення, %":150,"Достатність темпу, %":140,"Ризик":140,
-                           "Причина / пояснення":240},
+            column_widths={"Період":100,"Код":110,"Захід":300,"Індикатор":300,"Одиниця виміру":155,
+                           "Тип продукту":170,"Головний ССП":120,"Джерело даних":300,"Початок":145,"Кінець":145,
+                           "Річний план":145,"Факт":145,"Статус":180,"Виконання, %":125,
+                           "Прогнозоване досягнення, %":180,"Достатність темпу, %":165,"Ризик":165,
+                           "Причина / пояснення":300},
             scroll_columns={"Захід","Індикатор","Джерело даних","Причина / пояснення"},
             formatters={
                 "Джерело даних": _dashboard_source_display,
                 "Виконання, %": lambda value: _format_table_number(value, 2),
-                "Фактичне досягнення плану, %": lambda value: _format_table_number(value, 2),
                 "Прогнозоване досягнення, %": lambda value: _format_table_number(value, 2),
                 "Достатність темпу, %": lambda value: _format_table_number(value, 2),
             },
             variant="wide",
-            metric_columns={"Виконання, %": "blue", "Фактичне досягнення плану, %": "blue", "Прогнозоване досягнення, %": "blue", "Достатність темпу, %": "blue"},
+            metric_columns={"Виконання, %": "blue", "Прогнозоване досягнення, %": "blue", "Достатність темпу, %": "blue"},
+            enforce_column_widths=True,
             status_columns={"Статус"},
             risk_columns={"Ризик"},
             header_alignment="center",
@@ -4881,39 +4884,12 @@ if breakdown_context is not None:
                 "Факт": "center",
                 "Статус": "center",
                 "Виконання, %": "center",
-                "Фактичне досягнення плану, %": "center",
                 "Прогнозоване досягнення, %": "center",
                 "Достатність темпу, %": "center",
                 "Ризик": "center",
             },
         )
         st.markdown("</div>", unsafe_allow_html=True)
-
-# ============================================================
-# МЕТОДОЛОГІЯ ТА ТЕСТОВИЙ АВТОМАТИЧНИЙ ВИСНОВОК
-# ============================================================
-
-with st.expander("Методологія розрахунку"):
-    st.markdown("""
-    <div class="methodology-box">
-    <strong>Quarter snapshot</strong> є єдиним джерелом розрахунків Dashboard. Майбутні заходи не входять у population. Для активного заходу точне подання вибраного кварталу має пріоритет; якщо його немає, execution зберігає останній підтверджений результат <em>лише в межах того самого року</em>, але поточний статус лишається «Не подано» і coverage погіршується. Якщо в поточному році підтверджених даних не було взагалі, для управлінської оцінки застосовується 0% з окремим signal відсутності даних — це не вважається відомим фізичним фактом. Завершений захід переносить останній підтверджений результат як фінальний і не потребує нового квартального подання.<br><br>
-
-    <strong>Виконання заходу.</strong> Для числових plan/fact використовується факт / річний план × 100 зі стелею 100% для execution score; raw attainment понад 100% зберігається окремо. Для якісних результатів: «Виконано» = 100%, «Частково виконано» = 75%, «Не виконано» = 0%; «Не настав час» та «Втратило актуальність» виключаються. Для active carry-forward reporting status і effective result навмисно розділені: «Не подано» описує відсутність актуального подання, а execution — останній підтверджений накопичений результат.<br><br>
-
-    <strong>Дві оцінки Стратегічного плану.</strong> «За заходами» — середнє execution score оцінених заходів. «За стратегічними цілями» — ієрархічна оцінка measure → task → goal → plan. Для кожної стратегічної цілі Dashboard окремо показує оцінку за заходами та за завданнями.<br><br>
-
-    <strong>ССП та заступник Міністра.</strong> Для управлінської аналітики кожен захід належить лише ССП — головному виконавцю; співвиконавці не дублюють execution або risk. Вага ССП — частка унікальних оцінених заходів цього головного ССП у базовому відфільтрованому портфелі до застосування ССП-фільтра. Вплив на загальне недовиконання та концентрацію High/Critical risk показуються окремо від результативності й не утворюють composite rating.<br><br>
-
-    <strong>Прогноз і темп</strong> застосовуються лише до реального поточного спостереження. Перенесений historical result не створює нового increment, forecast, pace або standard risk. У I кварталі прогноз є попереднім. У II–III кварталах використовується безпосередньо попередній валідний квартал; locked / monitoring-not-conducted observation повністю виключається з history. Від'ємний приріст зберігається як signal, але прогноз річного факту не може бути нижчим за 0. У IV кварталі прогнозний ризик не розраховується — показується підсумок року за фактичним результатом.<br><br>
-
-    <strong>Ризик</strong> визначається за прогнозованим досягненням річного плану: понад 85% — низький; 51–85% — середній; 20–менше 51% — високий; менше 20% — критичний. Відсутність актуального подання є окремим attention signal, а не вигаданим trajectory risk. Ризик у multi-period розрізах показується станом на останній вибраний квартал і не усереднюється між кварталами.<br><br>
-
-    <strong>Порівняння результатів.</strong> Average — середнє готових квартальних KPI з однаковою вагою кварталів; Latest — останній валідний вибраний квартал; Change — Latest мінус earliest comparable. Якщо використано status filter, cohort фіксується за останнім вибраним кварталом і той самий набір кодів використовується для попередніх кварталів, average та change.<br><br>
-
-    <strong>Період без моніторингу</strong> не перетворюється на 0% і не використовується як previous fact, у прогнозі, темпі чи risk trajectory. У динаміці він залишається пропуском.
-    </div>
-    """, unsafe_allow_html=True)
-
 
 if snapshot_context is not None and snapshot_monitoring_available:
     _activate_dashboard_context(snapshot_context)
@@ -5391,99 +5367,6 @@ def _render_indicator_trajectory_section():
         st.caption(" · ".join(rate_bits))
 
 
-def _render_dash_auto_summary():
-    try:
-        _q_order = ["I", "II", "III", "IV"]
-        _context_pairs = sorted(
-            list(pairs_for_calc or []), key=lambda pair: core_period_number(pair[0], pair[1])
-        )
-        if not _context_pairs:
-            return
-        _cy, _cq = _context_pairs[-1]
-        _cq_i = _q_order.index(_cq)
-        if _cq_i > 0:
-            _py, _pq = _cy, _q_order[_cq_i - 1]
-        else:
-            _py, _pq = _cy - 1, "IV"
-
-        _filtered_strat = dashboard_filters_v2.filter_measures(
-            measures_all,
-            ssp=selected_department_indices, goals=selected_goals, tasks=selected_tasks,
-            measure_codes=selected_measures, product_types=selected_product_types,
-            deputies=selected_deputies, sources=selected_sources, financing=selected_financing,
-            kpkvk=selected_kpkvk,
-        )
-        _summary_pairs = [(_py, _pq), (_cy, _cq)]
-        _summary_results = dashboard_breakdowns_v2.build_period_results(
-            _filtered_strat, requests_df, _summary_pairs, stable_statuses=selected_statuses,
-            period_sources=_build_period_source_overrides(_summary_pairs, ssp_filter=selected_department_indices),
-        )
-        _prev = _summary_results.get((_py, _pq), {}).get("snapshot", pd.DataFrame())
-        _current_for_summary = _summary_results.get((_cy, _cq), {}).get("snapshot", active)
-
-        def _counts(df):
-            if df is None or df.empty or "status" not in df.columns:
-                return {}
-            return df["status"].astype(str).value_counts().to_dict()
-
-        _cur_c, _prev_c = _counts(_current_for_summary), _counts(_prev)
-        _lines = []
-        _better, _worse = [], []
-        for _st_name, _good in [("Виконано", True), ("Частково виконано", True),
-                                ("Не виконано", False)]:
-            _d = _cur_c.get(_st_name, 0) - _prev_c.get(_st_name, 0)
-            if _d == 0:
-                continue
-            _txt = (f"«{_st_name}»: {'+' if _d > 0 else ''}{_d} "
-                    f"заходів проти {_pq} кв. {_py}")
-            if (_d > 0) == _good:
-                _better.append(_txt)
-            else:
-                _worse.append(_txt)
-        _no_data = int(
-            (_current_for_summary["status"].astype(str).isin(["", "Не подано"])).sum()
-        ) if "status" in _current_for_summary.columns else 0
-        _not_yet = int(
-            (_current_for_summary["status"].astype(str) == "Не настав час").sum()
-        ) if "status" in _current_for_summary.columns else 0
-
-        if _better:
-            _lines.append("📈 <b>Покращилось:</b> " + "; ".join(_better) + ".")
-        if _worse:
-            _lines.append("📉 <b>Погіршилось:</b> " + "; ".join(_worse) + ".")
-        if not _better and not _worse:
-            _lines.append(
-                f"➖ Суттєвих змін розподілу статусів проти {_pq} кв. {_py} "
-                f"не зафіксовано."
-            )
-        _attn = []
-        if _no_data:
-            _attn.append(f"{_no_data} заходів без поданих відомостей")
-        if _not_yet:
-            _attn.append(f"{_not_yet} заходів у стані «Не настав час»")
-        if _attn:
-            _lines.append("👀 <b>На що звернути увагу:</b> " + "; ".join(_attn) + ".")
-
-        st.markdown(
-            '<div class="card">'
-            '<div class="card-title">🧪 Автоматичний висновок '
-            '<span style="font-size:12px;background:#FDF3D8;border:1px solid '
-            '#F4B400;color:#8A6400;border-radius:8px;padding:2px 8px;'
-            'vertical-align:middle;">тестовий режим</span></div>'
-            f'<div class="card-subtitle">Порівняння: {_cq} кв. {_cy} проти '
-            f'{_pq} кв. {_py} · за застосованими фільтрами</div>'
-            + "".join(f'<div style="font-size:13px;color:#132238;'
-                      f'margin:4px 0;">{l}</div>' for l in _lines)
-            + '<div style="font-size:11.5px;color:#8A96A8;margin-top:6px;">'
-              'Текст сформовано автоматично і він не є офіційним висновком.'
-              '</div></div>',
-            unsafe_allow_html=True,
-        )
-    except Exception as exc:
-        # Тестовий режим не має права зламати Dashboard.
-        log_cosmetic_error("Автоматичний текстовий підсумок Dashboard", exc)
-
-
 # Окремий керівний блок індикаторів Цілей/Завдань. Він використовує
 # фактичні подання та довгострокові орієнтири, але не змінює формули МіО.
 # Блок вставляється саме в секцію «Динаміка», а не в кінець сторінки.
@@ -5493,9 +5376,5 @@ if dynamics_context is not None:
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
         _render_indicator_trajectory_section()
         st.markdown('</div>', unsafe_allow_html=True)
-
-if snapshot_context is not None and snapshot_monitoring_available:
-    _activate_dashboard_context(snapshot_context)
-    _render_dash_auto_summary()
 
 render_footer()

@@ -1267,6 +1267,8 @@ def _render_html_table(headers, rows, empty_message="Записів немає."
         height=325,
         compact=False,
         empty_message=empty_message,
+        visual_style="signal",
+        variant="standard",
     )
 
 

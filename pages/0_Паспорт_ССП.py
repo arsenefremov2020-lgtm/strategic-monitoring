@@ -207,7 +207,7 @@ for r in _role_order:
 
 if _team_rows:
     team_df = pd.DataFrame(_team_rows, columns=["Роль", "ПІБ", "Email"])
-    render_readonly_table(team_df, height=260, compact=True)
+    render_readonly_table(team_df, height=260, compact=True, visual_style="signal", variant="compact")
 else:
     st.info("Для цього ССП поки що не знайдено користувачів у таблиці доступів.")
 st.markdown("</div>", unsafe_allow_html=True)
@@ -348,6 +348,9 @@ else:
         height=480,
         min_width=1250,
         empty_message="Заходів немає.",
+        visual_style="signal",
+        variant="status-grid",
+        status_columns=["I квартал", "II квартал", "III квартал", "IV квартал"],
     )
 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -484,6 +487,9 @@ if _co_toggle:
             height=420,
             min_width=1550,
             empty_message="Заходів немає.",
+            visual_style="signal",
+            variant="status-grid",
+            status_columns=["I квартал", "II квартал", "III квартал", "IV квартал"],
         )
     st.markdown("</div>", unsafe_allow_html=True)
 

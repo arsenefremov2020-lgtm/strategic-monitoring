@@ -1103,7 +1103,10 @@ if submission_mode == "indicators":
     if not ind_locked_df.empty:
         st.markdown("**Уже подані / заблоковані індикатори**")
         locked_cols = [c for c in ind_display_cols if c != "Подати"]
-        render_readonly_table(ind_locked_df[[c for c in locked_cols if c in ind_locked_df.columns]], height=250)
+        render_readonly_table(
+            ind_locked_df[[c for c in locked_cols if c in ind_locked_df.columns]],
+            height=250, visual_style="signal", variant="standard",
+        )
 
     ind_editor_df = add_editor_bottom_spacer(ind_editable_df)
     _ind_visible_height = TABLE_VISIBLE_HEIGHT_PX
@@ -1852,7 +1855,10 @@ else:
     if not locked_measure_df.empty:
         st.markdown("**Уже подані / заблоковані заходи**")
         locked_cols = [c for c in display_cols if c != "Подати"]
-        render_readonly_table(locked_measure_df[[c for c in locked_cols if c in locked_measure_df.columns]], height=260)
+        render_readonly_table(
+            locked_measure_df[[c for c in locked_cols if c in locked_measure_df.columns]],
+            height=260, visual_style="signal", variant="standard",
+        )
 
     editor_table_df = add_editor_bottom_spacer(editable_measure_df)
     _meas_scheme_prefix = (

@@ -1197,6 +1197,14 @@ def render_dashboard_table(
     column_widths=None,
     scroll_columns=None,
     table_width=None,
+    variant="analytics",
+    focus_column=None,
+    metric_columns=None,
+    status_columns=None,
+    risk_columns=None,
+    delta_columns=None,
+    column_groups=None,
+    signal_edges=False,
 ):
     """Read-only table in the Home-page visual standard.
 
@@ -1226,7 +1234,36 @@ def render_dashboard_table(
         column_widths=column_widths or {},
         scroll_columns=scroll_columns or set(),
         table_width=table_width,
+        visual_style="signal",
+        variant=variant,
+        focus_column=focus_column,
+        metric_columns=metric_columns,
+        status_columns=status_columns,
+        risk_columns=risk_columns,
+        delta_columns=delta_columns,
+        column_groups=column_groups,
+        signal_edges=signal_edges,
     )
+
+
+def _signal_delta_row_class(row, _total_rows):
+    """Presentation-only edge from the already calculated delta; no business threshold."""
+    value = pd.to_numeric(pd.Series([row.get("Зміна, в.п.")]), errors="coerce").iloc[0]
+    if pd.isna(value) or float(value) == 0:
+        return ""
+    return "rt-row-green" if float(value) > 0 else "rt-row-red"
+
+
+def _signal_risk_row_class(row, _total_rows):
+    """Presentation-only edge from the canonical risk category already present in the row."""
+    risk = str(row.get("Ризик") or "").strip()
+    if risk in {"Критичний ризик", "Високий ризик"}:
+        return "rt-row-red"
+    if risk == "Середній ризик":
+        return "rt-row-yellow"
+    if risk == "Низький ризик":
+        return "rt-row-green"
+    return ""
 
 
 def _period_number_to_text(period_num):
@@ -3688,6 +3725,24 @@ if breakdown_context is not None:
                     column: (lambda value: _format_table_number(value, 2))
                     for column in _ssp_display_numeric_columns
                 },
+                variant="ranking",
+                focus_column="Останнє виконання, %",
+                metric_columns={
+                    "Середнє виконання, %": "blue", "Останнє виконання, %": "blue",
+                    "Середнє покриття, %": "blue", "Останнє покриття, %": "blue",
+                    "Високий + критичний ризик, %": "red",
+                },
+                delta_columns={"Зміна, в.п."},
+                risk_columns={"Високий + критичний ризик, %"},
+                column_groups={
+                    "Ідентифікація": {"columns": ["Місце", "Самостійний структурний підрозділ"], "color": "navy"},
+                    "Виконання": {"columns": ["Середнє виконання, %", "Останнє виконання, %", "Зміна, в.п."], "color": "blue"},
+                    "Покриття": {"columns": ["Середнє покриття, %", "Останнє покриття, %"], "color": "light-blue"},
+                    "Ризик": {"columns": ["Високий + критичний ризик, %"], "color": "red"},
+                    "Портфель": {"columns": ["Вага портфеля, %", "Частка у загальному недовиконанні, %", "Частка у загальній концентрації ризику, %"], "color": "navy"},
+                },
+                row_class_fn=_signal_delta_row_class,
+                signal_edges=True,
             )
             st.caption(
                 "Ризик у рейтингу — станом на останній вибраний звітний квартал; між кварталами він не усереднюється. "
@@ -3748,6 +3803,23 @@ if breakdown_context is not None:
                     column: (lambda value: _format_table_number(value, 2))
                     for column in _deputy_display_numeric_columns
                 },
+                variant="ranking",
+                focus_column="Останнє виконання, %",
+                metric_columns={
+                    "Середнє виконання, %": "blue", "Останнє виконання, %": "blue",
+                    "Середнє покриття, %": "blue", "Останнє покриття, %": "blue",
+                    "Високий + критичний ризик, %": "red",
+                },
+                delta_columns={"Зміна, в.п."},
+                risk_columns={"Високий + критичний ризик, %"},
+                column_groups={
+                    "Ідентифікація": {"columns": ["Заступник Міністра"], "color": "navy"},
+                    "Виконання": {"columns": ["Середнє виконання, %", "Останнє виконання, %", "Зміна, в.п."], "color": "blue"},
+                    "Покриття": {"columns": ["Середнє покриття, %", "Останнє покриття, %"], "color": "light-blue"},
+                    "Ризик": {"columns": ["Високий + критичний ризик, %"], "color": "red"},
+                },
+                row_class_fn=_signal_delta_row_class,
+                signal_edges=True,
             )
             dep_plot = dep_cmp.copy(); dep_plot["short"] = dep_plot["deputy"].astype(str).str[:32]
             fig_deputy = go.Figure()
@@ -4300,6 +4372,7 @@ if finance_context is not None:
                 render_dashboard_table(
                     _finance_detail_display(detail_rows, finance_year),
                     hide_index=True,
+                    variant="finance",
                 )
                 detail_plan_values = pd.to_numeric(
                     detail_rows["_finance_plan_bln"], errors="coerce"
@@ -4519,6 +4592,7 @@ if finance_context is not None:
                 ]],
                 hide_index=False,
                 table_width="99%",
+                variant="finance",
             )
             st.caption(
                 "Кожен захід у межах КПКВК враховано один раз; суми обчислено за числовими значеннями."
@@ -4571,6 +4645,13 @@ if finance_context is not None:
                 "Коефіцієнт еластичності": 135,
             },
             scroll_columns={"Захід"},
+            variant="finance",
+            metric_columns={"% фінансового виконання": "blue", "Стан виконання заходу, %": "blue"},
+            column_groups={
+                "Ідентифікація": {"columns": ["Код", "Захід", "Головний ССП", "Статус виконання"], "color": "navy"},
+                "Фінансування": {"columns": ["КПКВК", "Інше джерело", f"План {finance_year}, млрд грн", f"Факт {finance_year}, млрд грн", "% фінансового виконання"], "color": "blue"},
+                "Результативність": {"columns": ["Стан виконання заходу, %", "Коефіцієнт еластичності"], "color": "light-blue"},
+            },
         )
         st.caption(
             "План — стратегічні дані за обраний рік; факт — єдиний індекс core.finance."
@@ -4613,6 +4694,17 @@ if breakdown_context is not None:
                                      "Ризик","Причина / пояснення","Data-quality conflict"]],
                     hide_index=True, max_cell_height=76, table_width="fit-columns",
                     scroll_columns={"Захід","Індикатор","Причина / пояснення"},
+                    variant="problems",
+                    metric_columns={"Виконання, %": "blue", "Прогнозоване досягнення, %": "blue", "Достатність темпу, %": "blue"},
+                    status_columns={"Статус"},
+                    risk_columns={"Ризик"},
+                    column_groups={
+                        "Ідентифікація": {"columns": ["Період", "Код", "Захід", "Індикатор", "Головний ССП"], "color": "navy"},
+                        "Виконання": {"columns": ["Статус", "Виконання, %", "Прогнозоване досягнення, %", "Достатність темпу, %"], "color": "blue"},
+                        "Ризик": {"columns": ["Ризик", "Причина / пояснення", "Data-quality conflict"], "color": "red"},
+                    },
+                    row_class_fn=_signal_risk_row_class,
+                    signal_edges=True,
                 )
                 st.caption("Для I кварталу прогнозні risk signals є попередніми; для IV кварталу показуються фінальні результати, а не прогнозний ризик.")
 
@@ -4648,6 +4740,10 @@ if breakdown_context is not None:
                            "Прогнозоване досягнення, %":145,"Достатність темпу, %":130,"Ризик":115,
                            "Причина / пояснення":210,"Data-quality conflict":120},
             scroll_columns={"Захід","Індикатор","Причина / пояснення"},
+            variant="wide",
+            metric_columns={"Виконання, %": "blue", "Raw attainment, %": "blue", "Прогнозоване досягнення, %": "blue", "Достатність темпу, %": "blue"},
+            status_columns={"Статус"},
+            risk_columns={"Ризик"},
         )
         st.markdown("</div>", unsafe_allow_html=True)
 

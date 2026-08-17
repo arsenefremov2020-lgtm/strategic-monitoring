@@ -433,6 +433,14 @@ def deviation_card_class(value):
     return "alert-red"
 
 
+def _signal_delta_row_class(row, _total_rows):
+    """Presentation-only edge from the already calculated change value."""
+    value = to_number(row.get("Зміна"))
+    if value is None or float(value) == 0:
+        return ""
+    return "rt-row-green" if float(value) > 0 else "rt-row-red"
+
+
 def concise_list(values, limit=5):
     values = [raw_value(v) for v in values if raw_value(v)]
     if not values:
@@ -678,7 +686,7 @@ def render_year_over_year_block(yoy_comparison):
         st.markdown("</div>", unsafe_allow_html=True)
         return
 
-    render_readonly_table(yoy_comparison)
+    render_readonly_table(yoy_comparison, visual_style="signal", variant="analytics", metric_columns={"Попередній рік": "blue", "Поточний рік": "blue"}, delta_columns={"Зміна"})
 
     chart_data = yoy_comparison[yoy_comparison["Показник"].isin([
         "Покриття моніторингом", "Рівень виконання СП"
@@ -926,7 +934,6 @@ def _excel_safe_frame(df):
         result[column] = result[column].map(_excel_safe_value)
 
     return result
-
 def create_excel_report(active, period_requests, goal_progress, dep_progress, task_progress, product_progress, status_counts, period_dynamics, yoy_comparison, metrics, filters):
     output = BytesIO()
 
@@ -1683,7 +1690,7 @@ _top_returned = return_analytics["top_requests"]
 if _top_returned.empty:
     st.info("Заявок із поверненнями у поточному зрізі немає.")
 else:
-    render_readonly_table(_top_returned.head(20))
+    render_readonly_table(_top_returned.head(20), visual_style="signal", variant="ranking")
 st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown(
@@ -1708,13 +1715,13 @@ with _speed_left:
     if approval_speed["stage_average"].empty:
         st.info("Для розрахунку часу на ланках недостатньо завершених переходів.")
     else:
-        render_readonly_table(approval_speed["stage_average"])
+        render_readonly_table(approval_speed["stage_average"], visual_style="signal", variant="analytics")
 with _speed_right:
     st.markdown("**Заявки, що зараз очікують найдовше**")
     if approval_speed["hanging"].empty:
         st.info("У поточному зрізі немає заявок на активних ланках погодження.")
     else:
-        render_readonly_table(approval_speed["hanging"].head(20))
+        render_readonly_table(approval_speed["hanging"].head(20), visual_style="signal", variant="analytics")
 st.markdown('</div>', unsafe_allow_html=True)
 
 
@@ -1825,22 +1832,66 @@ with tab1:
         "ССП", "Заступник Міністра", "Планове значення", "Фактичне значення", "Статус",
         "Виконання, %", "Рівень ризику"
     ]
-    render_readonly_table(show_active[[c for c in cols if c in show_active.columns]])
+    render_readonly_table(
+        show_active[[c for c in cols if c in show_active.columns]],
+        visual_style="signal", variant="wide",
+        metric_columns={"Виконання, %": "blue"},
+        status_columns={"Статус"}, risk_columns={"Рівень ризику"},
+    )
 
 with tab2:
-    render_readonly_table(goal_progress)
+    render_readonly_table(
+        goal_progress, visual_style="signal", variant="analytics",
+        metric_columns={"Виконання": "blue", "Покриття_%": "blue"}, delta_columns={"Зміна"},
+        column_groups={
+            "Ідентифікація": {"columns": ["goal_code", "strategic_goal"], "color": "navy"},
+            "Виконання": {"columns": ["Виконання", "Останнє_виконання", "Зміна"], "color": "blue"},
+            "Покриття": {"columns": ["Покриття_%", "Покриття_eligible", "Подано"], "color": "light-blue"},
+            "Увага": {"columns": ["Проблемних", "Без_даних"], "color": "red"},
+        },
+    )
 
 with tab3:
-    render_readonly_table(task_progress)
+    render_readonly_table(
+        task_progress, visual_style="signal", variant="analytics",
+        metric_columns={"Виконання": "blue", "Покриття_%": "blue"}, delta_columns={"Зміна"},
+        column_groups={
+            "Ідентифікація": {"columns": ["task_code", "task_name"], "color": "navy"},
+            "Виконання": {"columns": ["Виконання", "Останнє_виконання", "Зміна"], "color": "blue"},
+            "Покриття": {"columns": ["Покриття_%", "Покриття_eligible", "Подано"], "color": "light-blue"},
+            "Увага": {"columns": ["Проблемних", "Без_даних"], "color": "red"},
+        },
+    )
 
 with tab4:
-    render_readonly_table(dep_progress)
+    render_readonly_table(
+        dep_progress, visual_style="signal", variant="ranking",
+        metric_columns={"Виконання": "blue", "Покриття_%": "blue"}, delta_columns={"Зміна"},
+        column_groups={
+            "Ідентифікація": {"columns": ["ssp_index", "department", "deputy_minister"], "color": "navy"},
+            "Виконання": {"columns": ["Виконання", "Останнє_виконання", "Зміна"], "color": "blue"},
+            "Покриття": {"columns": ["Покриття_%", "Покриття_eligible", "Подано"], "color": "light-blue"},
+            "Ризик": {"columns": ["risk_high_critical_latest", "Проблемних", "Без_даних"], "color": "red"},
+            "Портфель": {"columns": ["portfolio_weight_pct", "underperformance_contribution_pct", "risk_contribution_pct"], "color": "navy"},
+        },
+        row_class_fn=_signal_delta_row_class,
+        signal_edges=True,
+    )
 
 with tab5:
-    render_readonly_table(product_progress)
+    render_readonly_table(
+        product_progress, visual_style="signal", variant="analytics",
+        metric_columns={"Виконання": "blue", "Покриття_%": "blue"},
+        column_groups={
+            "Ідентифікація": {"columns": ["product_type"], "color": "navy"},
+            "Виконання": {"columns": ["Виконання"], "color": "blue"},
+            "Покриття": {"columns": ["Покриття_%"], "color": "light-blue"},
+            "Увага": {"columns": ["Проблемних", "Без_даних"], "color": "red"},
+        },
+    )
 
 with tab6:
-    render_readonly_table(period_requests)
+    render_readonly_table(period_requests, visual_style="signal", variant="wide")
 
 st.markdown("</div>", unsafe_allow_html=True)
 

@@ -1096,7 +1096,12 @@ if can_view_submission_history and view_mode in ["Огляд", "Історія �
         history["Дата подання"] = history.get("submitted_at", pd.Series("", index=history.index)).apply(format_kyiv_datetime)
         history["Коментар"] = history.get("admin_comment", pd.Series("", index=history.index)).apply(lambda v: clean(v) or "—")
         human_history = history[["Рік", "Квартал", "Статус виконання", "Статус погодження", "Фактичне значення", "Відповідальна особа", "Дата подання", "Коментар"]]
-        render_readonly_table(style_status_columns(human_history, ["Статус виконання", "Статус погодження"]))
+        render_readonly_table(
+            style_status_columns(human_history, ["Статус виконання", "Статус погодження"]),
+            visual_style="signal", variant="history",
+            status_columns={"Статус виконання", "Статус погодження"},
+            scroll_columns={"Коментар"},
+        )
         if not measure_logs.empty:
             with st.expander("Історія погодження заходу"):
                 render_request_timeline(measure_logs)
@@ -1105,7 +1110,12 @@ if can_view_submission_history and view_mode in ["Огляд", "Історія �
             if focused_versions.empty:
                 st.info("Для цієї заявки збережених версій поки що немає.")
             else:
-                render_readonly_table(style_status_columns(human_versions_table(focused_versions), ["Статус виконання", "Статус погодження"]))
+                render_readonly_table(
+                    style_status_columns(human_versions_table(focused_versions), ["Статус виконання", "Статус погодження"]),
+                    visual_style="signal", variant="history",
+                    status_columns={"Статус виконання", "Статус погодження"},
+                    scroll_columns={"Опис прогресу", "Ризики / проблеми"},
+                )
                 with st.expander("Порівняти дві версії заявки", expanded=False):
                     render_version_comparison(focused_versions, key_prefix=f"card_versions_{focused_request_id}")
     render_html('</div>')

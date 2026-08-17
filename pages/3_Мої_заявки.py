@@ -659,6 +659,10 @@ with st.expander("Перелік поданих відомостей", expanded=
         pd.DataFrame(_table_rows),
         height=325,
         empty_message="Поданих відомостей за вибраними фільтрами немає.",
+        visual_style="signal",
+        variant="standard",
+        status_columns={"Статус виконання", "Статус погодження"},
+        scroll_columns={"Коментар координатора"},
     )
 
 # ============================================================
@@ -1234,10 +1238,12 @@ with st.expander("Історія версій заявки", expanded=False):
                 "Посилання на НПА": clean(version_row.get("npa_link")) or "—",
             })
         versions_show = pd.DataFrame(_version_rows)
-        render_readonly_table(style_status_columns(
-                versions_show,
-                ["Статус погодження", "Статус виконання"],
-            ))
+        render_readonly_table(
+            style_status_columns(versions_show, ["Статус погодження", "Статус виконання"]),
+            visual_style="signal", variant="history",
+            status_columns={"Статус погодження", "Статус виконання"},
+            scroll_columns={"Опис прогресу", "Ризики/проблеми/відхилення"},
+        )
 
 
 # ============================================================

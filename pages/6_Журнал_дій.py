@@ -762,7 +762,7 @@ def display_notifications_table(df):
     show = show.rename(columns=rename_map)
     cols = ["ID", "Дата відправки", "Email отримувача", "Роль отримувача", "Тип сповіщення", "Пов'язаний ключ", "Тема", "Текст/прев'ю", "Статус", "Помилка"]
     available = [c for c in cols if c in show.columns]
-    render_readonly_table(show[available])
+    render_readonly_table(show[available], visual_style="signal", variant="log")
     return show[available]
 
 
@@ -833,7 +833,7 @@ def display_logs_table(filtered):
 
     available = [c for c in cols if c in show.columns]
 
-    render_readonly_table(show[available])
+    render_readonly_table(show[available], visual_style="signal", variant="log")
 
     return show[available]
 
@@ -907,7 +907,7 @@ def display_requests_table(df):
     ]
 
     available = [c for c in cols if c in show.columns]
-    render_readonly_table(show[available])
+    render_readonly_table(show[available], visual_style="signal", variant="log")
 
     return show[available]
 
@@ -972,7 +972,7 @@ def display_versions_table(versions_df, selected_departments, selected_years, se
         st.info("За обраними параметрами версій заявок не знайдено.")
         return pd.DataFrame()
 
-    render_readonly_table(show[available])
+    render_readonly_table(show[available], visual_style="signal", variant="log")
     return show[available]
 
 
@@ -1327,10 +1327,11 @@ try:
                 _stale_cols = ["№ заявки", "Код заходу", "ССП", "Рік",
                                "Квартал", "Статус погодження",
                                "Днів в очікуванні"]
-                render_readonly_table(_stale_show[[c for c in _stale_cols
-                                 if c in _stale_show.columns]]
+                render_readonly_table(
+                    _stale_show[[c for c in _stale_cols if c in _stale_show.columns]]
                     .sort_values("Днів в очікуванні", ascending=False),
-             )
+                    visual_style="signal", variant="log",
+                )
                 st.markdown('</div>', unsafe_allow_html=True)
 except Exception as exc:
     show_warning(

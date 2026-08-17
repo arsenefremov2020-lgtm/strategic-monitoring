@@ -472,7 +472,7 @@ def _html_cell(value):
     return escape(value_text).replace("\n", "<br>") if value_text else "—"
 
 
-def _render_html_table(headers, rows, empty_message="Записів немає."):
+def _render_html_table(headers, rows, empty_message="Записів немає.", *, table_variant="standard"):
     """Read-only table in the single Home-page visual standard."""
     if not rows:
         st.info(empty_message)
@@ -482,6 +482,8 @@ def _render_html_table(headers, rows, empty_message="Записів немає."
         height=325,
         compact=False,
         empty_message=empty_message,
+        visual_style="signal",
+        variant=table_variant,
     )
 
 
@@ -1718,6 +1720,7 @@ else:
             list(_history_table.columns),
             [list(row) for row in _history_table.itertuples(index=False, name=None)],
             empty_message="Історії змін для цієї заявки поки що немає.",
+            table_variant="history",
         )
 
 _render_cabinet_submission_notice()

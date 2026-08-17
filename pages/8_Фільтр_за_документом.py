@@ -379,6 +379,9 @@ render_readonly_table(
     height=560,
     min_width=1600,
     empty_message="За вибраними параметрами немає заходів.",
+    visual_style="signal",
+    variant="wide",
+    status_columns={"Стан подання", "Статус виконання"},
 )
 st.markdown('</div>', unsafe_allow_html=True)
 

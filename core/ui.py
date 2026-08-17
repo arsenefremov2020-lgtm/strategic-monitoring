@@ -479,6 +479,7 @@ def _render_readonly_table_signal(
     signal_edges: bool = False,
     header_alignment: str | None = None,
     column_alignments: dict[str, str] | None = None,
+    enforce_column_widths: bool = False,
 ) -> None:
     """Opt-in Signal Grid. Decorative configuration is defensive and presentation-only."""
     frame = _signal_grid_frame(data)
@@ -562,6 +563,24 @@ def _render_readonly_table_signal(
         table_width_css, table_min_width_css = "100%", f"{int(min_width)}px"
 
     variant_class = f"signal-grid-{variant}"
+
+    # Optional strict widths for exceptional very-wide analytical grids.
+    # Default stays off so existing Signal Grid tables keep their current layout.
+    strict_width_rules = ""
+    if enforce_column_widths and column_widths:
+        offset = 1 if show_index else 0
+        strict_parts = []
+        for index, col in enumerate(columns, start=1 + offset):
+            width = _column_css_width(column_widths.get(col))
+            if not width:
+                continue
+            strict_parts.append(
+                f"table.signal-grid-table th:nth-child({index}), "
+                f"table.signal-grid-table td:nth-child({index}) "
+                f"{{ width:{width} !important; min-width:{width} !important; max-width:{width} !important; }}"
+            )
+        strict_width_rules = "\n".join(strict_parts)
+
     css = f"""
     <style>
     .signal-grid-wrap {{ width:{wrapper_width_css} !important; max-width:{wrapper_max_width_css} !important; border:1px solid #DCE4F0; border-radius:13px; background:#FFFFFF; box-shadow:0 4px 14px rgba(15,23,42,.04); margin:8px 0 18px 0; }}
@@ -599,6 +618,7 @@ def _render_readonly_table_signal(
     table.signal-grid-table tr.dashboard-rank-yellow td:first-child, table.signal-grid-table tr.rt-row-yellow td:first-child {{ box-shadow:inset 3px 0 0 #F4B400; }}
     table.signal-grid-table tr.dashboard-rank-red td:first-child, table.signal-grid-table tr.rt-row-red td:first-child {{ box-shadow:inset 3px 0 0 #DC4A4A; }}
     table.signal-grid-table.signal-grid-log th, table.signal-grid-table.signal-grid-history th {{ padding-top:7px; padding-bottom:7px; }}
+    {strict_width_rules}
     </style>
     """
 
@@ -721,6 +741,7 @@ def render_readonly_table(
     signal_edges: bool = False,
     header_alignment: str | None = None,
     column_alignments: dict[str, str] | None = None,
+    enforce_column_widths: bool = False,
 ) -> None:
     """Render a read-only table. Default is the unchanged legacy renderer.
 
@@ -742,6 +763,7 @@ def render_readonly_table(
             risk_columns=risk_columns, delta_columns=delta_columns,
             column_groups=column_groups, signal_edges=signal_edges,
             header_alignment=header_alignment, column_alignments=column_alignments,
+            enforce_column_widths=enforce_column_widths,
         )
     except Exception:
         _SIGNAL_GRID_LOGGER.exception("Signal Grid presentation failed; using legacy table renderer")

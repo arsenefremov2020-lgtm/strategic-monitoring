@@ -477,6 +477,8 @@ def _render_readonly_table_signal(
     delta_columns: list[str] | set[str] | tuple[str, ...] | None = None,
     column_groups: dict[str, Any] | None = None,
     signal_edges: bool = False,
+    header_alignment: str | None = None,
+    column_alignments: dict[str, str] | None = None,
 ) -> None:
     """Opt-in Signal Grid. Decorative configuration is defensive and presentation-only."""
     frame = _signal_grid_frame(data)
@@ -495,6 +497,16 @@ def _render_readonly_table_signal(
     metric_colors = _signal_grid_metric_colors(metric_columns, columns)
     focus_column = str(focus_column) if focus_column is not None and str(focus_column) in set(columns) else None
     crowns = _signal_grid_crowns(column_groups, columns)
+    valid_alignments = {"left", "center", "right"}
+    header_alignment = str(header_alignment or "").strip().casefold()
+    if header_alignment not in valid_alignments:
+        header_alignment = ""
+    column_alignments = {
+        str(column): str(alignment).strip().casefold()
+        for column, alignment in (column_alignments or {}).items()
+        if str(column) in set(columns)
+        and str(alignment).strip().casefold() in valid_alignments
+    }
     variant = str(variant or "standard").strip().casefold()
     if variant not in _SIGNAL_GRID_VARIANTS:
         variant = "standard"
@@ -559,8 +571,11 @@ def _render_readonly_table_signal(
     table.signal-grid-table td {{ padding:{row_pad}; border:0; border-bottom:1px solid #E8EDF4; vertical-align:middle; text-align:left; white-space:normal; overflow-wrap:anywhere; line-height:1.3; background:#FFFFFF; }}
     table.signal-grid-table tbody tr:last-child td {{ border-bottom:0; }}
     table.signal-grid-table tbody tr:hover td {{ background:#F8FAFD; }}
+    table.signal-grid-table .sg-align-left {{ text-align:left; }}
     table.signal-grid-table .sg-align-right {{ text-align:right; font-variant-numeric:tabular-nums; }}
     table.signal-grid-table .sg-align-center {{ text-align:center; }}
+    table.signal-grid-table td.sg-align-center .signal-grid-metric {{ margin-left:auto; margin-right:auto; text-align:center; }}
+    table.signal-grid-table td.sg-align-left .signal-grid-metric {{ margin-left:0; margin-right:auto; text-align:left; }}
     table.signal-grid-table .sg-primary {{ color:#132238; font-weight:650; }}
     table.signal-grid-table .sg-focus {{ background:#F3F7FD !important; }}
     table.signal-grid-table .signal-grid-cell {{ display:block; max-height:{int(max_cell_height)}px; overflow:hidden; }}
@@ -588,6 +603,9 @@ def _render_readonly_table_signal(
     """
 
     def _alignment_class(col: str) -> str:
+        explicit = column_alignments.get(col)
+        if explicit:
+            return f"sg-align-{explicit}"
         if col in status_columns_set or col in risk_columns_set:
             return "sg-align-center"
         if col in metric_colors or col in delta_columns_set:
@@ -604,7 +622,9 @@ def _render_readonly_table_signal(
     if show_index:
         head_parts.append("<th class='sg-align-center'></th>")
     for col in columns:
-        classes = [_alignment_class(col)]
+        classes = [
+            f"sg-align-{header_alignment}" if header_alignment else _alignment_class(col)
+        ]
         if col == focus_column:
             classes.append("sg-focus")
         crown_style = f" style='border-top:3px solid {escape(crowns[col])}'" if col in crowns else ""
@@ -699,6 +719,8 @@ def render_readonly_table(
     delta_columns: list[str] | set[str] | tuple[str, ...] | None = None,
     column_groups: dict[str, Any] | None = None,
     signal_edges: bool = False,
+    header_alignment: str | None = None,
+    column_alignments: dict[str, str] | None = None,
 ) -> None:
     """Render a read-only table. Default is the unchanged legacy renderer.
 
@@ -719,6 +741,7 @@ def render_readonly_table(
             metric_columns=metric_columns, status_columns=status_columns,
             risk_columns=risk_columns, delta_columns=delta_columns,
             column_groups=column_groups, signal_edges=signal_edges,
+            header_alignment=header_alignment, column_alignments=column_alignments,
         )
     except Exception:
         _SIGNAL_GRID_LOGGER.exception("Signal Grid presentation failed; using legacy table renderer")

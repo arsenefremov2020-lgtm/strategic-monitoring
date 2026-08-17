@@ -1257,7 +1257,13 @@ def _sort_by_ssp(frame: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def _render_html_table(headers, rows, empty_message="Записів немає."):
+def _render_html_table(
+    headers,
+    rows,
+    empty_message="Записів немає.",
+    column_widths=None,
+    enforce_column_widths=False,
+):
     """Read-only table in the single Home-page visual standard."""
     if not rows:
         st.info(empty_message)
@@ -1269,6 +1275,8 @@ def _render_html_table(headers, rows, empty_message="Записів немає."
         empty_message=empty_message,
         visual_style="signal",
         variant="standard",
+        column_widths=column_widths,
+        enforce_column_widths=enforce_column_widths,
     )
 
 
@@ -2963,6 +2971,12 @@ def _render_coordinator_summary(scope_df: pd.DataFrame) -> None:
         _render_html_table(
             _REQUEST_TABLE_HEADERS,
             [_request_table_values(row) for _, row in frame.iterrows()],
+            column_widths={
+                "Особа, яка подала заявку": 260,
+                "Номер телефону": 190,
+                "Дата подання": 190,
+            },
+            enforce_column_widths=True,
         )
 
     with st.expander("Перегляд записів"):

@@ -414,19 +414,45 @@ main_executors = {
 }
 
 kpi_items = [
-    ("Заходів", str(len(matched))),
-    ("Головних виконавців", str(len(main_executors))),
-    ("Виконано заходів", f"{completed_count} із {len(matched)}"),
-    (f"Виконання за {selected_year} рік", _format_execution_kpi(execution_kpi)),
+    {
+        "label": "Заходів",
+        "value": str(len(matched)),
+        "background": "#EAF1FF",
+        "border": "#BFD3F2",
+        "accent": "#005BBB",
+    },
+    {
+        "label": "Головних виконавців",
+        "value": str(len(main_executors)),
+        "background": "#F5F8FD",
+        "border": "#DCE4F0",
+        "accent": "#032A63",
+    },
+    {
+        "label": "Виконано заходів",
+        "value": f"{completed_count} із {len(matched)}",
+        "background": "#E4F5EC",
+        "border": "#BFE7CF",
+        "accent": "#118847",
+    },
+    {
+        "label": f"Виконання за {selected_year} рік",
+        "value": _format_execution_kpi(execution_kpi),
+        "background": "#F3F7FD",
+        "border": "#BFD3F2",
+        "accent": "#005BBB",
+    },
 ]
 st.markdown(
     '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:14px 0 20px;">'
     + "".join(
-        '<div class="admin-kpi-card">'
-        f'<div class="admin-kpi-value">{escape(value)}</div>'
-        f'<div class="admin-kpi-label">{escape(label)}</div>'
+        '<div class="admin-kpi-card" '
+        f'style="background:{item["background"]};border:1px solid {item["border"]};'
+        f'border-top:3px solid {item["accent"]};box-shadow:0 4px 14px rgba(15,23,42,.035);">'
+        f'<div class="admin-kpi-value" style="color:{item["accent"]};">{escape(item["value"])}</div>'
+        f'<div class="admin-kpi-label" style="color:#61708A;">{escape(item["label"])}</div>'
         '</div>'
-        for label, value in kpi_items
+        for item in kpi_items
     )
     + '</div>',
     unsafe_allow_html=True,
@@ -453,7 +479,7 @@ else:
     )
     render_readonly_table(
         display_rows,
-        height=560,
+        height=350,
         min_width=2785,
         empty_message="За обраним документом немає заходів.",
         visual_style="signal",
@@ -480,6 +506,18 @@ else:
         scroll_columns={"Захід", "Індикатор"},
         status_columns={"Стан подання", "Стан виконання"},
         metric_columns={"Виконання, %": "blue"},
+        column_alignments={
+            "Тип продукту": "center",
+            "Головний виконавець": "center",
+            "2021 базовий рівень (факт)": "center",
+            "2024 звіт": "center",
+            "2025 факт": "center",
+            "План": "center",
+            "Факт": "center",
+            "Початок виконання": "center",
+            "Кінець виконання": "center",
+            "Виконання, %": "center",
+        },
         enforce_column_widths=True,
     )
 

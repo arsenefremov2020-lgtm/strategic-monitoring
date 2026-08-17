@@ -1263,6 +1263,7 @@ def _render_html_table(
     empty_message="Записів немає.",
     column_widths=None,
     enforce_column_widths=False,
+    header_alignment=None,
 ):
     """Read-only table in the single Home-page visual standard."""
     if not rows:
@@ -1277,6 +1278,7 @@ def _render_html_table(
         variant="standard",
         column_widths=column_widths,
         enforce_column_widths=enforce_column_widths,
+        header_alignment=header_alignment,
     )
 
 
@@ -3441,7 +3443,22 @@ if _is_superadmin_current and admin_work_mode == "Основний режим к
             _assigned_headers = _REQUEST_TABLE_HEADERS.copy()
             _assigned_headers.insert(12, "Координатор")
             _assigned_headers.insert(1, "На розгляді (днів)")
-            _render_html_table(_assigned_headers, _assigned_table_rows)
+            _render_html_table(
+                _assigned_headers,
+                _assigned_table_rows,
+                column_widths={
+                    "Назва заходу": 300,
+                    "Опис прогресу": 300,
+                    "Ризики / проблеми / відхилення": 300,
+                    "Посилання на НПА": 260,
+                    "Координатор": 260,
+                    "Особа, яка подала заявку": 260,
+                    "Номер телефону": 190,
+                    "Дата подання": 190,
+                },
+                enforce_column_widths=True,
+                header_alignment="center",
+            )
 
 if admin_work_mode == "Коригування закритих заявок":
     _render_locked_correction_mode(_all_access_df)

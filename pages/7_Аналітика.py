@@ -435,7 +435,7 @@ def deviation_card_class(value):
 
 def _signal_delta_row_class(row, _total_rows):
     """Presentation-only edge from the already calculated change value."""
-    value = to_number(row.get("Зміна"))
+    value = to_number(row.get("Зміна, в.п.", row.get("Зміна")))
     if value is None or float(value) == 0:
         return ""
     return "rt-row-green" if float(value) > 0 else "rt-row-red"
@@ -594,6 +594,22 @@ def format_pct(value):
     return f"{int(number)}%" if number.is_integer() else f"{number:.1f}%"
 
 
+def format_number_2(value):
+    """Display-only number formatter: maximum two digits after the decimal point."""
+    if value is None:
+        return "—"
+    try:
+        if pd.isna(value):
+            return "—"
+    except (TypeError, ValueError):
+        pass
+    number = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+    if pd.isna(number):
+        text = raw_value(value)
+        return text if text else "—"
+    return f"{float(number):.2f}".rstrip("0").rstrip(".")
+
+
 def apply_dimension_filters(data, selected_ssp, selected_deputies, selected_goals, selected_tasks, selected_product_types):
     filtered = data.copy()
 
@@ -686,7 +702,18 @@ def render_year_over_year_block(yoy_comparison):
         st.markdown("</div>", unsafe_allow_html=True)
         return
 
-    render_readonly_table(yoy_comparison, visual_style="signal", variant="analytics", metric_columns={"Попередній рік": "blue", "Поточний рік": "blue"}, delta_columns={"Зміна"})
+    render_readonly_table(
+        yoy_comparison,
+        visual_style="signal",
+        variant="analytics",
+        metric_columns={"Попередній рік": "blue", "Поточний рік": "blue"},
+        delta_columns={"Зміна"},
+        formatters={
+            "Попередній рік": format_number_2,
+            "Поточний рік": format_number_2,
+            "Зміна": format_number_2,
+        },
+    )
 
     chart_data = yoy_comparison[yoy_comparison["Показник"].isin([
         "Покриття моніторингом", "Рівень виконання СП"
@@ -1041,7 +1068,8 @@ def build_report_charts(goal_progress, dep_progress, status_counts, period_dynam
                 charts.append(("Рис. Структура портфеля заходів за статусами виконання", png))
 
         if goal_progress is not None and not goal_progress.empty:
-            _g = goal_progress.sort_values("Виконання", ascending=True)
+            _g = goal_progress.sort_values("Виконання", ascending=True).copy()
+            _g["Виконання"] = pd.to_numeric(_g["Виконання"], errors="coerce").round(2)
             fig = _px_rep.bar(
                 _g, x="Виконання", y=_g["goal_code"].astype(str),
                 orientation="h", color_discrete_sequence=[_brand[0]],
@@ -1551,8 +1579,12 @@ with g1:
 
 with g2:
     if not goal_progress.empty:
+        goal_chart = goal_progress.sort_values("goal_code").copy()
+        for _column in ("Виконання", "Покриття_%"):
+            if _column in goal_chart.columns:
+                goal_chart[_column] = pd.to_numeric(goal_chart[_column], errors="coerce").round(2)
         fig = px.bar(
-            goal_progress.sort_values("goal_code"),
+            goal_chart,
             x="goal_code",
             y="Виконання",
             text="Виконання",
@@ -1560,6 +1592,7 @@ with g2:
             title="Виконання за стратегічними цілями",
             labels={"goal_code": "Стратегічна ціль", "Виконання": "Виконання, %"}
         )
+        fig.update_traces(texttemplate="%{text:.2f}")
         st.plotly_chart(fig, use_container_width=True)
 
 g3, g4 = st.columns(2)
@@ -1834,64 +1867,220 @@ with tab1:
     ]
     render_readonly_table(
         show_active[[c for c in cols if c in show_active.columns]],
-        visual_style="signal", variant="wide",
+        visual_style="signal",
+        variant="wide",
         metric_columns={"Виконання, %": "blue"},
-        status_columns={"Статус"}, risk_columns={"Рівень ризику"},
+        status_columns={"Статус"},
+        risk_columns={"Рівень ризику"},
+        column_widths={
+            "Рік": 110,
+            "Захід": 300,
+            "Завдання": 300,
+            "Тип продукту": 170,
+        },
+        scroll_columns={"Захід", "Завдання"},
+        enforce_column_widths=True,
     )
 
 with tab2:
+    goal_check = goal_progress.rename(columns={
+        "goal_code": "Код стратегічної цілі",
+        "strategic_goal": "Стратегічна ціль",
+        "average_by_measures": "Середнє виконання за заходами, %",
+        "latest_by_measures": "Останнє виконання за заходами, %",
+        "change_by_measures": "Зміна за заходами, в.п.",
+        "Виконання": "Середнє виконання, %",
+        "Останнє_виконання": "Останнє виконання, %",
+        "Зміна": "Зміна, в.п.",
+        "Покриття_%": "Покриття, %",
+        "Заходів_періодів": "Записів захід-період",
+        "Унікальних_заходів": "Унікальних заходів",
+        "Покриття_eligible": "У покритті",
+        "Без_даних": "Без даних",
+    })
+    goal_numeric = {
+        "Середнє виконання за заходами, %", "Останнє виконання за заходами, %",
+        "Зміна за заходами, в.п.", "Середнє виконання, %",
+        "Останнє виконання, %", "Зміна, в.п.", "Покриття, %",
+    }
     render_readonly_table(
-        goal_progress, visual_style="signal", variant="analytics",
-        metric_columns={"Виконання": "blue", "Покриття_%": "blue"}, delta_columns={"Зміна"},
+        goal_check,
+        visual_style="signal",
+        variant="analytics",
+        metric_columns={
+            "Середнє виконання, %": "blue",
+            "Останнє виконання, %": "blue",
+            "Покриття, %": "blue",
+        },
+        delta_columns={"Зміна, в.п.", "Зміна за заходами, в.п."},
+        formatters={column: format_number_2 for column in goal_numeric},
         column_groups={
-            "Ідентифікація": {"columns": ["goal_code", "strategic_goal"], "color": "navy"},
-            "Виконання": {"columns": ["Виконання", "Останнє_виконання", "Зміна"], "color": "blue"},
-            "Покриття": {"columns": ["Покриття_%", "Покриття_eligible", "Подано"], "color": "light-blue"},
-            "Увага": {"columns": ["Проблемних", "Без_даних"], "color": "red"},
+            "Ідентифікація": {"columns": ["Код стратегічної цілі", "Стратегічна ціль"], "color": "navy"},
+            "Виконання": {"columns": [
+                "Середнє виконання за заходами, %", "Останнє виконання за заходами, %",
+                "Зміна за заходами, в.п.", "Середнє виконання, %",
+                "Останнє виконання, %", "Зміна, в.п."
+            ], "color": "blue"},
+            "Покриття": {"columns": ["Покриття, %", "У покритті", "Подано"], "color": "light-blue"},
+            "Увага": {"columns": ["Проблемних", "Без даних"], "color": "red"},
         },
     )
 
 with tab3:
+    task_check = task_progress.rename(columns={
+        "task_code": "Код завдання",
+        "task_name": "Завдання",
+        "Виконання": "Середнє виконання, %",
+        "Останнє_виконання": "Останнє виконання, %",
+        "Зміна": "Зміна, в.п.",
+        "Покриття_%": "Покриття, %",
+        "Заходів_періодів": "Записів захід-період",
+        "Унікальних_заходів": "Унікальних заходів",
+        "Покриття_eligible": "У покритті",
+        "Без_даних": "Без даних",
+    })
+    task_numeric = {"Середнє виконання, %", "Останнє виконання, %", "Зміна, в.п.", "Покриття, %"}
     render_readonly_table(
-        task_progress, visual_style="signal", variant="analytics",
-        metric_columns={"Виконання": "blue", "Покриття_%": "blue"}, delta_columns={"Зміна"},
+        task_check,
+        visual_style="signal",
+        variant="analytics",
+        metric_columns={"Середнє виконання, %": "blue", "Останнє виконання, %": "blue", "Покриття, %": "blue"},
+        delta_columns={"Зміна, в.п."},
+        formatters={column: format_number_2 for column in task_numeric},
+        column_widths={"Завдання": 300},
+        scroll_columns={"Завдання"},
+        enforce_column_widths=True,
         column_groups={
-            "Ідентифікація": {"columns": ["task_code", "task_name"], "color": "navy"},
-            "Виконання": {"columns": ["Виконання", "Останнє_виконання", "Зміна"], "color": "blue"},
-            "Покриття": {"columns": ["Покриття_%", "Покриття_eligible", "Подано"], "color": "light-blue"},
-            "Увага": {"columns": ["Проблемних", "Без_даних"], "color": "red"},
+            "Ідентифікація": {"columns": ["Код завдання", "Завдання"], "color": "navy"},
+            "Виконання": {"columns": ["Середнє виконання, %", "Останнє виконання, %", "Зміна, в.п."], "color": "blue"},
+            "Покриття": {"columns": ["Покриття, %", "У покритті", "Подано"], "color": "light-blue"},
+            "Увага": {"columns": ["Проблемних", "Без даних"], "color": "red"},
         },
     )
 
 with tab4:
+    ssp_check = dep_progress.rename(columns={
+        "ssp_index": "ССП",
+        "Виконання": "Середнє виконання, %",
+        "Останнє_виконання": "Останнє виконання, %",
+        "Зміна": "Зміна, в.п.",
+        "Покриття_%": "Середнє покриття, %",
+        "latest_coverage": "Останнє покриття, %",
+        "risk_without_substantial_latest": "Без суттєвого ризику, %",
+        "risk_high_critical_latest": "Високий + критичний ризик, %",
+        "latest_period": "Останній період",
+        "portfolio_weight_pct": "Вага портфеля, %",
+        "underperformance_contribution_pct": "Частка у недовиконанні, %",
+        "risk_contribution_pct": "Частка у концентрації ризику, %",
+        "portfolio_measure_count": "Заходів у портфелі",
+        "department": "Самостійний структурний підрозділ",
+        "deputy_minister": "Заступник Міністра",
+        "Заходів_періодів": "Записів захід-період",
+        "Унікальних_заходів": "Унікальних заходів",
+        "Покриття_eligible": "У покритті",
+        "Без_даних": "Без даних",
+    })
+    ssp_numeric = {
+        "Середнє виконання, %", "Останнє виконання, %", "Зміна, в.п.",
+        "Середнє покриття, %", "Останнє покриття, %",
+        "Без суттєвого ризику, %", "Високий + критичний ризик, %",
+        "Вага портфеля, %", "Частка у недовиконанні, %",
+        "Частка у концентрації ризику, %",
+    }
     render_readonly_table(
-        dep_progress, visual_style="signal", variant="ranking",
-        metric_columns={"Виконання": "blue", "Покриття_%": "blue"}, delta_columns={"Зміна"},
+        ssp_check,
+        visual_style="signal",
+        variant="ranking",
+        metric_columns={
+            "Середнє виконання, %": "blue", "Останнє виконання, %": "blue",
+            "Середнє покриття, %": "blue", "Останнє покриття, %": "blue",
+        },
+        delta_columns={"Зміна, в.п."},
+        formatters={column: format_number_2 for column in ssp_numeric},
         column_groups={
-            "Ідентифікація": {"columns": ["ssp_index", "department", "deputy_minister"], "color": "navy"},
-            "Виконання": {"columns": ["Виконання", "Останнє_виконання", "Зміна"], "color": "blue"},
-            "Покриття": {"columns": ["Покриття_%", "Покриття_eligible", "Подано"], "color": "light-blue"},
-            "Ризик": {"columns": ["risk_high_critical_latest", "Проблемних", "Без_даних"], "color": "red"},
-            "Портфель": {"columns": ["portfolio_weight_pct", "underperformance_contribution_pct", "risk_contribution_pct"], "color": "navy"},
+            "Ідентифікація": {"columns": ["ССП", "Самостійний структурний підрозділ", "Заступник Міністра"], "color": "navy"},
+            "Виконання": {"columns": ["Середнє виконання, %", "Останнє виконання, %", "Зміна, в.п."], "color": "blue"},
+            "Покриття": {"columns": ["Середнє покриття, %", "Останнє покриття, %", "У покритті", "Подано"], "color": "light-blue"},
+            "Ризик": {"columns": ["Без суттєвого ризику, %", "Високий + критичний ризик, %", "Проблемних", "Без даних"], "color": "red"},
+            "Портфель": {"columns": ["Вага портфеля, %", "Частка у недовиконанні, %", "Частка у концентрації ризику, %"], "color": "navy"},
         },
         row_class_fn=_signal_delta_row_class,
         signal_edges=True,
     )
 
 with tab5:
+    product_check = product_progress.rename(columns={
+        "product_type": "Тип продукту",
+        "Унікальних_заходів": "Унікальних заходів",
+        "Виконання": "Виконання, %",
+        "Покриття_%": "Покриття, %",
+        "Без_даних": "Без даних",
+    })
     render_readonly_table(
-        product_progress, visual_style="signal", variant="analytics",
-        metric_columns={"Виконання": "blue", "Покриття_%": "blue"},
+        product_check,
+        visual_style="signal",
+        variant="analytics",
+        metric_columns={"Виконання, %": "blue", "Покриття, %": "blue"},
+        formatters={"Виконання, %": format_number_2, "Покриття, %": format_number_2},
         column_groups={
-            "Ідентифікація": {"columns": ["product_type"], "color": "navy"},
-            "Виконання": {"columns": ["Виконання"], "color": "blue"},
-            "Покриття": {"columns": ["Покриття_%"], "color": "light-blue"},
-            "Увага": {"columns": ["Проблемних", "Без_даних"], "color": "red"},
+            "Ідентифікація": {"columns": ["Тип продукту"], "color": "navy"},
+            "Виконання": {"columns": ["Виконання, %"], "color": "blue"},
+            "Покриття": {"columns": ["Покриття, %"], "color": "light-blue"},
+            "Увага": {"columns": ["Проблемних", "Без даних"], "color": "red"},
         },
     )
 
 with tab6:
-    render_readonly_table(period_requests, visual_style="signal", variant="wide")
+    registry_display = period_requests.rename(columns={
+        "id": "ID заявки",
+        "year": "Рік",
+        "quarter": "Квартал",
+        "department": "ССП",
+        "responsible_person": "Відповідальна особа",
+        "phone": "Номер телефону",
+        "email": "Електронна пошта",
+        "strat_code": "Код заходу",
+        "object_name": "Назва заходу",
+        "indicator_name": "Індикатор",
+        "status": "Статус виконання",
+        "progress_text": "Опис прогресу",
+        "numeric_value": "Фактичне числове значення",
+        "value_text": "Фактичне текстове значення",
+        "risks": "Ризики / проблеми / відхилення",
+        "submitted_at": "Дата подання",
+        "approval_status": "Статус погодження",
+        "admin_comment": "Коментар координатора",
+        "created_at": "Дата створення",
+        "updated_at": "Дата оновлення",
+        "start_date": "Початок виконання",
+        "end_date": "Кінець виконання",
+        "file_names": "Файли",
+        "file_urls": "Посилання на файли",
+        "npa_link": "Посилання на НПА",
+        "approval_chain": "Схема погодження",
+        "chain_stage": "Етап погодження",
+        "scheme_label": "Назва схеми",
+        "object_kind": "Тип об'єкта",
+        "as_of_date": "Дата станом на",
+        "final_locked": "Фінально заблоковано",
+        "final_locked_at": "Дата фінального блокування",
+        "_auto_inherited": "Автоматично успадковано",
+        "_inherited_from_quarter": "Успадковано з кварталу",
+    })
+    render_readonly_table(
+        registry_display,
+        visual_style="signal",
+        variant="wide",
+        column_widths={
+            "Назва заходу": 300,
+            "Індикатор": 300,
+            "Статус виконання": 180,
+            "Статус погодження": 180,
+        },
+        scroll_columns={"Назва заходу", "Індикатор"},
+        enforce_column_widths=True,
+        status_columns={"Статус виконання", "Статус погодження"},
+    )
 
 st.markdown("</div>", unsafe_allow_html=True)
 

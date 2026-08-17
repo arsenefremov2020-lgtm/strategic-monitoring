@@ -180,7 +180,29 @@ def test_table_uses_home_widths_and_signal_grid():
     for token in [
         '"Код заходу": 90', '"Захід": 360', '"Індикатор": 430', '"Тип продукту": 170',
         '"Головний виконавець": 210', '"2021 базовий рівень (факт)": 130',
-        'height=560', 'visual_style="signal"', 'enforce_column_widths=True',
+        'height=350', 'visual_style="signal"', 'enforce_column_widths=True',
+    ]:
+        assert token in SRC
+
+
+
+def test_kpi_cards_use_system_colors_and_table_alignment():
+    for token in [
+        '"background": "#EAF1FF"',
+        '"background": "#E4F5EC"',
+        '"accent": "#005BBB"',
+        '"accent": "#118847"',
+        '"Тип продукту": "center"',
+        '"Головний виконавець": "center"',
+        '"2021 базовий рівень (факт)": "center"',
+        '"2024 звіт": "center"',
+        '"2025 факт": "center"',
+        '"План": "center"',
+        '"Факт": "center"',
+        '"Початок виконання": "center"',
+        '"Кінець виконання": "center"',
+        '"Виконання, %": "center"',
+        'height=350',
     ]:
         assert token in SRC
 

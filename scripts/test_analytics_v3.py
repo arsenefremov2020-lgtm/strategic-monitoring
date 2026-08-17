@@ -471,10 +471,23 @@ def test_registry_combined_context_subset_contract():
 
 def test_registry_ui_excel_share_same_filtered_dataframe_source():
     assert "period_requests = filter_period_requests_to_active_cohort(" in SRC
-    # One filtered dataframe is passed to the report/export path and rendered in the UI.
+    # UI may rename headers presentation-only, but must derive from the same filtered dataframe.
     assert '"Реєстр заявок": period_requests' in SRC
-    assert "render_readonly_table(period_requests" in SRC
+    assert "registry_display = period_requests.rename(" in SRC
+    assert "render_readonly_table(" in SRC and "registry_display," in SRC
     assert "workflow_requests = period_requests.copy()" in SRC
+
+
+
+def test_check_tables_use_ukrainian_presentation_and_two_digit_formatting():
+    assert "def format_number_2" in SRC
+    assert '"goal_code": "Код стратегічної цілі"' in SRC
+    assert '"task_code": "Код завдання"' in SRC
+    assert '"ssp_index": "ССП"' in SRC
+    assert '"product_type": "Тип продукту"' in SRC
+    assert '"object_name": "Назва заходу"' in SRC
+    assert '"indicator_name": "Індикатор"' in SRC
+    assert 'goal_chart[_column] = pd.to_numeric(goal_chart[_column], errors="coerce").round(2)' in SRC
 
 
 def test_build_metrics_has_no_dead_execution_or_coverage_formula():

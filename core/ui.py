@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import builtins
+import logging
+import re
 from pathlib import Path
 from typing import Any, Callable
 from html import escape
@@ -136,7 +138,7 @@ def _readonly_status_class(value: Any) -> str:
     return ""
 
 
-def render_readonly_table(
+def _render_readonly_table_legacy(
     data: Any,
     *,
     height: int = 325,
@@ -313,6 +315,414 @@ def render_readonly_table(
     else:  # compatibility fallback for older Streamlit releases
         st.markdown(html, unsafe_allow_html=True)
 
+
+
+_SIGNAL_GRID_LOGGER = logging.getLogger(__name__)
+_SIGNAL_GRID_VARIANTS = {
+    "standard", "compact", "history", "log", "analytics", "ranking",
+    "problems", "finance", "wide", "status-grid",
+}
+_SIGNAL_GRID_CROWN_COLORS = {
+    "navy": "#032A63", "blue": "#005BBB", "light-blue": "#BFD3F2",
+    "red": "#DC4A4A", "green": "#118847", "yellow": "#F4B400",
+}
+
+
+def _signal_grid_frame(data: Any) -> pd.DataFrame | None:
+    """Presentation-only normalization; never mutate the caller's DataFrame."""
+    if data is None:
+        return None
+    if hasattr(data, "data") and isinstance(getattr(data, "data"), pd.DataFrame):
+        return data.data.copy()
+    if isinstance(data, pd.DataFrame):
+        return data.copy()
+    try:
+        return pd.DataFrame(data)
+    except Exception:
+        return None
+
+
+def _signal_grid_missing(value: Any) -> bool:
+    if value is None:
+        return True
+    try:
+        missing = pd.isna(value)
+        if isinstance(missing, bool):
+            return missing
+    except (TypeError, ValueError):
+        pass
+    return False
+
+
+def _signal_grid_default_text(value: Any) -> str:
+    if _signal_grid_missing(value):
+        return "—"
+    text = str(value).strip()
+    return text if text and text.lower() not in {"none", "nan", "nat", "<na>"} else "—"
+
+
+def _signal_grid_numeric(value: Any) -> float | None:
+    """Best-effort parser for decorative underlines only; calculation data is untouched."""
+    if _signal_grid_missing(value) or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+    text = str(value).strip().replace("\u00a0", " ").replace(" ", "")
+    if not text or text in {"—", "-"}:
+        return None
+    text = text.replace(",", ".")
+    match = re.search(r"[-+]?\d+(?:\.\d+)?", text)
+    if not match:
+        return None
+    try:
+        return float(match.group(0))
+    except ValueError:
+        return None
+
+
+def _signal_grid_risk_class(value: Any) -> str:
+    text = _signal_grid_default_text(value).casefold()
+    if "крит" in text:
+        return "sg-risk-critical"
+    if "висок" in text:
+        return "sg-risk-high"
+    if "серед" in text:
+        return "sg-risk-medium"
+    if "низьк" in text:
+        return "sg-risk-low"
+    return ""
+
+
+def _signal_grid_columns(value: Any, columns: list[str]) -> set[str]:
+    if value is None:
+        return set()
+    if isinstance(value, dict):
+        candidates = value.keys()
+    elif isinstance(value, str):
+        candidates = [value]
+    else:
+        try:
+            candidates = list(value)
+        except TypeError:
+            candidates = []
+    existing = set(columns)
+    return {str(col) for col in candidates if str(col) in existing}
+
+
+def _signal_grid_metric_colors(value: Any, columns: list[str]) -> dict[str, str]:
+    allowed = {
+        "blue": "#005BBB", "green": "#118847", "red": "#DC4A4A",
+        "yellow": "#F4B400", "navy": "#032A63",
+    }
+    active = _signal_grid_columns(value, columns)
+    result = {col: allowed["blue"] for col in active}
+    if isinstance(value, dict):
+        for col in active:
+            raw = str(value.get(col, "blue")).strip().casefold()
+            result[col] = allowed.get(raw, allowed["blue"])
+    return result
+
+
+def _signal_grid_crowns(column_groups: Any, columns: list[str]) -> dict[str, str]:
+    """Return per-column accent colors. Invalid/missing columns are safe no-ops."""
+    if not isinstance(column_groups, dict):
+        return {}
+    existing = set(columns)
+    result: dict[str, str] = {}
+    for group, spec in column_groups.items():
+        color = "#005BBB"
+        group_columns: Any = []
+        if isinstance(spec, dict):
+            group_columns = spec.get("columns", [])
+            raw_color = str(spec.get("color", "blue")).strip().casefold()
+            color = _SIGNAL_GRID_CROWN_COLORS.get(raw_color, "#005BBB")
+        else:
+            group_columns = spec
+            raw_group = str(group).strip().casefold()
+            color = _SIGNAL_GRID_CROWN_COLORS.get(raw_group, "#005BBB")
+        if isinstance(group_columns, str):
+            group_columns = [group_columns]
+        try:
+            for col in group_columns:
+                if str(col) in existing:
+                    result[str(col)] = color
+        except TypeError:
+            continue
+    return result
+
+
+def _render_readonly_table_signal(
+    data: Any,
+    *,
+    height: int = 325,
+    min_width: int | None = None,
+    max_cell_height: int = 74,
+    compact: bool = False,
+    empty_message: str = "Немає даних для відображення.",
+    value_formatter: Callable[[Any], str] | None = None,
+    formatters: dict[str, Callable[[Any], Any]] | None = None,
+    row_class_fn: Callable[[pd.Series, int], str] | None = None,
+    show_index: bool = False,
+    column_widths: dict[str, int | str] | None = None,
+    scroll_columns: list[str] | set[str] | tuple[str, ...] | None = None,
+    table_width: str | int | None = None,
+    variant: str = "standard",
+    focus_column: str | None = None,
+    metric_columns: list[str] | set[str] | tuple[str, ...] | dict[str, str] | None = None,
+    status_columns: list[str] | set[str] | tuple[str, ...] | None = None,
+    risk_columns: list[str] | set[str] | tuple[str, ...] | None = None,
+    delta_columns: list[str] | set[str] | tuple[str, ...] | None = None,
+    column_groups: dict[str, Any] | None = None,
+    signal_edges: bool = False,
+) -> None:
+    """Opt-in Signal Grid. Decorative configuration is defensive and presentation-only."""
+    frame = _signal_grid_frame(data)
+    if frame is None or frame.empty:
+        st.info(empty_message)
+        return
+
+    columns = [str(c) for c in frame.columns]
+    formatter = value_formatter or _signal_grid_default_text
+    formatters = formatters or {}
+    column_widths = {str(key): value for key, value in (column_widths or {}).items() if str(key) in set(columns)}
+    scroll_columns_set = _signal_grid_columns(scroll_columns, columns)
+    status_columns_set = _signal_grid_columns(status_columns, columns)
+    risk_columns_set = _signal_grid_columns(risk_columns, columns)
+    delta_columns_set = _signal_grid_columns(delta_columns, columns)
+    metric_colors = _signal_grid_metric_colors(metric_columns, columns)
+    focus_column = str(focus_column) if focus_column is not None and str(focus_column) in set(columns) else None
+    crowns = _signal_grid_crowns(column_groups, columns)
+    variant = str(variant or "standard").strip().casefold()
+    if variant not in _SIGNAL_GRID_VARIANTS:
+        variant = "standard"
+
+    dense = compact or variant in {"compact", "history", "log"}
+    row_pad = "5px 8px" if dense else "7px 10px"
+    font_size = 12 if dense else 13
+    display_column_count = len(columns) + (1 if show_index else 0)
+    if min_width is None:
+        min_width = max(900, min(5600, 165 * max(1, display_column_count)))
+
+    fit_columns = str(table_width).strip().lower() == "fit-columns"
+    explicit_wrapper_width = None
+    if table_width is not None and not fit_columns:
+        if isinstance(table_width, (int, float)):
+            explicit_wrapper_width = f"{max(1, int(table_width))}px"
+        else:
+            explicit_wrapper_width = str(table_width).strip() or None
+
+    def _column_css_width(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, (int, float)):
+            return f"{max(1, int(value))}px"
+        text = str(value).strip()
+        return text if text else ""
+
+    col_parts = ["<col style='width:54px'>"] if show_index else []
+    for col in columns:
+        width = _column_css_width(column_widths.get(col))
+        col_parts.append(f"<col style='width:{escape(width)}'>" if width else "<col>")
+    colgroup = "<colgroup>" + "".join(col_parts) + "</colgroup>"
+
+    if fit_columns:
+        def _column_px(value: Any) -> int:
+            if isinstance(value, (int, float)):
+                return max(1, int(value))
+            text = str(value or "").strip().lower()
+            if text.endswith("px"):
+                try:
+                    return max(1, int(float(text[:-2].strip())))
+                except ValueError:
+                    pass
+            return 165
+        exact_width = (54 if show_index else 0) + sum(_column_px(column_widths.get(col)) for col in columns)
+        wrapper_width_css, wrapper_max_width_css = "fit-content", "100%"
+        table_width_css = table_min_width_css = f"{exact_width}px"
+    elif explicit_wrapper_width:
+        wrapper_width_css, wrapper_max_width_css = explicit_wrapper_width, "100%"
+        table_width_css = table_min_width_css = "100%"
+    else:
+        wrapper_width_css, wrapper_max_width_css = "100%", "100%"
+        table_width_css, table_min_width_css = "100%", f"{int(min_width)}px"
+
+    variant_class = f"signal-grid-{variant}"
+    css = f"""
+    <style>
+    .signal-grid-wrap {{ width:{wrapper_width_css} !important; max-width:{wrapper_max_width_css} !important; border:1px solid #DCE4F0; border-radius:13px; background:#FFFFFF; box-shadow:0 4px 14px rgba(15,23,42,.04); margin:8px 0 18px 0; }}
+    .signal-grid-scroll {{ overflow:auto; width:100%; max-width:100%; max-height:{int(height)}px; border-radius:13px; scrollbar-width:thin; }}
+    table.signal-grid-table {{ border-collapse:separate; border-spacing:0; table-layout:fixed; min-width:{table_min_width_css} !important; width:{table_width_css} !important; max-width:none !important; font-size:{font_size}px; color:#132238; background:#FFFFFF; }}
+    table.signal-grid-table th {{ position:sticky; top:0; z-index:3; background:#F5F8FD; color:#61708A; padding:8px 10px; border:0; border-bottom:1px solid #DCE4F0; text-align:left; vertical-align:middle; white-space:normal; font-weight:700; line-height:1.2; }}
+    table.signal-grid-table td {{ padding:{row_pad}; border:0; border-bottom:1px solid #E8EDF4; vertical-align:middle; text-align:left; white-space:normal; overflow-wrap:anywhere; line-height:1.3; background:#FFFFFF; }}
+    table.signal-grid-table tbody tr:last-child td {{ border-bottom:0; }}
+    table.signal-grid-table tbody tr:hover td {{ background:#F8FAFD; }}
+    table.signal-grid-table .sg-align-right {{ text-align:right; font-variant-numeric:tabular-nums; }}
+    table.signal-grid-table .sg-align-center {{ text-align:center; }}
+    table.signal-grid-table .sg-primary {{ color:#132238; font-weight:650; }}
+    table.signal-grid-table .sg-focus {{ background:#F3F7FD !important; }}
+    table.signal-grid-table .signal-grid-cell {{ display:block; max-height:{int(max_cell_height)}px; overflow:hidden; }}
+    table.signal-grid-table .signal-grid-cell:hover {{ overflow:auto; }}
+    table.signal-grid-table .signal-grid-cell-scroll {{ overflow:auto !important; scrollbar-width:thin; padding-right:2px; }}
+    table.signal-grid-table .signal-grid-status {{ display:inline-flex; align-items:center; gap:5px; max-width:100%; border-radius:999px; padding:2px 7px; font-weight:700; line-height:1.25; }}
+    table.signal-grid-table .signal-grid-status::before {{ content:""; flex:0 0 auto; width:6px; height:6px; border-radius:50%; background:currentColor; }}
+    table.signal-grid-table td.rt-approved .signal-grid-status {{ color:#0C713A; background:#E4F5EC; }}
+    table.signal-grid-table td.rt-returned .signal-grid-status, table.signal-grid-table td.rt-notdone .signal-grid-status {{ color:#B3261E; background:#FBE5E5; }}
+    table.signal-grid-table td.rt-review .signal-grid-status {{ color:#005BBB; background:#EAF1FF; }}
+    table.signal-grid-table td.rt-partly .signal-grid-status {{ color:#8A6400; background:#FDF3D8; }}
+    table.signal-grid-table td.rt-notyet .signal-grid-status {{ color:#61708A; background:#F1F4F8; }}
+    table.signal-grid-table .signal-grid-metric {{ display:inline-block; min-width:42px; max-width:100%; font-weight:700; font-variant-numeric:tabular-nums; text-align:right; }}
+    table.signal-grid-table .signal-grid-metric::after {{ content:""; display:block; height:2px; width:var(--sg-width,0%); max-width:100%; margin-top:2px; margin-left:auto; border-radius:99px; background:var(--sg-color,#005BBB); }}
+    table.signal-grid-table .sg-delta-positive {{ color:#0C713A; font-weight:700; }}
+    table.signal-grid-table .sg-delta-negative {{ color:#B3261E; font-weight:700; }}
+    table.signal-grid-table .sg-risk-low {{ color:#0C713A; font-weight:700; }}
+    table.signal-grid-table .sg-risk-medium {{ color:#8A6400; font-weight:700; }}
+    table.signal-grid-table .sg-risk-high, table.signal-grid-table .sg-risk-critical {{ color:#B3261E; font-weight:750; }}
+    table.signal-grid-table tr.dashboard-rank-green td:first-child, table.signal-grid-table tr.rt-row-green td:first-child {{ box-shadow:inset 3px 0 0 #118847; }}
+    table.signal-grid-table tr.dashboard-rank-yellow td:first-child, table.signal-grid-table tr.rt-row-yellow td:first-child {{ box-shadow:inset 3px 0 0 #F4B400; }}
+    table.signal-grid-table tr.dashboard-rank-red td:first-child, table.signal-grid-table tr.rt-row-red td:first-child {{ box-shadow:inset 3px 0 0 #DC4A4A; }}
+    table.signal-grid-table.signal-grid-log th, table.signal-grid-table.signal-grid-history th {{ padding-top:7px; padding-bottom:7px; }}
+    </style>
+    """
+
+    def _alignment_class(col: str) -> str:
+        if col in status_columns_set or col in risk_columns_set:
+            return "sg-align-center"
+        if col in metric_colors or col in delta_columns_set:
+            return "sg-align-right"
+        try:
+            source = frame[col]
+            if pd.api.types.is_numeric_dtype(source.dtype):
+                return "sg-align-right"
+        except Exception:
+            pass
+        return ""
+
+    head_parts = []
+    if show_index:
+        head_parts.append("<th class='sg-align-center'></th>")
+    for col in columns:
+        classes = [_alignment_class(col)]
+        if col == focus_column:
+            classes.append("sg-focus")
+        crown_style = f" style='border-top:3px solid {escape(crowns[col])}'" if col in crowns else ""
+        head_parts.append(f"<th class='{escape(' '.join(filter(None, classes)))}'{crown_style}>{escape(col)}</th>")
+    head = "".join(head_parts)
+
+    rows = []
+    total_rows = len(frame)
+    for index_value, row in frame.iterrows():
+        row_class = ""
+        if row_class_fn is not None:
+            try:
+                row_class = str(row_class_fn(row, total_rows) or "").strip()
+            except Exception as exc:
+                _SIGNAL_GRID_LOGGER.warning("Signal Grid row class skipped: %s", exc)
+        cells = []
+        if show_index:
+            shown_index = _signal_grid_default_text(index_value)
+            cells.append(f"<td class='sg-align-center'><span class='signal-grid-cell'>{escape(shown_index)}</span></td>")
+        for original_col in frame.columns:
+            col = str(original_col)
+            raw = row.get(original_col)
+            try:
+                local_formatter = formatters.get(col) or formatters.get(original_col)
+                shown = local_formatter(raw) if local_formatter is not None else formatter(raw)
+            except Exception as exc:
+                _SIGNAL_GRID_LOGGER.warning("Signal Grid formatter skipped for %s: %s", col, exc)
+                shown = _signal_grid_default_text(raw)
+            shown_text = _signal_grid_default_text(shown)
+            status_class = _readonly_status_class(shown_text)
+            classes = [status_class, _alignment_class(col)]
+            if col == focus_column:
+                classes.append("sg-focus")
+            if col in risk_columns_set:
+                classes.append(_signal_grid_risk_class(shown_text))
+            numeric = _signal_grid_numeric(shown)
+            if col in delta_columns_set and numeric is not None:
+                classes.append("sg-delta-positive" if numeric > 0 else "sg-delta-negative" if numeric < 0 else "")
+            span_class = "signal-grid-cell signal-grid-cell-scroll" if col in scroll_columns_set else "signal-grid-cell"
+            safe_shown = escape(shown_text).replace("\n", "<br>")
+            if status_class or col in status_columns_set:
+                content = f"<span class='signal-grid-status'>{safe_shown}</span>"
+            elif col in metric_colors and numeric is not None:
+                width = max(0.0, min(100.0, abs(float(numeric))))
+                color = metric_colors[col]
+                if col in delta_columns_set:
+                    color = "#118847" if numeric > 0 else "#DC4A4A" if numeric < 0 else "#61708A"
+                content = (
+                    f"<span class='signal-grid-metric' style='--sg-width:{width:.2f}%;--sg-color:{escape(color)}'>"
+                    f"{safe_shown}</span>"
+                )
+            else:
+                content = safe_shown
+            cells.append(
+                f"<td class='{escape(' '.join(filter(None, classes)))}'><span class='{span_class}'>{content}</span></td>"
+            )
+        class_attr = f" class='{escape(row_class)}'" if row_class and signal_edges else ""
+        rows.append(f"<tr{class_attr}>" + "".join(cells) + "</tr>")
+
+    html = css + (
+        f"<div class='signal-grid-wrap {variant_class}'><div class='signal-grid-scroll'>"
+        f"<table class='signal-grid-table {variant_class}'>{colgroup}<thead><tr>{head}</tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table></div></div>"
+    )
+    if hasattr(st, "html"):
+        st.html(html)
+    else:
+        st.markdown(html, unsafe_allow_html=True)
+
+
+def render_readonly_table(
+    data: Any,
+    *,
+    height: int = 325,
+    min_width: int | None = None,
+    max_cell_height: int = 74,
+    compact: bool = False,
+    empty_message: str = "Немає даних для відображення.",
+    value_formatter: Callable[[Any], str] | None = None,
+    formatters: dict[str, Callable[[Any], Any]] | None = None,
+    row_class_fn: Callable[[pd.Series, int], str] | None = None,
+    show_index: bool = False,
+    column_widths: dict[str, int | str] | None = None,
+    scroll_columns: list[str] | set[str] | tuple[str, ...] | None = None,
+    table_width: str | int | None = None,
+    visual_style: str = "legacy",
+    variant: str = "standard",
+    focus_column: str | None = None,
+    metric_columns: list[str] | set[str] | tuple[str, ...] | dict[str, str] | None = None,
+    status_columns: list[str] | set[str] | tuple[str, ...] | None = None,
+    risk_columns: list[str] | set[str] | tuple[str, ...] | None = None,
+    delta_columns: list[str] | set[str] | tuple[str, ...] | None = None,
+    column_groups: dict[str, Any] | None = None,
+    signal_edges: bool = False,
+) -> None:
+    """Render a read-only table. Default is the unchanged legacy renderer.
+
+    Signal Grid is opt-in. Any cosmetic Signal Grid exception falls back to the
+    same legacy renderer without surfacing a red Streamlit error block.
+    """
+    legacy_kwargs = dict(
+        height=height, min_width=min_width, max_cell_height=max_cell_height,
+        compact=compact, empty_message=empty_message, value_formatter=value_formatter,
+        formatters=formatters, row_class_fn=row_class_fn, show_index=show_index,
+        column_widths=column_widths, scroll_columns=scroll_columns, table_width=table_width,
+    )
+    if str(visual_style or "legacy").strip().casefold() != "signal":
+        return _render_readonly_table_legacy(data, **legacy_kwargs)
+    try:
+        return _render_readonly_table_signal(
+            data, **legacy_kwargs, variant=variant, focus_column=focus_column,
+            metric_columns=metric_columns, status_columns=status_columns,
+            risk_columns=risk_columns, delta_columns=delta_columns,
+            column_groups=column_groups, signal_edges=signal_edges,
+        )
+    except Exception:
+        _SIGNAL_GRID_LOGGER.exception("Signal Grid presentation failed; using legacy table renderer")
+        return _render_readonly_table_legacy(data, **legacy_kwargs)
 
 def render_own_ssp_badge(user: dict | None, *, label: str = "Ваш ССП") -> None:
     """Уніфікований підпис для ролей, прив'язаних до власного ССП."""

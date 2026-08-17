@@ -34,6 +34,8 @@ from core.access import (
 )
 from core.ui import render_readonly_table, render_scope_toggle
 from core.stage4 import render_measure_rows_with_card_links
+from core.filters import get_source_options
+from config.npa_documents import CANONICAL_NPA_DOCUMENTS, normalize_for_match
 from html import escape
 import re
 
@@ -1205,6 +1207,8 @@ def render_dashboard_table(
     delta_columns=None,
     column_groups=None,
     signal_edges=False,
+    header_alignment=None,
+    column_alignments=None,
 ):
     """Read-only table in the Home-page visual standard.
 
@@ -1243,6 +1247,8 @@ def render_dashboard_table(
         delta_columns=delta_columns,
         column_groups=column_groups,
         signal_edges=signal_edges,
+        header_alignment=header_alignment,
+        column_alignments=column_alignments,
     )
 
 
@@ -2449,6 +2455,47 @@ def _format_table_number(value, digits=2):
         return "—"
     text = f"{float(number):.{digits}f}".rstrip("0").rstrip(".")
     return text.replace("-", "−")
+
+
+_DASHBOARD_SOURCE_LABELS = tuple(dict.fromkeys([
+    *CANONICAL_NPA_DOCUMENTS,
+    *get_source_options(),
+]))
+
+
+def _dashboard_source_match_key(value):
+    """Presentation-only tolerant key for the existing canonical source dictionaries."""
+    normalized = normalize_for_match(clean(value))
+    return re.sub(r'["“”«»]', "", normalized)
+
+
+def _dashboard_source_display(value):
+    """Show exact canonical document names instead of raw numbering/quotes/prefixes."""
+    raw = clean(value)
+    if not raw:
+        return "—"
+    normalized = _dashboard_source_match_key(raw)
+    if not normalized:
+        return raw
+
+    matches = []
+    for label in _DASHBOARD_SOURCE_LABELS:
+        label_key = _dashboard_source_match_key(label)
+        if not label_key:
+            continue
+        position = normalized.find(label_key)
+        if position >= 0:
+            matches.append((position, -len(label_key), label))
+
+    if not matches:
+        return raw
+
+    matches.sort()
+    ordered = []
+    for _, _, label in matches:
+        if label not in ordered:
+            ordered.append(label)
+    return "; ".join(ordered)
 
 
 def _task_chart_label(task_code, task_name, limit=58):
@@ -3741,6 +3788,20 @@ if breakdown_context is not None:
                     "Ризик": {"columns": ["Високий + критичний ризик, %"], "color": "red"},
                     "Портфель": {"columns": ["Вага портфеля, %", "Частка у загальному недовиконанні, %", "Частка у загальній концентрації ризику, %"], "color": "navy"},
                 },
+                column_widths={"Самостійний структурний підрозділ": 92},
+                header_alignment="center",
+                column_alignments={
+                    column: "center"
+                    for column in [
+                        "Місце", "Самостійний структурний підрозділ",
+                        "Середнє виконання, %", "Останнє виконання, %",
+                        "Зміна, в.п.", "Середнє покриття, %",
+                        "Останнє покриття, %", "Високий + критичний ризик, %",
+                        "Вага портфеля, %",
+                        "Частка у загальному недовиконанні, %",
+                        "Частка у загальній концентрації ризику, %",
+                    ]
+                },
                 row_class_fn=_signal_delta_row_class,
                 signal_edges=True,
             )
@@ -3817,6 +3878,26 @@ if breakdown_context is not None:
                     "Виконання": {"columns": ["Середнє виконання, %", "Останнє виконання, %", "Зміна, в.п."], "color": "blue"},
                     "Покриття": {"columns": ["Середнє покриття, %", "Останнє покриття, %"], "color": "light-blue"},
                     "Ризик": {"columns": ["Високий + критичний ризик, %"], "color": "red"},
+                },
+                table_width="100%",
+                column_widths={
+                    "Заступник Міністра": "24%",
+                    "Середнє виконання, %": "13%",
+                    "Останнє виконання, %": "13%",
+                    "Зміна, в.п.": "10%",
+                    "Середнє покриття, %": "14%",
+                    "Останнє покриття, %": "14%",
+                    "Високий + критичний ризик, %": "12%",
+                },
+                header_alignment="center",
+                column_alignments={
+                    "Заступник Міністра": "left",
+                    "Середнє виконання, %": "center",
+                    "Останнє виконання, %": "center",
+                    "Зміна, в.п.": "center",
+                    "Середнє покриття, %": "center",
+                    "Останнє покриття, %": "center",
+                    "Високий + критичний ризик, %": "center",
                 },
                 row_class_fn=_signal_delta_row_class,
                 signal_edges=True,
@@ -4591,8 +4672,15 @@ if finance_context is not None:
                     f"Факт {finance_year} (млрд грн)",
                 ]],
                 hide_index=False,
-                table_width="99%",
+                table_width="100%",
                 variant="finance",
+                header_alignment="center",
+                column_alignments={
+                    "КПКВК": "center",
+                    "Заходів": "center",
+                    f"План {finance_year} (млрд грн)": "center",
+                    f"Факт {finance_year} (млрд грн)": "center",
+                },
             )
             st.caption(
                 "Кожен захід у межах КПКВК враховано один раз; суми обчислено за числовими значеннями."
@@ -4632,12 +4720,12 @@ if finance_context is not None:
             max_cell_height=72,
             table_width="fit-columns",
             column_widths={
-                "Код": 72,
-                "Захід": 180,
+                "Код": 82,
+                "Захід": 220,
                 "Головний ССП": 105,
-                "Статус виконання": 120,
-                "КПКВК": 90,
-                "Інше джерело": 160,
+                "Статус виконання": 130,
+                "КПКВК": 100,
+                "Інше джерело": 180,
                 f"План {finance_year}, млрд грн": 125,
                 f"Факт {finance_year}, млрд грн": 125,
                 "% фінансового виконання": 135,
@@ -4647,6 +4735,17 @@ if finance_context is not None:
             scroll_columns={"Захід"},
             variant="finance",
             metric_columns={"% фінансового виконання": "blue", "Стан виконання заходу, %": "blue"},
+            header_alignment="center",
+            column_alignments={
+                "Головний ССП": "center",
+                "КПКВК": "center",
+                "Інше джерело": "center",
+                f"План {finance_year}, млрд грн": "center",
+                f"Факт {finance_year}, млрд грн": "center",
+                "% фінансового виконання": "center",
+                "Стан виконання заходу, %": "center",
+                "Коефіцієнт еластичності": "center",
+            },
             column_groups={
                 "Ідентифікація": {"columns": ["Код", "Захід", "Головний ССП", "Статус виконання"], "color": "navy"},
                 "Фінансування": {"columns": ["КПКВК", "Інше джерело", f"План {finance_year}, млрд грн", f"Факт {finance_year}, млрд грн", "% фінансового виконання"], "color": "blue"},
@@ -4686,14 +4785,25 @@ if breakdown_context is not None:
                     "period_label":"Період", "code":"Код", "name":"Захід", "indicator":"Індикатор",
                     "department":"Головний ССП", "status_display":"Статус", "execution_score":"Виконання, %",
                     "forecast_attainment_pct":"Прогнозоване досягнення, %", "pace_sufficiency_pct":"Достатність темпу, %",
-                    "risk_level":"Ризик", "data_quality_conflict":"Data-quality conflict",
+                    "risk_level":"Ризик",
                 })
                 render_dashboard_table(
                     problem_display[["Період","Код","Захід","Індикатор","Головний ССП","Статус",
                                      "Виконання, %","Прогнозоване досягнення, %","Достатність темпу, %",
-                                     "Ризик","Причина / пояснення","Data-quality conflict"]],
+                                     "Ризик","Причина / пояснення"]],
                     hide_index=True, max_cell_height=76, table_width="fit-columns",
+                    column_widths={
+                        "Період": 82, "Код": 90, "Захід": 220, "Індикатор": 220,
+                        "Головний ССП": 95, "Статус": 150, "Виконання, %": 110,
+                        "Прогнозоване досягнення, %": 150, "Достатність темпу, %": 140,
+                        "Ризик": 140, "Причина / пояснення": 240,
+                    },
                     scroll_columns={"Захід","Індикатор","Причина / пояснення"},
+                    formatters={
+                        "Виконання, %": lambda value: _format_table_number(value, 2),
+                        "Прогнозоване досягнення, %": lambda value: _format_table_number(value, 2),
+                        "Достатність темпу, %": lambda value: _format_table_number(value, 2),
+                    },
                     variant="problems",
                     metric_columns={"Виконання, %": "blue", "Прогнозоване досягнення, %": "blue", "Достатність темпу, %": "blue"},
                     status_columns={"Статус"},
@@ -4701,7 +4811,15 @@ if breakdown_context is not None:
                     column_groups={
                         "Ідентифікація": {"columns": ["Період", "Код", "Захід", "Індикатор", "Головний ССП"], "color": "navy"},
                         "Виконання": {"columns": ["Статус", "Виконання, %", "Прогнозоване досягнення, %", "Достатність темпу, %"], "color": "blue"},
-                        "Ризик": {"columns": ["Ризик", "Причина / пояснення", "Data-quality conflict"], "color": "red"},
+                        "Ризик": {"columns": ["Ризик", "Причина / пояснення"], "color": "red"},
+                    },
+                    header_alignment="center",
+                    column_alignments={
+                        "Головний ССП": "center",
+                        "Виконання, %": "center",
+                        "Прогнозоване досягнення, %": "center",
+                        "Достатність темпу, %": "center",
+                        "Ризик": "center",
                     },
                     row_class_fn=_signal_risk_row_class,
                     signal_edges=True,
@@ -4724,26 +4842,50 @@ if breakdown_context is not None:
             "unit":"Одиниця виміру", "product_type":"Тип продукту", "department":"Головний ССП",
             "source_national":"Джерело даних", "start_period":"Початок", "end_period":"Кінець",
             "annual_target":"Річний план", "actual":"Факт", "status_display":"Статус",
-            "execution_score":"Виконання, %", "raw_attainment_pct":"Raw attainment, %",
+            "execution_score":"Виконання, %", "raw_attainment_pct":"Фактичне досягнення плану, %",
             "forecast_attainment_pct":"Прогнозоване досягнення, %", "pace_sufficiency_pct":"Достатність темпу, %",
-            "risk_level":"Ризик", "data_quality_conflict":"Data-quality conflict",
+            "risk_level":"Ризик",
         })
         columns = ["Період","Код","Захід","Індикатор","Одиниця виміру","Тип продукту","Головний ССП",
                    "Джерело даних","Початок","Кінець","Річний план","Факт","Статус","Виконання, %",
-                   "Raw attainment, %","Прогнозоване досягнення, %","Достатність темпу, %","Ризик",
-                   "Причина / пояснення","Data-quality conflict"]
+                   "Фактичне досягнення плану, %","Прогнозоване досягнення, %","Достатність темпу, %","Ризик",
+                   "Причина / пояснення"]
         render_dashboard_table(
             full[columns], hide_index=True, max_cell_height=76, table_width="fit-columns",
-            column_widths={"Період":82,"Код":72,"Захід":190,"Індикатор":190,"Одиниця виміру":105,
-                           "Тип продукту":105,"Головний ССП":100,"Джерело даних":120,"Початок":90,"Кінець":90,
-                           "Річний план":110,"Факт":110,"Статус":120,"Виконання, %":110,"Raw attainment, %":115,
-                           "Прогнозоване досягнення, %":145,"Достатність темпу, %":130,"Ризик":115,
-                           "Причина / пояснення":210,"Data-quality conflict":120},
-            scroll_columns={"Захід","Індикатор","Причина / пояснення"},
+            column_widths={"Період":90,"Код":90,"Захід":220,"Індикатор":220,"Одиниця виміру":130,
+                           "Тип продукту":135,"Головний ССП":105,"Джерело даних":220,"Початок":125,"Кінець":125,
+                           "Річний план":125,"Факт":125,"Статус":150,"Виконання, %":115,
+                           "Фактичне досягнення плану, %":155,
+                           "Прогнозоване досягнення, %":150,"Достатність темпу, %":140,"Ризик":140,
+                           "Причина / пояснення":240},
+            scroll_columns={"Захід","Індикатор","Джерело даних","Причина / пояснення"},
+            formatters={
+                "Джерело даних": _dashboard_source_display,
+                "Виконання, %": lambda value: _format_table_number(value, 2),
+                "Фактичне досягнення плану, %": lambda value: _format_table_number(value, 2),
+                "Прогнозоване досягнення, %": lambda value: _format_table_number(value, 2),
+                "Достатність темпу, %": lambda value: _format_table_number(value, 2),
+            },
             variant="wide",
-            metric_columns={"Виконання, %": "blue", "Raw attainment, %": "blue", "Прогнозоване досягнення, %": "blue", "Достатність темпу, %": "blue"},
+            metric_columns={"Виконання, %": "blue", "Фактичне досягнення плану, %": "blue", "Прогнозоване досягнення, %": "blue", "Достатність темпу, %": "blue"},
             status_columns={"Статус"},
             risk_columns={"Ризик"},
+            header_alignment="center",
+            column_alignments={
+                "Одиниця виміру": "center",
+                "Тип продукту": "center",
+                "Головний ССП": "center",
+                "Початок": "center",
+                "Кінець": "center",
+                "Річний план": "center",
+                "Факт": "center",
+                "Статус": "center",
+                "Виконання, %": "center",
+                "Фактичне досягнення плану, %": "center",
+                "Прогнозоване досягнення, %": "center",
+                "Достатність темпу, %": "center",
+                "Ризик": "center",
+            },
         )
         st.markdown("</div>", unsafe_allow_html=True)
 

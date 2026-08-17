@@ -473,7 +473,7 @@ def test_registry_ui_excel_share_same_filtered_dataframe_source():
     assert "period_requests = filter_period_requests_to_active_cohort(" in SRC
     # One filtered dataframe is passed to the report/export path and rendered in the UI.
     assert '"Реєстр заявок": period_requests' in SRC
-    assert "render_readonly_table(period_requests)" in SRC
+    assert "render_readonly_table(period_requests" in SRC
     assert "workflow_requests = period_requests.copy()" in SRC
 
 

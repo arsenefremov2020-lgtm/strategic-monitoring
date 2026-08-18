@@ -1,6 +1,7 @@
 """Фільтр за документом — управлінський зріз заходів Стратегічного плану."""
 from __future__ import annotations
 
+import io
 import re
 from html import escape
 
@@ -16,8 +17,6 @@ from core import dashboard_sources as dashboard_sources_v3
 from core.access import filter_actions_for_user
 from core.ui import render_readonly_table, render_scope_toggle, load_css
 from core.excel_loader import read_excel_sheet
-from core.timeutils import now_kyiv
-from core import exports as core_exports
 from core.errors import log_cosmetic_error
 from config.npa_documents import (
     CANONICAL_NPA_DOCUMENTS,
@@ -48,6 +47,40 @@ TABLE_COLUMNS = [
     "Кінець виконання",
     "Виконання, %",
 ]
+
+EXCEL_EXPORT_COLUMNS = [
+    "Код",
+    "Захід",
+    "Тип продукту",
+    "Індикатор",
+    "Одиниці виміру",
+    "Головний виконавець",
+    "Співвиконавець",
+    "Глобальний рівень",
+    "Національний рівень",
+    "Стан подання",
+    "Статус виконання",
+    "Фактичне значення",
+    "Опис прогресу",
+    "Останнє подання",
+]
+
+EXCEL_COLUMN_WIDTHS = {
+    "Код": 12,
+    "Захід": 42,
+    "Тип продукту": 24,
+    "Індикатор": 46,
+    "Одиниці виміру": 18,
+    "Головний виконавець": 24,
+    "Співвиконавець": 24,
+    "Глобальний рівень": 36,
+    "Національний рівень": 36,
+    "Стан подання": 18,
+    "Статус виконання": 20,
+    "Фактичне значення": 18,
+    "Опис прогресу": 42,
+    "Останнє подання": 20,
+}
 
 
 def raw(value) -> str:
@@ -275,6 +308,174 @@ def _build_display_rows(
 
     frame = pd.DataFrame(display_rows, columns=TABLE_COLUMNS)
     return frame, export_rows
+
+
+def _build_filter_document_excel(export_rows: list[dict], kpi_items: list[dict]) -> bytes:
+    """One-sheet Excel export: four KPI cards above the full existing export table."""
+    frame = pd.DataFrame(export_rows, columns=EXCEL_EXPORT_COLUMNS)
+    buffer = io.BytesIO()
+
+    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+        workbook = writer.book
+        worksheet = workbook.add_worksheet("Заходи за документом")
+        writer.sheets["Заходи за документом"] = worksheet
+
+        worksheet.hide_gridlines(2)
+        worksheet.set_zoom(90)
+
+        # System palette / typography.
+        card_specs = [
+            ("#EAF1FF", "#BFD3F2", "#005BBB"),
+            ("#F5F8FD", "#DCE4F0", "#032A63"),
+            ("#E4F5EC", "#BFE7CF", "#118847"),
+            ("#F3F7FD", "#BFD3F2", "#005BBB"),
+        ]
+        card_ranges = [
+            ("A1:C2", "A3:C3"),
+            ("E1:G2", "E3:G3"),
+            ("I1:K2", "I3:K3"),
+            ("M1:O2", "M3:O3"),
+        ]
+
+        worksheet.set_row(0, 24)
+        worksheet.set_row(1, 24)
+        worksheet.set_row(2, 22)
+        worksheet.set_row(3, 8)
+        worksheet.set_row(4, 8)
+
+        # O is used only to give the fourth KPI card enough visual width.
+        worksheet.set_column("O:O", 12)
+
+        for index, item in enumerate((kpi_items or [])[:4]):
+            background, border, accent = card_specs[index]
+            value_range, label_range = card_ranges[index]
+            value_fmt = workbook.add_format({
+                "font_name": "Arial",
+                "font_size": 18,
+                "bold": True,
+                "font_color": accent,
+                "bg_color": background,
+                "align": "left",
+                "valign": "vcenter",
+                "left": 1,
+                "right": 1,
+                "top": 3,
+                "left_color": border,
+                "right_color": border,
+                "top_color": accent,
+            })
+            label_fmt = workbook.add_format({
+                "font_name": "Arial",
+                "font_size": 9,
+                "bold": True,
+                "font_color": "#61708A",
+                "bg_color": background,
+                "align": "left",
+                "valign": "vcenter",
+                "left": 1,
+                "right": 1,
+                "bottom": 1,
+                "left_color": border,
+                "right_color": border,
+                "bottom_color": border,
+            })
+            worksheet.merge_range(value_range, str(item.get("value", "")), value_fmt)
+            worksheet.merge_range(label_range, str(item.get("label", "")), label_fmt)
+
+        # Table begins after two empty rows.
+        header_row = 5
+        header_fmt = workbook.add_format({
+            "font_name": "Arial",
+            "font_size": 10,
+            "bold": True,
+            "font_color": "#132238",
+            "bg_color": "#F5F8FD",
+            "align": "center",
+            "valign": "vcenter",
+            "text_wrap": True,
+            "bottom": 2,
+            "bottom_color": "#BFD3F2",
+        })
+        body_fmt = workbook.add_format({
+            "font_name": "Arial",
+            "font_size": 10,
+            "font_color": "#132238",
+            "valign": "top",
+            "bg_color": "#FFFFFF",
+            "bottom": 1,
+            "bottom_color": "#E8EDF4",
+        })
+        wrap_fmt = workbook.add_format({
+            "font_name": "Arial",
+            "font_size": 10,
+            "font_color": "#132238",
+            "valign": "top",
+            "text_wrap": True,
+            "bg_color": "#FFFFFF",
+            "bottom": 1,
+            "bottom_color": "#E8EDF4",
+        })
+        center_fmt = workbook.add_format({
+            "font_name": "Arial",
+            "font_size": 10,
+            "font_color": "#132238",
+            "align": "center",
+            "valign": "vcenter",
+            "bg_color": "#FFFFFF",
+            "bottom": 1,
+            "bottom_color": "#E8EDF4",
+        })
+
+        wrap_columns = {
+            "Захід",
+            "Тип продукту",
+            "Індикатор",
+            "Головний виконавець",
+            "Співвиконавець",
+            "Глобальний рівень",
+            "Національний рівень",
+            "Опис прогресу",
+        }
+        center_columns = {
+            "Код",
+            "Одиниці виміру",
+            "Стан подання",
+            "Статус виконання",
+            "Фактичне значення",
+            "Останнє подання",
+        }
+
+        for col_idx, column in enumerate(EXCEL_EXPORT_COLUMNS):
+            worksheet.set_column(col_idx, col_idx, EXCEL_COLUMN_WIDTHS.get(column, 18))
+            worksheet.write(header_row, col_idx, column, header_fmt)
+
+        worksheet.set_row(header_row, 34)
+
+        for row_idx, row in frame.iterrows():
+            excel_row = header_row + 1 + row_idx
+            worksheet.set_row(excel_row, 36)
+            for col_idx, column in enumerate(EXCEL_EXPORT_COLUMNS):
+                value = row.get(column, "")
+                if value is None:
+                    value = ""
+                else:
+                    try:
+                        if pd.isna(value):
+                            value = ""
+                    except (TypeError, ValueError):
+                        pass
+
+                if column in wrap_columns:
+                    fmt = wrap_fmt
+                elif column in center_columns:
+                    fmt = center_fmt
+                else:
+                    fmt = body_fmt
+                worksheet.write(excel_row, col_idx, value, fmt)
+
+        # AutoFilter is intentionally omitted, and no second worksheet is created.
+
+    return buffer.getvalue()
 
 
 current_user = page_setup(PAGE_KEY, page_name=PAGE_KEY)
@@ -662,18 +863,7 @@ else:
         enforce_column_widths=True,
     )
 
-# Existing export is deliberately preserved; no new export functionality in this stage.
-params_df = pd.DataFrame([
-    {"Параметр": "Документ", "Значення": selected_doc},
-    {"Параметр": "Рік", "Значення": selected_year},
-    {"Параметр": "Квартали", "Значення": "усі"},
-    {"Параметр": "Режим", "Значення": "офіційні"},
-    {"Параметр": "Сформовано", "Значення": now_kyiv().strftime("%d.%m.%Y %H:%M")},
-])
-xlsx = core_exports.write_styled_excel(
-    {"Заходи за документом": pd.DataFrame(export_rows)},
-    extra_sheets_no_style={"Параметри": params_df},
-)
+xlsx = _build_filter_document_excel(export_rows, kpi_items)
 st.download_button(
     "⬇️ Завантажити Excel",
     data=xlsx,

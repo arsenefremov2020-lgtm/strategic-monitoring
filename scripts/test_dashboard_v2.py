@@ -1476,6 +1476,70 @@ def test_stage1_correction_missing_data_insight_contract():
     assert 'departments["status"] == "Не подано"' not in block
 
 
+
+def test_indicator_trajectory_uses_fixed_pre_monitoring_anchor_and_no_pace_forecast():
+    """Required path stays anchored to matrix history; monitoring facts cannot move it."""
+    import ast
+    import re
+    from types import SimpleNamespace
+
+    dashboard_path = ROOT / "pages" / "2_Dashboard.py"
+    dashboard = dashboard_path.read_text(encoding="utf-8")
+    tree = ast.parse(dashboard)
+    wanted = {"clean", "_trajectory_number", "_geometric_path", "_build_indicator_trajectory"}
+    defs = [
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name in wanted
+    ]
+
+    indicator_identity_key = lambda code, name: (str(code).strip(), str(name).strip().casefold())
+    requests = pd.DataFrame([
+        {
+            "id": 1, "year": 2026, "strat_code": "1.", "indicator_name": "Індикатор",
+            "numeric_value": 61, "value_text": "", "as_of_date": "2026-06-30",
+            "submitted_at": "2026-07-01T08:00:00Z",
+        },
+        {
+            "id": 2, "year": 2027, "strat_code": "1.", "indicator_name": "Індикатор",
+            "numeric_value": 70, "value_text": "", "as_of_date": "2027-06-30",
+            "submitted_at": "2027-07-01T08:00:00Z",
+        },
+    ])
+    env = {
+        "pd": pd,
+        "re": re,
+        "monitoring_data": SimpleNamespace(indicator_identity_key=indicator_identity_key),
+        "_indicator_requests_effective": requests,
+    }
+    exec(compile(ast.Module(body=defs, type_ignores=[]), str(dashboard_path), "exec"), env)
+
+    row = pd.Series({
+        "code": "1.", "indicator": "Індикатор",
+        "base_2021": 55, "fact_2024": 62, "fact_2025": 65,
+        "strategic_target_2028": 75, "strategic_target_2034": 80,
+    })
+    actual, required, forecast, rates, current_rate, t28, t34, anchor_year, anchor_value = env["_build_indicator_trajectory"](row)
+    assert actual[2026] == 61 and actual[2027] == 70
+    assert (anchor_year, anchor_value) == (2025, 65.0)
+    assert required[2025] == 65.0
+    assert abs(required[2028] - 75.0) < 1e-9
+    assert forecast == {} and current_rate is None
+
+    # Missing 2025 falls back to the latest earlier matrix fact, not monitoring 2026.
+    row_2024 = row.copy()
+    row_2024["fact_2025"] = None
+    _, required_2024, forecast_2024, _, current_rate_2024, _, _, anchor_year_2024, anchor_value_2024 = env["_build_indicator_trajectory"](row_2024)
+    assert (anchor_year_2024, anchor_value_2024) == (2024, 62.0)
+    assert required_2024[2024] == 62.0
+    assert forecast_2024 == {} and current_rate_2024 is None
+
+    # The removed current-pace series must not survive in user-facing chart code.
+    assert "Прогноз за нинішнім темпом" not in dashboard
+    assert "forecast_color" not in dashboard
+    assert "фактичний середньорічний темп" not in dashboard
+    assert "останнього доступного історичного " in dashboard and "факту до орієнтирів 2028/2034" in dashboard
+    assert "базова точка необхідної траєкторії" in dashboard
+
 def main():
     tests = [
         test_numeric_control_cases,
@@ -1507,6 +1571,7 @@ def main():
         test_stage1_correction_operational_kpi_detail_contract,
         test_stage1_correction_canonical_ssp_ownership_across_range,
         test_stage1_correction_missing_data_insight_contract,
+        test_indicator_trajectory_uses_fixed_pre_monitoring_anchor_and_no_pace_forecast,
         test_risk_thresholds,
     ]
     for test in tests:

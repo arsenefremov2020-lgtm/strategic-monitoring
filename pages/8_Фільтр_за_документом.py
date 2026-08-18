@@ -48,39 +48,44 @@ TABLE_COLUMNS = [
     "Виконання, %",
 ]
 
-EXCEL_EXPORT_COLUMNS = [
-    "Код",
-    "Захід",
-    "Тип продукту",
-    "Індикатор",
-    "Одиниці виміру",
-    "Головний виконавець",
-    "Співвиконавець",
-    "Глобальний рівень",
-    "Національний рівень",
-    "Стан подання",
-    "Статус виконання",
-    "Фактичне значення",
-    "Опис прогресу",
-    "Останнє подання",
-]
-
-EXCEL_COLUMN_WIDTHS = {
-    "Код": 12,
-    "Захід": 42,
-    "Тип продукту": 24,
-    "Індикатор": 46,
-    "Одиниці виміру": 18,
-    "Головний виконавець": 24,
-    "Співвиконавець": 24,
-    "Глобальний рівень": 36,
-    "Національний рівень": 36,
-    "Стан подання": 18,
-    "Статус виконання": 20,
-    "Фактичне значення": 18,
-    "Опис прогресу": 42,
-    "Останнє подання": 20,
+EXCEL_COLUMN_WIDTHS_PX = {
+    "Код заходу": 90,
+    "Захід": 360,
+    "Індикатор": 430,
+    "Тип продукту": 170,
+    "Головний виконавець": 210,
+    "Стан подання": 160,
+    "Стан виконання": 160,
+    "2021 базовий рівень (факт)": 130,
+    "2024 звіт": 130,
+    "2025 факт": 130,
+    "План": 130,
+    "Факт": 130,
+    "Початок виконання": 130,
+    "Кінець виконання": 130,
+    "Виконання, %": 130,
 }
+
+EXCEL_CENTER_COLUMNS = {
+    "Тип продукту",
+    "Головний виконавець",
+    "Стан подання",
+    "Стан виконання",
+    "2021 базовий рівень (факт)",
+    "2024 звіт",
+    "2025 факт",
+    "План",
+    "Факт",
+    "Початок виконання",
+    "Кінець виконання",
+    "Виконання, %",
+}
+
+EXCEL_WRAP_COLUMNS = {
+    "Захід",
+    "Індикатор",
+}
+
 
 
 def raw(value) -> str:
@@ -310,9 +315,33 @@ def _build_display_rows(
     return frame, export_rows
 
 
-def _build_filter_document_excel(export_rows: list[dict], kpi_items: list[dict]) -> bytes:
-    """One-sheet Excel export: four KPI cards above the full existing export table."""
-    frame = pd.DataFrame(export_rows, columns=EXCEL_EXPORT_COLUMNS)
+def _excel_width_from_px(px: int) -> float:
+    """Approximate Excel character width from the already fixed Signal Grid pixel width."""
+    try:
+        return max(8.0, round(float(px) / 7.0, 1))
+    except (TypeError, ValueError):
+        return 18.0
+
+
+def _excel_status_kind(value) -> str:
+    """Presentation-only status color class; values are never changed."""
+    text = raw(value).casefold()
+    if not text:
+        return "neutral"
+    if any(token in text for token in ("погоджено", "виконано")) and "не виконано" not in text:
+        return "positive"
+    if any(token in text for token in ("на розгляді", "в процесі", "очікує", "подано")):
+        return "info"
+    if any(token in text for token in ("частково", "доопрац", "уваг")):
+        return "warning"
+    if any(token in text for token in ("не виконано", "відхил", "критич", "високий ризик", "повернуто")):
+        return "negative"
+    return "neutral"
+
+
+def _build_filter_document_excel(display_rows: pd.DataFrame, kpi_items: list[dict]) -> bytes:
+    """One-sheet Excel export mirroring the exact on-screen Filter-by-Document table."""
+    frame = pd.DataFrame(display_rows, columns=TABLE_COLUMNS).copy()
     buffer = io.BytesIO()
 
     with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
@@ -321,9 +350,8 @@ def _build_filter_document_excel(export_rows: list[dict], kpi_items: list[dict])
         writer.sheets["Заходи за документом"] = worksheet
 
         worksheet.hide_gridlines(2)
-        worksheet.set_zoom(90)
+        worksheet.set_zoom(85)
 
-        # System palette / typography.
         card_specs = [
             ("#EAF1FF", "#BFD3F2", "#005BBB"),
             ("#F5F8FD", "#DCE4F0", "#032A63"),
@@ -336,125 +364,109 @@ def _build_filter_document_excel(export_rows: list[dict], kpi_items: list[dict])
             ("I1:K2", "I3:K3"),
             ("M1:O2", "M3:O3"),
         ]
-
         worksheet.set_row(0, 24)
         worksheet.set_row(1, 24)
         worksheet.set_row(2, 22)
         worksheet.set_row(3, 8)
         worksheet.set_row(4, 8)
 
-        # O is used only to give the fourth KPI card enough visual width.
-        worksheet.set_column("O:O", 12)
-
         for index, item in enumerate((kpi_items or [])[:4]):
             background, border, accent = card_specs[index]
             value_range, label_range = card_ranges[index]
             value_fmt = workbook.add_format({
-                "font_name": "Arial",
-                "font_size": 18,
-                "bold": True,
-                "font_color": accent,
-                "bg_color": background,
-                "align": "left",
-                "valign": "vcenter",
-                "left": 1,
-                "right": 1,
-                "top": 3,
-                "left_color": border,
-                "right_color": border,
-                "top_color": accent,
+                "font_name": "Arial", "font_size": 18, "bold": True,
+                "font_color": accent, "bg_color": background,
+                "align": "left", "valign": "vcenter",
+                "left": 1, "right": 1, "top": 3,
+                "left_color": border, "right_color": border, "top_color": accent,
             })
             label_fmt = workbook.add_format({
-                "font_name": "Arial",
-                "font_size": 9,
-                "bold": True,
-                "font_color": "#61708A",
-                "bg_color": background,
-                "align": "left",
-                "valign": "vcenter",
-                "left": 1,
-                "right": 1,
-                "bottom": 1,
-                "left_color": border,
-                "right_color": border,
-                "bottom_color": border,
+                "font_name": "Arial", "font_size": 9, "bold": True,
+                "font_color": "#61708A", "bg_color": background,
+                "align": "left", "valign": "vcenter",
+                "left": 1, "right": 1, "bottom": 1,
+                "left_color": border, "right_color": border, "bottom_color": border,
             })
             worksheet.merge_range(value_range, str(item.get("value", "")), value_fmt)
             worksheet.merge_range(label_range, str(item.get("label", "")), label_fmt)
 
-        # Table begins after two empty rows.
         header_row = 5
-        header_fmt = workbook.add_format({
-            "font_name": "Arial",
-            "font_size": 10,
-            "bold": True,
-            "font_color": "#132238",
-            "bg_color": "#F5F8FD",
-            "align": "center",
-            "valign": "vcenter",
-            "text_wrap": True,
-            "bottom": 2,
-            "bottom_color": "#BFD3F2",
+        header_left_fmt = workbook.add_format({
+            "font_name": "Arial", "font_size": 10, "bold": True,
+            "font_color": "#132238", "bg_color": "#F5F8FD",
+            "align": "left", "valign": "vcenter", "text_wrap": True,
+            "bottom": 2, "bottom_color": "#BFD3F2",
         })
-        body_fmt = workbook.add_format({
-            "font_name": "Arial",
-            "font_size": 10,
-            "font_color": "#132238",
-            "valign": "top",
-            "bg_color": "#FFFFFF",
-            "bottom": 1,
-            "bottom_color": "#E8EDF4",
+        header_center_fmt = workbook.add_format({
+            "font_name": "Arial", "font_size": 10, "bold": True,
+            "font_color": "#132238", "bg_color": "#F5F8FD",
+            "align": "center", "valign": "vcenter", "text_wrap": True,
+            "bottom": 2, "bottom_color": "#BFD3F2",
         })
-        wrap_fmt = workbook.add_format({
-            "font_name": "Arial",
-            "font_size": 10,
-            "font_color": "#132238",
-            "valign": "top",
-            "text_wrap": True,
-            "bg_color": "#FFFFFF",
-            "bottom": 1,
-            "bottom_color": "#E8EDF4",
+        body_left_fmt = workbook.add_format({
+            "font_name": "Arial", "font_size": 10, "font_color": "#132238",
+            "align": "left", "valign": "top", "bg_color": "#FFFFFF",
+            "bottom": 1, "bottom_color": "#E8EDF4",
         })
-        center_fmt = workbook.add_format({
-            "font_name": "Arial",
-            "font_size": 10,
-            "font_color": "#132238",
-            "align": "center",
-            "valign": "vcenter",
-            "bg_color": "#FFFFFF",
-            "bottom": 1,
-            "bottom_color": "#E8EDF4",
+        body_wrap_fmt = workbook.add_format({
+            "font_name": "Arial", "font_size": 10, "font_color": "#132238",
+            "align": "left", "valign": "top", "text_wrap": True,
+            "bg_color": "#FFFFFF", "bottom": 1, "bottom_color": "#E8EDF4",
         })
-
-        wrap_columns = {
-            "Захід",
-            "Тип продукту",
-            "Індикатор",
-            "Головний виконавець",
-            "Співвиконавець",
-            "Глобальний рівень",
-            "Національний рівень",
-            "Опис прогресу",
+        body_center_fmt = workbook.add_format({
+            "font_name": "Arial", "font_size": 10, "font_color": "#132238",
+            "align": "center", "valign": "vcenter", "bg_color": "#FFFFFF",
+            "bottom": 1, "bottom_color": "#E8EDF4",
+        })
+        execution_fmt = workbook.add_format({
+            "font_name": "Arial", "font_size": 10, "bold": True,
+            "font_color": "#005BBB", "align": "center", "valign": "vcenter",
+            "bg_color": "#F3F7FD", "bottom": 2, "bottom_color": "#005BBB",
+        })
+        status_formats = {
+            "positive": workbook.add_format({
+                "font_name": "Arial", "font_size": 10, "bold": True,
+                "font_color": "#118847", "bg_color": "#E4F5EC",
+                "align": "center", "valign": "vcenter",
+                "bottom": 1, "bottom_color": "#E8EDF4",
+            }),
+            "info": workbook.add_format({
+                "font_name": "Arial", "font_size": 10, "bold": True,
+                "font_color": "#005BBB", "bg_color": "#EAF1FF",
+                "align": "center", "valign": "vcenter",
+                "bottom": 1, "bottom_color": "#E8EDF4",
+            }),
+            "warning": workbook.add_format({
+                "font_name": "Arial", "font_size": 10, "bold": True,
+                "font_color": "#8A6400", "bg_color": "#FDF3D8",
+                "align": "center", "valign": "vcenter",
+                "bottom": 1, "bottom_color": "#E8EDF4",
+            }),
+            "negative": workbook.add_format({
+                "font_name": "Arial", "font_size": 10, "bold": True,
+                "font_color": "#DC4A4A", "bg_color": "#FBE5E5",
+                "align": "center", "valign": "vcenter",
+                "bottom": 1, "bottom_color": "#E8EDF4",
+            }),
+            "neutral": workbook.add_format({
+                "font_name": "Arial", "font_size": 10, "bold": True,
+                "font_color": "#61708A", "bg_color": "#F5F8FD",
+                "align": "center", "valign": "vcenter",
+                "bottom": 1, "bottom_color": "#E8EDF4",
+            }),
         }
-        center_columns = {
-            "Код",
-            "Одиниці виміру",
-            "Стан подання",
-            "Статус виконання",
-            "Фактичне значення",
-            "Останнє подання",
-        }
 
-        for col_idx, column in enumerate(EXCEL_EXPORT_COLUMNS):
-            worksheet.set_column(col_idx, col_idx, EXCEL_COLUMN_WIDTHS.get(column, 18))
+        for col_idx, column in enumerate(TABLE_COLUMNS):
+            width_px = EXCEL_COLUMN_WIDTHS_PX.get(column, 130)
+            worksheet.set_column(col_idx, col_idx, _excel_width_from_px(width_px))
+            header_fmt = header_center_fmt if column in EXCEL_CENTER_COLUMNS else header_left_fmt
             worksheet.write(header_row, col_idx, column, header_fmt)
-
-        worksheet.set_row(header_row, 34)
+        worksheet.set_row(header_row, 36)
 
         for row_idx, row in frame.iterrows():
             excel_row = header_row + 1 + row_idx
-            worksheet.set_row(excel_row, 36)
-            for col_idx, column in enumerate(EXCEL_EXPORT_COLUMNS):
+            worksheet.set_row(excel_row, 44)
+            for col_idx, column in enumerate(TABLE_COLUMNS):
                 value = row.get(column, "")
                 if value is None:
                     value = ""
@@ -464,16 +476,19 @@ def _build_filter_document_excel(export_rows: list[dict], kpi_items: list[dict])
                             value = ""
                     except (TypeError, ValueError):
                         pass
-
-                if column in wrap_columns:
-                    fmt = wrap_fmt
-                elif column in center_columns:
-                    fmt = center_fmt
+                if column in {"Стан подання", "Стан виконання"}:
+                    fmt = status_formats[_excel_status_kind(value)]
+                elif column == "Виконання, %":
+                    fmt = execution_fmt
+                elif column in EXCEL_WRAP_COLUMNS:
+                    fmt = body_wrap_fmt
+                elif column in EXCEL_CENTER_COLUMNS:
+                    fmt = body_center_fmt
                 else:
-                    fmt = body_fmt
+                    fmt = body_left_fmt
                 worksheet.write(excel_row, col_idx, value, fmt)
 
-        # AutoFilter is intentionally omitted, and no second worksheet is created.
+        # Intentionally no AutoFilter and no second worksheet.
 
     return buffer.getvalue()
 
@@ -863,7 +878,7 @@ else:
         enforce_column_widths=True,
     )
 
-xlsx = _build_filter_document_excel(export_rows, kpi_items)
+xlsx = _build_filter_document_excel(display_rows, kpi_items)
 st.download_button(
     "⬇️ Завантажити Excel",
     data=xlsx,

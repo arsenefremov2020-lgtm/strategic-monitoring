@@ -280,8 +280,142 @@ def _build_display_rows(
 current_user = page_setup(PAGE_KEY, page_name=PAGE_KEY)
 load_css()
 
-st.title("Фільтр за документом")
-st.caption("Перегляд усіх заходів та показників, пов’язаних з обраним документом.")
+# Page shell intentionally mirrors the current Dashboard composition.
+# Functional controls and calculations below remain unchanged.
+st.markdown(
+    """
+<style>
+header[data-testid="stHeader"] {
+    background: transparent !important;
+}
+.stApp {
+    background: #F7F9FC;
+}
+.main .block-container {
+    max-width: min(1500px, 98vw);
+    padding: clamp(0.5rem, 2vw, 1.5rem) clamp(0.5rem, 2vw, 2rem);
+    position: relative;
+    z-index: 1;
+}
+
+/* Dashboard-identical branded shell, scoped to this page. */
+.ua-stripe {
+    height: 5px;
+    border-radius: 0 0 6px 6px;
+    background: linear-gradient(90deg, #005BBB 50%, #FFD500 50%);
+    margin-bottom: 16px;
+    box-shadow: 0 2px 8px rgba(0,91,187,0.15);
+}
+.ministry-label {
+    text-align: right;
+    color: #61708A;
+    font-size: clamp(11px, 1.1vw, 14px);
+    font-weight: 700;
+    margin-bottom: 10px;
+    letter-spacing: 0.01em;
+}
+.header-card {
+    background: #F7F9FC;
+    border: 1px solid #DCE4F0;
+    border-left: 5px solid #005BBB;
+    border-radius: 12px;
+    padding: clamp(16px, 2.5vw, 28px) clamp(16px, 2.5vw, 32px);
+    margin-bottom: 20px;
+    box-shadow: 0 4px 20px rgba(0,91,187,0.08), 0 1px 4px rgba(0,0,0,0.04);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 16px;
+}
+.header-main {
+    flex: 1 1 100%;
+    width: 100%;
+    min-width: 200px;
+}
+.header-title {
+    font-size: clamp(20px, 2.5vw, 30px);
+    font-weight: 900;
+    color: #032A63;
+    margin: 0 0 6px 0;
+    line-height: 1.2;
+}
+.header-subtitle {
+    font-size: clamp(12px, 1.1vw, 14px);
+    color: #61708A;
+    line-height: 1.6;
+    max-width: none;
+    width: 100%;
+}
+
+/* Dashboard section-card tokens reused for the document information card. */
+.section-card {
+    background: #FFFFFF;
+    border: 1px solid #DCE4F0;
+    border-radius: 12px;
+    padding: clamp(14px, 2vw, 22px) clamp(14px, 2vw, 24px);
+    margin-bottom: 18px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.04);
+}
+.section-title {
+    font-size: clamp(15px, 1.4vw, 19px);
+    font-weight: 800;
+    color: #032A63;
+    margin: 0 0 4px 0;
+}
+
+/* Reactive control panel: visual equivalent of Dashboard filter card, without st.form. */
+.st-key-npa_filter_panel {
+    background: #FFFFFF;
+    border: 1px solid #DCE4F0;
+    border-radius: 12px;
+    padding: clamp(14px, 2vw, 22px) clamp(14px, 2vw, 24px);
+    margin-bottom: 18px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.04);
+}
+.st-key-npa_filter_panel .npa-filter-subtitle {
+    margin-top: 0 !important;
+}
+
+.npa-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 12px;
+    margin: 0 0 20px 0;
+}
+.npa-document-name {
+    font-size: 20px;
+    font-weight: 750;
+    color: #132238;
+    margin: 8px 0 12px;
+}
+.npa-document-meta {
+    font-size: 13px;
+    color: #61708A;
+}
+.npa-document-meta b { color: #132238; }
+.npa-document-link {
+    display: inline-block;
+    margin-top: 12px;
+    color: #005BBB !important;
+    font-weight: 700;
+    text-decoration: none !important;
+}
+</style>
+<div class="ua-stripe"></div>
+<div class="ministry-label">
+🇺🇦 Міністерство економіки, довкілля та сільського господарства України
+</div>
+<div class="header-card">
+    <div class="header-main">
+        <div class="header-title">Фільтр за документом</div>
+        <div class="header-subtitle">
+            Перегляд усіх заходів та показників, пов’язаних з обраним документом.
+        </div>
+    </div>
+</div>
+""",
+    unsafe_allow_html=True,
+)
 
 raw_df = load_strat_matrix()
 measures_all = raw_df[raw_df["object_type"].astype(str).str.strip().eq("measure")].copy()
@@ -308,8 +442,15 @@ def _choose_ppdu():
     st.session_state["npa_doc_selected"] = PPDU_2026_LABEL if PPDU_2026_LABEL in doc_options else ""
 
 
-with st.container(border=True):
-    st.markdown("#### Документ")
+with st.container(key="npa_filter_panel"):
+    st.markdown(
+        '<div class="filter-title">Параметри відбору</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="filter-subtitle npa-filter-subtitle">Документ і період</div>',
+        unsafe_allow_html=True,
+    )
     search_query = st.text_input(
         "Пошук за назвою / номером",
         key="npa_doc_search",
@@ -367,25 +508,25 @@ if details:
     link = _first_http_url(details.get("link"))
     link_html = (
         f'<a href="{escape(link, quote=True)}" target="_blank" rel="noopener noreferrer" '
-        'style="display:inline-block;margin-top:12px;color:#005BBB;font-weight:700;text-decoration:none;">'
+        'class="npa-document-link">'
         'Відкрити документ ↗</a>'
         if link else ""
     )
     st.markdown(
-        '<div class="card">'
-        '<div class="card-title">Обраний документ</div>'
-        f'<div style="font-size:20px;font-weight:750;color:#132238;margin:8px 0 12px;">{escape(selected_doc)}</div>'
-        f'<div style="font-size:13px;color:#61708A;"><b style="color:#132238;">Прийнято:</b> {escape(adopted)}</div>'
+        '<div class="section-card">'
+        '<div class="section-title">Обраний документ</div>'
+        f'<div class="npa-document-name">{escape(selected_doc)}</div>'
+        f'<div class="npa-document-meta"><b>Прийнято:</b> {escape(adopted)}</div>'
         f'{link_html}'
         '</div>',
         unsafe_allow_html=True,
     )
 else:
     st.markdown(
-        '<div class="card">'
-        '<div class="card-title">Обраний документ</div>'
-        f'<div style="font-size:20px;font-weight:750;color:#132238;margin:8px 0 12px;">{escape(selected_doc)}</div>'
-        '<div style="font-size:13px;color:#61708A;">Реквізити документа не знайдено у «Переліку НПА».</div>'
+        '<div class="section-card">'
+        '<div class="section-title">Обраний документ</div>'
+        f'<div class="npa-document-name">{escape(selected_doc)}</div>'
+        '<div class="npa-document-meta">Реквізити документа не знайдено у «Переліку НПА».</div>'
         '</div>',
         unsafe_allow_html=True,
     )
@@ -444,7 +585,7 @@ kpi_items = [
     },
 ]
 st.markdown(
-    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:14px 0 20px;">'
+    '<div class="npa-kpi-grid">'
     + "".join(
         '<div class="admin-kpi-card" '
         f'style="background:{item["background"]};border:1px solid {item["border"]};'

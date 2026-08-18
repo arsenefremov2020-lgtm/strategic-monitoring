@@ -43,7 +43,7 @@ def _helper_namespace(read_excel_sheet=None):
                 targets = [node.target.id]
             if any(name in {
                 "YEAR_OPTIONS", "QUARTERS", "HISTORICAL_COLUMNS", "TABLE_COLUMNS",
-                "EXCEL_EXPORT_COLUMNS", "EXCEL_COLUMN_WIDTHS",
+                "EXCEL_COLUMN_WIDTHS_PX", "EXCEL_CENTER_COLUMNS", "EXCEL_WRAP_COLUMNS",
             } for name in targets):
                 exec(compile(ast.Module(body=[node], type_ignores=[]), str(PAGE), "exec"), ns)
         elif isinstance(node, ast.FunctionDef):
@@ -170,7 +170,7 @@ def test_ppdu_button_is_preserved():
     assert "PPDU_2026_LABEL" in SRC
 
 
-def test_excel_export_is_single_sheet_with_kpi_blocks_and_no_filters():
+def test_excel_export_is_single_sheet_with_exact_display_table():
     ns = _helper_namespace()
     kpis = [
         {"label": "Заходів", "value": "113"},
@@ -178,23 +178,24 @@ def test_excel_export_is_single_sheet_with_kpi_blocks_and_no_filters():
         {"label": "Виконано заходів", "value": "64 із 113"},
         {"label": "Виконання за 2026 рік", "value": "72.73%"},
     ]
-    rows = [{
-        "Код": "1.1.1.",
+    display = pd.DataFrame([{
+        "Код заходу": "1.1.1.",
         "Захід": "Тестовий захід",
-        "Тип продукту": "Інше",
         "Індикатор": "Тестовий індикатор",
-        "Одиниці виміру": "%",
+        "Тип продукту": "Інше",
         "Головний виконавець": "деп. 10",
-        "Співвиконавець": "",
-        "Глобальний рівень": "",
-        "Національний рівень": "Документ",
         "Стан подання": "Погоджено",
-        "Статус виконання": "Виконано",
-        "Фактичне значення": "100",
-        "Опис прогресу": "Виконано",
-        "Останнє подання": "18.08.2026",
-    }]
-    xlsx = ns["_build_filter_document_excel"](rows, kpis)
+        "Стан виконання": "Виконано",
+        "2021 базовий рівень (факт)": "10",
+        "2024 звіт": "20",
+        "2025 факт": "30",
+        "План": "100",
+        "Факт": "72.73",
+        "Початок виконання": "I квартал 2026",
+        "Кінець виконання": "IV квартал 2026",
+        "Виконання, %": "72.73",
+    }], columns=ns["TABLE_COLUMNS"])
+    xlsx = ns["_build_filter_document_excel"](display, kpis)
     assert isinstance(xlsx, (bytes, bytearray)) and len(xlsx) > 1000
 
     with zipfile.ZipFile(io.BytesIO(xlsx)) as archive:
@@ -207,22 +208,38 @@ def test_excel_export_is_single_sheet_with_kpi_blocks_and_no_filters():
     assert "<autoFilter" not in sheet_xml
     for merged in ["A1:C2", "A3:C3", "E1:G2", "E3:G3", "I1:K2", "I3:K3", "M1:O2", "M3:O3"]:
         assert merged in sheet_xml
-    for token in ["Заходів", "Головних виконавців", "Виконано заходів", "Виконання за 2026 рік", "Код", "Захід", "Опис прогресу"]:
+
+    # The export must be the exact 15-column table displayed on the page, in the same order.
+    for column in ns["TABLE_COLUMNS"]:
+        assert column in shared_strings, column
+    for obsolete in [
+        "Одиниці виміру", "Співвиконавець", "Глобальний рівень", "Національний рівень",
+        "Опис прогресу", "Останнє подання", "Фактичне значення",
+    ]:
+        assert obsolete not in shared_strings, obsolete
+
+    for token in ["Заходів", "Головних виконавців", "Виконано заходів", "Виконання за 2026 рік"]:
         assert token in shared_strings
 
     assert "extra_sheets_no_style" not in SRC
     assert "worksheet.autofilter(" not in SRC
-    assert "_build_filter_document_excel(export_rows, kpi_items)" in SRC
+    assert "_build_filter_document_excel(display_rows, kpi_items)" in SRC
     assert 'file_name="Фільтр_за_документом_DEMO_1_9.xlsx"' in SRC
 
-    # Existing export data schema is preserved.
+    # Excel width/alignment contracts mirror the already fixed Signal Grid presentation.
+    assert ns["EXCEL_COLUMN_WIDTHS_PX"] == {
+        "Код заходу": 90, "Захід": 360, "Індикатор": 430, "Тип продукту": 170,
+        "Головний виконавець": 210, "Стан подання": 160, "Стан виконання": 160,
+        "2021 базовий рівень (факт)": 130, "2024 звіт": 130, "2025 факт": 130,
+        "План": 130, "Факт": 130, "Початок виконання": 130,
+        "Кінець виконання": 130, "Виконання, %": 130,
+    }
     for column in [
-        '"Код": code', '"Захід": name', '"Тип продукту": raw(measure.get("product_type"))',
-        '"Індикатор": raw(measure.get("indicator"))', '"Одиниці виміру": raw(measure.get("unit"))',
-        '"Головний виконавець": raw(measure.get("resp_main"))', '"Співвиконавець": raw(measure.get("resp_co_1"))',
-        '"Глобальний рівень": raw(measure.get("source_global"))', '"Національний рівень": raw(measure.get("source_national"))',
+        "Тип продукту", "Головний виконавець", "2021 базовий рівень (факт)",
+        "2024 звіт", "2025 факт", "План", "Факт", "Початок виконання",
+        "Кінець виконання", "Виконання, %",
     ]:
-        assert column in SRC
+        assert column in ns["EXCEL_CENTER_COLUMNS"]
 
 
 def test_table_uses_home_widths_and_signal_grid():

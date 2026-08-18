@@ -5003,12 +5003,25 @@ def _build_indicator_trajectory(row):
     indicator_name = clean(row.get("indicator"))
     code_key, indicator_key = monitoring_data.indicator_identity_key(code, indicator_name)
 
-    actual = {}
+    # Фіксована база необхідної траєкторії — останній доступний
+    # історичний факт, що походить зі стратегічної матриці, а не із системи
+    # моніторингу. Нові monitoring facts залишаються фактичними
+    # спостереженнями на синій лінії, але більше не пересувають anchor.
+    historical_actual = {}
     for year, col in [(2021, "base_2021"), (2024, "fact_2024"), (2025, "fact_2025")]:
         value = _trajectory_number(row.get(col))
         if value is not None:
-            actual[year] = value
+            historical_actual[year] = value
 
+    historical_numeric = sorted(
+        (int(year), float(value))
+        for year, value in historical_actual.items()
+        if value is not None
+    )
+    anchor_year = historical_numeric[-1][0] if historical_numeric else None
+    anchor_value = historical_numeric[-1][1] if historical_numeric else None
+
+    actual = dict(historical_actual)
     req = _indicator_requests_effective.copy()
     if not req.empty:
         req = req[req.apply(
@@ -5046,18 +5059,8 @@ def _build_indicator_trajectory(row):
     target_2028 = _trajectory_number(row.get("strategic_target_2028"))
     target_2034 = _trajectory_number(row.get("strategic_target_2034"))
 
-    numeric_actuals = sorted(
-        (int(year), float(value))
-        for year, value in actual.items()
-        if value is not None
-    )
-    positive_actuals = [
-        (year, value) for year, value in numeric_actuals if value > 0
-    ]
-    anchor_year = numeric_actuals[-1][0] if numeric_actuals else None
-    anchor_value = numeric_actuals[-1][1] if numeric_actuals else None
-
-    # Необхідна траєкторія завжди починається від ОСТАННЬОГО факту.
+    # Необхідна траєкторія фіксується від historical anchor і не
+    # перебудовується після нових подань у системі моніторингу.
     required = {}
     required_rates = []
     if anchor_year is not None and anchor_value is not None and anchor_value > 0:
@@ -5094,41 +5097,11 @@ def _build_indicator_trajectory(row):
                     2034,
                     (target_2034 / anchor_value) ** (1 / (2034 - anchor_year)) - 1,
                 ))
-        elif anchor_year < 2028 and target_2034 is not None and target_2034 > 0:
-            segment = _geometric_path(
-                anchor_year, anchor_value, 2034, target_2034
-            )
-            required.update(segment)
-            if segment:
-                required_rates.append((
-                    anchor_year,
-                    2034,
-                    (target_2034 / anchor_value) ** (1 / (2034 - anchor_year)) - 1,
-                ))
 
-    # Червоний прогноз: геометричний темп між ДВОМА ОСТАННІМИ
-    # позитивними фактичними значеннями.
+    # Backward-compatible placeholders for the local helper return shape.
+    # The current-pace forecast is intentionally no longer calculated/rendered.
     forecast = {}
     current_rate = None
-    if len(positive_actuals) >= 2:
-        previous_year, previous_value = positive_actuals[-2]
-        latest_year, latest_value = positive_actuals[-1]
-        years_elapsed = latest_year - previous_year
-        if years_elapsed > 0:
-            current_rate = (
-                latest_value / previous_value
-            ) ** (1.0 / years_elapsed)
-            horizon_year = (
-                2034 if target_2034 is not None
-                else (2028 if target_2028 is not None else latest_year + 5)
-            )
-            if horizon_year >= latest_year:
-                forecast = {
-                    year: latest_value * (
-                        current_rate ** (year - latest_year)
-                    )
-                    for year in range(latest_year, int(horizon_year) + 1)
-                }
 
     return (
         actual,
@@ -5167,10 +5140,9 @@ def _render_indicator_trajectory_section():
     )
     st.markdown(
         '<div class="section-subtitle">Синя лінія — фактичні значення. '
-        'Помаранчева — необхідна траєкторія від останнього факту до орієнтирів '
-        '2028/2034. Червоний пунктир — прогноз за фактичним середньорічним '
-        'темпом. Поява нового факту автоматично переносить точку старту обох '
-        'прогнозних ліній.</div>',
+        'Помаранчева — необхідна траєкторія від останнього доступного історичного '
+        'факту до орієнтирів 2028/2034. Нові факти, подані через систему '
+        'моніторингу, не змінюють її стартову точку.</div>',
         unsafe_allow_html=True,
     )
     if indicators.empty:
@@ -5212,7 +5184,6 @@ def _render_indicator_trajectory_section():
 
     fact_color = "#005BBB"
     required_color = "#E66A00"
-    forecast_color = "#DC2626"
     target_border = "#8F3A00"
 
     fig = go.Figure()
@@ -5269,36 +5240,6 @@ def _render_indicator_trajectory_section():
             hovertemplate="Необхідно %{x}: %{y:.2f}<extra></extra>",
         ))
 
-    if forecast:
-        years = sorted(forecast)
-        values = [forecast[y] for y in years]
-        fig.add_trace(go.Scatter(
-            x=years,
-            y=values,
-            mode="lines+markers+text",
-            name="Прогноз за нинішнім темпом",
-            line=dict(color=forecast_color, width=3, dash="dash"),
-            marker=dict(
-                color=forecast_color,
-                size=[
-                    0 if anchor_year is not None and y == anchor_year
-                    else _trajectory_marker_sizes(
-                        [forecast[y]], base=26, maximum=38
-                    )[0]
-                    for y in years
-                ],
-                symbol="circle",
-                line=dict(color="#FFFFFF", width=2),
-            ),
-            text=[
-                "" if anchor_year is not None and y == anchor_year
-                else _trajectory_value_label(forecast[y])
-                for y in years
-            ],
-            textposition="middle center",
-            textfont=dict(color="#FFFFFF", size=7, family="Arial Black"),
-            hovertemplate="Прогноз %{x}: %{y:.2f}<extra></extra>",
-        ))
 
     if t28 is not None:
         target_label = _trajectory_value_label(t28)
@@ -5353,14 +5294,10 @@ def _render_indicator_trajectory_section():
         rate_bits.append(
             f"потрібний середньорічний темп {sy}–{ey}: {rate*100:+.2f}%"
         )
-    if current_rate is not None:
-        rate_bits.append(
-            f"фактичний середньорічний темп: {(current_rate-1)*100:+.2f}%"
-        )
     if anchor_year is not None and anchor_value is not None:
         rate_bits.insert(
             0,
-            f"точка перебудови: факт {anchor_year} = "
+            f"базова точка необхідної траєкторії: історичний факт {anchor_year} = "
             f"{_trajectory_value_label(anchor_value)}",
         )
     if rate_bits:

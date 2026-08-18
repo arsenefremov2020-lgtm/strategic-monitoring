@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import ast
+import io
 import re
 import sys
+import zipfile
 from pathlib import Path
 
 import pandas as pd
@@ -24,6 +26,7 @@ TREE = ast.parse(SRC)
 def _helper_namespace(read_excel_sheet=None):
     ns = {
         "pd": pd,
+        "io": io,
         "re": re,
         "normalize_for_match": normalize_for_match,
         "log_cosmetic_error": lambda *args, **kwargs: None,
@@ -38,7 +41,10 @@ def _helper_namespace(read_excel_sheet=None):
                 targets = [target.id for target in node.targets if isinstance(target, ast.Name)]
             elif isinstance(node.target, ast.Name):
                 targets = [node.target.id]
-            if any(name in {"YEAR_OPTIONS", "QUARTERS", "HISTORICAL_COLUMNS", "TABLE_COLUMNS"} for name in targets):
+            if any(name in {
+                "YEAR_OPTIONS", "QUARTERS", "HISTORICAL_COLUMNS", "TABLE_COLUMNS",
+                "EXCEL_EXPORT_COLUMNS", "EXCEL_COLUMN_WIDTHS",
+            } for name in targets):
                 exec(compile(ast.Module(body=[node], type_ignores=[]), str(PAGE), "exec"), ns)
         elif isinstance(node, ast.FunctionDef):
             exec(compile(ast.Module(body=[node], type_ignores=[]), str(PAGE), "exec"), ns)
@@ -164,9 +170,52 @@ def test_ppdu_button_is_preserved():
     assert "PPDU_2026_LABEL" in SRC
 
 
-def test_existing_export_is_preserved_not_rebuilt():
-    assert "core_exports.write_styled_excel(" in SRC
+def test_excel_export_is_single_sheet_with_kpi_blocks_and_no_filters():
+    ns = _helper_namespace()
+    kpis = [
+        {"label": "Заходів", "value": "113"},
+        {"label": "Головних виконавців", "value": "33"},
+        {"label": "Виконано заходів", "value": "64 із 113"},
+        {"label": "Виконання за 2026 рік", "value": "72.73%"},
+    ]
+    rows = [{
+        "Код": "1.1.1.",
+        "Захід": "Тестовий захід",
+        "Тип продукту": "Інше",
+        "Індикатор": "Тестовий індикатор",
+        "Одиниці виміру": "%",
+        "Головний виконавець": "деп. 10",
+        "Співвиконавець": "",
+        "Глобальний рівень": "",
+        "Національний рівень": "Документ",
+        "Стан подання": "Погоджено",
+        "Статус виконання": "Виконано",
+        "Фактичне значення": "100",
+        "Опис прогресу": "Виконано",
+        "Останнє подання": "18.08.2026",
+    }]
+    xlsx = ns["_build_filter_document_excel"](rows, kpis)
+    assert isinstance(xlsx, (bytes, bytearray)) and len(xlsx) > 1000
+
+    with zipfile.ZipFile(io.BytesIO(xlsx)) as archive:
+        workbook_xml = archive.read("xl/workbook.xml").decode("utf-8")
+        sheet_xml = archive.read("xl/worksheets/sheet1.xml").decode("utf-8")
+        shared_strings = archive.read("xl/sharedStrings.xml").decode("utf-8")
+
+    assert workbook_xml.count("<sheet ") == 1
+    assert 'name="Заходи за документом"' in workbook_xml
+    assert "<autoFilter" not in sheet_xml
+    for merged in ["A1:C2", "A3:C3", "E1:G2", "E3:G3", "I1:K2", "I3:K3", "M1:O2", "M3:O3"]:
+        assert merged in sheet_xml
+    for token in ["Заходів", "Головних виконавців", "Виконано заходів", "Виконання за 2026 рік", "Код", "Захід", "Опис прогресу"]:
+        assert token in shared_strings
+
+    assert "extra_sheets_no_style" not in SRC
+    assert "worksheet.autofilter(" not in SRC
+    assert "_build_filter_document_excel(export_rows, kpi_items)" in SRC
     assert 'file_name="Фільтр_за_документом_DEMO_1_9.xlsx"' in SRC
+
+    # Existing export data schema is preserved.
     for column in [
         '"Код": code', '"Захід": name', '"Тип продукту": raw(measure.get("product_type"))',
         '"Індикатор": raw(measure.get("indicator"))', '"Одиниці виміру": raw(measure.get("unit"))',

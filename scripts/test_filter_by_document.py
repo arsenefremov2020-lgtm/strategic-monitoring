@@ -207,6 +207,31 @@ def test_kpi_cards_use_system_colors_and_table_alignment():
         assert token in SRC
 
 
+
+def test_dashboard_page_shell_and_reactive_filter_card():
+    # Dashboard-identical branded composition replaces the raw Streamlit title/caption.
+    for token in [
+        'class="ua-stripe"',
+        'max-width: min(1500px, 98vw);',
+        'class="ministry-label"',
+        'class="header-card"',
+        'class="header-title">Фільтр за документом</div>',
+        'class="header-subtitle"',
+        'Міністерство економіки, довкілля та сільського господарства України',
+        'with st.container(key="npa_filter_panel")',
+        'class="filter-title">Параметри відбору</div>',
+        'class="filter-subtitle npa-filter-subtitle">Документ і період</div>',
+        'class="section-card"',
+        'class="section-title">Обраний документ</div>',
+        'class="npa-kpi-grid"',
+    ]:
+        assert token in SRC, token
+    assert 'st.title("Фільтр за документом")' not in SRC
+    assert 'st.caption("Перегляд усіх заходів' not in SRC
+    # Controls stay reactive: the page shell fix must not wrap them in a Streamlit form.
+    assert 'with st.form(' not in SRC
+    assert 'with st.container(border=True):' not in SRC
+
 def test_document_card_uses_exact_registry_and_valid_url():
     ns = _helper_namespace()
     assert ns["_first_http_url"]("text https://example.org/a more") == "https://example.org/a"

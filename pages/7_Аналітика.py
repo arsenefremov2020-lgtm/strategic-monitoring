@@ -1447,6 +1447,18 @@ plan_summary = build_analytics_plan_summary(period_results)
 metrics = build_metrics(active)
 metrics["completion"] = plan_summary.get("execution_by_measures_average")
 metrics["coverage"] = plan_summary.get("coverage_average")
+# Additional canonical outputs are passed through for analytical interpretation only.
+# The text engine does not recalculate monitoring methodology; it compares and
+# localises values already produced by the shared Dashboard aggregation layer.
+metrics["completion_latest"] = plan_summary.get("execution_by_measures_latest")
+metrics["completion_change"] = plan_summary.get("execution_by_measures_change")
+metrics["goal_completion"] = plan_summary.get("execution_by_goals_average")
+metrics["goal_completion_latest"] = plan_summary.get("execution_by_goals_latest")
+metrics["goal_completion_change"] = plan_summary.get("execution_by_goals_change")
+metrics["coverage_latest"] = plan_summary.get("coverage_latest")
+metrics["coverage_change"] = plan_summary.get("coverage_change")
+metrics["latest_period"] = plan_summary.get("latest_period")
+metrics["latest_risk_summary"] = plan_summary.get("latest_risk_summary") or {}
 goal_progress = build_analytics_goal_summary(period_results, active)
 dep_progress = build_analytics_ssp_summary(period_results, active, base_results=ssp_base_period_results)
 task_progress = build_analytics_task_summary(period_results, active)

@@ -30,6 +30,7 @@ from core import monitoring_data
 from core import statuses as core_statuses
 from core import operational
 from core import mio_shared
+from core import analytics_calculations
 from core import periods as core_periods
 from core.dashboard_breakdowns import (
     build_period_results, aggregate_plan, aggregate_objects, dynamics_frame,
@@ -518,74 +519,31 @@ def is_active_for_period(row, year, quarter):
     ) == "active"
 
 def _snapshot_rows_from_period_results(results):
-    parts = []
-    for (year, quarter), result in results.items():
-        snap = result.get("snapshot")
-        if snap is None or snap.empty:
-            continue
-        part = snap.copy()
-        part["report_year"] = int(year)
-        part["report_quarter"] = quarter
-        part["report_quarter_num"] = quarter_to_number(quarter)
-        part["report_period"] = f"{year} {quarter} квартал"
-        part["task_name"] = part.get("parent_task_name", pd.Series("", index=part.index)).astype(str)
-        part["ssp_index"] = part.get("main_ssp", "").astype(str)
-        part["deputy_minister"] = part.get("deputy_minister_by_ssp", "").astype(str)
-        part["numeric_value"] = part.get("actual", "")
-        part["has_submission"] = part.get("submitted", False).fillna(False).astype(bool)
-        part["is_problem_status"] = attention_mask(part).reindex(part.index, fill_value=False).astype(bool)
-        parts.append(part)
-    return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
+    return analytics_calculations.snapshot_rows_from_period_results(results)
 
 
 def prepare_analysis_context(strat_df, requests_df, years, quarters):
-    """Keep canonical period results available through the Analytics aggregation layer."""
-    pairs = [(int(year), quarter) for year in (years or []) for quarter in (quarters or [])]
-    results = build_period_results(strat_df, requests_df, pairs)
-    return results, _snapshot_rows_from_period_results(results)
+    return analytics_calculations.prepare_analysis_context(strat_df, requests_df, years, quarters)
 
 
 def prepare_analysis_data(strat_df, requests_df, years, quarters):
-    """Compatibility detail frame; portfolio/hierarchy metrics use period_results instead."""
-    return prepare_analysis_context(strat_df, requests_df, years, quarters)[1]
+    return analytics_calculations.prepare_analysis_data(strat_df, requests_df, years, quarters)
 
 
 def _rebuild_filtered_results(results, row_filter):
-    output = {}
-    for key, item in results.items():
-        snap = item.get("snapshot")
-        filtered = row_filter(snap.copy()) if snap is not None and not snap.empty else pd.DataFrame()
-        scores = plan_scores(filtered)
-        output[key] = {**item, "snapshot": filtered, **scores, "risk_summary": risk_summary(filtered)}
-    return output
+    return analytics_calculations.rebuild_filtered_results(results, row_filter)
 
 
 def build_analytics_result_context(results, selected_ssp, selected_deputies, selected_goals, selected_tasks, selected_product_types):
-    """Return (base_results, display_results); SSP selection never rewrites its base denominator."""
-    def _row_filter(snap):
-        data = snap.copy()
-        if selected_goals:
-            data = data[data["goal_code"].astype(str).isin(set(map(str, selected_goals)))]
-        if selected_tasks:
-            data = data[data["task_code"].astype(str).isin(set(map(str, selected_tasks)))]
-        if selected_product_types:
-            data = data[data["product_type"].astype(str).isin(set(map(str, selected_product_types)))]
-        return data
-
-    base_results = _rebuild_filtered_results(results, _row_filter)
-    if selected_deputies:
-        wanted_ssp = [str(k) for k, v in DEPUTY_MINISTER_BY_SSP.items() if str(v) in set(map(str, selected_deputies))]
-        base_results = filter_results_by_ssp(base_results, wanted_ssp)
-    display_results = filter_results_by_ssp(base_results, selected_ssp) if selected_ssp else base_results
-    return base_results, display_results
+    return analytics_calculations.build_analytics_result_context(
+        results, selected_ssp, selected_deputies, selected_goals, selected_tasks, selected_product_types
+    )
 
 
 def filter_analysis_period_results(results, selected_ssp, selected_deputies, selected_goals, selected_tasks, selected_product_types):
-    """Compatibility wrapper returning the display calculation context."""
-    return build_analytics_result_context(
+    return analytics_calculations.filter_analysis_period_results(
         results, selected_ssp, selected_deputies, selected_goals, selected_tasks, selected_product_types
-    )[1]
-
+    )
 
 def format_pct(value):
     if value is None or pd.isna(value):
@@ -637,210 +595,47 @@ def apply_dimension_filters(data, selected_ssp, selected_deputies, selected_goal
 # ============================================================
 
 def build_metrics(active):
-    """Descriptive counts only; canonical execution/coverage are injected from shared summaries."""
-    total = len(active)
-    submitted = int(active.get("submitted", pd.Series(False, index=active.index)).fillna(False).astype(bool).sum()) if total else 0
-    unique_measures = active["code"].nunique() if total else 0
-    goals = active["goal_code"].nunique() if total else 0
-    tasks = active["task_code"].nunique() if total else 0
-    no_data = int(active.get("missing_required_submission", pd.Series(False, index=active.index)).fillna(False).astype(bool).sum()) if total else 0
-    completed = int(active.get("result_achieved", pd.Series(False, index=active.index)).fillna(False).astype(bool).sum()) if total else 0
-    problem = int(active.get("is_problem_status", pd.Series(False, index=active.index)).fillna(False).astype(bool).sum()) if total else 0
-    return {
-        "total_rows": total, "unique_measures": unique_measures, "submitted": submitted,
-        "coverage": None, "completion": None,
-        "goals": goals, "tasks": tasks, "no_data": no_data, "completed": completed, "problem": problem,
-    }
+    return analytics_calculations.build_metrics(active)
+
 
 def build_year_over_year_comparison(period_results):
-    """Year-to-year comparison from canonical period-level portfolio aggregates."""
-    if not period_results:
-        return pd.DataFrame()
-    by_year = {}
-    for year in sorted({key[0] for key in period_results}):
-        subset = {key: value for key, value in period_results.items() if key[0] == year}
-        plan = aggregate_plan(subset)
-        rows = _snapshot_rows_from_period_results(subset)
-        metrics = build_metrics(rows)
-        metrics["completion"] = plan.get("execution_by_measures_average")
-        metrics["coverage"] = plan.get("coverage_average")
-        by_year[int(year)] = metrics
-    years = sorted(by_year)
-    if len(years) < 2:
-        return pd.DataFrame()
-    indicators = [
-        ("Унікальні заходи", "unique_measures", "од."), ("Записи захід-період", "total_rows", "од."),
-        ("Покриття моніторингом", "coverage", "%"), ("Рівень виконання СП", "completion", "%"),
-        ("Без поданих погоджених даних", "no_data", "од."), ("Виконано", "completed", "од."),
-        ("Проблемні / ризикові", "problem", "од."),
-    ]
-    rows=[]
-    for previous_year,current_year in zip(years[:-1],years[1:]):
-        previous,current=by_year[previous_year],by_year[current_year]
-        for label,key,unit in indicators:
-            prev_value,current_value=previous.get(key),current.get(key)
-            change = None if prev_value is None or current_value is None else round(float(current_value)-float(prev_value),2)
-            rows.append({"Період порівняння":f"{current_year} до {previous_year}","Показник":label,"Попередній рік":prev_value,"Поточний рік":current_value,"Зміна":change,"Одиниця":unit})
-    return pd.DataFrame(rows)
-
-
-def render_year_over_year_block(yoy_comparison):
-    """Render the year-to-year analytics block when comparison data is available."""
-    st.markdown(
-        """
-<div class="card">
-    <div class="card-title">Порівняння «рік до року»</div>
-    <div class="card-subtitle">
-        Порівняння сформовано за тією самою вибіркою, що й аналітична довідка.
-    </div>
-""",
-        unsafe_allow_html=True,
-    )
-
-    if yoy_comparison.empty:
-        st.info("Для порівняння «рік до року» потрібні дані щонайменше за два роки в межах обраної вибірки.")
-        st.markdown("</div>", unsafe_allow_html=True)
-        return
-
-    render_readonly_table(
-        yoy_comparison,
-        visual_style="signal",
-        variant="analytics",
-        metric_columns={"Попередній рік": "blue", "Поточний рік": "blue"},
-        delta_columns={"Зміна"},
-        formatters={
-            "Попередній рік": format_number_2,
-            "Поточний рік": format_number_2,
-            "Зміна": format_number_2,
-        },
-    )
-
-    chart_data = yoy_comparison[yoy_comparison["Показник"].isin([
-        "Покриття моніторингом", "Рівень виконання СП"
-    ])].copy()
-    if not chart_data.empty:
-        fig = px.bar(
-            chart_data,
-            x="Показник",
-            y="Зміна",
-            color="Період порівняння",
-            barmode="group",
-            title="Зміна ключових показників рік до року",
-            labels={"Зміна": "Зміна, в.п."},
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-    st.markdown("</div>", unsafe_allow_html=True)
+    return analytics_calculations.build_year_over_year_comparison(period_results)
 
 
 def build_analytics_plan_summary(period_results):
-    return aggregate_plan(period_results)
+    return analytics_calculations.build_analytics_plan_summary(period_results)
 
 
 def _detail_counts(active, group_cols):
-    """Descriptive counts only. Execution, coverage and risk methodology stay in shared helpers."""
-    if active.empty:
-        return pd.DataFrame()
-    rows = []
-    for keys, group in active.groupby(group_cols, dropna=False):
-        if not isinstance(keys, tuple):
-            keys = (keys,)
-        coverage_pop = group[group.get("coverage_eligible", pd.Series(False, index=group.index)).fillna(False).astype(bool)]
-        row = dict(zip(group_cols, keys))
-        row.update({
-            "Заходів_періодів": int(len(group)),
-            "Унікальних_заходів": int(group["code"].nunique()),
-            "Покриття_eligible": int(len(coverage_pop)),
-            "Подано": int(coverage_pop.get("submitted", pd.Series(False, index=coverage_pop.index)).fillna(False).astype(bool).sum()),
-            "Без_даних": int(group.get("missing_required_submission", pd.Series(False,index=group.index)).fillna(False).astype(bool).sum()),
-            "Проблемних": int(group.get("is_problem_status", pd.Series(False,index=group.index)).fillna(False).astype(bool).sum()),
-        })
-        rows.append(row)
-    return pd.DataFrame(rows)
+    return analytics_calculations.detail_counts(active, group_cols)
 
 
 def _object_period_coverage(period_results, object_type):
-    """Average canonical per-period object coverage values; never row-weight measure-periods."""
-    frame_key = "goal_scores" if object_type == "goal" else "task_scores"
-    code_col = "goal_code" if object_type == "goal" else "task_code"
-    rows = []
-    for (year, quarter), result in period_results.items():
-        frame = result.get(frame_key)
-        if frame is None or frame.empty or "coverage" not in frame.columns:
-            continue
-        part = frame[[code_col, "coverage"]].copy()
-        part["year"] = year
-        part["quarter"] = quarter
-        rows.append(part)
-    if not rows:
-        return pd.DataFrame(columns=[code_col, "Покриття_%"])
-    data = pd.concat(rows, ignore_index=True)
-    data["coverage"] = pd.to_numeric(data["coverage"], errors="coerce")
-    return (
-        data.groupby(code_col, as_index=False)["coverage"]
-        .mean()
-        .rename(columns={"coverage": "Покриття_%"})
-    )
+    return analytics_calculations.object_period_coverage(period_results, object_type)
+
 
 def build_analytics_goal_summary(period_results, active):
-    shared = aggregate_objects(period_results, object_type="goal").rename(columns={
-        "goal_name":"strategic_goal", "average_by_tasks":"Виконання", "latest_by_tasks":"Останнє_виконання", "change_by_tasks":"Зміна"})
-    coverage = _object_period_coverage(period_results, "goal")
-    counts = _detail_counts(active, ["goal_code", "strategic_goal"])
-    if shared.empty:
-        return shared
-    return shared.merge(coverage, on="goal_code", how="left").merge(counts, on=["goal_code","strategic_goal"], how="left")
+    return analytics_calculations.build_analytics_goal_summary(period_results, active)
 
 
 def build_analytics_task_summary(period_results, active):
-    shared = aggregate_objects(period_results, object_type="task").rename(columns={
-        "average_execution":"Виконання", "latest_execution":"Останнє_виконання", "change_execution":"Зміна"})
-    coverage = _object_period_coverage(period_results, "task")
-    counts = _detail_counts(active, ["goal_code", "task_code", "task_name"])
-    if shared.empty:
-        return shared
-    return (
-        shared.merge(coverage, on="task_code", how="left")
-        .merge(counts.drop(columns=["goal_code"], errors="ignore"), on=["task_code","task_name"], how="left")
-    )
+    return analytics_calculations.build_analytics_task_summary(period_results, active)
 
 
 def build_analytics_ssp_summary(period_results, active, base_results=None):
-    shared = ssp_summary(period_results, base_results=base_results if base_results is not None else period_results).rename(columns={"ssp":"ssp_index", "average":"Виконання", "latest":"Останнє_виконання", "change":"Зміна", "average_coverage":"Покриття_%"})
-    counts = _detail_counts(active, ["ssp_index", "department", "deputy_minister"])
-    if shared.empty:
-        return shared
-    output = shared.merge(counts, on="ssp_index", how="left")
-    return output
+    return analytics_calculations.build_analytics_ssp_summary(period_results, active, base_results=base_results)
 
 
 def build_analytics_deputy_summary(period_results):
-    return deputy_summary(period_results)
+    return analytics_calculations.build_analytics_deputy_summary(period_results)
 
 
 def build_analytics_dynamics(period_results):
-    frame = dynamics_frame(period_results)
-    if frame.empty: return pd.DataFrame()
-    exec_rows = frame[frame["series"] == "Виконання за заходами"].copy()
-    cov_rows = frame[frame["series"] == "Покриття"][["year","quarter","value"]].rename(columns={"value":"Покриття_%"})
-    exec_rows = exec_rows.rename(columns={"year":"report_year","quarter":"report_quarter","value":"Виконання"})
-    exec_rows["report_quarter_num"] = exec_rows["report_quarter"].map(quarter_to_number)
-    exec_rows["Період"] = exec_rows["report_year"].astype(str) + " " + exec_rows["report_quarter"].astype(str)
-    return exec_rows.merge(cov_rows, left_on=["report_year","report_quarter"], right_on=["year","quarter"], how="left").drop(columns=["year","quarter"], errors="ignore")
+    return analytics_calculations.build_analytics_dynamics(period_results)
 
 
 def aggregate_product_progress(period_results, active):
-    if active.empty: return pd.DataFrame()
-    rows=[]
-    for product in sorted(active["product_type"].fillna("").astype(str).unique()):
-        subset=_rebuild_filtered_results(period_results, lambda snap, p=product: snap[snap["product_type"].fillna("").astype(str).eq(p)].copy())
-        plan=aggregate_plan(subset)
-        detail=active[active["product_type"].fillna("").astype(str).eq(product)]
-        counts=_detail_counts(detail,["product_type"]).iloc[0].to_dict() if not detail.empty else {}
-        rows.append({"product_type": product or "н/д", "Унікальних_заходів": int(detail["code"].nunique()), "Виконання": plan.get("execution_by_measures_average"), "Покриття_%": plan.get("coverage_average"), "Проблемних": counts.get("Проблемних",0), "Без_даних": counts.get("Без_даних",0)})
-    return pd.DataFrame(rows).sort_values("Унікальних_заходів", ascending=False)
-
-
+    return analytics_calculations.aggregate_product_progress(period_results, active)
 
 def filter_period_requests_to_active_cohort(requests, active, selected_years, selected_quarters):
     """Registry/export cohort = selected periods intersect canonical active measure codes."""
@@ -1650,11 +1445,7 @@ if not mio_goal_evaluation.empty:
     _mio_measures = _mio_summary.average_measure_execution
     _mio_tasks = _mio_summary.average_task_score
     _mio_progress = _mio_summary.average_strategic_progress
-    _fin_pair = mio_financing.copy()
-    _fin_avg = None
-    if not _fin_pair.empty and "% виконання" in _fin_pair.columns:
-        _fin_series = pd.to_numeric(_fin_pair["% виконання"], errors="coerce").dropna()
-        _fin_avg = float(_fin_series.mean()) if not _fin_series.empty else None
+    _fin_avg = analytics_text_context.factual_value("mio.fin.avg_financial_execution")
     st.markdown(
         f"""
 <div class="mio-summary-box">

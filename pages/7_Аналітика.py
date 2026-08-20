@@ -1,5 +1,6 @@
 import os
 import re
+import hashlib
 from datetime import datetime
 from io import BytesIO
 from html import escape
@@ -7,7 +8,7 @@ from html import escape
 import pandas as pd
 import plotly.express as px
 import streamlit as st
-from core.period_locks import exclude_locked_periods, is_period_locked
+from core.period_locks import apply_locked_status, exclude_locked_periods, is_period_locked
 from core.timeutils import now_kyiv
 from core.db import fetch_all, get_supabase_client
 from core.deputies import DEPUTY_MINISTER_BY_SSP
@@ -1227,7 +1228,12 @@ st.markdown(
 # ============================================================
 
 strat_df = load_strat_matrix()
-requests_df = ensure_request_columns(load_requests())
+# Dashboard/monitoring analytics operate on measure submissions only.  MIO also
+# requires goal/task indicator submissions, so keep the full monitoring stream
+# separately instead of feeding measures_only() into the MIO methodology.
+_mio_requests_all = monitoring_data.load_monitoring_requests()
+requests_df = ensure_request_columns(monitoring_data.measures_only(_mio_requests_all))
+mio_requests_df = _mio_requests_all.copy() if isinstance(_mio_requests_all, pd.DataFrame) else pd.DataFrame()
 workflow_logs = load_workflow_logs()
 analytics_read_at = kyiv_now()
 
@@ -1395,10 +1401,21 @@ selected_task_labels = list(_an_applied.get("tasks", []) or [])
 selected_product_types = list(_an_applied.get("product_types", []) or [])
 
 # Apply the selected data source only after the form has committed its pending values.
-if analytics_data_mode == operational.MODE_OPERATIONAL and not requests_df.empty:
+# The MIO stream intentionally remains full (measures + indicator submissions) so
+# its annual integral is identical to the shared MIO page for the same methodology.
+if not mio_requests_df.empty:
+    mio_requests_df = apply_locked_status(mio_requests_df, status_col="status")
+if analytics_data_mode == operational.MODE_OPERATIONAL:
     _analytics_targets = operational.build_target_map(strat_df)
-    requests_df, _analytics_auto = operational.apply_operational_mode(requests_df, _analytics_targets)
+    if not requests_df.empty:
+        requests_df, _analytics_auto = operational.apply_operational_mode(requests_df, _analytics_targets)
+    if not mio_requests_df.empty:
+        mio_requests_df, _analytics_mio_auto = operational.apply_operational_mode(mio_requests_df, _analytics_targets)
+        mio_requests_df = apply_locked_status(mio_requests_df, status_col="status")
 requests_df = ensure_request_columns(append_confirmed_closeout_facts(requests_df))
+# MIO must ignore legacy manual closeouts without a recorded fact, matching its
+# methodology on the dedicated page. Indicator rows remain untouched.
+mio_requests_df = append_confirmed_closeout_facts(mio_requests_df, include_incomplete=False)
 
 selected_years = selected_years_raw if selected_years_raw else [2026]
 selected_quarters = selected_quarters_raw if selected_quarters_raw else QUARTERS.copy()
@@ -1475,7 +1492,7 @@ mio_financing = pd.DataFrame()
 mio_filter_limited = False
 try:
     _mio_years = [int(y) for y in selected_years if int(y) in (2026, 2027, 2028)]
-    _mio_outputs = mio_shared.build_mio_analytics(strat_df, requests_df, _mio_years or [2026])
+    _mio_outputs = mio_shared.build_mio_analytics(strat_df, mio_requests_df, _mio_years or [2026])
     _all_mio_goals = _mio_outputs.get("goals", pd.DataFrame()).copy()
     _all_mio_goal_tasks = _mio_outputs.get("goals_tasks", pd.DataFrame()).copy()
     _all_mio_measures = _mio_outputs.get("measures", pd.DataFrame()).copy()
@@ -1549,36 +1566,33 @@ analytics_text_context = build_analytics_text_context(
 )
 
 ANALYTICS_TEXT_DEBUG = str(os.getenv("ANALYTICS_TEXT_DEBUG", "")).strip().lower() in {"1", "true", "yes", "on"}
-analytics_text_engine_used = "new"
+analytics_text_engine_used = "new_success"
 analytics_text_engine_incident = ""
+analytics_text_available = True
 try:
     analytical_text = generate_analytics_note(context=analytics_text_context)
 except Exception as exc:
-    # Production keeps the legacy note only as an emergency availability path.
-    # In QA/debug the exception must remain visible so a programmer bug cannot
-    # masquerade as a merely weak analytical text.
+    # A failed analytical engine must never masquerade as a successful legacy
+    # note.  Keep the old function in the codebase for developer compatibility,
+    # but do not expose it as a production fallback.
     log_exception("Analytics rule-based text generator", exc)
-    analytics_text_engine_used = "legacy_fallback"
-    analytics_text_engine_incident = f"{type(exc).__name__}: {exc}"
+    _incident_seed = f"{type(exc).__name__}:{exc}".encode("utf-8", errors="replace")
+    analytics_text_engine_incident = "AN-" + hashlib.sha256(_incident_seed).hexdigest()[:10].upper()
+    analytics_text_engine_used = "new_failed"
+    analytics_text_available = False
+    analytical_text = ""
     if ANALYTICS_TEXT_DEBUG:
         raise
-    analytical_text = generate_analytical_text(
-        active,
-        filters,
-        metrics,
-        goal_progress,
-        dep_progress,
-        task_progress,
-        product_progress,
-        status_counts,
-        period_dynamics,
+    st.error(
+        "Аналітичну довідку не сформовано через технічну помилку. "
+        f"Код інциденту: {analytics_text_engine_incident}."
     )
 
 if ANALYTICS_TEXT_DEBUG:
-    if analytics_text_engine_used == "new":
-        st.caption("Text engine: NEW")
+    if analytics_text_engine_used == "new_success":
+        st.caption("Text engine: NEW ANALYTICS ENGINE — SUCCESS")
     else:
-        st.caption(f"Text engine: LEGACY FALLBACK · Incident: {analytics_text_engine_incident}")
+        st.caption(f"Text engine: NEW ANALYTICS ENGINE — FAILED · Incident: {analytics_text_engine_incident}")
 
 
 # ============================================================
@@ -1615,21 +1629,13 @@ st.markdown(
 # applied filter set is methodologically compatible with the annual MіO model.
 if not mio_goal_evaluation.empty:
     _mio_year = max([int(y) for y in selected_years if int(y) in (2026, 2027, 2028)] or [2026])
-    _mio_cols = {
-        "integral": f"Інтеграл {_mio_year}",
-        "measures": f"Заходи {_mio_year}",
-        "tasks": f"Завдання {_mio_year}",
-        "progress": f"Прогрес {_mio_year}",
-    }
-    def _mio_avg(_column):
-        if _column not in mio_goal_evaluation.columns:
-            return None
-        _series = pd.to_numeric(mio_goal_evaluation[_column], errors="coerce").dropna()
-        return float(_series.mean()) if not _series.empty else None
-    _mio_integral = _mio_avg(_mio_cols["integral"])
-    _mio_measures = _mio_avg(_mio_cols["measures"])
-    _mio_tasks = _mio_avg(_mio_cols["tasks"])
-    _mio_progress = _mio_avg(_mio_cols["progress"])
+    _mio_summary = mio_shared.summarize_integral_goals(mio_goal_evaluation, _mio_year)
+    # Semantically typed fields prevent a weighted component (e.g. 20% ×
+    # measures) from ever being displayed as the final integral.
+    _mio_integral = _mio_summary.average_integral
+    _mio_measures = _mio_summary.average_measure_execution
+    _mio_tasks = _mio_summary.average_task_score
+    _mio_progress = _mio_summary.average_strategic_progress
     _fin_pair = mio_financing.copy()
     _fin_avg = None
     if not _fin_pair.empty and "% виконання" in _fin_pair.columns:
@@ -1642,8 +1648,8 @@ if not mio_goal_evaluation.empty:
     <div class="mio-summary-grid">
         <div class="mio-mini"><span>Інтегральна оцінка</span><b>{format_pct(_mio_integral)}</b></div>
         <div class="mio-mini"><span>Виконання заходів</span><b>{format_pct(_mio_measures)}</b></div>
-        <div class="mio-mini"><span>Завдання · індикатори</span><b>{format_pct(_mio_tasks)}</b></div>
-        <div class="mio-mini"><span>Стратегічний прогрес</span><b>{format_pct(_mio_progress)}</b></div>
+        <div class="mio-mini"><span>Оцінка завдань</span><b>{format_pct(_mio_tasks)}</b></div>
+        <div class="mio-mini"><span>Прогрес індикаторів цілей</span><b>{format_pct(_mio_progress)}</b></div>
         <div class="mio-mini"><span>Фінансове виконання</span><b>{format_pct(_fin_avg)}</b></div>
     </div>
 </div>
@@ -1660,18 +1666,17 @@ render_year_over_year_block(yoy_comparison)
 # Analytical note
 # ============================================================
 
-st.markdown(
-    f"""
+if analytics_text_available:
+    st.markdown(
+        """
 <div class="report-box">
     <div class="report-title">Автоматично сформована аналітична довідка</div>
 """,
-    unsafe_allow_html=True
-)
-
-for paragraph in analytical_text.split("\n\n"):
-    st.markdown(f"<p class='report-text'>{clean(paragraph)}</p>", unsafe_allow_html=True)
-
-st.markdown("</div>", unsafe_allow_html=True)
+        unsafe_allow_html=True
+    )
+    for paragraph in analytical_text.split("\n\n"):
+        st.markdown(f"<p class='report-text'>{clean(paragraph)}</p>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ============================================================
@@ -1919,7 +1924,7 @@ docx_file = create_docx_report(
     status_counts=status_counts,
     period_dynamics=period_dynamics,
     flex_note="",
-)
+) if analytics_text_available else None
 
 e1, e2, e3 = st.columns(3)
 with e1:
@@ -1933,7 +1938,8 @@ with e1:
 with e2:
     st.download_button(
         "Аналітична довідка DOCX",
-        data=docx_file,
+        data=docx_file or b"",
+        disabled=not analytics_text_available,
         file_name=f"analytical_note_{'_'.join(map(str, selected_years))}_{'_'.join(selected_quarters)}.docx",
         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         use_container_width=True,

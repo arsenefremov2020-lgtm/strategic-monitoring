@@ -119,8 +119,11 @@ def split_indexes(value) -> list[str]:
     """
     Розбиває перелік індексів ССП.
 
-    Приклад:
-    "26, 30, 42" -> ["26", "30", "42"]
+    Приклади:
+    - "26, 30, 42" -> ["26", "30", "42"]
+    - "*" -> ["*"]
+
+    Символ "*" зберігається як службова ознака глобальної області перегляду.
     """
 
     text = clean_value(value)
@@ -133,7 +136,13 @@ def split_indexes(value) -> list[str]:
     result = []
 
     for part in parts:
-        index = normalize_ssp_index(part)
+        part_text = clean_value(part)
+        if part_text == "*":
+            if "*" not in result:
+                result.append("*")
+            continue
+
+        index = normalize_ssp_index(part_text)
 
         if index and index not in result:
             result.append(index)
@@ -259,6 +268,10 @@ def build_admin_or_super_admin(row: dict) -> dict | None:
         "allowed_ssp_labels": allowed_labels,
         # Окреме поле: за якими ССП адмін є координатором (ланкою погодження).
         "coordinator_ssp_indexes": coordinator_indexes,
+        # Для super_admin значення "*" у assigned_ssp_indexes означає глобальний
+        # режим ПЕРЕГЛЯДУ: усі заявки доступні для огляду, але користувач не стає
+        # додатковою ланкою маршруту погодження лише через цю ознаку.
+        "global_superadmin_view": bool(role == ROLE_SUPER_ADMIN and "*" in assigned_indexes),
 
         "is_active": parse_is_active(row.get("is_active")),
         "is_owner": is_owner,

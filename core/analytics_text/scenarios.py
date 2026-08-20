@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from .models import Scenario, Signal
+from .models import AnalyticalFinding, Scenario, Signal
+from .findings import SUPPORTED_FINDING_CODES
 
 
 # Scenario rules deliberately describe content priorities, not complete texts.
@@ -67,11 +68,63 @@ SCENARIOS: tuple[Scenario, ...] = (
 )
 
 
-def activate_scenarios(signals: list[Signal]) -> list[Scenario]:
-    codes = {item.code for item in signals}
-    active = []
+def _finding_block(code: str) -> tuple[str, tuple[str, ...], str, int]:
+    if code.startswith("trajectory_"):
+        return "trajectory", ("dynamics", "goals", "departments", "final_assessment"), "dynamics", 82
+    if code.startswith("goal_"):
+        block = "tasks" if code == "goal_drilldown" else ("problem_concentration" if "problems_" in code or "missing_" in code else "goals")
+        return "goal_analysis", (block, "goals", "tasks", "management_attention", "final_assessment"), "goals", 78
+    if code.startswith("task_"):
+        return "task_analysis", ("tasks", "goals", "management_attention", "final_assessment"), "tasks", 68
+    if code.startswith("department_") or code.startswith("ssp_"):
+        return "ssp_analysis", ("departments", "problem_concentration", "management_attention", "final_assessment"), "departments", 84
+    if code == "risk_structure" or code.startswith("persistent_"):
+        return "risk", ("problem_concentration", "departments", "management_attention", "final_assessment"), "risk", 82
+    if code.startswith("conflict_") or code.startswith("stable_aggregate"):
+        return "conflict", ("dynamics", "coverage", "goals", "departments", "problem_concentration", "final_assessment"), "conflict", 96
+    if code.startswith("yoy_"):
+        return "yoy", ("year_over_year", "dynamics", "coverage", "final_assessment"), "yoy", 75
+    if code == "status_structure":
+        return "statuses", ("statuses", "overall_state", "final_assessment"), "statuses", 55
+    if code == "product_structure":
+        return "products", ("products", "overall_state", "final_assessment"), "products", 45
+    if code == "management_priorities":
+        return "management", ("management_attention", "problem_concentration", "final_assessment"), "management", 100
+    if code == "overall_state":
+        return "general", ("overall_state", "coverage", "dynamics", "final_assessment"), "general", 88
+    return "general", ("overall_state", "final_assessment"), "general", 50
+
+
+def _build_finding_scenarios() -> tuple[Scenario, ...]:
+    result: list[Scenario] = []
+    for idx, code in enumerate(sorted(SUPPORTED_FINDING_CODES)):
+        if code in {"scope_profile", "trajectory_unavailable", "trajectory_single_period"}:
+            continue
+        category, blocks, _dimension, importance = _finding_block(code)
+        result.append(Scenario(
+            code=f"finding_{code}", category=category, importance=importance,
+            priority=max(20, 94 - (idx % 25)), preferred_blocks=blocks, required_findings=(code,),
+        ))
+    return tuple(result)
+
+
+FINDING_SCENARIOS = _build_finding_scenarios()
+SCENARIOS = SCENARIOS + FINDING_SCENARIOS
+
+
+def activate_scenarios(signals: list[Signal], findings: list[AnalyticalFinding] | tuple[AnalyticalFinding, ...] = ()) -> list[Scenario]:
+    signal_codes = {item.code for item in signals}
+    finding_codes = {item.code for item in findings}
+    active: list[Scenario] = []
     for scenario in SCENARIOS:
-        if all(code in codes for code in scenario.required_signals) and not any(code in codes for code in scenario.excluded_signals):
-            active.append(scenario)
+        if not all(code in signal_codes for code in scenario.required_signals):
+            continue
+        if any(code in signal_codes for code in scenario.excluded_signals):
+            continue
+        if not all(code in finding_codes for code in scenario.required_findings):
+            continue
+        if any(code in finding_codes for code in scenario.excluded_findings):
+            continue
+        active.append(scenario)
     active.sort(key=lambda item: (-item.priority, -item.importance, item.code))
     return active

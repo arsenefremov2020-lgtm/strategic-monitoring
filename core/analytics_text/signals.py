@@ -339,7 +339,7 @@ def detect_signals(ctx: AnalyticsContext) -> list[Signal]:
 
     # Conflicting signals explicitly called out by the specification.
     codes = {s.code for s in signals}
-    if execution_up and ("problem_signals_large_share" in codes or "yoy_problem_increased" in codes):
+    if execution_up and "yoy_problem_increased" in codes:
         signals.append(_signal("execution_up_problems_up", "warning", 95, "combined"))
     if execution_up and any(c in codes for c in {"goal_most_deteriorated", "department_most_deteriorated"}):
         signals.append(_signal("overall_up_but_component_down", "warning", 85, "combined"))

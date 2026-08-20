@@ -75,11 +75,15 @@ def _count_share(count: int, total: int, entity: str = "record") -> str:
 
 
 def _choose_opening(ctx: AnalyticsContext, tag: str, state: GenerationState, debug: GenerationDebug) -> str:
-    pool = phrase_pool("opening", tag)
-    variant = choose_variant(pool, key=f"{ctx.signature}:opening:{tag}", state=state)
-    debug.selected_phrase_ids.append(variant.id)
-    return variant.template
-
+    options = {
+        "positive": ("Загальна динаміка виконання є позитивною.", "Зведений результат покращується порівняно з попередніми оціненими періодами."),
+        "negative": ("Загальна динаміка виконання є негативною.", "Зведений результат погіршується порівняно з попередніми оціненими періодами."),
+        "mixed": ("Зведений результат приховує різноспрямовані внутрішні зміни: покращення в одних частинах портфеля відбувається одночасно з погіршенням в інших.", "Загальна картина є неоднорідною: позитивні й негативні зміни відбуваються одночасно в різних частинах портфеля."),
+        "cautious": ("Неповнота моніторингових даних обмежує силу загального висновку щодо виконання.", "Поточна оцінка виконання має суттєве обмеження за повнотою моніторингових даних."),
+        "neutral": ("Загальний стан виконання не демонструє одного домінуючого напряму зміни.", "Зведений результат залишається відносно стабільним."),
+    }
+    pool = options.get(tag, options["neutral"])
+    return pool[deterministic_index(len(pool), f"{ctx.signature}:opening:{tag}")]
 
 def _transition(ctx: AnalyticsContext, topic: str, sentence: str, state: GenerationState, debug: GenerationDebug) -> str:
     if not sentence:
@@ -106,9 +110,9 @@ def _transition(ctx: AnalyticsContext, topic: str, sentence: str, state: Generat
         debug.selected_phrase_ids.append(variant.id)
         return variant.template.format(sentence=low)
     lead_options = {
-        "dynamics": ("З погляду динаміки", "Часовий розріз показує", "За послідовністю періодів"),
-        "products": ("Продуктовий розріз додатково показує", "За типами продукту"),
-        "problems": ("Щодо концентрації відхилень", "Локалізація проблемних позицій показує"),
+        "dynamics": ("З погляду динаміки", "У часовій динаміці", "За послідовністю періодів"),
+        "products": ("За типами продукту", "У структурі продуктів"),
+        "problems": ("Щодо концентрації відхилень", "Проблемні позиції концентруються"),
     }.get(topic, ("На цьому тлі", "Поряд із цим"))
     lead = lead_options[deterministic_index(len(lead_options), f"{ctx.signature}:transition:{topic}")]
     return f"{lead}: {low}"
@@ -131,23 +135,15 @@ def _scope_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding], openi
     f = scope.facts if scope else {}
     measures = _n(f.get("measures", ctx.sample_size)); rows = _n(f.get("rows", ctx.row_count))
     goals = _n(f.get("goals", ctx.metric("goals"))); tasks = _n(f.get("tasks", ctx.metric("tasks")))
-    departments = _n(f.get("departments", len(ctx.department_progress)))
-    products = _n(f.get("products", len(ctx.product_progress)))
     sentences = [opening]
-    sentences.append(
-        f"Аналіз охоплює {_period_text(ctx)}; до вибірки включено {count_uk(measures, 'measure')} та {count_uk(rows, 'record')} у розрізі періодів."
-    )
-    if measures > 1:
-        composition = []
-        if goals: composition.append(count_uk(goals, "goal"))
-        if tasks: composition.append(count_uk(tasks, "task"))
-        if departments: composition.append(count_uk(departments, "department"))
-        if composition:
-            sentences.append("За структурою портфеля вибірка охоплює " + join_uk(composition) + "; ці розрізи використано для локалізації відхилень, що формують зведений результат.")
-    if products > 1 and complexity in {"wide", "very_wide"}:
-        sentences.append(f"Окремий продуктовий розріз охоплює {count_uk(products, 'product_type')}; він використовується як допоміжний вимір для перевірки структурних відмінностей.")
-    return AnalyticalBlock("scope", "scope", 60, findings=("scope_profile",), sentences=tuple(sentences), facts_used=frozenset({"scope_profile"}))
-
+    if complexity in {"wide", "very_wide"}:
+        context_bits=[]
+        if measures: context_bits.append(count_uk(measures, "measure"))
+        if goals: context_bits.append(count_uk(goals, "goal"))
+        if tasks: context_bits.append(count_uk(tasks, "task"))
+        if context_bits:
+            sentences.append(f"Аналіз охоплює {_period_text(ctx)} та {join_uk(context_bits)}.")
+    return AnalyticalBlock("scope", "scope", 55, findings=("scope_profile",), sentences=tuple(sentences), facts_used=frozenset({"scope_profile"}))
 
 def _overall_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding], complexity: str) -> AnalyticalBlock:
     item = _first(findings, "overall_state")
@@ -160,13 +156,13 @@ def _overall_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding], com
     parts: dict[str, str] = {}
 
     if is_number(avg):
-        parts["execution"] = f"Середній рівень виконання за обраною вибіркою становить {_pct(avg)}; це зведена оцінка за всіма включеними оціненими періодами, а не значення лише останнього кварталу."
+        parts["execution"] = f"Загальний рівень виконання за обраною вибіркою становить {_pct(avg)}."
     else:
         parts["execution"] = "За обраною вибіркою зведений рівень виконання не розрахований через відсутність достатнього масиву оцінених результатів."
 
     if is_number(latest):
         if is_number(avg) and abs(float(latest) - float(avg)) >= 0.05:
-            parts["latest"] = f"В останньому оціненому періоді результат становить {_pct(latest)}. Отже, {_pct(latest)} характеризує найактуальніший часовий зріз, тоді як {_pct(avg)} — середній результат за всіма включеними періодами."
+            parts["latest"] = f"В останньому оціненому періоді результат становить {_pct(latest)} проти {_pct(avg)} в середньому за вибіркою; різниця становить {_delta_words(float(latest)-float(avg))}."
         else:
             parts["latest"] = f"В останньому оціненому періоді значення становить {_pct(latest)} і практично збігається із середнім рівнем за вибіркою."
 
@@ -174,7 +170,7 @@ def _overall_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding], com
         text = f"Середнє покриття моніторингом становить {_pct(cov)}"
         if is_number(cov_latest) and abs(float(cov_latest) - float(cov)) >= 0.05:
             text += f", тоді як в останньому оціненому періоді — {_pct(cov_latest)}"
-        text += "; неповнота даних аналізується окремо від виконання, не прирівнюючи відсутні подання до невиконання."
+        text += "."
         parts["coverage"] = text
 
     if divergence:
@@ -184,13 +180,13 @@ def _overall_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding], com
             gap = float(d.get("gap") or 0)
             relation = "вище" if gap > 0 else "нижче"
             parts["divergence"] = (
-                f"Окремо простежується розбіжність між виконанням за заходами та агрегованим результатом за стратегічними цілями: "
+                f"Окремо простежується розбіжність між виконанням за заходами та результатом за стратегічними цілями: "
                 f"{_pct(d.get('measure_execution'))} проти {_pct(d.get('goal_execution'))}; показник за заходами на {_delta_words(gap)} {relation}. "
-                "Це різні вже розраховані рівні агрегації, тому їхня розбіжність є окремим аналітичним фактом, а не помилкою округлення."
+                "Така розбіжність означає, що операційне виконання заходів не повністю збігається з результатом на рівні стратегічних цілей."
             )
         elif complexity in {"wide", "very_wide"}:
             parts["divergence"] = (
-                f"Виконання за заходами ({_pct(d.get('measure_execution'))}) та агрегований результат за стратегічними цілями "
+                f"Виконання за заходами ({_pct(d.get('measure_execution'))}) та результат за стратегічними цілями "
                 f"({_pct(d.get('goal_execution'))}) залишаються близькими, тому між цими рівнями агрегації не виявлено суттєвого розходження."
             )
 
@@ -200,10 +196,27 @@ def _overall_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding], com
             issue_parts.append(count_uk(problems, "record") + " із проблемним статусом або ризиковою ознакою")
         if missing:
             issue_parts.append(f"відсутні подання за {count_uk(missing, 'record')}")
-        parts["issues"] = (
-            "У структурі масиву окремої уваги потребують " + join_uk(issue_parts) + ". "
-            "Проблемні позиції характеризують фактично зафіксовані відхилення, тоді як відсутні подання характеризують неповноту інформаційної основи і не є тотожними невиконанню."
-        )
+        issue_text = "У структурі масиву окремої уваги потребують " + join_uk(issue_parts) + "."
+
+        # Close the analytical loop already in the opening paragraph: if the
+        # engine knows where problems/missing data concentrate, state it rather
+        # than telling the reader that the distribution should be inspected.
+        candidates = []
+        if problems:
+            candidates.extend(x for x in findings if x.code.startswith(("goal_problems_", "department_problems_")))
+        if missing:
+            candidates.extend(x for x in findings if x.code.startswith(("goal_missing_", "department_missing_")))
+        candidates = [x for x in candidates if _n(x.facts.get("total")) > 0 and x.facts.get("top_label")]
+        if candidates:
+            strongest = max(candidates, key=lambda x: (float(x.facts.get("top_share") or 0), x.importance))
+            sf = strongest.facts
+            used.add(strongest.code)
+            topic_name = "проблемних позицій" if "problems" in strongest.code else "відсутніх подань"
+            issue_text += (
+                f" Найбільший осередок {topic_name} — {sf.get('top_label')}: "
+                f"{_n(sf.get('top_count'))} із {_n(sf.get('total'))}, або {_pct(float(sf.get('top_share') or 0) * 100)}."
+            )
+        parts["issues"] = issue_text
     elif ctx.row_count:
         if ctx.sample_size <= 1:
             parts["issues"] = "У межах єдиного заходу не зафіксовано відсутнього обов’язкового подання або проблемної позиції; тому висновок обмежується фактичним рівнем виконання і повнотою даних цього об’єкта без узагальнень про портфель."
@@ -425,9 +438,9 @@ def _coverage_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding]) ->
     parts: dict[str, str] = {}; used: set[str] = {"overall_state"} if overall else set()
 
     if is_number(avg):
-        parts["overall"] = f"Середнє покриття моніторингом у межах вибірки становить {_pct(avg)}; цей показник характеризує повноту фактичної інформаційної основи, а не рівень виконання."
+        parts["overall"] = f"Покриття моніторингом у межах вибірки становить {_pct(avg)}."
     if is_number(latest):
-        parts["latest"] = f"В останньому оціненому періоді покриття становить {_pct(latest)}; це рівень повноти найактуальнішого часового зрізу."
+        parts["latest"] = f"В останньому оціненому періоді покриття становить {_pct(latest)}."
     if missing == 0:
         parts["missing"] = "Відсутніх обов’язкових подань у поточному масиві не зафіксовано, тому неповнота подань не формує окремого обмеження для цієї вибірки."
     else:
@@ -482,14 +495,14 @@ def _distribution_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding]
         used.add(dist.code); f = dist.facts
         if _n(f.get("count")) > 1:
             sentences["spread"] = f"У розрізі {entity_gen} результати є диференційованими: найвищий рівень виконання має {f.get('best_label')} — {_pct(f.get('best_value'))}, а найнижчий — {f.get('worst_label')} — {_pct(f.get('worst_value'))}; розрив становить {_delta_words(f.get('gap'))}."
-            sentences["relative"] = f"Порівняно із загальним орієнтиром вибірки {_pct(f.get('reference'))}, вище нього перебувають {count_uk(_n(f.get('above_reference')), entity_key)}, нижче — {count_uk(_n(f.get('below_reference')), entity_key)}; це показує ширину внутрішнього розподілу, а не лише крайні значення."
+            sentences["relative"] = f"Порівняно із загальним рівнем виконання {_pct(f.get('reference'))}, вище нього перебувають {count_uk(_n(f.get('above_reference')), entity_key)}, нижче — {count_uk(_n(f.get('below_reference')), entity_key)}. Отже, відхилення охоплюють не лише окремі крайні позиції, а помітну частину {entity_gen}."
             top = f.get("top", []); bottom = f.get("bottom", [])
             if top and bottom:
                 top_text = ", ".join(f"{l} ({_pct(v)})" for l, v in top[:3])
                 bottom_text = ", ".join(f"{l} ({_pct(v)})" for l, v in bottom[:3])
                 sentences["ranking"] = f"Серед трьох найвищих результатів — {top_text}; нижню частину розподілу формують {bottom_text}."
         else:
-            sentences["spread"] = f"У вибірці представлено лише один компонент у розрізі {entity_gen}, тому порівняння лідера й аутсайдера не формується."
+            pass
     if change:
         used.add(change.code); f = change.facts; total = _n(f.get("count_with_change")); imp = _n(f.get("improved")); dec = _n(f.get("declined")); stable = _n(f.get("stable"))
         if total:
@@ -530,7 +543,7 @@ def _distribution_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding]
                 f"внесок у недовиконання {_pct(f.get('top_underperformance_contribution'))}."
             )
         elif largest:
-            sentences["weight"] = f"Найбільший за масштабом портфель має ССП «{largest}» — {_pct(f.get('largest_weight'))} усіх заходів у відповідному агрегованому розподілі; його рівень виконання становить {_pct(f.get('largest_execution'))}."
+            sentences["weight"] = f"Найбільший за масштабом портфель має ССП «{largest}» — {_pct(f.get('largest_weight'))} усіх заходів у загальному портфелі; його рівень виконання становить {_pct(f.get('largest_execution'))}."
         if top_under and is_number(f.get("top_underperformance_contribution")) and not same_focus:
             sentences["under"] = f"Найбільша розрахована в системі частка внеску в недовиконання припадає на ССП «{top_under}» — {_pct(f.get('top_underperformance_contribution'))}, тоді як частка цього ССП у портфелі становить {_pct(f.get('top_underperformance_weight'))}."
         if top_under and is_number(f.get("top_underperformance_contribution")):
@@ -542,15 +555,15 @@ def _distribution_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding]
         used.add(drill.code); f = drill.facts
         if drill.code == "goal_drilldown" and f.get("top_tasks"):
             pieces = [f"{label}: проблемних {pr}, без даних {mi}" for label, pr, mi in f["top_tasks"]]
-            sentences["drill"] = f"Для {f.get('goal_label')} деталізація до рівня завдань показує, де саме формується основна частина позицій уваги: " + "; ".join(pieces) + "."
+            sentences["drill"] = f"У межах {f.get('goal_label')} основна частина проблемних і відсутніх позицій припадає на такі завдання: " + "; ".join(pieces) + "."
             if is_number(f.get("top2_attention_share")):
                 sentences["drill_share"] = f"Два найбільші завдання охоплюють {_pct(float(f['top2_attention_share'])*100)} усіх проблемних і відсутніх позицій цієї цілі, тобто відхилення на цьому рівні є переважно локалізованим."
         elif drill.code == "ssp_drilldown":
             if f.get("top_tasks"):
                 pieces = [f"{label}: проблемних {pr}, без даних {mi}" for label, pr, mi in f["top_tasks"]]
-                sentences["drill_share"] = f"Деталізація ССП «{f.get('department')}» до рівня завдань локалізує основні позиції уваги так: " + "; ".join(pieces) + "."
+                sentences["drill_share"] = f"У портфелі ССП «{f.get('department')}» основні проблемні й відсутні позиції зосереджені в таких завданнях: " + "; ".join(pieces) + "."
             else:
-                sentences["drill"] = f"Для ССП «{f.get('department')}» структурна деталізація не виявила окремого завдання, яке самостійно концентрує основну частину проблемних або відсутніх позицій."
+                sentences["drill"] = f"У ССП «{f.get('department')}» немає одного завдання, яке самостійно концентрує основну частину проблемних або відсутніх позицій; відхилення розподілені між кількома завданнями."
     structures = BLOCK_STRUCTURES["distribution"]
     order = structures[deterministic_index(len(structures), f"{ctx.signature}:{block}-structure")]
     rendered = [sentences[k] for k in order if k in sentences]
@@ -591,10 +604,9 @@ def _statuses_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding]) ->
         prev_total = _n(comparison.get("previous_total")); latest_total = _n(comparison.get("latest_total"))
         if prev_total and latest_total and prev_total != latest_total:
             sentences.append(
-                f"Кількість записів у двох порівнюваних статусних зрізах відрізняється — {prev_total} проти {latest_total}; "
-                "тому для порівняння структури використано насамперед частки статусів, а не лише абсолютні кількості."
+                f"Кількість записів у двох порівнюваних періодах відрізняється — {prev_total} проти {latest_total}; тому зміни часток статусів слід читати як структурний зсув, а не як зміну абсолютної кількості позицій."
             )
-    sentences.append("Статусний розріз пояснює склад фактично зафіксованих результатів і не підмінює розрахований у системі рівень виконання.")
+    sentences.append("Найбільше значення для загальної картини мають зміни часток статусів, які безпосередньо формують перехід між невиконанням, частковим та повним виконанням.")
     return AnalyticalBlock("statuses", "statuses", item.importance, findings=(item.code,), sentences=tuple(sentences), facts_used=frozenset({item.code}))
 
 
@@ -623,8 +635,73 @@ def _products_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding]) ->
             f"Неповнота даних найбільше концентрується у типі «{f.get('top_missing_label')}» — {f.get('top_missing_count')} із "
             f"{f.get('missing_total')} відсутніх подань у цьому розрізі ({_pct(float(f.get('top_missing_share',0))*100)})."
         )
-    sentences.append("Продуктовий розріз використовується як структурне пояснення відмінностей усередині портфеля; сам по собі він не є доказом причинного зв’язку між типом продукту та результатом виконання.")
     return AnalyticalBlock("products", "products", item.importance, findings=(item.code,), sentences=tuple(sentences), facts_used=frozenset({item.code}))
+
+
+def _mio_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding]) -> AnalyticalBlock:
+    profile = _first(findings, "mio_integral_profile")
+    divergence = _first(findings, "mio_execution_result_divergence")
+    task_profile = _first(findings, "mio_task_indicator_profile")
+    task_divergence = _first(findings, "mio_task_execution_result_divergence")
+    measure_profile = _first(findings, "mio_measure_profile")
+    financing = _first(findings, "mio_financing_profile")
+    if not any((profile, divergence, task_profile, task_divergence, measure_profile, financing)):
+        return AnalyticalBlock("mio_assessment", "mio", 40, sentences=())
+    sentences=[]; used=set()
+    if profile:
+        used.add(profile.code); f=profile.facts
+        sentences.append(
+            f"Оцінка МіО за {f.get('year')} рік показує середню інтегральну оцінку стратегічних цілей {_pct(f.get('average_integral'))}. "
+            f"Найвищий результат має {f.get('best_code')} — {_pct(f.get('best_integral'))}, найнижчий — {f.get('worst_code')} — {_pct(f.get('worst_integral'))}; розрив становить {_delta_words(f.get('gap'))}."
+        )
+        comps=[]
+        if is_number(f.get('average_measures')): comps.append(f"виконання заходів {_pct(f.get('average_measures'))}")
+        if is_number(f.get('average_tasks')): comps.append(f"результат завдань за індикаторами {_pct(f.get('average_tasks'))}")
+        if is_number(f.get('average_progress')): comps.append(f"прогрес стратегічних індикаторів {_pct(f.get('average_progress'))}")
+        if comps: sentences.append("У середньому компоненти інтегральної оцінки співвідносяться так: " + "; ".join(comps) + ".")
+    if divergence:
+        used.add(divergence.code); items=divergence.facts.get('items',[]) or []
+        if items:
+            pieces=[]
+            for item in items[:3]:
+                direction="вище" if float(item.get('gap') or 0)>0 else "нижче"
+                pieces.append(f"{item.get('code')}: виконання заходів {_pct(item.get('measure_execution'))}, інтеграл {_pct(item.get('integral'))} ({_delta_words(item.get('gap'))} {direction})")
+            sentences.append("Найбільша розбіжність між операційним виконанням і стратегічним результатом зафіксована за " + "; ".join(pieces) + ". Це локалізує цілі, де виконання заходів найменше трансформується в інтегральний результат або, навпаки, стратегічний прогрес випереджає операційний компонент.")
+    if task_profile:
+        used.add(task_profile.code); f=task_profile.facts
+        sentences.append(
+            f"На рівні завдань прогрес цільових індикаторів у середньому становить {_pct(f.get('average_task_indicator_progress'))}; "
+            f"найвищий результат має завдання {f.get('best_task')} — {_pct(f.get('best_task_progress'))}, найнижчий — {f.get('worst_task')} — {_pct(f.get('worst_task_progress'))}, "
+            f"а розрив між ними становить {_delta_words(f.get('gap'))}."
+        )
+    if task_divergence:
+        used.add(task_divergence.code); items=task_divergence.facts.get('items',[]) or []
+        if items:
+            pieces=[]
+            for item in items[:3]:
+                relation="вище" if float(item.get('gap') or 0)>0 else "нижче"
+                pieces.append(f"{item.get('code')}: виконання {_pct(item.get('execution'))}, прогрес індикаторів {_pct(item.get('indicator_progress'))} ({_delta_words(item.get('gap'))} {relation})")
+            sentences.append("Найбільші розриви між виконанням завдань і прогресом їхніх індикаторів зафіксовано за " + "; ".join(pieces) + ".")
+    if measure_profile:
+        used.add(measure_profile.code); f=measure_profile.facts
+        if _n(f.get('evaluated_measures')):
+            sentences.append(
+                f"На рівні заходів оцінку співвідношення факту до плану доступно для {count_uk(_n(f.get('evaluated_measures')), 'measure')}; "
+                f"середнє значення становить {_pct(f.get('average_fact_plan'))}, медіанне — {_pct(f.get('median_fact_plan'))}."
+            )
+
+    if financing:
+        used.add(financing.code); f=financing.facts
+        paired=_n(f.get('paired_count'))
+        if paired:
+            sentences.append(f"Для {count_uk(paired, 'measure')} доступне одночасне зіставлення фінансового та фактичного виконання: у середньому фінансове виконання становить {_pct(f.get('avg_financial_execution'))}, а стан виконання заходів — {_pct(f.get('avg_physical_execution'))}.")
+            gaps=f.get('largest_gaps',[]) or []
+            if gaps:
+                top=gaps[0]; delta=top.get('_gap')
+                if is_number(delta):
+                    relation="випереджає" if float(delta)>0 else "відстає від"
+                    sentences.append(f"Найбільше відхилення має захід {top.get('Захід')}: фінансове виконання {_pct(top.get('% виконання'))} {relation} фізичний результат {_pct(top.get('Стан виконання заходу, %'))} на {_delta_words(delta)}.")
+    return AnalyticalBlock("mio_assessment", "mio", 94, findings=tuple(used), sentences=tuple(sentences), facts_used=frozenset(used))
 
 
 def _problem_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding]) -> AnalyticalBlock:
@@ -728,7 +805,7 @@ def _management_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding]) 
         sentences.append("Наступну групу точок уваги формують " + "; ".join(describe(p) for p in priorities[1:3]) + ".")
     if len(priorities) > 3:
         sentences.append("Додатково до пріоритетної групи входять " + "; ".join(describe(p) for p in priorities[3:5]) + ".")
-    sentences.append("Це ранжування використовується лише для визначення послідовності аналітичної уваги: воно не є новим офіційним показником оцінювання і не містить причинних припущень щодо роботи відповідальних підрозділів.")
+    sentences.append("Ці напрями мають найбільшу сукупну вагу в поточних відхиленнях з урахуванням масштабу портфеля, динаміки, проблемних позицій та повноти даних.")
     return AnalyticalBlock("management_attention", "management", 100, findings=(item.code,), sentences=tuple(sentences), facts_used=frozenset({item.code}))
 
 
@@ -758,7 +835,7 @@ def _final_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding], block
                 "trajectory_volatile":"суттєвими різноспрямованими коливаннями",
                 "trajectory_plateau":"відсутністю помітного зрушення протягом доступного горизонту",
             }.get(traj.code, "змішаною часовою траєкторією")
-            groups["trajectory"].append(f"У підсумку часовий профіль виконання характеризується {direction}; цей висновок охоплює всю доступну послідовність періодів, а не лише останній перехід.")
+            groups["trajectory"].append(f"У підсумку часовий профіль виконання характеризується {direction}.")
     elif overall and is_number(overall.facts.get("execution_average")):
         used.add(overall.code)
         groups["trajectory"].append(f"За відсутності достатньої часової послідовності підсумкова оцінка спирається на середній рівень виконання {_pct(overall.facts.get('execution_average'))} та структурний розподіл поточної вибірки, без штучного висновку про тренд.")
@@ -776,7 +853,7 @@ def _final_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding], block
 
     if conflicts:
         used.update(item.code for item in conflicts)
-        groups["conflict"].append("Позитивні й негативні зміни не є повністю односпрямованими: у висновку одночасно враховано рух виконання, повноту даних і локальні внутрішні відхилення, тому позитивний зведений тренд не маскує слабші компоненти портфеля.")
+        groups["conflict"].append("Позитивні й негативні зміни не є повністю односпрямованими: покращення зведеного виконання поєднується з локальними внутрішніми відхиленнями та обмеженнями за повнотою даних.")
 
     if dep_missing and _n(dep_missing.facts.get("total")):
         used.add(dep_missing.code)
@@ -793,9 +870,9 @@ def _final_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding], block
         groups["priorities"].append("З погляду управлінської уваги першочерговими залишаються " + join_uk(labels) + "; саме вони мають найбільшу сукупну вагу за фактичними відхиленнями, проблемними/відсутніми позиціями та масштабом портфеля там, де такий показник доступний.")
 
     if ctx.sample_size <= 1:
-        groups["closing"].append("Таким чином, для цієї вузької вибірки завершений висновок полягає у фіксації результату одного заходу та повноти його даних; порівняльні рейтинги та концентрація не формуються, оскільки для них немає достатньої сукупності об’єктів.")
+        groups["closing"].append("Для цієї вузької вибірки визначальними є фактичний результат одного заходу та повнота даних щодо нього; ширші портфельні закономірності за такою сукупністю не встановлюються.")
     elif not priorities and not dep_impact and overall and is_number(overall.facts.get("execution_average")):
-        groups["closing"].append(f"Загалом поточна картина визначається рівнем виконання {_pct(overall.facts.get('execution_average'))} у поєднанні з фактично встановленою динамікою та структурою відхилень; причинні пояснення поза наявними даними до висновку не додаються.")
+        groups["closing"].append(f"Загалом поточна картина визначається рівнем виконання {_pct(overall.facts.get('execution_average'))} у поєднанні з часовою динамікою та структурою відхилень між складовими портфеля.")
 
     structures=BLOCK_STRUCTURES["final"]
     order=structures[deterministic_index(len(structures), f"{ctx.signature}:final-structure")]
@@ -813,6 +890,7 @@ def _render_block(ctx: AnalyticsContext, code: str, findings: list[AnalyticalFin
     if code == "departments": return _distribution_block(ctx, findings, "department")
     if code == "statuses": return _statuses_block(ctx, findings)
     if code == "products": return _products_block(ctx, findings)
+    if code == "mio_assessment": return _mio_block(ctx, findings)
     if code == "problem_concentration": return _problem_block(ctx, findings)
     if code == "management_attention": return _management_block(ctx, findings)
     if code == "final_assessment": return _final_block(ctx, findings, prior_blocks)
@@ -840,6 +918,9 @@ def compose_note(ctx: AnalyticsContext, debug_mode: bool = False) -> GeneratedNo
     blocks: list[AnalyticalBlock] = []
     for index, code in enumerate(plan.blocks):
         block = _render_block(ctx, code, findings, opening, plan.complexity, blocks)
+        if code == "overall_state" and block.sentences:
+            block = AnalyticalBlock(block.code, block.topic, block.importance, block.signals, block.findings,
+                                    (opening,) + block.sentences, block.facts_used)
         if not block.text:
             continue
         # Natural paragraph transition for middle blocks. Do not alter the first or final synthesis.

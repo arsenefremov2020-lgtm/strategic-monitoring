@@ -153,6 +153,10 @@ class AnalyticsContext:
     yoy_comparison: pd.DataFrame
     active: pd.DataFrame
     signature: str
+    mio_goal_evaluation: pd.DataFrame = field(default_factory=pd.DataFrame)
+    mio_goal_task_evaluation: pd.DataFrame = field(default_factory=pd.DataFrame)
+    mio_measure_evaluation: pd.DataFrame = field(default_factory=pd.DataFrame)
+    mio_financing: pd.DataFrame = field(default_factory=pd.DataFrame)
 
     @property
     def sample_size(self) -> int:

@@ -30,6 +30,9 @@ UNFINISHED_ANALYSIS_BANS = (
     "доцільно перевірити", "варто звернутися до детальнішого розподілу", "важливо зрозуміти, чи",
     "для повнішої картини необхідно", "для розуміння цієї зміни важливо враховувати", "цей показник слід оцінювати разом із",
     "варто також звернути увагу на", "подальший аналіз має бути спрямований", "показує, чи",
+    "деталізація до рівня завдань показує", "структурна деталізація", "до підсумкового висновку",
+    "розріз включено", "це показує ширину внутрішнього розподілу", "використано насамперед частки статусів",
+    "продуктовий розріз додатково показує", "часовий розріз показує", "локалізація проблемних позицій показує",
 )
 
 FILLER_BANS = (
@@ -93,7 +96,8 @@ def allowed_numeric_values(
     allowed = _numbers_from(dict(ctx.metrics))
     for frame in (
         ctx.goal_progress, ctx.task_progress, ctx.department_progress, ctx.product_progress,
-        ctx.status_counts, ctx.period_dynamics, ctx.yoy_comparison,
+        ctx.status_counts, ctx.period_dynamics, ctx.yoy_comparison, ctx.mio_goal_evaluation,
+        ctx.mio_goal_task_evaluation, ctx.mio_measure_evaluation, ctx.mio_financing,
     ):
         if frame is None or frame.empty:
             continue

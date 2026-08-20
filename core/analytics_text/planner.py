@@ -6,15 +6,15 @@ from .models import AnalyticsContext, AnalyticalFinding, BlockPlan, Scenario, Si
 
 
 BASE_BLOCK_ORDER = (
-    "scope", "overall_state", "dynamics", "year_over_year", "coverage", "goals", "tasks",
-    "departments", "statuses", "products", "problem_concentration", "management_attention", "final_assessment",
+    "overall_state", "dynamics", "year_over_year", "coverage", "goals", "tasks",
+    "departments", "mio_assessment", "statuses", "products", "problem_concentration", "management_attention", "final_assessment",
 )
 
 TOPIC_TO_BLOCK = {
     "scope": "scope", "general": "overall_state", "dynamics": "dynamics", "yoy": "year_over_year",
     "coverage": "coverage", "missing": "coverage", "goal": "goals", "task": "tasks",
     "department": "departments", "departments": "departments", "statuses": "statuses", "products": "products",
-    "problems": "problem_concentration", "risk": "problem_concentration", "conflict": "problem_concentration", "management_attention": "management_attention",
+    "problems": "problem_concentration", "risk": "problem_concentration", "conflict": "problem_concentration", "mio": "mio_assessment", "management_attention": "management_attention",
 }
 
 DEPTH_SENTENCES = {
@@ -120,7 +120,7 @@ def build_text_plan(
     mix = _select_scenario_mix(scenarios)
     primary = mix[0].code if mix else "default"
 
-    available: set[str] = {"scope", "overall_state", "final_assessment"}
+    available: set[str] = {"overall_state", "final_assessment"}
     if ctx.period_dynamics is not None and not ctx.period_dynamics.empty:
         available.add("dynamics")
     if ctx.yoy_comparison is not None and not ctx.yoy_comparison.empty:
@@ -131,20 +131,37 @@ def build_text_plan(
         available.add("tasks")
     if ctx.department_progress is not None and not ctx.department_progress.empty and ctx.sample_size > 1:
         available.add("departments")
-    if ctx.status_counts is not None and not ctx.status_counts.empty:
+    # Status/product breakdowns are supporting dimensions, not default prose.
+    # Include them only when they explain a material structure or change.
+    status_items = grouped.get("statuses", [])
+    if ctx.status_counts is not None and not ctx.status_counts.empty and any(
+        item.importance >= 65 or bool(item.facts.get("period_comparison")) for item in status_items
+    ):
         available.add("statuses")
-    if ctx.product_progress is not None and len(ctx.product_progress) > 1:
+    product_items = grouped.get("products", [])
+    if ctx.product_progress is not None and len(ctx.product_progress) > 1 and any(
+        item.importance >= 60
+        and (
+            float(item.facts.get("gap") or 0) >= 10
+            or float(item.facts.get("top_problem_share") or 0) >= 0.40
+            or float(item.facts.get("top_missing_share") or 0) >= 0.40
+            or float(item.facts.get("largest_share") or 0) >= 0.50
+        )
+        for item in product_items
+    ):
         available.add("products")
     if ctx.metric("coverage") is not None or int(ctx.metric("no_data") or 0) > 0:
         available.add("coverage")
     if grouped.get("problem_concentration") or any(f.topic == "problems" for f in findings):
         available.add("problem_concentration")
+    if grouped.get("mio_assessment"):
+        available.add("mio_assessment")
     if grouped.get("management_attention"):
         available.add("management_attention")
 
     # Tiny selections must not manufacture portfolio/distribution analysis.
     if complexity == "tiny":
-        available &= {"scope", "overall_state", "dynamics", "final_assessment"}
+        available &= {"overall_state", "dynamics", "final_assessment"}
     elif complexity == "narrow":
         # Keep only genuinely available selected-entity detail, not every taxonomy block.
         if len(ctx.goal_progress) <= 1:
@@ -165,19 +182,19 @@ def build_text_plan(
     order_index = {b: i for i, b in enumerate(BASE_BLOCK_ORDER)}
     ordered = sorted(available, key=lambda b: (order_index.get(b, 99) - min(preference_score.get(b, 0) / 30, 2.0), order_index.get(b, 99)))
     # Always begin with scope and finish with synthesis.
-    ordered = [b for b in ordered if b not in {"scope", "overall_state", "final_assessment"}]
+    ordered = [b for b in ordered if b not in {"overall_state", "final_assessment"}]
     ordered.insert(0, "overall_state")
-    ordered.insert(0, "scope")
     ordered.append("final_assessment")
 
     target_min, target_max = _targets(complexity)
     # For narrow/tiny notes, cap paragraphs; for rich contexts, include all useful blocks up to target max.
     if len(ordered) > target_max:
-        mandatory = {"scope", "overall_state", "final_assessment"}
+        mandatory = {"overall_state", "final_assessment"}
         if "dynamics" in available: mandatory.add("dynamics")
         if "coverage" in available: mandatory.add("coverage")
         if "goals" in available: mandatory.add("goals")
         if "departments" in available and complexity in {"wide", "very_wide"}: mandatory.add("departments")
+        if "mio_assessment" in available: mandatory.add("mio_assessment")
         if "management_attention" in available: mandatory.add("management_attention")
         scored = sorted(
             [b for b in ordered if b not in mandatory],

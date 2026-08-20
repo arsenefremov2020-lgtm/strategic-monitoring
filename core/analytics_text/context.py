@@ -109,6 +109,10 @@ def build_context(
     period_dynamics: pd.DataFrame,
     yoy_comparison: pd.DataFrame,
     active: pd.DataFrame,
+    mio_goal_evaluation: pd.DataFrame | None = None,
+    mio_goal_task_evaluation: pd.DataFrame | None = None,
+    mio_measure_evaluation: pd.DataFrame | None = None,
+    mio_financing: pd.DataFrame | None = None,
 ) -> AnalyticsContext:
     goal_progress = safe_dataframe(goal_progress)
     task_progress = safe_dataframe(task_progress)
@@ -118,6 +122,10 @@ def build_context(
     period_dynamics = safe_dataframe(period_dynamics)
     yoy_comparison = safe_dataframe(yoy_comparison)
     active = safe_dataframe(active)
+    mio_goal_evaluation = safe_dataframe(mio_goal_evaluation)
+    mio_goal_task_evaluation = safe_dataframe(mio_goal_task_evaluation)
+    mio_measure_evaluation = safe_dataframe(mio_measure_evaluation)
+    mio_financing = safe_dataframe(mio_financing)
     frames = {
         "goal": goal_progress,
         "task": task_progress,
@@ -126,6 +134,10 @@ def build_context(
         "status": status_counts,
         "dynamics": period_dynamics,
         "yoy": yoy_comparison,
+        "mio_goals": mio_goal_evaluation,
+        "mio_goal_tasks": mio_goal_task_evaluation,
+        "mio_measures": mio_measure_evaluation,
+        "mio_financing": mio_financing,
     }
     return AnalyticsContext(
         filters=dict(filters),
@@ -139,4 +151,8 @@ def build_context(
         yoy_comparison=yoy_comparison,
         active=active,
         signature=build_signature(filters, metrics, frames),
+        mio_goal_evaluation=mio_goal_evaluation,
+        mio_goal_task_evaluation=mio_goal_task_evaluation,
+        mio_measure_evaluation=mio_measure_evaluation,
+        mio_financing=mio_financing,
     )

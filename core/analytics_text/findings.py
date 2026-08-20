@@ -343,7 +343,16 @@ def _status_finding(ctx: AnalyticsContext) -> AnalyticalFinding | None:
                 "previous_shares": prev_shares, "latest_shares": latest_shares, "share_changes_pp": changes,
             }
 
-    importance = 68 if "period_comparison" in facts else (45 if total <= 5 else 62)
+    # Statuses are a supporting analytical dimension. Treat them as important
+    # only when the distribution itself is materially concentrated or changes
+    # noticeably between periods; otherwise they should not force a prose block.
+    importance = 45 if total <= 5 else 48
+    if facts.get("dominant_share", 0) >= 0.60:
+        importance = max(importance, 65)
+    if "period_comparison" in facts:
+        changes = facts["period_comparison"].get("share_changes_pp", {}) or {}
+        max_change = max((abs(float(v)) for v in changes.values()), default=0.0)
+        importance = max(importance, 68 if max_change >= 5.0 else 55)
     return _f("status_structure", "statuses", importance, facts=facts)
 
 
@@ -786,13 +795,104 @@ def _management_priorities(ctx: AnalyticsContext) -> AnalyticalFinding | None:
     return _f("management_priorities", "management_attention", 100, "warning", facts={"priorities": public}, question="what_requires_management_attention")
 
 
+
+def _mio_findings(ctx: AnalyticsContext) -> list[AnalyticalFinding]:
+    """Interpret reusable MіO outputs without changing the MіO methodology."""
+    out: list[AnalyticalFinding] = []
+    goals = ctx.mio_goal_evaluation.copy() if ctx.mio_goal_evaluation is not None else pd.DataFrame()
+    years = sorted({int(y) for y in (ctx.filters.get("years", []) or []) if str(y).isdigit()})
+    year = max(years) if years else 2026
+    int_col, meas_col, task_col, prog_col = (f"Інтеграл {year}", f"Заходи {year}", f"Завдання {year}", f"Прогрес {year}")
+    if not goals.empty and int_col in goals.columns:
+        frame = goals.copy()
+        for c in (int_col, meas_col, task_col, prog_col):
+            if c in frame.columns:
+                frame[c] = pd.to_numeric(frame[c], errors="coerce")
+        valid = frame.dropna(subset=[int_col]).copy()
+        if not valid.empty:
+            best = valid.sort_values(int_col, ascending=False).iloc[0]
+            worst = valid.sort_values(int_col, ascending=True).iloc[0]
+            facts = {
+                "year": year, "goals_count": int(len(valid)),
+                "average_integral": float(valid[int_col].mean()),
+                "best_code": str(best.get("Код", "")), "best_name": str(best.get("Ціль", "")), "best_integral": float(best[int_col]),
+                "worst_code": str(worst.get("Код", "")), "worst_name": str(worst.get("Ціль", "")), "worst_integral": float(worst[int_col]),
+                "gap": float(best[int_col] - worst[int_col]),
+            }
+            if meas_col in valid.columns: facts["average_measures"] = float(valid[meas_col].dropna().mean()) if valid[meas_col].notna().any() else None
+            if task_col in valid.columns: facts["average_tasks"] = float(valid[task_col].dropna().mean()) if valid[task_col].notna().any() else None
+            if prog_col in valid.columns: facts["average_progress"] = float(valid[prog_col].dropna().mean()) if valid[prog_col].notna().any() else None
+            divergences=[]
+            for _, row in valid.iterrows():
+                m=row.get(meas_col) if meas_col in valid.columns else None; integ=row.get(int_col); prog=row.get(prog_col) if prog_col in valid.columns else None
+                if pd.notna(m) and pd.notna(integ):
+                    gap=float(m)-float(integ)
+                    if abs(gap)>=10:
+                        divergences.append({"code":str(row.get("Код","")),"name":str(row.get("Ціль","")),"measure_execution":float(m),"integral":float(integ),"gap":gap,"progress":float(prog) if pd.notna(prog) else None})
+            facts["divergences"] = sorted(divergences, key=lambda x: abs(x["gap"]), reverse=True)[:4]
+            out.append(_f("mio_integral_profile", "mio", 94, "neutral", facts=facts, question="how_does_execution_translate_to_strategic_result"))
+            if divergences:
+                out.append(_f("mio_execution_result_divergence", "mio", 96, "warning", facts={"year":year,"items":facts["divergences"]}, question="where_does_measure_execution_not_translate_to_result"))
+    # Task-level MIO indicators: compare indicator progress with monitoring
+    # execution only when both are available for the same task code.
+    gt = ctx.mio_goal_task_evaluation.copy() if ctx.mio_goal_task_evaluation is not None else pd.DataFrame()
+    score_col = f"Оцінка {year}"
+    if not gt.empty and {"Рівень", "Код", score_col}.issubset(gt.columns):
+        tasks = gt[gt["Рівень"].astype(str).eq("task")].copy()
+        tasks[score_col] = pd.to_numeric(tasks[score_col], errors="coerce")
+        task_scores = tasks.groupby(tasks["Код"].astype(str))[score_col].mean().dropna()
+        if not task_scores.empty:
+            facts = {
+                "year": year, "tasks_count": int(len(task_scores)),
+                "average_task_indicator_progress": float(task_scores.mean()),
+                "best_task": str(task_scores.idxmax()), "best_task_progress": float(task_scores.max()),
+                "worst_task": str(task_scores.idxmin()), "worst_task_progress": float(task_scores.min()),
+                "gap": float(task_scores.max() - task_scores.min()),
+            }
+            divergences=[]
+            tp = ctx.task_progress.copy() if ctx.task_progress is not None else pd.DataFrame()
+            if not tp.empty and "task_code" in tp.columns and "Виконання" in tp.columns:
+                tp = tp.copy(); tp["_code"] = tp["task_code"].astype(str); tp["_exec"] = pd.to_numeric(tp["Виконання"], errors="coerce")
+                execution_by_task = tp.dropna(subset=["_exec"]).groupby("_code")["_exec"].mean()
+                for code, progress in task_scores.items():
+                    if code in execution_by_task.index:
+                        execution=float(execution_by_task.loc[code]); gap=execution-float(progress)
+                        if abs(gap) >= 10:
+                            divergences.append({"code":code,"execution":execution,"indicator_progress":float(progress),"gap":gap})
+            facts["divergences"] = sorted(divergences, key=lambda x: abs(x["gap"]), reverse=True)[:4]
+            out.append(_f("mio_task_indicator_profile", "mio", 86, "neutral", facts=facts, question="how_do_task_results_compare_with_execution"))
+            if divergences:
+                out.append(_f("mio_task_execution_result_divergence", "mio", 92, "warning", facts={"year":year,"items":facts["divergences"]}, question="where_do_task_indicators_diverge_from_execution"))
+
+    measures = ctx.mio_measure_evaluation.copy() if ctx.mio_measure_evaluation is not None else pd.DataFrame()
+    if not measures.empty and "Факт/План, %" in measures.columns:
+        ratios = pd.to_numeric(measures["Факт/План, %"], errors="coerce").dropna()
+        if not ratios.empty:
+            out.append(_f("mio_measure_profile", "mio", 72, "neutral", facts={
+                "year":year, "measures_count":int(len(measures)), "evaluated_measures":int(len(ratios)),
+                "average_fact_plan":float(ratios.mean()), "median_fact_plan":float(ratios.median()),
+            }, question="what_is_measure_level_mio_result"))
+
+    fin = ctx.mio_financing.copy() if ctx.mio_financing is not None else pd.DataFrame()
+    if not fin.empty:
+        for c in ("% виконання", "Стан виконання заходу, %", "План, млрд грн", "Факт, млрд грн", "Коефіцієнт еластичності"):
+            if c in fin.columns: fin[c]=pd.to_numeric(fin[c], errors="coerce")
+        paired=fin.dropna(subset=[c for c in ["% виконання","Стан виконання заходу, %"] if c in fin.columns]).copy() if all(c in fin.columns for c in ["% виконання","Стан виконання заходу, %"]) else pd.DataFrame()
+        facts={"rows":int(len(fin)),"plan_total":float(fin["План, млрд грн"].sum()) if "План, млрд грн" in fin.columns and fin["План, млрд грн"].notna().any() else None,"fact_total":float(fin["Факт, млрд грн"].sum()) if "Факт, млрд грн" in fin.columns and fin["Факт, млрд грн"].notna().any() else None}
+        if not paired.empty:
+            paired["_gap"]=paired["% виконання"]-paired["Стан виконання заходу, %"]
+            facts["paired_count"]=int(len(paired)); facts["avg_financial_execution"]=float(paired["% виконання"].mean()); facts["avg_physical_execution"]=float(paired["Стан виконання заходу, %"].mean())
+            facts["largest_gaps"]=paired.assign(_abs=paired["_gap"].abs()).sort_values("_abs",ascending=False).head(4)[[c for c in ["Захід","Назва заходу","% виконання","Стан виконання заходу, %","_gap"] if c in paired.columns or c=="_gap"]].to_dict("records")
+        out.append(_f("mio_financing_profile", "mio", 78, "neutral", facts=facts, question="how_does_financing_compare_with_physical_result"))
+    return out
+
 def derive_findings(ctx: AnalyticsContext, signals: list[Signal]) -> tuple[list[AnalyticalQuestion], list[AnalyticalFinding]]:
     """Close the analytical loop using all dimensions already available in context."""
     questions = list(QUESTIONS)
     findings: list[AnalyticalFinding] = []
     execution = _num(ctx.metric("completion"))
     coverage = _num(ctx.metric("coverage"))
-    findings.append(_f("scope_profile", "scope", 60, facts={
+    findings.append(_f("scope_profile", "scope", 25, facts={
         "rows": ctx.row_count, "measures": ctx.sample_size, "goals": _int(ctx.metric("goals")), "tasks": _int(ctx.metric("tasks")),
         "departments": int(len(ctx.department_progress)) if ctx.department_progress is not None else 0,
         "products": int(len(ctx.product_progress)) if ctx.product_progress is not None else 0,
@@ -829,6 +929,7 @@ def derive_findings(ctx: AnalyticsContext, signals: list[Signal]) -> tuple[list[
     sd = _ssp_drilldown(ctx)
     if sd: findings.append(sd)
     findings.extend(_conflict_findings(ctx, findings, signals))
+    findings.extend(_mio_findings(ctx))
     mp = _management_priorities(ctx)
     if mp: findings.append(mp)
 
@@ -854,7 +955,8 @@ SUPPORTED_FINDING_CODES = frozenset({
     "risk_structure", "execution_goal_alignment", "execution_goal_divergence",
     "persistent_goal_problems", "persistent_goal_missing", "persistent_department_problems", "persistent_department_missing",
     "conflict_execution_up_coverage_down", "conflict_execution_down_coverage_up", "conflict_execution_up_problems_up",
-    "stable_aggregate_hidden_internal_movement",
+    "stable_aggregate_hidden_internal_movement", "mio_integral_profile", "mio_execution_result_divergence",
+    "mio_task_indicator_profile", "mio_task_execution_result_divergence", "mio_measure_profile", "mio_financing_profile",
 } | {
     f"{kind}_{suffix}"
     for kind in ("goal", "task", "department")

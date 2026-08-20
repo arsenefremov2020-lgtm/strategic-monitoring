@@ -8,6 +8,59 @@ import pandas as pd
 
 from .models import AnalyticsContext
 
+_MISSING_TEXT = {"", "—", "–", "-", "н/д", "n/a", "na", "none", "null", "nan"}
+
+
+def safe_number(value: Any) -> float | None:
+    """Normalize a scalar to float without raising on production missing values."""
+    if value is None:
+        return None
+    if isinstance(value, str) and value.strip().lower() in _MISSING_TEXT:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        return None
+    parsed = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+    return None if pd.isna(parsed) else float(parsed)
+
+
+def safe_int(value: Any, default: int = 0) -> int:
+    number = safe_number(value)
+    return default if number is None else int(number)
+
+
+def safe_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str) and value.strip().lower() in _MISSING_TEXT:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        return ""
+    return str(value).strip()
+
+
+def safe_dataframe(frame: pd.DataFrame | None) -> pd.DataFrame:
+    """Return a detached production-safe frame; optional/missing values stay missing.
+
+    This layer intentionally does not invent columns or recalculate KPI values. It
+    only converts common textual missing markers to ``pd.NA`` so downstream
+    analytics can use numeric coercion consistently.
+    """
+    if frame is None:
+        return pd.DataFrame()
+    out = frame.copy()
+    for column in out.columns:
+        if out[column].dtype == object or pd.api.types.is_string_dtype(out[column].dtype):
+            out[column] = out[column].map(
+                lambda value: pd.NA if isinstance(value, str) and value.strip().lower() in _MISSING_TEXT else value
+            )
+    return out
+
 
 def _normalise_scalar(value: Any) -> Any:
     if value is None:
@@ -57,6 +110,14 @@ def build_context(
     yoy_comparison: pd.DataFrame,
     active: pd.DataFrame,
 ) -> AnalyticsContext:
+    goal_progress = safe_dataframe(goal_progress)
+    task_progress = safe_dataframe(task_progress)
+    department_progress = safe_dataframe(department_progress)
+    product_progress = safe_dataframe(product_progress)
+    status_counts = safe_dataframe(status_counts)
+    period_dynamics = safe_dataframe(period_dynamics)
+    yoy_comparison = safe_dataframe(yoy_comparison)
+    active = safe_dataframe(active)
     frames = {
         "goal": goal_progress,
         "task": task_progress,
@@ -69,13 +130,13 @@ def build_context(
     return AnalyticsContext(
         filters=dict(filters),
         metrics=dict(metrics),
-        goal_progress=goal_progress.copy() if goal_progress is not None else pd.DataFrame(),
-        task_progress=task_progress.copy() if task_progress is not None else pd.DataFrame(),
-        department_progress=department_progress.copy() if department_progress is not None else pd.DataFrame(),
-        product_progress=product_progress.copy() if product_progress is not None else pd.DataFrame(),
-        status_counts=status_counts.copy() if status_counts is not None else pd.DataFrame(),
-        period_dynamics=period_dynamics.copy() if period_dynamics is not None else pd.DataFrame(),
-        yoy_comparison=yoy_comparison.copy() if yoy_comparison is not None else pd.DataFrame(),
-        active=active.copy() if active is not None else pd.DataFrame(),
+        goal_progress=goal_progress,
+        task_progress=task_progress,
+        department_progress=department_progress,
+        product_progress=product_progress,
+        status_counts=status_counts,
+        period_dynamics=period_dynamics,
+        yoy_comparison=yoy_comparison,
+        active=active,
         signature=build_signature(filters, metrics, frames),
     )

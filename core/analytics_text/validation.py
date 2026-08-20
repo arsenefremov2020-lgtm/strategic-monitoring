@@ -109,7 +109,18 @@ def allowed_numeric_values(
     return allowed
 
 
-def _has_allowed(value: float, allowed: set[float], tolerance: float = 0.12) -> bool:
+def _has_allowed(value: float, allowed: set[float], tolerance: float = 0.12, *, magnitude: bool = False) -> bool:
+    """Return whether a rendered number is supported by analytical facts.
+
+    ``magnitude=True`` is used for wording such as ``зменшилося на 4,2 в.п.``:
+    the source fact is legitimately ``-4.2`` while Ukrainian prose renders the
+    magnitude without a minus sign.  The previous validator compared ``+4.2``
+    only with signed facts and falsely rejected such sentences, which triggered
+    the production legacy fallback.
+    """
+    if magnitude:
+        target = abs(value)
+        return any(abs(target - abs(candidate)) <= tolerance for candidate in allowed)
     return any(abs(value - candidate) <= tolerance for candidate in allowed)
 
 
@@ -191,7 +202,7 @@ def validate_text(
             warnings.append(f"percentage not supported by analytical facts: {raw}%")
     for raw in re.findall(r"([+-]?\d+(?:,\d+)?)\s*в\.п\.", text):
         value = float(raw.replace(",", "."))
-        if not (_has_allowed(value, allowed) or _has_allowed(abs(value), allowed)):
+        if not _has_allowed(value, allowed, magnitude=True):
             warnings.append(f"delta not supported by analytical facts: {raw} в.п.")
     return warnings
 

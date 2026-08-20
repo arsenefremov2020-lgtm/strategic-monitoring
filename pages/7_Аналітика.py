@@ -568,6 +568,55 @@ def format_number_2(value):
     return f"{float(number):.2f}".rstrip("0").rstrip(".")
 
 
+def render_year_over_year_block(yoy_comparison):
+    """Render the year-to-year analytics block when comparison data is available."""
+    st.markdown(
+        """
+<div class="card">
+    <div class="card-title">Порівняння «рік до року»</div>
+    <div class="card-subtitle">
+        Порівняння сформовано за тією самою вибіркою, що й аналітична довідка.
+    </div>
+""",
+        unsafe_allow_html=True,
+    )
+
+    if yoy_comparison.empty:
+        st.info("Для порівняння «рік до року» потрібні дані щонайменше за два роки в межах обраної вибірки.")
+        st.markdown("</div>", unsafe_allow_html=True)
+        return
+
+    render_readonly_table(
+        yoy_comparison,
+        visual_style="signal",
+        variant="analytics",
+        metric_columns={"Попередній рік": "blue", "Поточний рік": "blue"},
+        delta_columns={"Зміна"},
+        formatters={
+            "Попередній рік": format_number_2,
+            "Поточний рік": format_number_2,
+            "Зміна": format_number_2,
+        },
+    )
+
+    chart_data = yoy_comparison[yoy_comparison["Показник"].isin([
+        "Покриття моніторингом", "Рівень виконання СП"
+    ])].copy()
+    if not chart_data.empty:
+        fig = px.bar(
+            chart_data,
+            x="Показник",
+            y="Зміна",
+            color="Період порівняння",
+            barmode="group",
+            title="Зміна ключових показників рік до року",
+            labels={"Зміна": "Зміна, в.п."},
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
 def apply_dimension_filters(data, selected_ssp, selected_deputies, selected_goals, selected_tasks, selected_product_types):
     filtered = data.copy()
 

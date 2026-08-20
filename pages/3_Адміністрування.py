@@ -67,6 +67,11 @@ from html import escape as _esc
 current_user = page_setup("Адміністрування", page_name="Адміністрування")
 supabase = get_supabase_client()
 _is_superadmin_current = is_super_admin_user(current_user)
+# Значення "*" у assigned_ssp_indexes для super_admin перетворюється завантажувачем
+# на global_superadmin_view=True. Це окрема область ПЕРЕГЛЯДУ, не ланка погодження.
+_is_global_superadmin_view = bool(
+    _is_superadmin_current and current_user.get("global_superadmin_view", False)
+)
 st.markdown("""
 <style>
 header[data-testid="stHeader"] {
@@ -2367,7 +2372,7 @@ def _render_closeout_superadmin_case(record) -> None:
 
 def _render_superadmin_bottom_tools():
     """Розсилка й архів у нижній частині основного режиму супер-адміна."""
-    if not is_super_admin_user(current_user):
+    if not is_super_admin_user(current_user) or _is_global_superadmin_view:
         return
 
     with st.expander("Розсилка: недоставлені листи", expanded=False):
@@ -3122,23 +3127,28 @@ _all_access_df["_source_id"] = _all_access_df.get("id", "")
 _all_access_df["_display_id"] = _all_access_df.get("id", "")
 
 if _is_superadmin_current:
-    if _all_access_df.empty:
-        _normal_superadmin_df = _all_access_df.copy()
+    if _is_global_superadmin_view:
+        # Глобальний супер-адмін бачить весь доступний масив monitoring_requests.
+        # Він не додається до approval_chain і не отримує pending closeout як власну чергу.
+        df = _all_access_df.copy()
     else:
-        _normal_superadmin_df = _all_access_df[
-            _all_access_df.apply(_request_mentions_current_superadmin, axis=1)
-        ].copy()
-    _pending_closeout_df = _pending_closeouts_for_current_superadmin(
-        load_closeout_requests()
-    )
-    _superadmin_frames = [
-        frame for frame in (_normal_superadmin_df, _pending_closeout_df)
-        if frame is not None and not frame.empty
-    ]
-    df = (
-        pd.concat(_superadmin_frames, ignore_index=True, sort=False)
-        if _superadmin_frames else _all_access_df.iloc[0:0].copy()
-    )
+        if _all_access_df.empty:
+            _normal_superadmin_df = _all_access_df.copy()
+        else:
+            _normal_superadmin_df = _all_access_df[
+                _all_access_df.apply(_request_mentions_current_superadmin, axis=1)
+            ].copy()
+        _pending_closeout_df = _pending_closeouts_for_current_superadmin(
+            load_closeout_requests()
+        )
+        _superadmin_frames = [
+            frame for frame in (_normal_superadmin_df, _pending_closeout_df)
+            if frame is not None and not frame.empty
+        ]
+        df = (
+            pd.concat(_superadmin_frames, ignore_index=True, sort=False)
+            if _superadmin_frames else _all_access_df.iloc[0:0].copy()
+        )
 else:
     df = _all_access_df.copy()
 
@@ -3366,7 +3376,12 @@ def _render_locked_correction_mode(source_df: pd.DataFrame):
 # РЕЖИМ РОБОТИ АДМІНІСТРУВАННЯ
 # ──────────────────────────────────────────────
 
-if _is_superadmin_current:
+if _is_global_superadmin_view:
+    # Глобальний супер-адмін працює лише в режимі огляду; службові режими зміни даних приховані.
+    _admin_work_modes = [
+        "Основний режим координатора",
+    ]
+elif _is_superadmin_current:
     _admin_work_modes = [
         "Основний режим координатора",
         "Коригування закритих заявок",
@@ -3415,7 +3430,11 @@ if (
         st.session_state.pop("superadmin_request_decision_notice", None)
         pass  # no explicit rerun: the triggering user action completes in this run
 
-if _is_superadmin_current and admin_work_mode == "Основний режим координатора":
+if (
+    _is_superadmin_current
+    and not _is_global_superadmin_view
+    and admin_work_mode == "Основний режим координатора"
+):
     with st.expander(
         "Заявки закріплених адміністраторів (ті, що на розгляді)",
         expanded=False,
@@ -3970,7 +3989,9 @@ if admin_work_mode == "Ручне закриття заходів":
     st.stop()
 
 if df.empty:
-    if _is_superadmin_current:
+    if _is_global_superadmin_view:
+        st.warning("Наразі немає заявок, доступних для глобального перегляду.")
+    elif _is_superadmin_current:
         st.warning("Наразі немає заявок, що стосуються вашої ланки або очікують вашого рішення.")
     else:
         st.warning(
@@ -3983,7 +4004,8 @@ if df.empty:
 
 
 if _is_superadmin_current:
-    # Для супер-адміна діє вже локально звужений набір без оглядових фільтрів.
+    # Для звичайного супер-адміна це локально звужений набір його маршруту.
+    # Для global_superadmin_view — повний набір заявок усіх координаторів.
     filtered = df.copy()
 else:
     attention_for_quick = build_attention_summary(df)
@@ -4202,7 +4224,9 @@ else:
         st.caption(f"Знайдено заявок: {len(filtered)}")
 
 if filtered.empty:
-    if _is_superadmin_current:
+    if _is_global_superadmin_view:
+        st.info("Наразі немає заявок, доступних для глобального перегляду.")
+    elif _is_superadmin_current:
         st.info("Наразі немає заявок, що стосуються вашої ланки або очікують вашого рішення.")
     else:
         st.info("За обраними фільтрами заявок не знайдено.")
@@ -4280,12 +4304,19 @@ if not queue_df.empty:
 # ──────────────────────────────────────────────
 
 # Вибір має реагувати одразу, тому це стилізований контейнер, а не st.form.
-_selectable = queue_df if not queue_df.empty else filtered.iloc[0:0]
+_selectable = (
+    filtered.copy()
+    if _is_global_superadmin_view
+    else (queue_df if not queue_df.empty else filtered.iloc[0:0])
+)
 
 if _selectable.empty:
     with st.container(border=True):
         st.markdown('<div class="filter-title">Вибір заявки</div>', unsafe_allow_html=True)
-        st.info("Наразі немає заявок, що очікують саме вашого рішення.")
+        if _is_global_superadmin_view:
+            st.info("Наразі немає заявок для перегляду.")
+        else:
+            st.info("Наразі немає заявок, що очікують саме вашого рішення.")
     _render_superadmin_bottom_tools()
     render_footer()
     st.stop()
@@ -4307,12 +4338,17 @@ for row_index, row in _selectable.iterrows():
 
 with st.container(border=True):
     st.markdown('<div class="filter-title">Вибір заявки</div>', unsafe_allow_html=True)
+    _selection_label = (
+        "Оберіть заявку для перегляду"
+        if _is_global_superadmin_view
+        else "Оберіть заявку для перегляду та погодження"
+    )
     st.markdown(
-        '<div class="filter-field-label">Оберіть заявку для перегляду та погодження</div>',
+        f'<div class="filter-field-label">{_selection_label}</div>',
         unsafe_allow_html=True,
     )
     selected_request_key = st.selectbox(
-        "Оберіть заявку для перегляду та погодження",
+        _selection_label,
         options=list(selected_option_labels),
         format_func=lambda key: selected_option_labels[key],
         label_visibility="collapsed",
@@ -4378,65 +4414,70 @@ if _is_conflict and _req_kind != "indicator":
         st.write("Статус: `Закрито вручну (= Виконано)`")
         st.caption("Деталі підстави — у розділі «Закриття заходу вручну» нижче.")
 
-    _cfb1, _cfb2 = st.columns(2)
-    with _cfb1:
-        if st.button("✅ Дані збігаються — погодити заявку", key=f"conflict_ok_{selected_id}", use_container_width=True):
-            try:
-                _conflict_next_status, _conflict_next_stage = schemes.status_after_regulator(
-                    _req_chain, _req_stage,
-                )
-                approve_request_step(
-                    request_id=int(selected_id),
-                    expected_status=approval_status,
-                    expected_chain_stage=int(_req_stage),
-                    new_status=_conflict_next_status,
-                    new_chain_stage=int(_conflict_next_stage),
-                    approval_chain=(schemes.chain_to_json(_req_chain) if _req_chain else None),
-                    comment="Погоджено: дані заявки збігаються з ручним закриттям заходу.",
-                    action="Погодження заявки (збіг із ручним закриттям)",
-                    user=current_user,
-                    created_by="Координатор / погодження збігу з ручним закриттям",
-                )
-                st.success(
-                    "Заявку погоджено координатором; "
-                    + (
-                        "її передано раніше обраному керівнику."
-                        if _conflict_next_status == schemes.STATUS_MANAGER_REVIEW
-                        else "вона очікує вибору керівника."
-                    )
-                )
-                monitoring_data.invalidate_monitoring_cache()
-                pass  # no explicit rerun: the triggering user action completes in this run
-            except TransitionRejected as exc:
-                st.error(exc.message)
-            except Exception as exc:
-                show_incident(exc, context="Атомарне погодження заявки при збігу з ручним закриттям")
-    with _cfb2:
-        _dispute_note = st.text_input("Опис розбіжності", key=f"dispute_note_{selected_id}",
-                                      placeholder="Наприклад: у заявці факт 40%, захід закрито як виконаний")
-        if st.button("⛔ Є розбіжність — передати Супер-адміну", key=f"conflict_bad_{selected_id}", use_container_width=True):
-            if not clean(_dispute_note):
-                st.error("Опишіть розбіжність перед передачею супер-адміну.")
-            else:
+    if _is_global_superadmin_view:
+        st.info(
+            "Глобальний режим перегляду: рішення щодо цієї заявки виконують лише учасники її маршруту погодження."
+        )
+    else:
+        _cfb1, _cfb2 = st.columns(2)
+        with _cfb1:
+            if st.button("✅ Дані збігаються — погодити заявку", key=f"conflict_ok_{selected_id}", use_container_width=True):
                 try:
-                    _co = (
-                        supabase.table("closeout_requests").select("id")
-                        .eq("strat_code", selected_code).eq("period_year", year_to_db(_req_year))
-                        .eq("approval_status", "Підтверджено").limit(1).execute()
+                    _conflict_next_status, _conflict_next_stage = schemes.status_after_regulator(
+                        _req_chain, _req_stage,
                     )
-                    if _co.data:
-                        supabase.table("closeout_requests").update({
-                            "dispute_request_id": int(selected_id),
-                            "dispute_note": clean(_dispute_note),
-                            "dispute_status": "На розгляді",
-                        }).eq("id", int(_co.data[0]["id"])).execute()
-                    write_log(selected_id, "Розбіжність із ручним закриттям — передано Супер-адміну",
-                              approval_status, approval_status, clean(_dispute_note))
-                    st.warning("Розбіжність зафіксовано та передано супер-адміну.")
+                    approve_request_step(
+                        request_id=int(selected_id),
+                        expected_status=approval_status,
+                        expected_chain_stage=int(_req_stage),
+                        new_status=_conflict_next_status,
+                        new_chain_stage=int(_conflict_next_stage),
+                        approval_chain=(schemes.chain_to_json(_req_chain) if _req_chain else None),
+                        comment="Погоджено: дані заявки збігаються з ручним закриттям заходу.",
+                        action="Погодження заявки (збіг із ручним закриттям)",
+                        user=current_user,
+                        created_by="Координатор / погодження збігу з ручним закриттям",
+                    )
+                    st.success(
+                        "Заявку погоджено координатором; "
+                        + (
+                            "її передано раніше обраному керівнику."
+                            if _conflict_next_status == schemes.STATUS_MANAGER_REVIEW
+                            else "вона очікує вибору керівника."
+                        )
+                    )
                     monitoring_data.invalidate_monitoring_cache()
                     pass  # no explicit rerun: the triggering user action completes in this run
+                except TransitionRejected as exc:
+                    st.error(exc.message)
                 except Exception as exc:
-                    show_incident(exc, context="Фіксація розбіжності з ручним закриттям")
+                    show_incident(exc, context="Атомарне погодження заявки при збігу з ручним закриттям")
+        with _cfb2:
+            _dispute_note = st.text_input("Опис розбіжності", key=f"dispute_note_{selected_id}",
+                                          placeholder="Наприклад: у заявці факт 40%, захід закрито як виконаний")
+            if st.button("⛔ Є розбіжність — передати Супер-адміну", key=f"conflict_bad_{selected_id}", use_container_width=True):
+                if not clean(_dispute_note):
+                    st.error("Опишіть розбіжність перед передачею супер-адміну.")
+                else:
+                    try:
+                        _co = (
+                            supabase.table("closeout_requests").select("id")
+                            .eq("strat_code", selected_code).eq("period_year", year_to_db(_req_year))
+                            .eq("approval_status", "Підтверджено").limit(1).execute()
+                        )
+                        if _co.data:
+                            supabase.table("closeout_requests").update({
+                                "dispute_request_id": int(selected_id),
+                                "dispute_note": clean(_dispute_note),
+                                "dispute_status": "На розгляді",
+                            }).eq("id", int(_co.data[0]["id"])).execute()
+                        write_log(selected_id, "Розбіжність із ручним закриттям — передано Супер-адміну",
+                                  approval_status, approval_status, clean(_dispute_note))
+                        st.warning("Розбіжність зафіксовано та передано супер-адміну.")
+                        monitoring_data.invalidate_monitoring_cache()
+                        pass  # no explicit rerun: the triggering user action completes in this run
+                    except Exception as exc:
+                        show_incident(exc, context="Фіксація розбіжності з ручним закриттям")
 
 # ──────────────────────────────────────────────
 # РІШЕННЯ АДМІНІСТРАТОРА
@@ -4487,6 +4528,7 @@ _is_waiting_manager_edit = bool(
 )
 _is_super_turn = bool(
     _current_role == ROLE_SUPER_ADMIN
+    and not _is_global_superadmin_view
     and approval_status == schemes.STATUS_SUPERADMIN_REVIEW
     and _current_waiting_stage is not None
     and _stage_matches_current_superadmin(_current_waiting_stage, current_user)

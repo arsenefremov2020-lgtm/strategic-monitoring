@@ -12,7 +12,7 @@ from core.timeutils import now_kyiv
 
 import logging
 from datetime import datetime
-from typing import Callable, TypeVar
+from typing import Any, Callable, Mapping, TypeVar
 
 import streamlit as st
 
@@ -27,9 +27,22 @@ def create_incident_code() -> str:
     return now_kyiv().strftime("%Y%m%d-%H%M%S")
 
 
-def log_exception(context: str, error: BaseException, *, incident_code: str | None = None) -> str:
-    """Log a full traceback and return the incident code used in the log."""
+def log_exception(
+    context: str,
+    error: BaseException,
+    *,
+    incident_code: str | None = None,
+    diagnostics: Mapping[str, Any] | None = None,
+) -> str:
+    """Log a full traceback and return the exact incident code used.
+
+    ``incident_code`` lets a caller create a stable user-facing code first and
+    guarantees that the same code is present in the traceback log. Optional
+    diagnostics are logged on the same incident for developer/QA inspection.
+    """
     code = incident_code or create_incident_code()
+    if diagnostics:
+        logger.error("INCIDENT %s | diagnostics=%r", code, dict(diagnostics))
     logger.error(
         "INCIDENT %s | %s | %s: %s",
         code,

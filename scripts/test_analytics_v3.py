@@ -27,7 +27,7 @@ if "supabase" not in sys.modules:
     supabase_stub.create_client = lambda *a, **k: None
     sys.modules["supabase"] = supabase_stub
 
-from core import operational, periods as core_periods
+from core import operational, periods as core_periods, analytics_calculations
 from core.dashboard_breakdowns import (
     build_period_results, aggregate_plan, aggregate_objects, dynamics_frame,
     ssp_summary, deputy_summary, filter_results_by_ssp,
@@ -55,7 +55,7 @@ def _load_functions(*names):
         "aggregate_plan": aggregate_plan, "aggregate_objects": aggregate_objects,
         "dynamics_frame": dynamics_frame, "ssp_summary": ssp_summary, "deputy_summary": deputy_summary,
         "filter_results_by_ssp": filter_results_by_ssp, "plan_scores": plan_scores,
-        "risk_summary": risk_summary, "DEPUTY_MINISTER_BY_SSP": {}, "core_periods": core_periods, "escape": lambda v: v, "raw_value": lambda v: "" if v is None else str(v).strip(),
+        "risk_summary": risk_summary, "DEPUTY_MINISTER_BY_SSP": {}, "core_periods": core_periods, "analytics_calculations": analytics_calculations, "escape": lambda v: v, "raw_value": lambda v: "" if v is None else str(v).strip(),
     }
     exec(compile(ast.fix_missing_locations(module), str(ANALYTICS), "exec"), ns)
     return [ns[name] for name in names]
@@ -101,7 +101,7 @@ def test_super_admin_only_guard_is_early():
 
 def test_canonical_period_results_and_no_legacy_metrics():
     fn = ast.unparse(_function("prepare_analysis_context"))
-    assert "build_period_results" in fn
+    assert "analytics_calculations.prepare_analysis_context" in fn
     assert "prepare_period_slice" not in SRC
     assert "dashboard_metrics" not in SRC
     for legacy in ("performance_score", "expected_progress", "period_deviation"):
@@ -110,8 +110,10 @@ def test_canonical_period_results_and_no_legacy_metrics():
 
 def test_attention_uses_canonical_risk_mask():
     fn = ast.unparse(_function("_snapshot_rows_from_period_results"))
-    assert "attention_mask" in fn
-    assert "is_problem_status" in fn
+    assert "analytics_calculations.snapshot_rows_from_period_results" in fn
+    shared_src = (ROOT / "core" / "analytics_calculations.py").read_text(encoding="utf-8")
+    assert "attention_mask" in shared_src
+    assert "is_problem_status" in shared_src
 
 
 def test_synthetic_111_q3_q4():
@@ -318,9 +320,11 @@ def test_static_closure_audit():
     ]
     for token in forbidden: assert token not in SRC, token
     goal_fn=ast.unparse(_function("build_analytics_goal_summary"))
-    assert "average_by_tasks" in goal_fn and "latest_by_tasks" in goal_fn and "change_by_tasks" in goal_fn
+    assert "analytics_calculations.build_analytics_goal_summary" in goal_fn
+    shared_src=(ROOT / "core" / "analytics_calculations.py").read_text(encoding="utf-8")
+    assert "average_by_tasks" in shared_src and "latest_by_tasks" in shared_src and "change_by_tasks" in shared_src
     ssp_fn=ast.unparse(_function("build_analytics_ssp_summary"))
-    assert "base_results=" in ssp_fn
+    assert "analytics_calculations.build_analytics_ssp_summary" in ssp_fn and "base_results=base_results" in ssp_fn
 
 
 def test_flexible_execution_removed_and_risk_wording_is_canonical():
@@ -366,7 +370,9 @@ def test_cross_surface_parity_is_real_analytics_adapter():
 
 def test_selected_periods_are_explicit_pairs():
     fn = ast.unparse(_function("prepare_analysis_context"))
-    assert 'pairs = [(int(year), quarter)' in fn
+    assert "analytics_calculations.prepare_analysis_context" in fn
+    shared_src=(ROOT / "core" / "analytics_calculations.py").read_text(encoding="utf-8")
+    assert 'pairs = [(int(year), quarter)' in shared_src
 
 
 

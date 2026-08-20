@@ -1,3 +1,4 @@
+import os
 import re
 from datetime import datetime
 from io import BytesIO
@@ -1501,12 +1502,20 @@ analytics_text_context = build_analytics_text_context(
     active=active,
 )
 
+ANALYTICS_TEXT_DEBUG = str(os.getenv("ANALYTICS_TEXT_DEBUG", "")).strip().lower() in {"1", "true", "yes", "on"}
+analytics_text_engine_used = "new"
+analytics_text_engine_incident = ""
 try:
     analytical_text = generate_analytics_note(context=analytics_text_context)
 except Exception as exc:
-    # Safe backward-compatible fallback: keep the page/export usable, but log the
-    # technical failure for developers without exposing a traceback to users.
+    # Production keeps the legacy note only as an emergency availability path.
+    # In QA/debug the exception must remain visible so a programmer bug cannot
+    # masquerade as a merely weak analytical text.
     log_exception("Analytics rule-based text generator", exc)
+    analytics_text_engine_used = "legacy_fallback"
+    analytics_text_engine_incident = f"{type(exc).__name__}: {exc}"
+    if ANALYTICS_TEXT_DEBUG:
+        raise
     analytical_text = generate_analytical_text(
         active,
         filters,
@@ -1518,6 +1527,12 @@ except Exception as exc:
         status_counts,
         period_dynamics,
     )
+
+if ANALYTICS_TEXT_DEBUG:
+    if analytics_text_engine_used == "new":
+        st.caption("Text engine: NEW")
+    else:
+        st.caption(f"Text engine: LEGACY FALLBACK · Incident: {analytics_text_engine_incident}")
 
 
 # ============================================================

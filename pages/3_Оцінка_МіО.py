@@ -19,6 +19,7 @@ from core.text_utils import names_match, normalize_name
 from core.ui import load_css, render_readonly_table
 from core.excel_loader import read_excel_sheet
 from core import operational
+from core import mio_shared as mio_shared_calculations
 from core.closeouts import load_manual_closeouts, load_manual_closeout_records, manual_closeout_record_index
 from core.exports import fig_png_bytes, render_png_download, write_styled_excel, build_presentation_pdf
 from core.errors import log_cosmetic_error, show_warning
@@ -3586,6 +3587,19 @@ def build_financing_table(strat_df, monitoring_df, fin_index, year):
         })
 
     return pd.DataFrame(rows)
+
+
+
+# Shared calculation layer: all downstream MіO renderers use the same pure
+# calculation functions as Analytics. Local definitions above are retained only
+# for backward-compatible source readability; these bindings are the runtime
+# source of truth.
+build_mio_measures_table = mio_shared_calculations.build_mio_measures_table
+build_rv_measures_table = mio_shared_calculations.build_rv_measures_table
+build_rv_goals_table = mio_shared_calculations.build_rv_goals_table
+build_mio_goals_tasks_table = mio_shared_calculations.build_mio_goals_tasks_table
+build_integral_table = mio_shared_calculations.build_integral_table
+build_financing_table = mio_shared_calculations.build_financing_table
 
 
 def _fin_bln_cell(val):

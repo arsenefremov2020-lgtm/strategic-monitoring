@@ -28,6 +28,7 @@ from core.strategic_data import load_strat_matrix as core_load_strat_matrix
 from core import monitoring_data
 from core import statuses as core_statuses
 from core import operational
+from core import mio_shared
 from core import periods as core_periods
 from core.dashboard_breakdowns import (
     build_period_results, aggregate_plan, aggregate_objects, dynamics_frame,
@@ -95,7 +96,6 @@ header[data-testid="stHeader"] {
 }
 
 .header-box,
-.filter-box,
 .card,
 .report-box,
 .export-box,
@@ -120,8 +120,7 @@ header[data-testid="stHeader"] {
 }
 
 .header-subtitle,
-.card-subtitle,
-.filter-subtitle {
+.card-subtitle {
     font-size: 15px;
     color: #61708A;
     line-height: 1.55;
@@ -156,7 +155,6 @@ header[data-testid="stHeader"] {
     color: #8A6400;
 }
 
-.filter-box,
 .card,
 .export-box,
 .table-box {
@@ -165,7 +163,6 @@ header[data-testid="stHeader"] {
 }
 
 .card-title,
-.filter-title,
 .report-title {
     font-size: 21px;
     font-weight: 950;
@@ -173,48 +170,18 @@ header[data-testid="stHeader"] {
     margin-bottom: 8px;
 }
 
-.filter-box {
-    background: #F7F9FC;
-    border: 1px solid #DCE4F0;
-}
-
-.filter-section-title {
-    color: #132238;
-    font-size: 15px;
-    font-weight: 950;
-    margin: 14px 0 10px 0;
-    padding-bottom: 5px;
-    border-bottom: 1px solid rgba(148,163,184,0.35);
-}
-
-/* Stronger color for all report filters */
-[data-testid="stMain"] div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
-[data-testid="stMain"] div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div,
-[data-testid="stMain"] div[data-testid="stTextInput"] input {
-    background-color: #EAF1FF !important;
-    border: 1px solid #BFD3F2 !important;
-    border-radius: 10px !important;
-    min-height: 43px !important;
-    box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.08) !important;
-}
-
-[data-testid="stMain"] div[data-testid="stSelectbox"] label,
-[data-testid="stMain"] div[data-testid="stMultiSelect"] label,
-[data-testid="stMain"] div[data-testid="stTextInput"] label {
-    font-weight: 850 !important;
-    color: #132238 !important;
-}
+/* Filter fields, labels and controls intentionally inherit the single system template from assets/app.css, identical to Dashboard. */
 
 .alert-grid {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 14px;
-    margin: 14px 0 18px 0;
+    gap: 10px;
+    margin: 10px 0 14px 0;
 }
 
 .alert-card {
-    border-radius: 16px;
-    padding: 17px 18px;
+    border-radius: 12px;
+    padding: 11px 14px;
     border: 1px solid #DCE4F0;
     box-shadow: 0 8px 20px rgba(15,23,42,0.06);
 }
@@ -224,21 +191,21 @@ header[data-testid="stHeader"] {
     color: #61708A;
     font-weight: 900;
     line-height: 1.35;
-    min-height: 36px;
+    min-height: 30px;
 }
 
 .alert-value {
-    font-size: 28px;
+    font-size: 24px;
     color: #132238;
     font-weight: 950;
-    margin-top: 8px;
+    margin-top: 4px;
 }
 
 .alert-note {
     font-size: 12px;
     color: #61708A;
-    margin-top: 6px;
-    line-height: 1.3;
+    margin-top: 3px;
+    line-height: 1.25;
 }
 
 .alert-blue {
@@ -261,6 +228,35 @@ header[data-testid="stHeader"] {
     border-color: #DC4A4A;
 }
 
+.mio-summary-box {
+    background: #FFFFFF;
+    border: 1px solid #DCE4F0;
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin: 4px 0 14px 0;
+    box-shadow: 0 2px 10px rgba(15,23,42,0.04);
+}
+.mio-summary-title {
+    font-size: 13px;
+    font-weight: 900;
+    color: #032A63;
+    margin-bottom: 8px;
+}
+.mio-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 8px;
+}
+.mio-mini {
+    background: #F7F9FC;
+    border: 1px solid #E3E9F2;
+    border-radius: 9px;
+    padding: 8px 10px;
+    min-height: 58px;
+}
+.mio-mini span { display:block; color:#61708A; font-size:11px; font-weight:750; line-height:1.2; }
+.mio-mini b { display:block; color:#132238; font-size:20px; margin-top:4px; }
+
 .report-box {
     border-left: 7px solid #005BBB;
     padding: 24px 28px;
@@ -275,8 +271,8 @@ header[data-testid="stHeader"] {
 .report-text {
     font-size: 15px;
     line-height: 1.75;
-    color: #61708A;
-    text-align: justify;
+    color: #34445C;
+    text-align: left;
 }
 
 .report-meta {
@@ -307,6 +303,7 @@ header[data-testid="stHeader"] {
 }
 
 @media (max-width: 1100px) {
+    .mio-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .alert-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
@@ -1212,24 +1209,17 @@ st.markdown(
 )
 
 st.markdown(
-    f"""
+    """
 <div class="header-box">
-    <div class="header-title">Аналітичні відомості</div>
+    <div class="header-title">Аналітика</div>
     <div class="header-subtitle">
-        Формування управлінських матеріалів на основі результатів моніторингу й оцінювання стратегічних результатів
-        для аналізу тенденцій, виявлення відхилень та підготовки пропозицій щодо коригування Стратегічного плану.
-    </div>
-    <div class="badge-wrap">
-        <div class="badge">● Аналітична довідка</div>
-        <div class="badge">● Динаміка виконання</div>
-        <div class="badge">● Стратегічні цілі / завдання / ССП</div>
-        <div class="badge badge-green">● DOCX та Excel</div>
-        <div class="badge badge-yellow">● Оновлено: {now_kyiv().strftime('%d.%m.%Y %H:%M')}</div>
+        Автоматизований аналіз виконання Стратегічного плану, динаміки, структурних відхилень, результатів МіО та фінансової складової.
     </div>
 </div>
 """,
     unsafe_allow_html=True
 )
+
 
 
 # ============================================================
@@ -1240,26 +1230,7 @@ strat_df = load_strat_matrix()
 requests_df = ensure_request_columns(load_requests())
 workflow_logs = load_workflow_logs()
 analytics_read_at = kyiv_now()
-st.caption(data_read_caption(analytics_read_at))
 
-analytics_data_mode = st.radio(
-    "Джерело даних для аналітики",
-    operational.MODE_OPTIONS,
-    horizontal=True,
-    key="analytics_data_mode_v19",
-    help=operational.MODE_HELP,
-)
-if analytics_data_mode == operational.MODE_OPERATIONAL and not requests_df.empty:
-    _analytics_targets = operational.build_target_map(strat_df)
-    requests_df, _analytics_auto = operational.apply_operational_mode(requests_df, _analytics_targets)
-    st.caption(f"⚡ Оперативний режим: додатково враховано подання після координатора; авто-зараховано: {len(_analytics_auto)}.")
-else:
-    st.caption("✅ Аналітика розраховується за офіційно погодженими даними.")
-
-# Підтверджені ручні закриття — той самий фактичний шар, що й на Dashboard.
-# Broken materialisation не приховує факт: беремо його з closeout_requests,
-# але ніколи не вигадуємо статус «Виконано».
-requests_df = ensure_request_columns(append_confirmed_closeout_facts(requests_df))
 
 measures_all = base_measures(strat_df)
 
@@ -1313,113 +1284,124 @@ product_type_options = sorted([x for x in measures_all["product_type"].dropna().
 
 
 # ============================================================
-# Filters UI
+# Filters UI — pending values are isolated from the applied analytical context
 # ============================================================
 
-st.markdown(
-    """
-<div class="filter-box">
-    <div class="filter-title">Параметри звіту</div>
-    <div class="filter-subtitle">
-        Можна обрати декілька років і кварталів. Якщо рік або квартал не обрано, система автоматично бере повний 2026 рік.
-    </div>
-    <div class="filter-section-title">Період</div>
-""",
-    unsafe_allow_html=True
-)
+_an_defaults = {
+    "data_mode": operational.MODE_CONFIRMED,
+    "years": [], "quarters": [], "ssp": [], "deputies": [],
+    "goals": [], "tasks": [], "product_types": [],
+}
+if "analytics_filters_applied_v20" not in st.session_state:
+    st.session_state["analytics_filters_applied_v20"] = _an_defaults.copy()
 
-p1, p2 = st.columns([1, 1])
-with p1:
-    selected_years_raw = st.multiselect(
-        "Рік",
-        YEAR_OPTIONS,
-        default=[],
-        placeholder="Усі роки або обрані роки"
-    )
-with p2:
-    selected_quarters_raw = st.multiselect(
-        "Квартал",
-        QUARTERS,
-        default=[],
-        placeholder="Усі квартали або обрані квартали"
-    )
+_pending_defaults = {
+    "analytics_pending_data_mode": st.session_state["analytics_filters_applied_v20"].get("data_mode", operational.MODE_CONFIRMED),
+    "analytics_pending_years": list(st.session_state["analytics_filters_applied_v20"].get("years", [])),
+    "analytics_pending_quarters": list(st.session_state["analytics_filters_applied_v20"].get("quarters", [])),
+    "analytics_pending_ssp": list(st.session_state["analytics_filters_applied_v20"].get("ssp", [])),
+    "analytics_pending_deputies": list(st.session_state["analytics_filters_applied_v20"].get("deputies", [])),
+    "analytics_pending_goals": list(st.session_state["analytics_filters_applied_v20"].get("goals", [])),
+    "analytics_pending_tasks": list(st.session_state["analytics_filters_applied_v20"].get("tasks", [])),
+    "analytics_pending_products": list(st.session_state["analytics_filters_applied_v20"].get("product_types", [])),
+}
+for _key, _value in _pending_defaults.items():
+    if _key not in st.session_state:
+        st.session_state[_key] = _value
 
-st.markdown('<div class="filter-section-title">Організаційний та змістовий зріз</div>', unsafe_allow_html=True)
 
-f1, f2, f3 = st.columns([1.2, 1.15, 1.3])
-with f1:
-    selected_ssp_indices = st.multiselect(
-        "Самостійний структурний підрозділ",
-        ssp_options,
-        format_func=lambda x: ssp_labels.get(x, x),
-        placeholder="Оберіть один або декілька ССП"
-    )
-with f2:
-    selected_deputies = st.multiselect(
-        "Заступник Міністра",
-        deputy_options,
-        placeholder="Оберіть заступника Міністра"
-    )
-with f3:
-    selected_goal_labels = st.multiselect(
-        "Стратегічна ціль",
-        list(goal_options.values()),
-        placeholder="Оберіть стратегічну ціль"
-    )
+def _apply_analytics_filters_v20():
+    st.session_state["analytics_filters_applied_v20"] = {
+        "data_mode": st.session_state.get("analytics_pending_data_mode", operational.MODE_CONFIRMED),
+        "years": list(st.session_state.get("analytics_pending_years", []) or []),
+        "quarters": list(st.session_state.get("analytics_pending_quarters", []) or []),
+        "ssp": list(st.session_state.get("analytics_pending_ssp", []) or []),
+        "deputies": list(st.session_state.get("analytics_pending_deputies", []) or []),
+        "goals": list(st.session_state.get("analytics_pending_goals", []) or []),
+        "tasks": list(st.session_state.get("analytics_pending_tasks", []) or []),
+        "product_types": list(st.session_state.get("analytics_pending_products", []) or []),
+    }
 
-f4, f5 = st.columns([1.4, 1])
-with f4:
-    selected_task_labels = st.multiselect(
-        "Завдання",
-        list(task_options.values()),
-        placeholder="Оберіть завдання"
-    )
-with f5:
-    selected_product_types = st.multiselect(
-        "Тип продукту",
-        product_type_options,
-        placeholder="Оберіть тип продукту"
-    )
 
-st.markdown('</div>', unsafe_allow_html=True)
+def _reset_analytics_filters_v20():
+    st.session_state["analytics_filters_applied_v20"] = _an_defaults.copy()
+    st.session_state["analytics_pending_data_mode"] = operational.MODE_CONFIRMED
+    st.session_state["analytics_pending_years"] = []
+    st.session_state["analytics_pending_quarters"] = []
+    st.session_state["analytics_pending_ssp"] = []
+    st.session_state["analytics_pending_deputies"] = []
+    st.session_state["analytics_pending_goals"] = []
+    st.session_state["analytics_pending_tasks"] = []
+    st.session_state["analytics_pending_products"] = []
 
-# DEMO 1.9: параметри аналітики застосовуються тільки після кнопки.
-_an_defaults = {"years": [], "quarters": [], "ssp": [], "deputies": [], "goals": [], "tasks": [], "product_types": []}
-if "analytics_filters_applied_v19" not in st.session_state:
-    st.session_state["analytics_filters_applied_v19"] = _an_defaults.copy()
-_an_a, _an_b, _an_c = st.columns([1, 1, 1.4])
-with _an_a:
-    if st.button("Застосувати обрані параметри", type="primary", use_container_width=True, key="analytics_apply_filters_v19"):
-        st.session_state["analytics_filters_applied_v19"] = {
-            "years": list(selected_years_raw or []),
-            "quarters": list(selected_quarters_raw or []),
-            "ssp": list(selected_ssp_indices or []),
-            "deputies": list(selected_deputies or []),
-            "goals": list(selected_goal_labels or []),
-            "tasks": list(selected_task_labels or []),
-            "product_types": list(selected_product_types or []),
-        }
-        pass  # no explicit rerun: the triggering user action completes in this run
-with _an_b:
-    if st.button("Скинути параметри", use_container_width=True, key="analytics_reset_filters_v19"):
-        st.session_state["analytics_filters_applied_v19"] = _an_defaults.copy()
-        pass  # no explicit rerun: the triggering user action completes in this run
-with _an_c:
-    st.caption("Аналітичні графіки, таблиці та експорти перебудовуються після застосування параметрів.")
 
-_an_applied = st.session_state.get("analytics_filters_applied_v19", _an_defaults.copy())
-selected_years_raw = _an_applied.get("years", [])
-selected_quarters_raw = _an_applied.get("quarters", [])
-selected_ssp_indices = _an_applied.get("ssp", [])
-selected_deputies = _an_applied.get("deputies", [])
-selected_goal_labels = _an_applied.get("goals", [])
-selected_task_labels = _an_applied.get("tasks", [])
-selected_product_types = _an_applied.get("product_types", [])
+with st.form("analytics_filters_form_v20"):
+    st.markdown('<div class="filter-title">Параметри відбору</div>', unsafe_allow_html=True)
+    a0, a1, a2 = st.columns([1.45, 0.75, 0.9])
+    with a0:
+        st.markdown('<div class="filter-field-label">Джерело даних</div>', unsafe_allow_html=True)
+        st.radio("Джерело даних", operational.MODE_OPTIONS, horizontal=True,
+                 key="analytics_pending_data_mode", label_visibility="collapsed")
+    with a1:
+        st.markdown('<div class="filter-field-label">Рік</div>', unsafe_allow_html=True)
+        st.multiselect("Рік", YEAR_OPTIONS, key="analytics_pending_years",
+                       placeholder="Усі роки", label_visibility="collapsed")
+    with a2:
+        st.markdown('<div class="filter-field-label">Квартал</div>', unsafe_allow_html=True)
+        st.multiselect("Квартал", QUARTERS, key="analytics_pending_quarters",
+                       placeholder="Усі квартали", label_visibility="collapsed")
 
-# Default rule requested by user: no period filters -> full 2026.
+    f1, f2, f3 = st.columns([1.2, 1.15, 1.3])
+    with f1:
+        st.markdown('<div class="filter-field-label">Самостійний структурний підрозділ</div>', unsafe_allow_html=True)
+        st.multiselect("Самостійний структурний підрозділ", ssp_options,
+                       format_func=lambda x: ssp_labels.get(x, x), key="analytics_pending_ssp",
+                       placeholder="Усі підрозділи", label_visibility="collapsed")
+    with f2:
+        st.markdown('<div class="filter-field-label">Заступник Міністра</div>', unsafe_allow_html=True)
+        st.multiselect("Заступник Міністра", deputy_options, key="analytics_pending_deputies",
+                       placeholder="Усі заступники", label_visibility="collapsed")
+    with f3:
+        st.markdown('<div class="filter-field-label">Стратегічна ціль</div>', unsafe_allow_html=True)
+        st.multiselect("Стратегічна ціль", list(goal_options.values()), key="analytics_pending_goals",
+                       placeholder="Усі стратегічні цілі", label_visibility="collapsed")
+
+    f4, f5 = st.columns([1.4, 1])
+    with f4:
+        st.markdown('<div class="filter-field-label">Завдання</div>', unsafe_allow_html=True)
+        st.multiselect("Завдання", list(task_options.values()), key="analytics_pending_tasks",
+                       placeholder="Усі завдання", label_visibility="collapsed")
+    with f5:
+        st.markdown('<div class="filter-field-label">Тип продукту</div>', unsafe_allow_html=True)
+        st.multiselect("Тип продукту", product_type_options, key="analytics_pending_products",
+                       placeholder="Усі типи продукту", label_visibility="collapsed")
+
+    _an_a, _an_b = st.columns([1, 1])
+    with _an_a:
+        st.form_submit_button("Застосувати обрані параметри", type="primary", use_container_width=True,
+                              on_click=_apply_analytics_filters_v20)
+    with _an_b:
+        st.form_submit_button("Скинути параметри", use_container_width=True,
+                              on_click=_reset_analytics_filters_v20)
+
+_an_applied = st.session_state.get("analytics_filters_applied_v20", _an_defaults.copy())
+analytics_data_mode = _an_applied.get("data_mode", operational.MODE_CONFIRMED)
+selected_years_raw = list(_an_applied.get("years", []) or [])
+selected_quarters_raw = list(_an_applied.get("quarters", []) or [])
+selected_ssp_indices = list(_an_applied.get("ssp", []) or [])
+selected_deputies = list(_an_applied.get("deputies", []) or [])
+selected_goal_labels = list(_an_applied.get("goals", []) or [])
+selected_task_labels = list(_an_applied.get("tasks", []) or [])
+selected_product_types = list(_an_applied.get("product_types", []) or [])
+
+# Apply the selected data source only after the form has committed its pending values.
+if analytics_data_mode == operational.MODE_OPERATIONAL and not requests_df.empty:
+    _analytics_targets = operational.build_target_map(strat_df)
+    requests_df, _analytics_auto = operational.apply_operational_mode(requests_df, _analytics_targets)
+requests_df = ensure_request_columns(append_confirmed_closeout_facts(requests_df))
+
 selected_years = selected_years_raw if selected_years_raw else [2026]
 selected_quarters = selected_quarters_raw if selected_quarters_raw else QUARTERS.copy()
-
 selected_goal_codes = [code for code, label in goal_options.items() if label in selected_goal_labels]
 selected_task_codes = [code for code, label in task_options.items() if label in selected_task_labels]
 selected_ssp_labels = [ssp_labels.get(x, x) for x in selected_ssp_indices]
@@ -1478,6 +1460,66 @@ if comparison_years:
 else:
     yoy_comparison = pd.DataFrame()
 
+# ============================================================
+# Reusable MіO analytical outputs
+# ============================================================
+# Annual integral evaluation is methodologically compatible with a full-year
+# selection and content filters at the strategic-goal level. Organisational,
+# task/product and partial-quarter filters do not trigger a synthetic recalculation
+# of the integral; financing, which is measure-level, may still be filtered to the
+# active cohort.
+mio_goal_evaluation = pd.DataFrame()
+mio_goal_task_evaluation = pd.DataFrame()
+mio_measure_evaluation = pd.DataFrame()
+mio_financing = pd.DataFrame()
+mio_filter_limited = False
+try:
+    _mio_years = [int(y) for y in selected_years if int(y) in (2026, 2027, 2028)]
+    _mio_outputs = mio_shared.build_mio_analytics(strat_df, requests_df, _mio_years or [2026])
+    _all_mio_goals = _mio_outputs.get("goals", pd.DataFrame()).copy()
+    _all_mio_goal_tasks = _mio_outputs.get("goals_tasks", pd.DataFrame()).copy()
+    _all_mio_measures = _mio_outputs.get("measures", pd.DataFrame()).copy()
+    _all_mio_financing = _mio_outputs.get("financing", pd.DataFrame()).copy()
+
+    _annual_scope = set(selected_quarters) == set(QUARTERS)
+    _integral_compatible = _annual_scope and not any((selected_ssp_indices, selected_deputies, selected_task_codes, selected_product_types))
+    _mio_indicator_compatible = _annual_scope and not any((selected_ssp_indices, selected_deputies, selected_product_types))
+    if _integral_compatible:
+        mio_goal_evaluation = _all_mio_goals
+        if selected_goal_codes and not mio_goal_evaluation.empty and "Код" in mio_goal_evaluation.columns:
+            mio_goal_evaluation = mio_goal_evaluation[mio_goal_evaluation["Код"].astype(str).isin(set(map(str, selected_goal_codes)))].copy()
+    else:
+        mio_filter_limited = not _all_mio_goals.empty
+
+    # Goal/task indicator evaluations are annual and can be narrowed by content
+    # hierarchy, but not by organisational/product filters that have no valid
+    # mapping to the MIO indicator methodology.
+    if _mio_indicator_compatible and not _all_mio_goal_tasks.empty:
+        mio_goal_task_evaluation = _all_mio_goal_tasks.copy()
+        if selected_goal_codes and "Код" in mio_goal_task_evaluation.columns:
+            _goal_prefixes = tuple(str(x) for x in selected_goal_codes)
+            mio_goal_task_evaluation = mio_goal_task_evaluation[
+                mio_goal_task_evaluation["Код"].astype(str).apply(lambda x: any(x == g or x.startswith(g + ".") for g in _goal_prefixes))
+            ].copy()
+        if selected_task_codes and "Код" in mio_goal_task_evaluation.columns:
+            _task_set = set(map(str, selected_task_codes))
+            mio_goal_task_evaluation = mio_goal_task_evaluation[
+                (mio_goal_task_evaluation.get("Рівень", pd.Series("", index=mio_goal_task_evaluation.index)).astype(str).eq("goal"))
+                | (mio_goal_task_evaluation["Код"].astype(str).isin(_task_set))
+            ].copy()
+
+    _active_codes_for_mio = set(active.get("code", pd.Series(dtype=object)).astype(str).str.strip())
+    if _annual_scope and not _all_mio_measures.empty and "Захід" in _all_mio_measures.columns:
+        mio_measure_evaluation = _all_mio_measures[_all_mio_measures["Захід"].astype(str).str.strip().isin(_active_codes_for_mio)].copy()
+    if not _all_mio_financing.empty and "Захід" in _all_mio_financing.columns:
+        mio_financing = _all_mio_financing[_all_mio_financing["Захід"].astype(str).str.strip().isin(_active_codes_for_mio)].copy()
+except Exception as exc:
+    log_exception("Analytics reusable MіO outputs", exc)
+    mio_goal_evaluation = pd.DataFrame()
+    mio_goal_task_evaluation = pd.DataFrame()
+    mio_measure_evaluation = pd.DataFrame()
+    mio_financing = pd.DataFrame()
+
 filters = {
     "years": selected_years,
     "quarters": selected_quarters,
@@ -1500,6 +1542,10 @@ analytics_text_context = build_analytics_text_context(
     period_dynamics=period_dynamics,
     yoy_comparison=yoy_comparison,
     active=active,
+    mio_goal_evaluation=mio_goal_evaluation,
+    mio_goal_task_evaluation=mio_goal_task_evaluation,
+    mio_measure_evaluation=mio_measure_evaluation,
+    mio_financing=mio_financing,
 )
 
 ANALYTICS_TEXT_DEBUG = str(os.getenv("ANALYTICS_TEXT_DEBUG", "")).strip().lower() in {"1", "true", "yes", "on"}
@@ -1547,27 +1593,65 @@ st.markdown(
     <div class="alert-card alert-blue">
         <div class="alert-title">Рівень виконання Стратегічного плану в обраному періоді</div>
         <div class="alert-value">{_completion_label}</div>
-        <div class="alert-note">Єдина методологія розрахунку; неоцінені періоди не підміняються 0%</div>
     </div>
     <div class="alert-card alert-red">
         <div class="alert-title">Потребують управлінської уваги</div>
         <div class="alert-value">{metrics['problem']}</div>
-        <div class="alert-note">Сигнали ризику та якості даних за єдиною методологією</div>
     </div>
     <div class="alert-card alert-yellow">
         <div class="alert-title">Покриття моніторингом</div>
         <div class="alert-value">{_coverage_label}</div>
-        <div class="alert-note">Покриття розраховано лише для заходів, що підлягають моніторингу</div>
     </div>
     <div class="alert-card alert-green">
         <div class="alert-title">Заходів у вибірці</div>
         <div class="alert-value">{metrics['unique_measures']}</div>
-        <div class="alert-note">Унікальні заходи; записів захід-період: {metrics['total_rows']}</div>
     </div>
 </div>
 """,
     unsafe_allow_html=True
 )
+
+# Compact MіO result strip. Annual integral components are shown only when the
+# applied filter set is methodologically compatible with the annual MіO model.
+if not mio_goal_evaluation.empty:
+    _mio_year = max([int(y) for y in selected_years if int(y) in (2026, 2027, 2028)] or [2026])
+    _mio_cols = {
+        "integral": f"Інтеграл {_mio_year}",
+        "measures": f"Заходи {_mio_year}",
+        "tasks": f"Завдання {_mio_year}",
+        "progress": f"Прогрес {_mio_year}",
+    }
+    def _mio_avg(_column):
+        if _column not in mio_goal_evaluation.columns:
+            return None
+        _series = pd.to_numeric(mio_goal_evaluation[_column], errors="coerce").dropna()
+        return float(_series.mean()) if not _series.empty else None
+    _mio_integral = _mio_avg(_mio_cols["integral"])
+    _mio_measures = _mio_avg(_mio_cols["measures"])
+    _mio_tasks = _mio_avg(_mio_cols["tasks"])
+    _mio_progress = _mio_avg(_mio_cols["progress"])
+    _fin_pair = mio_financing.copy()
+    _fin_avg = None
+    if not _fin_pair.empty and "% виконання" in _fin_pair.columns:
+        _fin_series = pd.to_numeric(_fin_pair["% виконання"], errors="coerce").dropna()
+        _fin_avg = float(_fin_series.mean()) if not _fin_series.empty else None
+    st.markdown(
+        f"""
+<div class="mio-summary-box">
+    <div class="mio-summary-title">Оцінка МіО · {_mio_year}</div>
+    <div class="mio-summary-grid">
+        <div class="mio-mini"><span>Інтегральна оцінка</span><b>{format_pct(_mio_integral)}</b></div>
+        <div class="mio-mini"><span>Виконання заходів</span><b>{format_pct(_mio_measures)}</b></div>
+        <div class="mio-mini"><span>Завдання · індикатори</span><b>{format_pct(_mio_tasks)}</b></div>
+        <div class="mio-mini"><span>Стратегічний прогрес</span><b>{format_pct(_mio_progress)}</b></div>
+        <div class="mio-mini"><span>Фінансове виконання</span><b>{format_pct(_fin_avg)}</b></div>
+    </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+elif mio_filter_limited:
+    st.caption("Оцінка МіО не перераховується за застосованим організаційним, продуктовим або неповним квартальним зрізом; аналітика моніторингу нижче залишається повністю відфільтрованою.")
 
 render_year_over_year_block(yoy_comparison)
 
@@ -1580,10 +1664,6 @@ st.markdown(
     f"""
 <div class="report-box">
     <div class="report-title">Автоматично сформована аналітична довідка</div>
-    <div class="report-meta">
-        Роки: {', '.join(map(str, selected_years))} | Квартали: {', '.join(selected_quarters)} | 
-        ССП: {filter_label(selected_ssp_labels, 'усі')} | Заступники: {filter_label(selected_deputies, 'усі')}
-    </div>
 """,
     unsafe_allow_html=True
 )
@@ -1602,9 +1682,6 @@ st.markdown(
     """
 <div class="card">
     <div class="card-title">Графіки до довідки</div>
-    <div class="card-subtitle">
-        Візуальні матеріали сформовано за тією самою вибіркою, що й текст довідки.
-    </div>
 """,
     unsafe_allow_html=True
 )

@@ -2,12 +2,64 @@ from __future__ import annotations
 
 import math
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
 from core.text_utils import names_match, normalize_name
+
+
+
+@dataclass(frozen=True)
+class MioYearSummary:
+    """Typed annual MIO summary.
+
+    The fields deliberately distinguish raw methodological components from the
+    final integral so a weighted contribution can never be consumed as the
+    integral by a UI caller. Values are percentages on the 0-100 scale.
+    """
+
+    year: int
+    goal_count: int
+    average_integral: float | None
+    average_measure_execution: float | None
+    average_task_score: float | None
+    average_strategic_progress: float | None
+
+
+def _mean_numeric(frame: pd.DataFrame, column: str) -> float | None:
+    if frame is None or frame.empty or column not in frame.columns:
+        return None
+    values = pd.to_numeric(frame[column], errors="coerce").dropna()
+    return float(values.mean()) if not values.empty else None
+
+
+def summarize_integral_goals(goals_df: pd.DataFrame, year: int) -> MioYearSummary:
+    """Return the exact annual MIO values used by the integral page.
+
+    This is the only supported accessor for the compact MIO KPI strip on other
+    pages.  Callers receive semantically named fields rather than looking up
+    arbitrary columns such as a 20% weighted component.
+    """
+
+    year = int(year)
+    frame = goals_df.copy() if isinstance(goals_df, pd.DataFrame) else pd.DataFrame()
+    integral_col = f"Інтеграл {year}"
+    measure_col = f"Заходи {year}"
+    task_col = f"Завдання {year}"
+    progress_col = f"Прогрес {year}"
+    valid_integrals = pd.to_numeric(frame.get(integral_col, pd.Series(dtype=float)), errors="coerce").dropna()
+    return MioYearSummary(
+        year=year,
+        goal_count=int(len(valid_integrals)),
+        average_integral=float(valid_integrals.mean()) if not valid_integrals.empty else None,
+        average_measure_execution=_mean_numeric(frame, measure_col),
+        average_task_score=_mean_numeric(frame, task_col),
+        average_strategic_progress=_mean_numeric(frame, progress_col),
+    )
+
 
 def raw_value(value):
     if value is None or (isinstance(value, float) and math.isnan(value)):

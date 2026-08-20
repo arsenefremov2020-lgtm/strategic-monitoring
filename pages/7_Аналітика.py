@@ -1573,14 +1573,28 @@ try:
     analytical_text = generate_analytics_note(context=analytics_text_context)
 except Exception as exc:
     # A failed analytical engine must never masquerade as a successful legacy
-    # note.  Keep the old function in the codebase for developer compatibility,
+    # note. Keep the old function in the codebase for developer compatibility,
     # but do not expose it as a production fallback.
-    log_exception("Analytics rule-based text generator", exc)
     _incident_seed = f"{type(exc).__name__}:{exc}".encode("utf-8", errors="replace")
     analytics_text_engine_incident = "AN-" + hashlib.sha256(_incident_seed).hexdigest()[:10].upper()
+    # The same incident code shown in the UI is written with the full traceback.
+    _validation_warnings = list(getattr(exc, "validation_warnings", ()) or ())
+    log_exception(
+        "Analytics rule-based text generator",
+        exc,
+        incident_code=analytics_text_engine_incident,
+        diagnostics={
+            "validation_warnings": _validation_warnings,
+            "filters": filters,
+        },
+    )
     analytics_text_engine_used = "new_failed"
     analytics_text_available = False
     analytical_text = ""
+    if ANALYTICS_TEXT_DEBUG:
+        st.caption(f"Text engine: NEW ANALYTICS ENGINE — FAILED · Incident: {analytics_text_engine_incident}")
+        if _validation_warnings:
+            st.code("\n".join(_validation_warnings), language="text")
     if ANALYTICS_TEXT_DEBUG:
         raise
     st.error(

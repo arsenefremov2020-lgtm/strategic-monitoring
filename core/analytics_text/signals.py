@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from statistics import pstdev
 from typing import Any
 
 import pandas as pd
@@ -42,19 +41,6 @@ def _numeric(frame: pd.DataFrame, column: str) -> pd.Series:
     if frame is None or frame.empty or column not in frame.columns:
         return pd.Series(dtype=float)
     return pd.to_numeric(frame[column], errors="coerce").dropna()
-
-
-def _latest_dynamics(ctx: AnalyticsContext) -> tuple[list[float], list[float], pd.DataFrame]:
-    frame = ctx.period_dynamics.copy()
-    if frame.empty:
-        return [], [], frame
-    q_order = {"I": 1, "II": 2, "III": 3, "IV": 4}
-    frame["_year"] = pd.to_numeric(frame.get("report_year"), errors="coerce")
-    frame["_q"] = frame.get("report_quarter", pd.Series(index=frame.index, dtype=object)).map(q_order)
-    frame = frame.sort_values(["_year", "_q"], na_position="last")
-    execution = pd.to_numeric(frame.get("Виконання"), errors="coerce").dropna().tolist()
-    coverage = pd.to_numeric(frame.get("Покриття_%"), errors="coerce").dropna().tolist()
-    return execution, coverage, frame
 
 
 def _level_signal(value: Any, prefix: str, thresholds: dict[str, float], dimension: str) -> Signal:
@@ -109,61 +95,64 @@ def _delta_code(delta: float, prefix: str) -> tuple[str, str, int]:
     return f"{prefix}_{direction}_{strength}", severity, imp
 
 
-def _distribution_signals(frame: pd.DataFrame, prefix: str, label_col: str) -> list[Signal]:
+def _distribution_signals(ctx: AnalyticsContext, prefix: str) -> list[Signal]:
+    """Classify prepared distribution facts without creating new numeric metrics."""
     signals: list[Signal] = []
-    if frame is None or frame.empty or "Виконання" not in frame.columns:
+    facts = ctx.factual_structure(f"{prefix}.distribution", {}) or {}
+    count = int(facts.get("count") or 0)
+    if count <= 0:
         return signals
-    valid = frame.copy()
-    valid["_exec"] = pd.to_numeric(valid["Виконання"], errors="coerce")
-    valid = valid.dropna(subset=["_exec"])
-    if valid.empty:
+    if count == 1:
+        top = (facts.get("top") or [("", None)])[0]
+        signals.append(_signal(f"single_{prefix}", "neutral", 40, prefix, label=str(top[0] or "")))
         return signals
-    if len(valid) == 1:
-        signals.append(_signal(f"single_{prefix}", "neutral", 40, prefix, label=str(valid.iloc[0].get(label_col, ""))))
-        return signals
-    best = valid.sort_values("_exec", ascending=False).iloc[0]
-    worst = valid.sort_values("_exec", ascending=True).iloc[0]
-    gap = float(best["_exec"] - worst["_exec"])
-    signals.extend([
-        _signal(f"{prefix}_leader", "positive", 45, prefix, label=str(best.get(label_col, "")), value=float(best["_exec"])),
-        _signal(f"{prefix}_laggard", "negative", 60, prefix, label=str(worst.get(label_col, "")), value=float(worst["_exec"])),
-    ])
-    if gap >= GAP_LANGUAGE_BANDS["very_wide"]:
-        code, imp = f"{prefix}_gap_very_wide", 85
-    elif gap >= GAP_LANGUAGE_BANDS["wide"]:
-        code, imp = f"{prefix}_gap_wide", 70
-    elif gap >= GAP_LANGUAGE_BANDS["moderate"]:
-        code, imp = f"{prefix}_gap_moderate", 55
-    else:
-        code, imp = f"{prefix}_gap_narrow", 45
-    signals.append(_signal(code, "warning" if gap >= GAP_LANGUAGE_BANDS["wide"] else "neutral", imp, prefix, gap=gap, best=str(best.get(label_col, "")), worst=str(worst.get(label_col, "")), classification_basis="language_only_band"))
 
-    if "Зміна" in valid.columns:
-        valid["_change"] = pd.to_numeric(valid["Зміна"], errors="coerce")
-        changes = valid.dropna(subset=["_change"])
-        if not changes.empty:
-            top = changes.sort_values("_change", ascending=False).iloc[0]
-            bottom = changes.sort_values("_change", ascending=True).iloc[0]
-            if float(top["_change"]) >= DELTA_LANGUAGE_BANDS["small"]:
-                signals.append(_signal(f"{prefix}_most_improved", "positive", 55, prefix, label=str(top.get(label_col, "")), delta=float(top["_change"])))
-            if float(bottom["_change"]) <= -DELTA_LANGUAGE_BANDS["small"]:
-                signals.append(_signal(f"{prefix}_most_deteriorated", "negative", 70, prefix, label=str(bottom.get(label_col, "")), delta=float(bottom["_change"])))
-    for col, suffix, imp in (("Проблемних", "most_problematic", 80), ("Без_даних", "most_missing", 75)):
-        if col in valid.columns:
-            vals = pd.to_numeric(valid[col], errors="coerce").fillna(0)
-            if vals.max() > 0:
-                idx = vals.idxmax()
-                row = valid.loc[idx]
-                signals.append(_signal(f"{prefix}_{suffix}", "negative", imp, prefix, label=str(row.get(label_col, "")), count=int(vals.loc[idx])))
-    if "Покриття_%" in valid.columns:
-        cov = pd.to_numeric(valid["Покриття_%"], errors="coerce")
+    best_label = str(facts.get("best_label") or "")
+    worst_label = str(facts.get("worst_label") or "")
+    best_value = facts.get("best")
+    worst_value = facts.get("worst")
+    gap = facts.get("gap")
+    if is_number(best_value):
+        signals.append(_signal(f"{prefix}_leader", "positive", 45, prefix, label=best_label, value=float(best_value)))
+    if is_number(worst_value):
+        signals.append(_signal(f"{prefix}_laggard", "negative", 60, prefix, label=worst_label, value=float(worst_value)))
+    if is_number(gap):
+        gap_val = float(gap)
+        if gap_val >= GAP_LANGUAGE_BANDS["very_wide"]:
+            code, imp = f"{prefix}_gap_very_wide", 85
+        elif gap_val >= GAP_LANGUAGE_BANDS["wide"]:
+            code, imp = f"{prefix}_gap_wide", 70
+        elif gap_val >= GAP_LANGUAGE_BANDS["moderate"]:
+            code, imp = f"{prefix}_gap_moderate", 55
+        else:
+            code, imp = f"{prefix}_gap_narrow", 45
+        signals.append(_signal(code, "warning" if gap_val >= GAP_LANGUAGE_BANDS["wide"] else "neutral", imp, prefix, gap=gap_val, best=best_label, worst=worst_label, classification_basis="language_only_band"))
+
+    changes = ctx.factual_structure(f"{prefix}.change", {}) or {}
+    if changes:
+        top_delta = changes.get("largest_improvement")
+        bottom_delta = changes.get("largest_deterioration")
+        if is_number(top_delta) and float(top_delta) >= DELTA_LANGUAGE_BANDS["small"]:
+            signals.append(_signal(f"{prefix}_most_improved", "positive", 55, prefix, label=str(changes.get("largest_improvement_label") or ""), delta=float(top_delta)))
+        if is_number(bottom_delta) and float(bottom_delta) <= -DELTA_LANGUAGE_BANDS["small"]:
+            signals.append(_signal(f"{prefix}_most_deteriorated", "negative", 70, prefix, label=str(changes.get("largest_deterioration_label") or ""), delta=float(bottom_delta)))
+
+    for topic, suffix, imp in (("problems", "most_problematic", 80), ("missing", "most_missing", 75)):
+        concentration = ctx.factual_structure(f"{prefix}.{topic}", {}) or {}
+        if _safe_int(concentration.get("top_count")) > 0:
+            signals.append(_signal(f"{prefix}_{suffix}", "negative", imp, prefix, label=str(concentration.get("top_label") or ""), count=_safe_int(concentration.get("top_count"))))
+
+    # Highest/lowest coverage are direct prepared source facts, not derived arithmetic.
+    frame = getattr(ctx, {"goal":"goal_progress", "task":"task_progress", "department":"department_progress"}[prefix])
+    label_col = {"goal":"goal_code", "task":"task_code", "department":"department"}[prefix]
+    if frame is not None and not frame.empty and "Покриття_%" in frame.columns:
+        cov = pd.to_numeric(frame["Покриття_%"], errors="coerce")
         if cov.notna().any():
-            hi = valid.loc[cov.idxmax()]
-            lo = valid.loc[cov.idxmin()]
+            hi = frame.loc[cov.idxmax()]
+            lo = frame.loc[cov.idxmin()]
             signals.append(_signal(f"{prefix}_highest_coverage", "positive", 35, prefix, label=str(hi.get(label_col, "")), value=float(cov.max())))
             signals.append(_signal(f"{prefix}_lowest_coverage", "warning", 55, prefix, label=str(lo.get(label_col, "")), value=float(cov.min())))
     return signals
-
 
 def detect_signals(ctx: AnalyticsContext) -> list[Signal]:
     signals: list[Signal] = []
@@ -185,34 +174,39 @@ def detect_signals(ctx: AnalyticsContext) -> list[Signal]:
         signals.append(_signal("sample_standard", "neutral", 25, "sample", count=sample))
 
     no_data = _safe_int(ctx.metric("no_data"))
-    total_rows = max(_safe_int(ctx.metric("total_rows")), 1)
+    missing_share_pct = ctx.factual_value("overall.missing_share_pct")
     if no_data == 0:
         signals.append(_signal("missing_none", "positive", 30, "coverage", count=0))
-    else:
-        ratio = no_data / total_rows
-        if ratio >= MISSING_SHARE_LANGUAGE_BANDS["large"]:
-            signals.append(_signal("missing_share_large", "negative", 90, "coverage", count=no_data, ratio=ratio, classification_basis="language_only_band"))
-        elif ratio >= MISSING_SHARE_LANGUAGE_BANDS["material"]:
-            signals.append(_signal("missing_share_material", "warning", 70, "coverage", count=no_data, ratio=ratio, classification_basis="language_only_band"))
+    elif is_number(missing_share_pct):
+        share = float(missing_share_pct)
+        if share >= MISSING_SHARE_LANGUAGE_BANDS["large"] * 100.0:
+            signals.append(_signal("missing_share_large", "negative", 90, "coverage", count=no_data, share_pct=share, classification_basis="language_only_band"))
+        elif share >= MISSING_SHARE_LANGUAGE_BANDS["material"] * 100.0:
+            signals.append(_signal("missing_share_material", "warning", 70, "coverage", count=no_data, share_pct=share, classification_basis="language_only_band"))
         else:
-            signals.append(_signal("missing_share_small", "warning", 45, "coverage", count=no_data, ratio=ratio, classification_basis="language_only_band"))
+            signals.append(_signal("missing_share_small", "warning", 45, "coverage", count=no_data, share_pct=share, classification_basis="language_only_band"))
 
     problem = _safe_int(ctx.metric("problem"))
-    if problem:
-        ratio = problem / total_rows
-        code = "problem_signals_large_share" if ratio >= PROBLEM_SHARE_LANGUAGE_BANDS["large"] else "problem_signals_present"
-        signals.append(_signal(code, "negative", 85 if ratio >= PROBLEM_SHARE_LANGUAGE_BANDS["large"] else 60, "risk", count=problem, ratio=ratio, classification_basis="language_only_band"))
+    problem_share_pct = ctx.factual_value("overall.problem_share_pct")
+    if problem and is_number(problem_share_pct):
+        share = float(problem_share_pct)
+        code = "problem_signals_large_share" if share >= PROBLEM_SHARE_LANGUAGE_BANDS["large"] * 100.0 else "problem_signals_present"
+        signals.append(_signal(code, "negative", 85 if code == "problem_signals_large_share" else 60, "risk", count=problem, share_pct=share, classification_basis="language_only_band"))
+    elif problem:
+        signals.append(_signal("problem_signals_present", "negative", 60, "risk", count=problem))
     else:
         signals.append(_signal("problem_signals_none", "positive", 30, "risk", count=0))
 
-    execution_series, coverage_series, dyn = _latest_dynamics(ctx)
-    if len(execution_series) < 2:
+    trajectory = ctx.factual_structure("trajectory", {}) or {}
+    execution_series = list(trajectory.get("values") or [])
+    coverage_series = list(trajectory.get("coverage_values") or [])
+    diffs = [x for x in (trajectory.get("deltas") or []) if is_number(x)]
+    if len(execution_series) < 2 or not diffs:
         signals.append(_signal("dynamics_insufficient", "neutral", 55, "dynamics", periods=len(execution_series)))
     else:
-        delta = float(execution_series[-1] - execution_series[-2])
+        delta = float(diffs[-1])
         code, sev, imp = _delta_code(delta, "execution")
-        signals.append(_signal(code, sev, imp, "dynamics", delta=delta, previous=execution_series[-2], current=execution_series[-1], classification_basis="language_only_band"))
-        diffs = [b - a for a, b in zip(execution_series[:-1], execution_series[1:])]
+        signals.append(_signal(code, sev, imp, "dynamics", delta=delta, previous=trajectory.get("first") if len(execution_series)==2 else execution_series[-2], current=trajectory.get("last"), classification_basis="language_only_band"))
         if len(diffs) >= 2:
             if all(x >= DELTA_LANGUAGE_BANDS["small"] for x in diffs[-2:]):
                 signals.append(_signal("execution_two_period_growth", "positive", 70, "dynamics", deltas=diffs[-2:]))
@@ -222,23 +216,28 @@ def detect_signals(ctx: AnalyticsContext) -> list[Signal]:
                 signals.append(_signal("execution_three_period_growth", "positive", 80, "dynamics", deltas=diffs[-3:]))
             if len(diffs) >= 3 and all(x <= -DELTA_LANGUAGE_BANDS["small"] for x in diffs[-3:]):
                 signals.append(_signal("execution_three_period_decline", "negative", 95, "dynamics", deltas=diffs[-3:]))
-            if diffs[-2] < 0 < diffs[-1]:
-                signals.append(_signal("execution_reversal_positive", "positive", 80, "dynamics", previous_delta=diffs[-2], current_delta=diffs[-1]))
-            if diffs[-2] > 0 > diffs[-1]:
-                signals.append(_signal("execution_reversal_negative", "negative", 90, "dynamics", previous_delta=diffs[-2], current_delta=diffs[-1]))
-            if diffs[-2] > 0 and diffs[-1] > diffs[-2] + DELTA_LANGUAGE_BANDS["small"]:
-                signals.append(_signal("positive_dynamics_accelerating", "positive", 65, "dynamics", previous_delta=diffs[-2], current_delta=diffs[-1]))
-            if diffs[-2] > 0 and 0 < diffs[-1] < diffs[-2] - DELTA_LANGUAGE_BANDS["small"]:
-                signals.append(_signal("positive_dynamics_slowing", "warning", 55, "dynamics", previous_delta=diffs[-2], current_delta=diffs[-1]))
-            if diffs[-2] < 0 and diffs[-1] < diffs[-2] - DELTA_LANGUAGE_BANDS["small"]:
-                signals.append(_signal("negative_dynamics_accelerating", "negative", 90, "dynamics", previous_delta=diffs[-2], current_delta=diffs[-1]))
-        if len(execution_series) >= 3 and pstdev(execution_series) >= VOLATILITY_LANGUAGE_BAND:
-            signals.append(_signal("execution_high_volatility", "warning", 70, "dynamics", volatility=pstdev(execution_series), classification_basis="language_only_band"))
+            previous_delta = float(diffs[-2]); current_delta = float(diffs[-1])
+            if previous_delta < 0 < current_delta:
+                signals.append(_signal("execution_reversal_positive", "positive", 80, "dynamics", previous_delta=previous_delta, current_delta=current_delta))
+            if previous_delta > 0 > current_delta:
+                signals.append(_signal("execution_reversal_negative", "negative", 90, "dynamics", previous_delta=previous_delta, current_delta=current_delta))
+            if previous_delta > 0 and current_delta > previous_delta + DELTA_LANGUAGE_BANDS["small"]:
+                signals.append(_signal("positive_dynamics_accelerating", "positive", 65, "dynamics", previous_delta=previous_delta, current_delta=current_delta))
+            if previous_delta > 0 and 0 < current_delta < previous_delta - DELTA_LANGUAGE_BANDS["small"]:
+                signals.append(_signal("positive_dynamics_slowing", "warning", 55, "dynamics", previous_delta=previous_delta, current_delta=current_delta))
+            if previous_delta < 0 and current_delta < previous_delta - DELTA_LANGUAGE_BANDS["small"]:
+                signals.append(_signal("negative_dynamics_accelerating", "negative", 90, "dynamics", previous_delta=previous_delta, current_delta=current_delta))
+        volatility = trajectory.get("volatility_stddev")
+        if is_number(volatility) and float(volatility) >= VOLATILITY_LANGUAGE_BAND:
+            signals.append(_signal("execution_high_volatility", "warning", 70, "dynamics", volatility=float(volatility), classification_basis="language_only_band"))
 
-    if len(coverage_series) >= 2:
-        cov_delta = float(coverage_series[-1] - coverage_series[-2])
+    coverage_deltas = [x for x in (trajectory.get("coverage_deltas") or []) if is_number(x)]
+    if coverage_deltas:
+        cov_delta = float(coverage_deltas[-1])
         code, sev, imp = _delta_code(cov_delta, "coverage")
-        signals.append(_signal(code, sev, imp, "coverage", delta=cov_delta, previous=coverage_series[-2], current=coverage_series[-1], classification_basis="language_only_band"))
+        previous_cov = next((x for x in reversed(coverage_series[:-1]) if is_number(x)), None) if coverage_series else None
+        current_cov = next((x for x in reversed(coverage_series) if is_number(x)), None) if coverage_series else None
+        signals.append(_signal(code, sev, imp, "coverage", delta=cov_delta, previous=previous_cov, current=current_cov, classification_basis="language_only_band"))
 
     # Combined execution/coverage semantics: low coverage limits the strength of conclusions.
     codes = {s.code for s in signals}
@@ -266,78 +265,67 @@ def detect_signals(ctx: AnalyticsContext) -> list[Signal]:
     if execution_down and coverage_up:
         signals.append(_signal("execution_down_coverage_up", "negative", 90, "combined"))
 
-    # Year-over-year signals use the already prepared comparison table.
-    yoy = ctx.yoy_comparison
-    if yoy is not None and not yoy.empty:
-        last_pair = str(yoy.iloc[-1].get("Період порівняння", ""))
-        subset = yoy[yoy["Період порівняння"].astype(str).eq(last_pair)] if "Період порівняння" in yoy.columns else yoy
-        lookup = {str(r.get("Показник")): r for _, r in subset.iterrows()}
-        for label, prefix in (("Рівень виконання СП", "yoy_execution"), ("Покриття моніторингом", "yoy_coverage"), ("Проблемні / ризикові", "yoy_problem"), ("Без поданих погоджених даних", "yoy_missing")):
-            row = lookup.get(label)
-            if row is None or not is_number(row.get("Зміна")):
-                continue
-            delta = float(row.get("Зміна"))
-            if prefix in {"yoy_problem", "yoy_missing"}:
-                if delta > 0:
-                    code, sev, imp = f"{prefix}_increased", "negative", 75
-                elif delta < 0:
-                    code, sev, imp = f"{prefix}_decreased", "positive", 65
-                else:
-                    code, sev, imp = f"{prefix}_stable", "neutral", 35
+    # Year-over-year signals classify the prepared comparison facts.
+    yoy_facts = ctx.factual_structure("yoy", {}) or {}
+    last_pair = str(yoy_facts.get("comparison") or "")
+    yoy_metrics = yoy_facts.get("metrics") or {}
+    for label, prefix in (("Рівень виконання СП", "yoy_execution"), ("Покриття моніторингом", "yoy_coverage"), ("Проблемні / ризикові", "yoy_problem"), ("Без поданих погоджених даних", "yoy_missing")):
+        row = yoy_metrics.get(label) or {}
+        delta = row.get("delta")
+        if not is_number(delta):
+            continue
+        delta = float(delta)
+        if prefix in {"yoy_problem", "yoy_missing"}:
+            if delta > 0:
+                code, sev, imp = f"{prefix}_increased", "negative", 75
+            elif delta < 0:
+                code, sev, imp = f"{prefix}_decreased", "positive", 65
             else:
-                c, sev, imp = _delta_code(delta, prefix)
-                code = c
-            signals.append(_signal(code, sev, imp, "yoy", delta=delta, previous=row.get("Попередній рік"), current=row.get("Поточний рік"), comparison=last_pair))
-
-    signals.extend(_distribution_signals(ctx.goal_progress, "goal", "goal_code"))
-    signals.extend(_distribution_signals(ctx.task_progress, "task", "task_code"))
-    signals.extend(_distribution_signals(ctx.department_progress, "department", "department"))
-
-    # Concentration of problems in a single goal/department when canonical descriptive counts are available.
-    for frame, prefix, label_col in ((ctx.goal_progress, "goal", "goal_code"), (ctx.department_progress, "department", "department")):
-        if frame is None or frame.empty or "Проблемних" not in frame.columns:
-            continue
-        vals = pd.to_numeric(frame["Проблемних"], errors="coerce").fillna(0)
-        total = float(vals.sum())
-        if total <= 0:
-            continue
-        idx = vals.idxmax()
-        ratio = float(vals.loc[idx] / total)
-        label = str(frame.loc[idx].get(label_col, ""))
-        if ratio >= CONCENTRATION_LANGUAGE_BANDS["majority"]:
-            signals.append(_signal(f"{prefix}_problem_concentration_half_or_more", "negative", 90, "concentration", label=label, ratio=ratio, count=int(vals.loc[idx]), total=int(total), classification_basis="language_only_band"))
-        elif ratio >= CONCENTRATION_LANGUAGE_BANDS["material"]:
-            signals.append(_signal(f"{prefix}_problem_concentration_material", "warning", 70, "concentration", label=label, ratio=ratio, count=int(vals.loc[idx]), total=int(total), classification_basis="language_only_band"))
+                code, sev, imp = f"{prefix}_stable", "neutral", 35
         else:
-            signals.append(_signal(f"{prefix}_problems_distributed", "neutral", 45, "concentration", ratio=ratio, total=int(total)))
+            code, sev, imp = _delta_code(delta, prefix)
+        signals.append(_signal(code, sev, imp, "yoy", delta=delta, previous=row.get("previous"), current=row.get("current"), comparison=last_pair))
 
-    # Product signals.
-    products = ctx.product_progress.copy()
-    if products is not None and not products.empty:
-        if "Унікальних_заходів" in products.columns:
-            counts = pd.to_numeric(products["Унікальних_заходів"], errors="coerce").fillna(0)
-            total = float(counts.sum())
-            if total > 0:
-                idx = counts.idxmax(); ratio = float(counts.loc[idx] / total)
-                signals.append(_signal("product_dominant", "neutral", 45, "products", label=str(products.loc[idx].get("product_type", "")), ratio=ratio, count=int(counts.loc[idx])))
-                if ratio >= CONCENTRATION_LANGUAGE_BANDS["majority"]:
-                    signals.append(_signal("product_concentration_half_or_more", "warning", 55, "products", label=str(products.loc[idx].get("product_type", "")), ratio=ratio, classification_basis="language_only_band"))
-        execs = _numeric(products, "Виконання")
-        if len(execs) >= 2:
-            best_idx = pd.to_numeric(products["Виконання"], errors="coerce").idxmax()
-            worst_idx = pd.to_numeric(products["Виконання"], errors="coerce").idxmin()
-            signals.append(_signal("product_best", "positive", 40, "products", label=str(products.loc[best_idx].get("product_type", "")), value=float(pd.to_numeric(products.loc[best_idx, "Виконання"]))))
-            signals.append(_signal("product_weakest", "negative", 50, "products", label=str(products.loc[worst_idx].get("product_type", "")), value=float(pd.to_numeric(products.loc[worst_idx, "Виконання"]))))
+    signals.extend(_distribution_signals(ctx, "goal"))
+    signals.extend(_distribution_signals(ctx, "task"))
+    signals.extend(_distribution_signals(ctx, "department"))
 
-    # Status structure.
-    statuses = ctx.status_counts.copy()
-    if statuses is not None and not statuses.empty and {"status", "Кількість"}.issubset(statuses.columns):
-        _status_numeric = pd.to_numeric(statuses["Кількість"], errors="coerce").fillna(0)
-        counts = {str(statuses.loc[idx, "status"]): int(value) for idx, value in _status_numeric.items()}
-        total = max(sum(counts.values()), 1)
-        if counts:
-            dominant = max(counts, key=counts.get)
-            signals.append(_signal("status_dominant", "neutral", 40, "statuses", label=dominant, count=counts[dominant], ratio=counts[dominant] / total))
+    # Problem concentration is classified from centrally prepared percent metrics.
+    for prefix in ("goal", "department"):
+        facts = ctx.factual_structure(f"{prefix}.problems", {}) or {}
+        share = facts.get("top_share")
+        total = _safe_int(facts.get("total"))
+        if not is_number(share) or total <= 0:
+            continue
+        share = float(share)
+        label = str(facts.get("top_label") or "")
+        if share >= CONCENTRATION_LANGUAGE_BANDS["majority"] * 100.0:
+            signals.append(_signal(f"{prefix}_problem_concentration_half_or_more", "negative", 90, "concentration", label=label, share_pct=share, count=_safe_int(facts.get("top_count")), total=total, classification_basis="language_only_band"))
+        elif share >= CONCENTRATION_LANGUAGE_BANDS["material"] * 100.0:
+            signals.append(_signal(f"{prefix}_problem_concentration_material", "warning", 70, "concentration", label=label, share_pct=share, count=_safe_int(facts.get("top_count")), total=total, classification_basis="language_only_band"))
+        else:
+            signals.append(_signal(f"{prefix}_problems_distributed", "neutral", 45, "concentration", share_pct=share, total=total))
+
+    # Product signals use prepared portfolio/execution facts.
+    product = ctx.factual_structure("product", {}) or {}
+    if product:
+        largest_share = product.get("largest_share")
+        if product.get("largest_label"):
+            signals.append(_signal("product_dominant", "neutral", 45, "products", label=str(product.get("largest_label")), share_pct=largest_share, count=_safe_int(product.get("largest_size"))))
+        if is_number(largest_share) and float(largest_share) >= CONCENTRATION_LANGUAGE_BANDS["majority"] * 100.0:
+            signals.append(_signal("product_concentration_half_or_more", "warning", 55, "products", label=str(product.get("largest_label") or ""), share_pct=float(largest_share), classification_basis="language_only_band"))
+        if is_number(product.get("best_value")) and is_number(product.get("worst_value")):
+            signals.append(_signal("product_best", "positive", 40, "products", label=str(product.get("best_label") or ""), value=float(product.get("best_value"))))
+            signals.append(_signal("product_weakest", "negative", 50, "products", label=str(product.get("worst_label") or ""), value=float(product.get("worst_value"))))
+
+    # Status structure uses prepared shares in the common 0..100 convention.
+    status = ctx.factual_structure("status", {}) or {}
+    if status:
+        dominant = str(status.get("dominant_label") or "")
+        dominant_count = _safe_int(status.get("dominant_count"))
+        dominant_share = status.get("dominant_share")
+        if dominant:
+            signals.append(_signal("status_dominant", "neutral", 40, "statuses", label=dominant, count=dominant_count, share_pct=dominant_share))
         mapping = {
             "Виконано": ("status_done_material_share", "positive", 55),
             "Частково виконано": ("status_partial_material_share", "warning", 55),
@@ -346,10 +334,12 @@ def detect_signals(ctx: AnalyticsContext) -> list[Signal]:
             "Не настав час": ("status_not_yet_material_share", "neutral", 35),
             "Втратило актуальність": ("status_obsolete_material_share", "neutral", 35),
         }
+        shares = status.get("shares") or {}
+        counts = dict(status.get("ranked") or [])
         for label, (code, sev, imp) in mapping.items():
-            ratio = counts.get(label, 0) / total
-            if ratio >= STATUS_SHARE_LANGUAGE_BANDS["material"]:
-                signals.append(_signal(code, sev, imp, "statuses", count=counts.get(label, 0), ratio=ratio, classification_basis="language_only_band"))
+            share = shares.get(label)
+            if is_number(share) and float(share) >= STATUS_SHARE_LANGUAGE_BANDS["material"] * 100.0:
+                signals.append(_signal(code, sev, imp, "statuses", count=_safe_int(counts.get(label)), share_pct=float(share), classification_basis="language_only_band"))
 
     # Conflicting signals explicitly called out by the specification.
     codes = {s.code for s in signals}

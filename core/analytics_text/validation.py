@@ -7,6 +7,7 @@ from typing import Any, Iterable
 import pandas as pd
 
 from .models import AnalyticsContext, AnalyticalFinding, NoteQualityMetrics, Signal
+from .analytical_metrics import MetricFloat, MetricInt, metric_code_of
 
 
 BANNED_FRAGMENTS = (
@@ -65,27 +66,23 @@ def audit_phrase_library() -> list[str]:
     return warnings
 
 
-def _numbers_from(value: Any, key_hint: str = "") -> set[float]:
-    values: set[float] = set()
-    if value is None or isinstance(value, bool):
-        return values
-    if isinstance(value, (int, float)):
-        try:
-            if not pd.isna(value):
-                number = round(float(value), 4)
-                values.add(number)
-                hint = key_hint.lower()
-                if any(token in hint for token in ("ratio", "share", "rate")) and abs(number) <= 1.0001:
-                    values.add(round(number * 100, 4))
-        except (TypeError, ValueError):
-            pass
-    elif isinstance(value, dict):
-        for key, item in value.items():
-            values.update(_numbers_from(item, f"{key_hint}.{key}" if key_hint else str(key)))
-    elif isinstance(value, (list, tuple, set, frozenset)):
-        for item in value:
-            values.update(_numbers_from(item, key_hint))
-    return values
+_METRIC_MARKER_RE = re.compile(r"⟦metric:([^⟧]+)⟧")
+
+
+def annotate_numeric(rendered: str, value: Any) -> str:
+    """Attach the exact factual metric code used to render one number.
+
+    The marker exists only inside the pre-validation representation and is
+    stripped before user-facing text is returned.
+    """
+    code = metric_code_of(value)
+    if not code or not rendered:
+        return rendered
+    return f"{rendered}⟦metric:{code}⟧"
+
+
+def strip_numeric_markers(text: str) -> str:
+    return _METRIC_MARKER_RE.sub("", text)
 
 
 def allowed_numeric_values(
@@ -93,47 +90,127 @@ def allowed_numeric_values(
     signals: Iterable[Signal] = (),
     findings: Iterable[AnalyticalFinding] = (),
 ) -> set[float]:
-    allowed = _numbers_from(dict(ctx.metrics))
-    for frame in (
-        ctx.goal_progress, ctx.task_progress, ctx.department_progress, ctx.product_progress,
-        ctx.status_counts, ctx.period_dynamics, ctx.yoy_comparison, ctx.mio_goal_evaluation,
-        ctx.mio_goal_task_evaluation, ctx.mio_measure_evaluation, ctx.mio_financing,
-    ):
-        if frame is None or frame.empty:
-            continue
-        for column in frame.columns:
-            series = pd.to_numeric(frame[column], errors="coerce").dropna()
-            allowed.update(round(float(value), 4) for value in series.tolist())
-    for signal in signals:
-        allowed.update(_numbers_from(dict(signal.values)))
+    facts = getattr(ctx, "analytical_facts", None)
+    if facts is None:
+        return set()
+    return {round(float(metric.value), 4) for metric in facts.metrics.values()}
+
+
+def _rendered_value_before_marker(text: str, marker_start: int) -> tuple[str, float | None, str | None]:
+    prefix = text[:marker_start]
+    patterns = (
+        (r"([+-]?\d+(?:,\d+)?)%$", "percent"),
+        (r"([+-]?\d+(?:,\d+)?)\s*в\.п\.$", "pp"),
+        (r"([+-]?\d+(?:[.,]\d+)?)$", "number"),
+    )
+    for pattern, unit in patterns:
+        match = re.search(pattern, prefix)
+        if match:
+            token = match.group(0)
+            raw = match.group(1).replace(",", ".")
+            try:
+                return token, float(raw), unit
+            except ValueError:
+                return token, None, unit
+    return "", None, None
+
+
+def trace_numeric_provenance(text: str, ctx: AnalyticsContext) -> list[dict[str, Any]]:
+    """Trace every rendered number to the exact metric code carried by Composer."""
+    facts = getattr(ctx, "analytical_facts", None)
+    traced: list[dict[str, Any]] = []
+    for marker in _METRIC_MARKER_RE.finditer(text):
+        code = marker.group(1)
+        metric = facts.metric(code) if facts is not None else None
+        rendered, rendered_value, rendered_unit = _rendered_value_before_marker(text, marker.start())
+        valid = metric is not None and rendered_value is not None
+        if valid:
+            expected_unit = metric.unit
+            if rendered_unit == "percent":
+                valid = expected_unit == "percent"
+            elif rendered_unit == "pp":
+                valid = expected_unit == "pp"
+            else:
+                valid = expected_unit in {"count", "number", "currency"}
+            # Display rounding is one decimal by default. Absolute wording of a
+            # decrease may render a negative pp metric without the minus sign.
+            if valid:
+                target = float(metric.value)
+                if rendered_value >= 0 and target < 0:
+                    target = abs(target)
+                valid = abs(float(rendered_value) - target) <= 0.11
+        traced.append({
+            "rendered": rendered,
+            "value": rendered_value,
+            "unit": rendered_unit,
+            "metric_code": code if valid else None,
+            "claimed_metric_code": code,
+            "source": metric.source if metric else None,
+            "aggregation": metric.aggregation if metric else None,
+            "numerator": metric.numerator if metric else None,
+            "denominator": metric.denominator if metric else None,
+            "dependencies": list(metric.dependencies) if metric else [],
+            "observation_unit": metric.observation_unit if metric else None,
+            "scope": dict(metric.scope) if metric else {},
+            "provenance_valid": bool(valid),
+        })
+    return traced
+
+
+def _unmarked_quantitative_tokens(annotated_text: str) -> list[str]:
+    """Return percentages/deltas that Composer emitted without an exact metric marker."""
+    warnings: list[str] = []
+    # Percentages and pp are always analytical values, never identifiers.
+    for pattern, label in ((r"(?<![\d,])\d+(?:,\d+)?%", "percentage"), (r"(?<![\d,])[+-]?\d+(?:,\d+)?\s*в\.п\.", "delta")):
+        for match in re.finditer(pattern, annotated_text):
+            tail = annotated_text[match.end():match.end()+9]
+            if not tail.startswith("⟦metric:"):
+                warnings.append(f"{label} has no factual metric provenance (without metric code): {match.group(0)}")
+    return warnings
+
+
+def validate_finding_numeric_provenance(ctx: AnalyticsContext, findings: Iterable[AnalyticalFinding]) -> list[str]:
+    """Require each user-facing finding number to carry its exact factual metric code."""
+    warnings: list[str] = []
+    facts = getattr(ctx, "analytical_facts", None)
+    percentage_tokens = ("share", "rate", "weight", "contribution", "execution", "coverage", "integral", "progress", "value", "average", "median")
+    pp_tokens = ("gap", "delta", "change", "excess")
+
+    def walk(value: Any, path: str):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                walk(item, f"{path}.{key}" if path else str(key))
+            return
+        if isinstance(value, (list, tuple)):
+            for idx, item in enumerate(value):
+                walk(item, f"{path}[{idx}]")
+            return
+        if isinstance(value, bool) or value is None or not isinstance(value, (int, float)):
+            return
+        leaf = path.rsplit(".", 1)[-1].lower()
+        # Years and purely internal ordering scores are identifiers/sorters, not narrative metrics.
+        if leaf in {"year", "score"}:
+            return
+        is_user_numeric = (
+            "count" in leaf or leaf in {"rows", "measures", "goals", "tasks", "departments", "products", "period_count", "pair_count", "periods_observed", "periods_with_problem", "periods_with_missing", "evaluated_measures", "paired_count"}
+            or any(token in leaf for token in percentage_tokens + pp_tokens)
+        )
+        if not is_user_numeric:
+            return
+        code = metric_code_of(value)
+        if not code:
+            warnings.append(f"finding numeric value has no metric code: {path}={value}")
+            return
+        metric = facts.metric(code) if facts is not None else None
+        if metric is None:
+            warnings.append(f"finding metric code not registered: {path}->{code}")
+            return
+        if abs(float(metric.value) - float(value)) > 1e-9:
+            warnings.append(f"finding metric/value mismatch: {path}->{code}: {value} != {metric.value}")
+
     for finding in findings:
-        allowed.update(_numbers_from(dict(finding.facts)))
-    # Common structural integers are harmless grammatical/count constructs.
-    allowed.update(float(i) for i in range(0, max(ctx.row_count, ctx.sample_size, 20) + 1))
-    return allowed
-
-
-def _has_allowed(value: float, allowed: set[float], tolerance: float = 0.12, *, magnitude: bool = False) -> bool:
-    """Return whether a rendered number is supported by analytical facts.
-
-    For percentage-point wording, a legitimate rendered value can be either an
-    explicitly stored delta or the difference between two supported percentage
-    facts (for example latest 74.8% minus selection average 58.1% = 16.7 p.p.).
-    This keeps validation strict without rejecting analytical comparisons that
-    are derived directly from canonical outputs.
-    """
-    if magnitude:
-        target = abs(value)
-        if any(abs(target - abs(candidate)) <= tolerance for candidate in allowed):
-            return True
-        candidates = list(allowed)
-        for i, left in enumerate(candidates):
-            for right in candidates[i + 1:]:
-                if abs(target - abs(left - right)) <= tolerance:
-                    return True
-        return False
-    return any(abs(value - candidate) <= tolerance for candidate in allowed)
-
+        walk(dict(finding.facts), finding.code)
+    return warnings
 
 def _sentences(text: str) -> list[str]:
     return [s.strip() for s in re.split(r"(?<=[.!?])\s+", text.strip()) if s.strip()]
@@ -167,6 +244,8 @@ def validate_text(
     ctx: AnalyticsContext,
     signals: Iterable[Signal] = (),
     findings: Iterable[AnalyticalFinding] = (),
+    *,
+    annotated_text: str | None = None,
 ) -> list[str]:
     warnings: list[str] = []
     if not text.strip():
@@ -205,20 +284,27 @@ def validate_text(
         len(ctx.goal_progress) if ctx.goal_progress is not None else 0,
         len(ctx.mio_goal_evaluation) if ctx.mio_goal_evaluation is not None else 0,
     )
-    if _goal_comparison_count <= 1 and "найвищ" in lowered and "найнижч" in lowered and "стратегіч" in lowered:
+    # Guard only an actual within-dimension best/worst comparison. The previous
+    # whole-note keyword check produced false positives whenever, for example,
+    # a one-SSP note also contained best/worst product or task sentences.
+    if _goal_comparison_count <= 1 and re.search(
+        r"у розрізі стратегічних цілей[^.]*найвищ[^.]*найнижч", lowered
+    ):
         warnings.append("meaningless best/worst goal comparison")
-    if len(ctx.department_progress) <= 1 and "найвищ" in lowered and "найнижч" in lowered and "ссп" in lowered:
+    if len(ctx.department_progress) <= 1 and re.search(
+        r"у розрізі ссп[^.]*найвищ[^.]*найнижч", lowered
+    ):
         warnings.append("meaningless best/worst department comparison")
 
-    allowed = allowed_numeric_values(ctx, signals, findings)
-    for raw in re.findall(r"(?<!\d)(\d+(?:,\d+)?)%", text):
-        value = float(raw.replace(",", "."))
-        if not _has_allowed(value, allowed):
-            warnings.append(f"percentage not supported by analytical facts: {raw}%")
-    for raw in re.findall(r"([+-]?\d+(?:,\d+)?)\s*в\.п\.", text):
-        value = float(raw.replace(",", "."))
-        if not _has_allowed(value, allowed, magnitude=True):
-            warnings.append(f"delta not supported by analytical facts: {raw} в.п.")
+    provenance_input = annotated_text if annotated_text is not None else text
+    provenance = trace_numeric_provenance(provenance_input, ctx)
+    warnings.extend(_unmarked_quantitative_tokens(provenance_input))
+    for item in provenance:
+        if not item.get("provenance_valid"):
+            warnings.append(
+                f"numeric provenance mismatch: {item.get('rendered') or '?'} -> {item.get('claimed_metric_code') or 'NONE'}"
+            )
+    warnings.extend(validate_finding_numeric_provenance(ctx, findings))
     return warnings
 
 

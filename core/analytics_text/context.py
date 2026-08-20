@@ -7,6 +7,7 @@ from typing import Any, Mapping
 import pandas as pd
 
 from .models import AnalyticsContext
+from .analytical_metrics import build_analytical_facts
 
 _MISSING_TEXT = {"", "—", "–", "-", "н/д", "n/a", "na", "none", "null", "nan"}
 
@@ -139,6 +140,13 @@ def build_context(
         "mio_measures": mio_measure_evaluation,
         "mio_financing": mio_financing,
     }
+    analytical_facts = build_analytical_facts(
+        filters=filters, metrics=metrics, goal_progress=goal_progress, task_progress=task_progress,
+        department_progress=department_progress, product_progress=product_progress, status_counts=status_counts,
+        period_dynamics=period_dynamics, yoy_comparison=yoy_comparison, active=active,
+        mio_goal_evaluation=mio_goal_evaluation, mio_goal_task_evaluation=mio_goal_task_evaluation,
+        mio_measure_evaluation=mio_measure_evaluation, mio_financing=mio_financing,
+    )
     return AnalyticsContext(
         filters=dict(filters),
         metrics=dict(metrics),
@@ -155,4 +163,5 @@ def build_context(
         mio_goal_task_evaluation=mio_goal_task_evaluation,
         mio_measure_evaluation=mio_measure_evaluation,
         mio_financing=mio_financing,
+        analytical_facts=analytical_facts,
     )

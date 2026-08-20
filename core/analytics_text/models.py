@@ -129,6 +129,7 @@ class GenerationDebug:
     word_count: int = 0
     quality_metrics: NoteQualityMetrics | None = None
     validation_warnings: list[str] = field(default_factory=list)
+    numeric_provenance: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -157,6 +158,18 @@ class AnalyticsContext:
     mio_goal_task_evaluation: pd.DataFrame = field(default_factory=pd.DataFrame)
     mio_measure_evaluation: pd.DataFrame = field(default_factory=pd.DataFrame)
     mio_financing: pd.DataFrame = field(default_factory=pd.DataFrame)
+    analytical_facts: Any = None
+
+    def factual_metric(self, code: str) -> Any:
+        return self.analytical_facts.metric(code) if self.analytical_facts is not None else None
+
+    def factual_value(self, code: str, default: Any = None) -> Any:
+        return self.analytical_facts.value(code, default) if self.analytical_facts is not None else default
+
+    def factual_structure(self, code: str, default: Any = None) -> Any:
+        if self.analytical_facts is None:
+            return default
+        return self.analytical_facts.structures.get(code, default)
 
     @staticmethod
     def _safe_metric_int(value: Any) -> int:

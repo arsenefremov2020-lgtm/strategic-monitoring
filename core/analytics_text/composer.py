@@ -4,18 +4,22 @@ import re
 from typing import Any, Iterable
 
 from .findings import derive_findings
-from .language import fmt_delta, fmt_number, fmt_pct, is_number, join_uk
+from .language import fmt_delta as _raw_fmt_delta, fmt_number as _raw_fmt_number, fmt_pct as _raw_fmt_pct, is_number, join_uk
 from .models import (
     AnalyticsContext, AnalyticalBlock, AnalyticalFinding, GeneratedNote, GenerationDebug,
     GenerationState, PhraseVariant, Signal,
 )
-from .morphology import count_case_uk, count_uk
+from .morphology import count_case_uk as _raw_count_case_uk, count_uk as _raw_count_uk
 from .planner import build_text_plan
 from .scenarios import activate_scenarios
 from .selector import choose_variant, deterministic_index
 from .signals import detect_signals
 from .templates import BLOCK_STRUCTURES, phrase_pool
-from .validation import assess_quality, clean_text, validate_text
+from .analytical_metrics import MetricInt, metric_code_of
+from .validation import (
+    annotate_numeric, assess_quality, clean_text, strip_numeric_markers,
+    validate_text, trace_numeric_provenance,
+)
 
 
 def _finding_map(findings: Iterable[AnalyticalFinding]) -> dict[str, AnalyticalFinding]:
@@ -39,6 +43,8 @@ def _prefix_finding(findings: Iterable[AnalyticalFinding], prefix: str) -> Analy
 
 
 def _n(value: Any) -> int:
+    if isinstance(value, MetricInt):
+        return value
     try:
         if value is None:
             return 0
@@ -53,15 +59,52 @@ def _n(value: Any) -> int:
         return 0
 
 
+def _fmt_number(value: Any, digits: int = 1) -> str:
+    rendered = _raw_fmt_number(value, digits)
+    return annotate_numeric(rendered, value) if rendered != "н/д" else rendered
+
+
+def _magnitude_number(value: Any, digits: int = 1) -> str:
+    if not is_number(value):
+        return "н/д"
+    rendered = _raw_fmt_number(abs(float(value)), digits)
+    return annotate_numeric(rendered, value)
+
+
+def _fmt_delta(value: Any, digits: int = 1, signed: bool = True) -> str:
+    rendered = _raw_fmt_delta(value, digits, signed)
+    return annotate_numeric(rendered, value) if rendered != "н/д" else rendered
+
+
 def _pct(value: Any) -> str:
-    return fmt_pct(value) if is_number(value) else "н/д"
+    if not is_number(value):
+        return "н/д"
+    return annotate_numeric(_raw_fmt_pct(value), value)
 
 
 def _delta_words(value: Any) -> str:
     if not is_number(value):
         return "н/д"
     val = float(value)
-    return f"{fmt_number(abs(val))} в.п."
+    rendered = f"{_raw_fmt_number(abs(val))} в.п."
+    return annotate_numeric(rendered, value)
+
+
+def _count_uk(value: Any, entity: str) -> str:
+    rendered = _raw_count_uk(value, entity)
+    code = metric_code_of(value)
+    if not code:
+        return rendered
+    # Bind the metric marker directly to the numerical token, not to the noun.
+    return re.sub(r"^([+-]?\d+(?:[.,]\d+)?)", lambda m: annotate_numeric(m.group(1), value), rendered, count=1)
+
+
+def _count_case_uk(value: Any, entity: str, case: str) -> str:
+    rendered = _raw_count_case_uk(value, entity, case)
+    code = metric_code_of(value)
+    if not code:
+        return rendered
+    return re.sub(r"^([+-]?\d+(?:[.,]\d+)?)", lambda m: annotate_numeric(m.group(1), value), rendered, count=1)
 
 
 def _change_phrase(value: Any) -> str:
@@ -69,17 +112,10 @@ def _change_phrase(value: Any) -> str:
         return "не визначена"
     val = float(value)
     if val > 0:
-        return f"зросло на {_delta_words(val)}"
+        return f"зросло на {_delta_words(value)}"
     if val < 0:
-        return f"знизилося на {_delta_words(val)}"
+        return f"знизилося на {_delta_words(value)}"
     return "не змінилося"
-
-
-def _count_share(count: int, total: int, entity: str = "record") -> str:
-    if total <= 0:
-        return count_uk(count, entity)
-    share = count / total * 100
-    return f"{count_uk(count, entity)}, або {fmt_pct(share)} від відповідної сукупності"
 
 
 def _choose_opening(ctx: AnalyticsContext, tag: str, state: GenerationState, debug: GenerationDebug) -> str:
@@ -146,9 +182,9 @@ def _scope_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding], openi
     sentences = [opening]
     if complexity in {"wide", "very_wide"}:
         context_bits=[]
-        if measures: context_bits.append(count_uk(measures, "measure"))
-        if goals: context_bits.append(count_uk(goals, "goal"))
-        if tasks: context_bits.append(count_uk(tasks, "task"))
+        if measures: context_bits.append(_count_uk(measures, "measure"))
+        if goals: context_bits.append(_count_uk(goals, "goal"))
+        if tasks: context_bits.append(_count_uk(tasks, "task"))
         if context_bits:
             sentences.append(f"Аналіз охоплює {_period_text(ctx)} та {join_uk(context_bits)}.")
     return AnalyticalBlock("scope", "scope", 55, findings=("scope_profile",), sentences=tuple(sentences), facts_used=frozenset({"scope_profile"}))
@@ -169,14 +205,16 @@ def _overall_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding], com
         parts["execution"] = "За обраною вибіркою зведений рівень виконання не розрахований через відсутність достатнього масиву оцінених результатів."
 
     if is_number(latest):
-        if is_number(avg) and abs(float(latest) - float(avg)) >= 0.05:
-            parts["latest"] = f"В останньому оціненому періоді результат становить {_pct(latest)} проти {_pct(avg)} в середньому за вибіркою; різниця становить {_delta_words(float(latest)-float(avg))}."
+        latest_gap = ctx.factual_value("overall.latest_minus_average_pp")
+        if is_number(avg) and is_number(latest_gap) and abs(float(latest_gap)) >= 0.05:
+            parts["latest"] = f"В останньому оціненому періоді результат становить {_pct(latest)} проти {_pct(avg)} в середньому за вибіркою; різниця становить {_delta_words(latest_gap)}."
         else:
             parts["latest"] = f"В останньому оціненому періоді значення становить {_pct(latest)} і практично збігається із середнім рівнем за вибіркою."
 
     if is_number(cov):
         text = f"Середнє покриття моніторингом становить {_pct(cov)}"
-        if is_number(cov_latest) and abs(float(cov_latest) - float(cov)) >= 0.05:
+        coverage_gap = ctx.factual_value("overall.coverage_latest_minus_average_pp")
+        if is_number(cov_latest) and is_number(coverage_gap) and abs(float(coverage_gap)) >= 0.05:
             text += f", тоді як в останньому оціненому періоді — {_pct(cov_latest)}"
         text += "."
         parts["coverage"] = text
@@ -185,8 +223,9 @@ def _overall_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding], com
         used.add(divergence.code)
         d = divergence.facts
         if divergence.code == "execution_goal_divergence":
-            gap = float(d.get("gap") or 0)
-            relation = "вище" if gap > 0 else "нижче"
+            gap = d.get("gap")
+            gap_num = float(gap or 0)
+            relation = "вище" if gap_num > 0 else "нижче"
             parts["divergence"] = (
                 f"Окремо простежується розбіжність між виконанням за заходами та результатом за стратегічними цілями: "
                 f"{_pct(d.get('measure_execution'))} проти {_pct(d.get('goal_execution'))}; показник за заходами на {_delta_words(gap)} {relation}. "
@@ -201,9 +240,9 @@ def _overall_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding], com
     if problems or missing:
         issue_parts = []
         if problems:
-            issue_parts.append(count_uk(problems, "record") + " із проблемним статусом або ризиковою ознакою")
+            issue_parts.append(_count_uk(problems, "record") + " із проблемним статусом або ризиковою ознакою")
         if missing:
-            issue_parts.append(f"відсутні подання за {count_uk(missing, 'record')}")
+            issue_parts.append(f"відсутні подання за {_count_uk(missing, 'record')}")
         issue_text = "У структурі масиву окремої уваги потребують " + join_uk(issue_parts) + "."
 
         # Close the analytical loop already in the opening paragraph: if the
@@ -222,7 +261,7 @@ def _overall_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding], com
             topic_name = "проблемних позицій" if "problems" in strongest.code else "відсутніх подань"
             issue_text += (
                 f" Найбільший осередок {topic_name} — {sf.get('top_label')}: "
-                f"{_n(sf.get('top_count'))} із {_n(sf.get('total'))}, або {_pct(float(sf.get('top_share') or 0) * 100)}."
+                f"{_n(sf.get('top_count'))} із {_n(sf.get('total'))}, або {_pct(sf.get('top_share'))}."
             )
         parts["issues"] = issue_text
     elif ctx.row_count:
@@ -263,10 +302,10 @@ def _dynamics_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding], co
     if path: sentences["path"] = path
     first, last = f.get("first"), f.get("last")
     if is_number(first) and is_number(last) and len(f.get("values", [])) >= 2:
-        delta = float(last) - float(first)
-        if delta > 0:
+        delta = f.get("cumulative_delta")
+        if is_number(delta) and float(delta) > 0:
             sentences["net"] = f"Від першого до останнього доступного періоду рівень виконання зріс із {_pct(first)} до {_pct(last)}, тобто на {_delta_words(delta)}."
-        elif delta < 0:
+        elif is_number(delta) and float(delta) < 0:
             sentences["net"] = f"Від першого до останнього доступного періоду рівень виконання знизився з {_pct(first)} до {_pct(last)}, тобто на {_delta_words(delta)}."
         else:
             sentences["net"] = f"Перший і останній доступні періоди мають однаковий результат — {_pct(last)}, однак це не виключає внутрішніх коливань між ними."
@@ -293,11 +332,11 @@ def _dynamics_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding], co
         elif aux.code == "trajectory_decline_accelerating":
             sentences["pace"] = f"Негативна динаміка наприкінці періоду посилилася: величина зниження змінилася з {_delta_words(aux.facts.get('previous_delta'))} до {_delta_words(aux.facts.get('latest_delta'))}."
     if "max_increase" in f:
-        up = float(f["max_increase"]); down = float(f["max_decrease"])
-        if up > 0 or down < 0:
+        up = f["max_increase"]; down = f["max_decrease"]
+        if float(up) > 0 or float(down) < 0:
             parts = []
-            if up > 0: parts.append(f"найбільший приріст припав на {f.get('max_increase_period')} і становив {_delta_words(up)}")
-            if down < 0: parts.append(f"найбільше зниження припало на {f.get('max_decrease_period')} і становило {_delta_words(down)}")
+            if float(up) > 0: parts.append(f"найбільший приріст припав на {f.get('max_increase_period')} і становив {_delta_words(up)}")
+            if float(down) < 0: parts.append(f"найбільше зниження припало на {f.get('max_decrease_period')} і становило {_delta_words(down)}")
             sentences["extremes"] = "За переходами між оціненими періодами " + "; ".join(parts) + "."
     cov_delta = f.get("coverage_cumulative_delta")
     if is_number(cov_delta):
@@ -311,12 +350,12 @@ def _dynamics_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding], co
         g = goal_change.facts; used.add(goal_change.code)
         total = _n(g.get("count_with_change")); improved = _n(g.get("improved")); declined = _n(g.get("declined"))
         if total:
-            sentences["breadth"] = f"У розрізі стратегічних цілей зміна охоплює не лише зведений показник: із {count_uk(total, 'goal')} результат зріс за {count_case_uk(improved, 'goal', 'ins') if improved else 'жодною стратегічною ціллю'} та знизився за {count_case_uk(declined, 'goal', 'ins') if declined else 'жодною'}."
+            sentences["breadth"] = f"У розрізі стратегічних цілей зміна охоплює не лише зведений показник: із {_count_uk(total, 'goal')} результат зріс за {_count_case_uk(improved, 'goal', 'ins') if improved else 'жодною стратегічною ціллю'} та знизився за {_count_case_uk(declined, 'goal', 'ins') if declined else 'жодною'}."
     if dep_change and complexity in {"wide", "very_wide"}:
         d = dep_change.facts; used.add(dep_change.code)
         total = _n(d.get("count_with_change")); improved = _n(d.get("improved")); declined = _n(d.get("declined"))
         if total:
-            sentences["ssp_breadth"] = f"За ССП картина також не зводиться до одного середнього: серед {count_uk(total, 'department')} зростання мають {improved}, зниження — {declined}; найбільший приріст має {d.get('largest_improvement_label')} ({fmt_delta(d.get('largest_improvement'))}), найбільше погіршення — {d.get('largest_deterioration_label')} ({fmt_delta(d.get('largest_deterioration'))})."
+            sentences["ssp_breadth"] = f"За ССП картина також не зводиться до одного середнього: серед {_count_uk(total, 'department')} зростання мають {improved}, зниження — {declined}; найбільший приріст має {d.get('largest_improvement_label')} ({_fmt_delta(d.get('largest_improvement'))}), найбільше погіршення — {d.get('largest_deterioration_label')} ({_fmt_delta(d.get('largest_deterioration'))})."
     structures = BLOCK_STRUCTURES["dynamics"]
     order = structures[deterministic_index(len(structures), f"{ctx.signature}:dynamics-structure")]
     rendered = [sentences[k] for k in order if k in sentences]
@@ -346,7 +385,7 @@ def _yoy_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding]) -> Anal
 
         if is_number(execution.get("previous")) and is_number(execution.get("current")):
             change = execution.get("change")
-            delta_text = fmt_delta(change) if is_number(change) else "н/д"
+            delta_text = _fmt_delta(change) if is_number(change) else "н/д"
             parts.append(
                 f"У порівнянні {pair} рівень виконання змінився з {_pct(execution['previous'])} до {_pct(execution['current'])}; "
                 f"річна різниця становить {delta_text}."
@@ -359,16 +398,16 @@ def _yoy_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding]) -> Anal
                 f"({_change_phrase(coverage.get('change'))})"
             )
         if is_number(problems.get("change")):
-            delta = float(problems["change"])
+            delta_metric = problems["change"]; delta = float(delta_metric)
             companion.append(
                 f"кількість проблемних/ризикових позицій {'зросла' if delta > 0 else 'скоротилася' if delta < 0 else 'не змінилася'}"
-                + (f" на {fmt_number(abs(delta))}" if delta else "")
+                + (f" на {_magnitude_number(delta_metric)}" if delta else "")
             )
         if is_number(missing.get("change")):
-            delta = float(missing["change"])
+            delta_metric = missing["change"]; delta = float(delta_metric)
             companion.append(
                 f"кількість відсутніх подань {'зросла' if delta > 0 else 'скоротилася' if delta < 0 else 'не змінилася'}"
-                + (f" на {fmt_number(abs(delta))}" if delta else "")
+                + (f" на {_magnitude_number(delta_metric)}" if delta else "")
             )
         if companion:
             lead = "Супровідні показники за цей самий інтервал показують, що " if total_pairs == 1 else "За цей самий річний інтервал "
@@ -377,7 +416,7 @@ def _yoy_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding]) -> Anal
         if is_number(measures.get("previous")) and is_number(measures.get("current")) and float(measures["previous"]) != float(measures["current"]):
             parts.append(
                 f"Склад порівнюваного портфеля у {pair} також відрізняється: кількість унікальних заходів змінилася "
-                f"з {fmt_number(measures['previous'])} до {fmt_number(measures['current'])}. Отже, річна різниця відображає зміну між "
+                f"з {_fmt_number(measures['previous'])} до {_fmt_number(measures['current'])}. Отже, річна різниця відображає зміну між "
                 "фактично сформованими у відповідні роки масивами, а не між двома повністю ідентичними наборами об’єктів."
             )
         return parts
@@ -390,17 +429,17 @@ def _yoy_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding]) -> Anal
         coverage_changes = [float(x) for x in (facts.get("coverage_changes", []) or []) if is_number(x)]
         if item.code == "yoy_multi_continuous_improvement":
             sentences.append(
-                f"Усі {len(execution_changes)} доступні міжрічні переходи за рівнем виконання мають позитивний напрям. "
+                f"Усі {_n(facts.get('pair_count'))} доступні міжрічні переходи за рівнем виконання мають позитивний напрям. "
                 "Отже, покращення не обмежується одним річним порівнянням, а простежується послідовно в доступному річному ряді."
             )
         elif item.code == "yoy_multi_continuous_deterioration":
             sentences.append(
-                f"Усі {len(execution_changes)} доступні міжрічні переходи за рівнем виконання мають негативний напрям. "
+                f"Усі {_n(facts.get('pair_count'))} доступні міжрічні переходи за рівнем виконання мають негативний напрям. "
                 "Погіршення, таким чином, має послідовний характер у доступному річному ряді, а не є одиничним відхиленням останнього року."
             )
         elif item.code == "yoy_multi_reversal":
-            positives = sum(x > 0 for x in execution_changes)
-            negatives = sum(x < 0 for x in execution_changes)
+            positives = _n(facts.get("execution_positive_count"))
+            negatives = _n(facts.get("execution_negative_count"))
             sentences.append(
                 f"Міжрічна траєкторія не є односпрямованою: серед доступних переходів {positives} показують зростання виконання, "
                 f"а {negatives} — зниження. Це означає зміну напряму між окремими роками, яку неможливо коректно звести лише до останньої річної різниці."
@@ -415,11 +454,11 @@ def _yoy_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding]) -> Anal
                 "Доступні річні порівняння не формують достатньо однорідної послідовності для висновку про стійкий багаторічний напрям; "
                 "у довідці відображено фактичні зміни кожного доступного річного переходу окремо."
             )
-        if coverage_changes and len(coverage_changes) == len(comparisons):
-            up = sum(x > 0 for x in coverage_changes); down = sum(x < 0 for x in coverage_changes)
-            if up == len(coverage_changes):
+        if coverage_changes and _n(facts.get("pair_count")) == len(comparisons):
+            up = _n(facts.get("coverage_positive_count")); down = _n(facts.get("coverage_negative_count"))
+            if up == _n(facts.get("pair_count")):
                 sentences.append("Повнота моніторингових даних водночас покращувалася в кожному доступному міжрічному переході, що посилює інформаційну основу для порівняння результатів у часі.")
-            elif down == len(coverage_changes):
+            elif down == _n(facts.get("pair_count")):
                 sentences.append("Повнота моніторингових даних знижувалася в кожному доступному міжрічному переході; це є окремим обмеженням для сили багаторічної інтерпретації, навіть якщо напрям виконання є однозначним.")
             elif up and down:
                 sentences.append("Покриття моніторингом змінювалося різноспрямовано між роками, тому інформаційна повнота окремих річних порівнянь також є неоднаковою.")
@@ -452,7 +491,7 @@ def _coverage_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding]) ->
     if missing == 0:
         parts["missing"] = "Відсутніх обов’язкових подань у поточному масиві не зафіксовано, тому неповнота подань не формує окремого обмеження для цієї вибірки."
     else:
-        parts["missing"] = f"У вибірці відсутні {count_uk(missing, 'submission')}; їх розподіл за ССП і стратегічними цілями показує, де саме зосереджена інформаційна неповнота."
+        parts["missing"] = f"У вибірці відсутні {_count_uk(missing, 'submission')}; їх розподіл за ССП і стратегічними цілями показує, де саме зосереджена інформаційна неповнота."
 
     for item, key, label in ((dep_missing, "department", "ССП"), (goal_missing, "goal", "стратегічних цілей")):
         if not item or not item.facts.get("total", 0):
@@ -461,17 +500,17 @@ def _coverage_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding]) ->
         top = x.get("top_label"); top_count = _n(x.get("top_count")); total = _n(x.get("total")); top3 = _n(x.get("top3_count"))
         display = f"ССП «{top}»" if key == "department" else str(top)
         if top:
-            parts[key] = f"У розрізі {label} найбільша кількість відсутніх подань припадає на {display}: {top_count} із {total}, або {_pct(top_count/total*100)}; три найбільші компоненти разом охоплюють {top3} подань ({_pct(top3/total*100)})."
+            parts[key] = f"У розрізі {label} найбільша кількість відсутніх подань припадає на {display}: {top_count} із {total}, або {_pct(x.get('top_share'))}; три найбільші компоненти разом охоплюють {top3} подань ({_pct(x.get('top3_share'))})."
         if x.get("top_internal_rate") is not None:
-            internal = float(x["top_internal_rate"]) * 100
+            internal = x.get("top_internal_rate")
             if is_number(x.get("top_portfolio_share")) and is_number(x.get("concentration_excess_pp")):
-                portfolio_share = float(x["top_portfolio_share"]) * 100
-                excess = float(x["concentration_excess_pp"])
-                if abs(excess) >= 0.05:
-                    relation = "перевищує" if excess > 0 else "нижча за"
+                portfolio_share = x.get("top_portfolio_share")
+                excess = x["concentration_excess_pp"]
+                if abs(float(excess)) >= 0.05:
+                    relation = "перевищує" if float(excess) > 0 else "нижча за"
                     parts[f"{key}_rate"] = (
                         f"У власному портфелі цього компонента без даних залишається {_pct(internal)} позицій. "
-                        f"На нього припадає {_pct(float(x.get('top_share', 0))*100)} усіх відсутніх подань при частці {_pct(portfolio_share)} у відповідному портфелі; "
+                        f"На нього припадає {_pct(x.get("top_share"))} усіх відсутніх подань при частці {_pct(portfolio_share)} у відповідному портфелі; "
                         f"частка неповних подань {relation} портфельну вагу на {_delta_words(excess)}."
                     )
                 else:
@@ -503,7 +542,7 @@ def _distribution_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding]
         used.add(dist.code); f = dist.facts
         if _n(f.get("count")) > 1:
             sentences["spread"] = f"У розрізі {entity_gen} результати є диференційованими: найвищий рівень виконання має {f.get('best_label')} — {_pct(f.get('best_value'))}, а найнижчий — {f.get('worst_label')} — {_pct(f.get('worst_value'))}; розрив становить {_delta_words(f.get('gap'))}."
-            sentences["relative"] = f"Порівняно із загальним рівнем виконання {_pct(f.get('reference'))}, вище нього перебувають {count_uk(_n(f.get('above_reference')), entity_key)}, нижче — {count_uk(_n(f.get('below_reference')), entity_key)}. Отже, відхилення охоплюють не лише окремі крайні позиції, а помітну частину {entity_gen}."
+            sentences["relative"] = f"Порівняно із загальним рівнем виконання {_pct(f.get('reference'))}, вище нього перебувають {_count_uk(_n(f.get('above_reference')), entity_key)}, нижче — {_count_uk(_n(f.get('below_reference')), entity_key)}. Отже, відхилення охоплюють не лише окремі крайні позиції, а помітну частину {entity_gen}."
             top = f.get("top", []); bottom = f.get("bottom", [])
             if top and bottom:
                 top_text = ", ".join(f"{l} ({_pct(v)})" for l, v in top[:3])
@@ -514,7 +553,7 @@ def _distribution_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding]
     if change:
         used.add(change.code); f = change.facts; total = _n(f.get("count_with_change")); imp = _n(f.get("improved")); dec = _n(f.get("declined")); stable = _n(f.get("stable"))
         if total:
-            sentences["movement"] = f"Динаміка доступна для {count_uk(total, entity_key)}: покращення зафіксовано за {count_case_uk(imp, entity_key, 'ins')}, погіршення — за {count_case_uk(dec, entity_key, 'ins')}, мінімальні зміни — за {count_case_uk(stable, entity_key, 'ins')}. Найбільший приріст має {f.get('largest_improvement_label')} ({fmt_delta(f.get('largest_improvement'))}), а найбільше зниження — {f.get('largest_deterioration_label')} ({fmt_delta(f.get('largest_deterioration'))})."
+            sentences["movement"] = f"Динаміка доступна для {_count_uk(total, entity_key)}: покращення зафіксовано за {_count_case_uk(imp, entity_key, 'ins')}, погіршення — за {_count_case_uk(dec, entity_key, 'ins')}, мінімальні зміни — за {_count_case_uk(stable, entity_key, 'ins')}. Найбільший приріст має {f.get('largest_improvement_label')} ({_fmt_delta(f.get('largest_improvement'))}), а найбільше зниження — {f.get('largest_deterioration_label')} ({_fmt_delta(f.get('largest_deterioration'))})."
             if "broad_positive" in change.code:
                 sentences["breadth"] = f"Покращення має широкий характер у межах доступних порівнянь: позитивна динаміка охоплює більшу частину {entity_gen}, а не один локальний компонент."
             elif "broad_negative" in change.code:
@@ -523,22 +562,22 @@ def _distribution_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding]
                 sentences["breadth"] = f"Зміна є поляризованою: одночасно присутні компоненти зі зростанням і зі зниженням, тому зведений показник приховує різноспрямований внутрішній рух."
     if kind == "task" and problems and _n(problems.facts.get("total")):
         used.add(problems.code); f = problems.facts; total = _n(f.get("total")); top_count = _n(f.get("top_count")); top3_count = _n(f.get("top3_count"))
-        sentences["problems"] = f"Проблемні позиції в цьому розрізі локалізуються нерівномірно: {f.get('top_label')} концентрує {top_count} із {total} ({_pct(top_count/total*100)}), а три найбільші компоненти — {top3_count} ({_pct(top3_count/total*100)})."
+        sentences["problems"] = f"Проблемні позиції в цьому розрізі локалізуються нерівномірно: {f.get('top_label')} концентрує {top_count} із {total} ({_pct(f.get("top_share"))}), а три найбільші компоненти — {top3_count} ({_pct(f.get("top3_share"))})."
         if f.get("top_internal_rate") is not None:
-            internal = float(f["top_internal_rate"]) * 100
+            internal = f.get("top_internal_rate")
             if is_number(f.get("top_portfolio_share")) and is_number(f.get("concentration_excess_pp")):
-                portfolio_share = float(f["top_portfolio_share"]) * 100
-                excess = float(f["concentration_excess_pp"])
-                if abs(excess) >= 0.05:
-                    relation = "перевищує" if excess > 0 else "нижча за"
-                    sentences["problem_rate"] = f"У власному портфелі цього компонента проблемними є {_pct(internal)} позицій. Його частка серед усіх проблемних позицій ({_pct(float(f.get('top_share', 0))*100)}) {relation} частку у відповідному портфелі ({_pct(portfolio_share)}) на {_delta_words(excess)}."
+                portfolio_share = f.get("top_portfolio_share")
+                excess = f["concentration_excess_pp"]
+                if abs(float(excess)) >= 0.05:
+                    relation = "перевищує" if float(excess) > 0 else "нижча за"
+                    sentences["problem_rate"] = f"У власному портфелі цього компонента проблемними є {_pct(internal)} позицій. Його частка серед усіх проблемних позицій ({_pct(f.get("top_share"))}) {relation} частку у відповідному портфелі ({_pct(portfolio_share)}) на {_delta_words(excess)}."
                 else:
                     sentences["problem_rate"] = f"У власному портфелі цього компонента проблемними є {_pct(internal)} позицій; його частка серед усіх проблемних позицій практично відповідає портфельній вазі."
             else:
                 sentences["problem_rate"] = f"У власному портфелі цього компонента проблемними є {_pct(internal)} позицій; це внутрішня інтенсивність проблемності для найбільшого абсолютного осередку відхилень."
     if kind == "task" and missing and _n(missing.facts.get("total")):
         used.add(missing.code); f = missing.facts; total = _n(f.get("total")); top_count = _n(f.get("top_count"))
-        sentences["missing"] = f"Неповнота даних на рівні завдань також має конкретну локалізацію: найбільше відсутніх подань має {f.get('top_label')} — {top_count} із {total}, або {_pct(top_count/total*100)}."
+        sentences["missing"] = f"Неповнота даних на рівні завдань також має конкретну локалізацію: найбільше відсутніх подань має {f.get('top_label')} — {top_count} із {total}, або {_pct(f.get("top_share"))}."
     if portfolio and kind == "department":
         used.add(portfolio.code); f = portfolio.facts
         largest = f.get("largest_department")
@@ -565,7 +604,7 @@ def _distribution_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding]
             pieces = [f"{label}: проблемних {pr}, без даних {mi}" for label, pr, mi in f["top_tasks"]]
             sentences["drill"] = f"У межах {f.get('goal_label')} основна частина проблемних і відсутніх позицій припадає на такі завдання: " + "; ".join(pieces) + "."
             if is_number(f.get("top2_attention_share")):
-                sentences["drill_share"] = f"Два найбільші завдання охоплюють {_pct(float(f['top2_attention_share'])*100)} усіх проблемних і відсутніх позицій цієї цілі, тобто відхилення на цьому рівні є переважно локалізованим."
+                sentences["drill_share"] = f"Два найбільші завдання охоплюють {_pct(f.get("top2_attention_share"))} усіх проблемних і відсутніх позицій цієї цілі, тобто відхилення на цьому рівні є переважно локалізованим."
         elif drill.code == "ssp_drilldown":
             if f.get("top_tasks"):
                 pieces = [f"{label}: проблемних {pr}, без даних {mi}" for label, pr, mi in f["top_tasks"]]
@@ -586,12 +625,12 @@ def _statuses_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding]) ->
     if ranked:
         pieces = [f"{label} — {count}" for label, count in ranked[:6]]
         sentences.append("Структура статусів у поточній вибірці розподіляється так: " + "; ".join(pieces) + ".")
-        sentences.append(f"Найпоширеніший фактично зафіксований статус — «{f.get('dominant_label')}»: {f.get('dominant_count')} із {total} записів, або {_pct(float(f.get('dominant_share',0))*100)}.")
+        sentences.append(f"Найпоширеніший фактично зафіксований статус — «{f.get('dominant_label')}»: {f.get('dominant_count')} із {total} записів, або {_pct(f.get("dominant_share"))}.")
     shares = f.get("shares", {}) or {}
     interpretation_parts = []
     for label in ("Частково виконано", "Не виконано", "Не подано"):
         if label in shares:
-            interpretation_parts.append(f"«{label}» — {_pct(float(shares[label])*100)}")
+            interpretation_parts.append(f"«{label}» — {_pct(shares[label])}")
     if interpretation_parts:
         sentences.append("Статуси, що безпосередньо впливають на інтерпретацію поточного портфеля, мають такі частки: " + "; ".join(interpretation_parts) + ".")
 
@@ -602,9 +641,9 @@ def _statuses_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding]) ->
         for label in ("Виконано", "Частково виконано", "Не виконано", "Не подано"):
             delta = changes.get(label)
             if is_number(delta) and abs(float(delta)) >= 0.5:
-                selected.append((label, float(delta)))
+                selected.append((label, delta))
         if selected:
-            parts = [f"частка «{label}» {'зросла' if delta > 0 else 'знизилася'} на {_delta_words(delta)}" for label, delta in selected]
+            parts = [f"частка «{label}» {'зросла' if float(delta) > 0 else 'знизилася'} на {_delta_words(delta)}" for label, delta in selected]
             sentences.append(
                 f"Між {comparison.get('previous_period')} та {comparison.get('latest_period')} статусна структура також змінилася: "
                 + "; ".join(parts) + "."
@@ -626,7 +665,7 @@ def _products_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding]) ->
     if f.get("largest_label") and f.get("total_size"):
         sentences.append(
             f"За типами продукту найбільший сегмент — «{f.get('largest_label')}»: {f.get('largest_size')} із {f.get('total_size')} унікальних заходів, "
-            f"або {_pct(float(f.get('largest_share',0))*100)} портфеля цього розрізу."
+            f"або {_pct(f.get("largest_share"))} портфеля цього розрізу."
         )
     if f.get("best_label") and f.get("worst_label"):
         sentences.append(
@@ -636,12 +675,12 @@ def _products_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding]) ->
     if _n(f.get("problem_total")) and f.get("top_problem_label"):
         sentences.append(
             f"Найбільша кількість проблемних позицій у продуктовому розрізі припадає на «{f.get('top_problem_label')}» — "
-            f"{f.get('top_problem_count')} із {f.get('problem_total')}, або {_pct(float(f.get('top_problem_share',0))*100)} всіх проблемних позицій за типами продукту."
+            f"{f.get('top_problem_count')} із {f.get('problem_total')}, або {_pct(f.get("top_problem_share"))} всіх проблемних позицій за типами продукту."
         )
     if _n(f.get("missing_total")) and f.get("top_missing_label"):
         sentences.append(
             f"Неповнота даних найбільше концентрується у типі «{f.get('top_missing_label')}» — {f.get('top_missing_count')} із "
-            f"{f.get('missing_total')} відсутніх подань у цьому розрізі ({_pct(float(f.get('top_missing_share',0))*100)})."
+            f"{f.get('missing_total')} відсутніх подань у цьому розрізі ({_pct(f.get("top_missing_share"))})."
         )
     return AnalyticalBlock("products", "products", item.importance, findings=(item.code,), sentences=tuple(sentences), facts_used=frozenset({item.code}))
 
@@ -694,7 +733,7 @@ def _mio_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding]) -> Anal
         used.add(measure_profile.code); f=measure_profile.facts
         if _n(f.get('evaluated_measures')):
             sentences.append(
-                f"На рівні заходів оцінку співвідношення факту до плану доступно для {count_uk(_n(f.get('evaluated_measures')), 'measure')}; "
+                f"На рівні заходів оцінку співвідношення факту до плану доступно для {_count_uk(_n(f.get('evaluated_measures')), 'measure')}; "
                 f"середнє значення становить {_pct(f.get('average_fact_plan'))}, медіанне — {_pct(f.get('median_fact_plan'))}."
             )
 
@@ -702,7 +741,7 @@ def _mio_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding]) -> Anal
         used.add(financing.code); f=financing.facts
         paired=_n(f.get('paired_count'))
         if paired:
-            sentences.append(f"Для {count_uk(paired, 'measure')} доступне одночасне зіставлення фінансового та фактичного виконання: у середньому фінансове виконання становить {_pct(f.get('avg_financial_execution'))}, а стан виконання заходів — {_pct(f.get('avg_physical_execution'))}.")
+            sentences.append(f"Для {_count_uk(paired, 'measure')} доступне одночасне зіставлення фінансового та фактичного виконання: у середньому фінансове виконання становить {_pct(f.get('avg_financial_execution'))}, а стан виконання заходів — {_pct(f.get('avg_physical_execution'))}.")
             gaps=f.get('largest_gaps',[]) or []
             if gaps:
                 top=gaps[0]; delta=top.get('_gap')
@@ -723,23 +762,23 @@ def _problem_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding]) -> 
 
     if goal and _n(goal.facts.get("total")):
         used.add(goal.code); f=goal.facts; total=_n(f.get("total")); top=_n(f.get("top_count")); top3=_n(f.get("top3_count"))
-        groups["goal"].append(f"За стратегічними цілями з {total} проблемних позицій {top} ({_pct(top/total*100)}) припадають на {f.get('top_label')}, а три найбільші цілі разом концентрують {top3} ({_pct(top3/total*100)}).")
+        groups["goal"].append(f"За стратегічними цілями з {total} проблемних позицій {top} ({_pct(f.get("top_share"))}) припадають на {f.get('top_label')}, а три найбільші цілі разом концентрують {top3} ({_pct(f.get("top3_share"))}).")
         if is_number(f.get("top_portfolio_share")) and is_number(f.get("concentration_excess_pp")):
-            excess=float(f["concentration_excess_pp"]); pshare=float(f["top_portfolio_share"])*100
-            if abs(excess)>=0.05:
-                relation="перевищує" if excess>0 else "є нижчою за"
-                conclusion = "проблемний внесок цієї цілі є непропорційно вищим за її портфельну вагу" if excess > 0 else "проблемний внесок цієї цілі є нижчим за її портфельну вагу"
+            excess=f["concentration_excess_pp"]; pshare=f.get("top_portfolio_share")
+            if abs(float(excess))>=0.05:
+                relation="перевищує" if float(excess)>0 else "є нижчою за"
+                conclusion = "проблемний внесок цієї цілі є непропорційно вищим за її портфельну вагу" if float(excess) > 0 else "проблемний внесок цієї цілі є нижчим за її портфельну вагу"
                 groups["goal"].append(f"Частка {f.get('top_label')} серед усіх проблемних позицій {relation} її частку в портфелі ({_pct(pshare)}) на {_delta_words(excess)}; отже, {conclusion}.")
 
     if dep and _n(dep.facts.get("total")):
         used.add(dep.code); f=dep.facts; total=_n(f.get("total")); top=_n(f.get("top_count")); top3=_n(f.get("top3_count"))
-        groups["department"].append(f"За ССП найбільший абсолютний обсяг проблемних позицій має ССП «{f.get('top_label')}» — {top} із {total} ({_pct(top/total*100)}); три найбільші ССП охоплюють {top3} ({_pct(top3/total*100)}).")
+        groups["department"].append(f"За ССП найбільший абсолютний обсяг проблемних позицій має ССП «{f.get('top_label')}» — {top} із {total} ({_pct(f.get("top_share"))}); три найбільші ССП охоплюють {top3} ({_pct(f.get("top3_share"))}).")
         if f.get("top_internal_rate") is not None:
-            groups["department"].append(f"У власному портфелі цього ССП проблемними є {_pct(float(f['top_internal_rate'])*100)} позицій.")
+            groups["department"].append(f"У власному портфелі цього ССП проблемними є {_pct(f.get("top_internal_rate"))} позицій.")
         if is_number(f.get("top_portfolio_share")) and is_number(f.get("concentration_excess_pp")):
-            excess=float(f["concentration_excess_pp"]); pshare=float(f["top_portfolio_share"])*100
-            if abs(excess)>=0.05:
-                relation="перевищує" if excess>0 else "є нижчою за"
+            excess=f["concentration_excess_pp"]; pshare=f.get("top_portfolio_share")
+            if abs(float(excess))>=0.05:
+                relation="перевищує" if float(excess)>0 else "є нижчою за"
                 groups["department"].append(f"Його частка серед усіх проблемних позицій {relation} частку у відповідному портфелі ({_pct(pshare)}) на {_delta_words(excess)}, тому масштаб проблемності не зводиться лише до розміру портфеля.")
 
     if risk:
@@ -755,7 +794,7 @@ def _problem_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding]) -> 
             else:
                 groups["risk"].append(f"Найбільша розрахована частка ризикового внеску припадає на ССП «{r.get('top_risk_department')}» — {_pct(r.get('top_risk_contribution'))}.")
             if is_number(r.get("top_risk_excess_pp")) and abs(float(r["top_risk_excess_pp"])) >= 0.05:
-                excess=float(r["top_risk_excess_pp"]); relation="перевищує" if excess>0 else "є нижчою за"
+                excess=r["top_risk_excess_pp"]; relation="перевищує" if float(excess)>0 else "є нижчою за"
                 groups["risk"].append(f"Ризиковий внесок цього ССП {relation} його портфельну вагу на {_delta_words(excess)}; у кількісному розрізі ризикове навантаження є непропорційним масштабу відповідальності.")
 
     if persistent:
@@ -780,11 +819,11 @@ def _problem_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding]) -> 
         elif item.code == "conflict_execution_up_problems_up":
             change=f.get("problem_change")
             if is_number(change) and float(change)>0:
-                groups["conflicts"].append(f"Позитивна динаміка виконання одночасно супроводжується збільшенням кількості проблемних/ризикових позицій на {fmt_number(change)} у річному порівнянні; у поточній вибірці їх {f.get('problem_count')}. Тому покращення зведеного виконання не означає однорідно позитивного руху всього портфеля.")
+                groups["conflicts"].append(f"Позитивна динаміка виконання одночасно супроводжується збільшенням кількості проблемних/ризикових позицій на {_fmt_number(change)} у річному порівнянні; у поточній вибірці їх {f.get('problem_count')}. Тому покращення зведеного виконання не означає однорідно позитивного руху всього портфеля.")
             else:
                 groups["conflicts"].append(f"Позитивна динаміка виконання поєднується з поточним обсягом проблемних позицій — {f.get('problem_count')}. Тому зростання зведеного показника не означає однорідно позитивної картини всього портфеля.")
         elif item.code == "stable_aggregate_hidden_internal_movement":
-            groups["conflicts"].append(f"Майже незмінний зведений результат приховує значні протилежні зміни всередині портфеля: {f.get('largest_improvement_label')} має {fmt_delta(f.get('largest_improvement'))}, тоді як {f.get('largest_deterioration_label')} — {fmt_delta(f.get('largest_deterioration'))}. Формально стабільне середнє в цьому випадку не відображає масштабу внутрішнього руху.")
+            groups["conflicts"].append(f"Майже незмінний зведений результат приховує значні протилежні зміни всередині портфеля: {f.get('largest_improvement_label')} має {_fmt_delta(f.get('largest_improvement'))}, тоді як {f.get('largest_deterioration_label')} — {_fmt_delta(f.get('largest_deterioration'))}. Формально стабільне середнє в цьому випадку не відображає масштабу внутрішнього руху.")
 
     if not any(groups.values()):
         return AnalyticalBlock("problem_concentration", "problems", 45, sentences=("Окремого значущого кластеру проблемних позицій у доступних структурних розрізах не виявлено; основні відхилення локалізовано у блоках динаміки, цілей та ССП.",))
@@ -802,7 +841,7 @@ def _management_block(ctx: AnalyticsContext, findings: list[AnalyticalFinding]) 
     def describe(p: dict[str,Any]) -> str:
         label = p.get("label"); kind = "стратегічна ціль" if p.get("kind")=="goal" else "ССП"
         parts=[f"виконання {_pct(p.get('execution'))}"]
-        if is_number(p.get("change")) and abs(float(p["change"])) >= .05: parts.append(f"зміна {fmt_delta(p.get('change'))}")
+        if is_number(p.get("change")) and abs(float(p["change"])) >= .05: parts.append(f"зміна {_fmt_delta(p.get('change'))}")
         if p.get("problems"): parts.append(f"проблемних позицій {p.get('problems')}")
         if p.get("missing"): parts.append(f"без даних {p.get('missing')}")
         if is_number(p.get("portfolio_weight")) and float(p["portfolio_weight"])>0: parts.append(f"частка портфеля {_pct(p.get('portfolio_weight'))}")
@@ -940,7 +979,8 @@ def compose_note(ctx: AnalyticsContext, debug_mode: bool = False) -> GeneratedNo
         blocks.append(block)
         debug.sentences_per_block[code] = len(block.sentences)
     paragraphs = [block.text for block in blocks if block.text]
-    text = clean_text("\n\n".join(paragraphs))
+    annotated_text = clean_text("\n\n".join(paragraphs))
+    text = clean_text(strip_numeric_markers(annotated_text))
 
     used_findings = {code for block in blocks for code in block.findings}
     important = {f.code for f in findings if f.importance >= 60}
@@ -950,7 +990,8 @@ def compose_note(ctx: AnalyticsContext, debug_mode: bool = False) -> GeneratedNo
     debug.word_count = len(re.findall(r"\b[\w’'-]+\b", text, flags=re.UNICODE))
     quality = assess_quality(text, plan.complexity, findings, used_findings, debug.selected_phrase_ids, debug.facts_used)
     debug.quality_metrics = quality
-    warnings = validate_text(text, ctx, signals, findings)
+    warnings = validate_text(text, ctx, signals, findings, annotated_text=annotated_text)
+    debug.numeric_provenance = trace_numeric_provenance(annotated_text, ctx)
     # Narrative-depth thresholds are QA diagnostics, not production-fatal errors.
     # A 699-word note must not disappear merely because it misses an editorial
     # target by one word. Safety/data-integrity validation below remains strict.

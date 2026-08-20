@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from .analytical_metrics import FactualMetric, PreparedAnalyticalFacts
 from .composer import compose_note
 from .context import build_context
 from .findings import QUESTIONS, SUPPORTED_FINDING_CODES, derive_findings
@@ -20,6 +21,7 @@ def generate_analytics_note(*, context: AnalyticsContext, debug: bool = False):
 
 __all__ = [
     "AnalyticsContext", "AnalyticalBlock", "AnalyticalFinding", "AnalyticalQuestion", "BlockPlan",
+    "FactualMetric", "PreparedAnalyticalFacts",
     "GeneratedNote", "GenerationDebug", "NoteQualityMetrics", "PhraseVariant", "Scenario", "Signal",
     "SCENARIOS", "PHRASE_LIBRARY", "QUESTIONS", "SUPPORTED_FINDING_CODES", "SUPPORTED_SIGNAL_CODES",
     "build_context", "derive_findings", "detect_signals", "generate_analytics_note", "phrase_count",

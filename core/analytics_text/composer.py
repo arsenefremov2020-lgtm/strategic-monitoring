@@ -951,23 +951,23 @@ def compose_note(ctx: AnalyticsContext, debug_mode: bool = False) -> GeneratedNo
     quality = assess_quality(text, plan.complexity, findings, used_findings, debug.selected_phrase_ids, debug.facts_used)
     debug.quality_metrics = quality
     warnings = validate_text(text, ctx, signals, findings)
-    # A wide/full-plan note that collapses back into a short dashboard summary is
-    # a generation failure, not an acceptable low-quality result. Since the page
-    # no longer falls back to legacy prose, these checks fail visibly and are
-    # logged with an incident code.
+    # Narrative-depth thresholds are QA diagnostics, not production-fatal errors.
+    # A 699-word note must not disappear merely because it misses an editorial
+    # target by one word. Safety/data-integrity validation below remains strict.
     if plan.complexity in {"wide", "very_wide"}:
-        if quality.paragraph_count < 7: warnings.append(f"quality-hard: wide note has {quality.paragraph_count} paragraphs")
-        if quality.sentence_count < 25: warnings.append(f"quality-hard: wide note has {quality.sentence_count} sentences")
-        if quality.word_count < 700: warnings.append(f"quality-hard: wide note has {quality.word_count} words")
-        if quality.median_sentences_per_paragraph < 3: warnings.append("quality-hard: median paragraph depth below 3 sentences")
+        if quality.paragraph_count < 7: warnings.append(f"quality: wide note has {quality.paragraph_count} paragraphs")
+        if quality.sentence_count < 25: warnings.append(f"quality: wide note has {quality.sentence_count} sentences")
+        if quality.word_count < 700: warnings.append(f"quality: wide note has {quality.word_count} words")
+        if quality.median_sentences_per_paragraph < 3: warnings.append("quality: median paragraph depth below 3 sentences")
     if quality.important_finding_coverage < 0.90 and important:
-        prefix = "quality-hard:" if plan.complexity in {"wide", "very_wide"} else "quality:"
-        warnings.append(f"{prefix} important finding coverage {quality.important_finding_coverage:.1%}")
+        warnings.append(f"quality: important finding coverage {quality.important_finding_coverage:.1%}")
     debug.validation_warnings = warnings
 
-    # Hard validation concerns should fail generation; quality warnings remain observable
-    # in debug without making the page silently fall back to the legacy summary.
+    # Only hard correctness/safety validation failures abort generation.
     hard = [w for w in warnings if not w.startswith("quality:")]
     if hard:
-        raise ValueError("Analytics text validation failed: " + "; ".join(hard))
+        error = ValueError("Analytics text validation failed: " + "; ".join(hard))
+        # Preserve the exact diagnostics on the exception for incident logging/tests.
+        setattr(error, "validation_warnings", tuple(warnings))
+        raise error
     return GeneratedNote(text=text, debug=debug)

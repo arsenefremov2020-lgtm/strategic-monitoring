@@ -40,8 +40,16 @@ def _prefix_finding(findings: Iterable[AnalyticalFinding], prefix: str) -> Analy
 
 def _n(value: Any) -> int:
     try:
-        return int(value or 0)
+        if value is None:
+            return 0
+        import pandas as _pd
+        if _pd.isna(value):
+            return 0
     except (TypeError, ValueError):
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
         return 0
 
 
@@ -943,14 +951,18 @@ def compose_note(ctx: AnalyticsContext, debug_mode: bool = False) -> GeneratedNo
     quality = assess_quality(text, plan.complexity, findings, used_findings, debug.selected_phrase_ids, debug.facts_used)
     debug.quality_metrics = quality
     warnings = validate_text(text, ctx, signals, findings)
-    # Quality deficits are debug warnings, not production blockers/fallback triggers.
+    # A wide/full-plan note that collapses back into a short dashboard summary is
+    # a generation failure, not an acceptable low-quality result. Since the page
+    # no longer falls back to legacy prose, these checks fail visibly and are
+    # logged with an incident code.
     if plan.complexity in {"wide", "very_wide"}:
-        if quality.paragraph_count < 7: warnings.append(f"quality: wide note has {quality.paragraph_count} paragraphs")
-        if quality.sentence_count < 25: warnings.append(f"quality: wide note has {quality.sentence_count} sentences")
-        if quality.word_count < 700: warnings.append(f"quality: wide note has {quality.word_count} words")
-        if quality.median_sentences_per_paragraph < 3: warnings.append("quality: median paragraph depth below 3 sentences")
+        if quality.paragraph_count < 7: warnings.append(f"quality-hard: wide note has {quality.paragraph_count} paragraphs")
+        if quality.sentence_count < 25: warnings.append(f"quality-hard: wide note has {quality.sentence_count} sentences")
+        if quality.word_count < 700: warnings.append(f"quality-hard: wide note has {quality.word_count} words")
+        if quality.median_sentences_per_paragraph < 3: warnings.append("quality-hard: median paragraph depth below 3 sentences")
     if quality.important_finding_coverage < 0.90 and important:
-        warnings.append(f"quality: important finding coverage {quality.important_finding_coverage:.1%}")
+        prefix = "quality-hard:" if plan.complexity in {"wide", "very_wide"} else "quality:"
+        warnings.append(f"{prefix} important finding coverage {quality.important_finding_coverage:.1%}")
     debug.validation_warnings = warnings
 
     # Hard validation concerns should fail generation; quality warnings remain observable

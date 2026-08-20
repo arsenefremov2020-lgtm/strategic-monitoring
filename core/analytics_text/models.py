@@ -158,13 +158,26 @@ class AnalyticsContext:
     mio_measure_evaluation: pd.DataFrame = field(default_factory=pd.DataFrame)
     mio_financing: pd.DataFrame = field(default_factory=pd.DataFrame)
 
+    @staticmethod
+    def _safe_metric_int(value: Any) -> int:
+        try:
+            if value is None or pd.isna(value):
+                return 0
+        except (TypeError, ValueError):
+            return 0
+        try:
+            number = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+            return 0 if pd.isna(number) else int(number)
+        except (TypeError, ValueError, OverflowError):
+            return 0
+
     @property
     def sample_size(self) -> int:
-        return int(self.metrics.get("unique_measures") or 0)
+        return self._safe_metric_int(self.metrics.get("unique_measures"))
 
     @property
     def row_count(self) -> int:
-        return int(self.metrics.get("total_rows") or 0)
+        return self._safe_metric_int(self.metrics.get("total_rows"))
 
     def metric(self, name: str) -> Any:
         return self.metrics.get(name)

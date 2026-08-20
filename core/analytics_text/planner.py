@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+import pandas as pd
+
 from .models import AnalyticsContext, AnalyticalFinding, BlockPlan, Scenario, Signal, TextPlan
 
 
@@ -21,6 +23,18 @@ DEPTH_SENTENCES = {
     "brief": (2, 3), "standard": (3, 4), "deep": (4, 6), "critical": (5, 7),
 }
 
+
+
+def _safe_int(value) -> int:
+    try:
+        if value is None or pd.isna(value):
+            return 0
+    except (TypeError, ValueError):
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return 0
 
 def context_complexity_score(ctx: AnalyticsContext, signals: list[Signal], findings: list[AnalyticalFinding]) -> str:
     periods = len(ctx.period_dynamics) if ctx.period_dynamics is not None else 0
@@ -150,7 +164,7 @@ def build_text_plan(
         for item in product_items
     ):
         available.add("products")
-    if ctx.metric("coverage") is not None or int(ctx.metric("no_data") or 0) > 0:
+    if ctx.metric("coverage") is not None or _safe_int(ctx.metric("no_data")) > 0:
         available.add("coverage")
     if grouped.get("problem_concentration") or any(f.topic == "problems" for f in findings):
         available.add("problem_concentration")

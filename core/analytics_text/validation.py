@@ -116,15 +116,22 @@ def allowed_numeric_values(
 def _has_allowed(value: float, allowed: set[float], tolerance: float = 0.12, *, magnitude: bool = False) -> bool:
     """Return whether a rendered number is supported by analytical facts.
 
-    ``magnitude=True`` is used for wording such as ``зменшилося на 4,2 в.п.``:
-    the source fact is legitimately ``-4.2`` while Ukrainian prose renders the
-    magnitude without a minus sign.  The previous validator compared ``+4.2``
-    only with signed facts and falsely rejected such sentences, which triggered
-    the production legacy fallback.
+    For percentage-point wording, a legitimate rendered value can be either an
+    explicitly stored delta or the difference between two supported percentage
+    facts (for example latest 74.8% minus selection average 58.1% = 16.7 p.p.).
+    This keeps validation strict without rejecting analytical comparisons that
+    are derived directly from canonical outputs.
     """
     if magnitude:
         target = abs(value)
-        return any(abs(target - abs(candidate)) <= tolerance for candidate in allowed)
+        if any(abs(target - abs(candidate)) <= tolerance for candidate in allowed):
+            return True
+        candidates = list(allowed)
+        for i, left in enumerate(candidates):
+            for right in candidates[i + 1:]:
+                if abs(target - abs(left - right)) <= tolerance:
+                    return True
+        return False
     return any(abs(value - candidate) <= tolerance for candidate in allowed)
 
 
@@ -194,7 +201,11 @@ def validate_text(
         if left == right:
             warnings.append("duplicated adjacent sentence")
             break
-    if len(ctx.goal_progress) <= 1 and "найвищ" in lowered and "найнижч" in lowered and "стратегіч" in lowered:
+    _goal_comparison_count = max(
+        len(ctx.goal_progress) if ctx.goal_progress is not None else 0,
+        len(ctx.mio_goal_evaluation) if ctx.mio_goal_evaluation is not None else 0,
+    )
+    if _goal_comparison_count <= 1 and "найвищ" in lowered and "найнижч" in lowered and "стратегіч" in lowered:
         warnings.append("meaningless best/worst goal comparison")
     if len(ctx.department_progress) <= 1 and "найвищ" in lowered and "найнижч" in lowered and "ссп" in lowered:
         warnings.append("meaningless best/worst department comparison")

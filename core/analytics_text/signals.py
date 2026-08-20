@@ -25,6 +25,19 @@ def _signal(code: str, severity: str, importance: int, dimension: str, **values:
     return Signal(code=code, severity=severity, importance=importance, dimension=dimension, values=values)
 
 
+def _safe_int(value: Any) -> int:
+    try:
+        if value is None or pd.isna(value):
+            return 0
+    except (TypeError, ValueError):
+        return 0
+    try:
+        number = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+        return 0 if pd.isna(number) else int(number)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
 def _numeric(frame: pd.DataFrame, column: str) -> pd.Series:
     if frame is None or frame.empty or column not in frame.columns:
         return pd.Series(dtype=float)
@@ -171,8 +184,8 @@ def detect_signals(ctx: AnalyticsContext) -> list[Signal]:
     else:
         signals.append(_signal("sample_standard", "neutral", 25, "sample", count=sample))
 
-    no_data = int(ctx.metric("no_data") or 0)
-    total_rows = max(int(ctx.metric("total_rows") or 0), 1)
+    no_data = _safe_int(ctx.metric("no_data"))
+    total_rows = max(_safe_int(ctx.metric("total_rows")), 1)
     if no_data == 0:
         signals.append(_signal("missing_none", "positive", 30, "coverage", count=0))
     else:
@@ -184,7 +197,7 @@ def detect_signals(ctx: AnalyticsContext) -> list[Signal]:
         else:
             signals.append(_signal("missing_share_small", "warning", 45, "coverage", count=no_data, ratio=ratio, classification_basis="language_only_band"))
 
-    problem = int(ctx.metric("problem") or 0)
+    problem = _safe_int(ctx.metric("problem"))
     if problem:
         ratio = problem / total_rows
         code = "problem_signals_large_share" if ratio >= PROBLEM_SHARE_LANGUAGE_BANDS["large"] else "problem_signals_present"
@@ -319,7 +332,8 @@ def detect_signals(ctx: AnalyticsContext) -> list[Signal]:
     # Status structure.
     statuses = ctx.status_counts.copy()
     if statuses is not None and not statuses.empty and {"status", "Кількість"}.issubset(statuses.columns):
-        counts = {str(r["status"]): int(r["Кількість"]) for _, r in statuses.iterrows()}
+        _status_numeric = pd.to_numeric(statuses["Кількість"], errors="coerce").fillna(0)
+        counts = {str(statuses.loc[idx, "status"]): int(value) for idx, value in _status_numeric.items()}
         total = max(sum(counts.values()), 1)
         if counts:
             dominant = max(counts, key=counts.get)

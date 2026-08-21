@@ -3,17 +3,13 @@ from __future__ import annotations
 """
 Службова read-only сторінка «Розрахунки».
 
-Призначення сторінки — прозоро показати, як поточні shared-модулі системи
-формують показники Dashboard і сторінки «Аналітика». Сторінка нічого не
-записує до БД, не змінює методологію і не дублює розрахунки в production-коді.
-
-Фіксований діагностичний контекст:
-- 2026 рік;
-- поточний зріз — IV квартал;
-- динаміка — I → IV квартал;
-- повний Стратегічний план;
-- confirmed/погоджені дані;
-- без додаткових організаційних і продуктових фільтрів.
+Версія LIGHT:
+- сторінка не обчислює всі контури одночасно;
+- важкі розділи виконуються лише після вибору користувачем;
+- великі технічні таблиці не рендеряться автоматично;
+- графічний довідник і методологічні пояснення відкриваються без завантаження БД;
+- усі st.dataframe отримують лише display-копії зі строковими значеннями,
+  щоб уникнути pyarrow.lib.ArrowInvalid на tuple/list/dict/object.
 """
 
 from typing import Any
@@ -42,10 +38,6 @@ from core.dashboard_risk import attention_mask, risk_summary
 from core.dashboard_finance import build_finance_frame, finance_kpis
 
 
-# =============================================================================
-# ФІКСОВАНИЙ ДІАГНОСТИЧНИЙ КОНТЕКСТ
-# =============================================================================
-
 YEAR = 2026
 QUARTERS = ["I", "II", "III", "IV"]
 LATEST_QUARTER = "IV"
@@ -55,7 +47,7 @@ TOL = 0.05
 
 
 # =============================================================================
-# СТАРТ СТОРІНКИ
+# PAGE
 # =============================================================================
 
 current_user = page_setup("Розрахунки", page_name=None)
@@ -64,14 +56,12 @@ if not is_super_admin_user(current_user):
     st.error("Сторінка «Розрахунки» доступна лише супер-адміністратору.")
     st.stop()
 
-# Локальний CSS навмисно не змінює висоту Streamlit-компонентів. Це важливо:
-# таблиці мають самі резервувати місце в layout і не накладатися на наступний текст.
 st.markdown(
     """
     <style>
     .main .block-container {
         max-width: 1380px;
-        padding-top: 1.25rem;
+        padding-top: 1.2rem;
         padding-bottom: 3rem;
     }
     .calc-hero {
@@ -79,7 +69,7 @@ st.markdown(
         border: 1px solid #DCE4F0;
         border-radius: 16px;
         padding: 20px 24px;
-        margin: 4px 0 18px 0;
+        margin: 4px 0 16px 0;
         box-shadow: 0 6px 20px rgba(15, 23, 42, 0.05);
     }
     .calc-hero-title {
@@ -121,55 +111,8 @@ st.markdown(
         border-color: #F4B400;
         border-left-color: #F4B400;
     }
-    .calc-after-table {
-        height: 18px;
-        width: 100%;
-        clear: both;
-    }
-    .calc-table-scroll {
-        width: 100%;
-        overflow: auto;
-        border: 1px solid #DCE4F0;
-        border-radius: 10px;
-        background: #FFFFFF;
-    }
-    .calc-html-table {
-        width: max-content;
-        min-width: 100%;
-        border-collapse: separate;
-        border-spacing: 0;
-        font-size: 13px;
-        line-height: 1.35;
-        color: #26364D;
-    }
-    .calc-html-table thead th {
-        position: sticky;
-        top: 0;
-        z-index: 2;
-        background: #F3F6FB;
-        color: #132238;
-        font-weight: 800;
-        text-align: left;
-        border-bottom: 1px solid #DCE4F0;
-        padding: 9px 10px;
-        white-space: nowrap;
-    }
-    .calc-html-table tbody td {
-        padding: 8px 10px;
-        border-bottom: 1px solid #E9EEF5;
-        vertical-align: top;
-        max-width: 420px;
-        white-space: normal;
-        overflow-wrap: anywhere;
-    }
-    .calc-html-table tbody tr:last-child td {
-        border-bottom: 0;
-    }
     div[data-testid="stDataFrame"] {
-        margin-bottom: 0.35rem;
-    }
-    div[data-testid="stExpander"] {
-        margin-bottom: 0.7rem;
+        margin-bottom: 0.8rem;
     }
     div[data-testid="stMetric"] {
         background: #FFFFFF;
@@ -187,26 +130,21 @@ st.markdown(
     <div class="calc-hero">
         <div class="calc-hero-title">Розрахунки</div>
         <div class="calc-hero-subtitle">
-            Службова сторінка прозорості методології. Тут кожний показник розкладено
-            за принципом: <b>які дані взяли → кого включили → як порахували → що означає результат</b>.
-            Фіксований контекст: 2026 рік, IV квартал як поточний зріз, динаміка I–IV квартали,
-            повний Стратегічний план, погоджені дані.
+            Службова сторінка прозорості методології. Важкі розрахунки та великі таблиці
+            завантажуються <b>лише для обраного розділу</b>, а не всі одночасно.
+            Фіксований контекст: 2026 рік; IV квартал як поточний зріз; динаміка I–IV;
+            повний Стратегічний план; погоджені дані.
         </div>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-st.info(
-    "Сторінка read-only. Вона не змінює формули та не записує дані. "
-    "Усі production-значення беруться з тих самих shared-модулів, що використовують Dashboard і «Аналітика»."
-)
-
-st.caption("Збірка сторінки: 21.08.2026 · HTML tables · no PyArrow")
+st.caption("Збірка: 21.08.2026 · LIGHT · обчислення за вимогою")
 
 
 # =============================================================================
-# ДОПОМІЖНІ ФУНКЦІЇ ВІДОБРАЖЕННЯ
+# HELPERS
 # =============================================================================
 
 def _num(value: Any) -> float | None:
@@ -278,8 +216,19 @@ def _parity_text(a: Any, b: Any) -> str:
     return "ЗБІГАЄТЬСЯ" if _close(a, b) else "ВІДРІЗНЯЄТЬСЯ"
 
 
+def _section(title: str, note: str | None = None) -> None:
+    st.markdown(f'<div class="calc-section-title">{title}</div>', unsafe_allow_html=True)
+    if note:
+        st.markdown(f'<div class="calc-section-note">{note}</div>', unsafe_allow_html=True)
+
+
+def _callout(text: str, *, warning: bool = False) -> None:
+    cls = "calc-callout calc-warning" if warning else "calc-callout"
+    st.markdown(f'<div class="{cls}">{text}</div>', unsafe_allow_html=True)
+
+
 def _display_cell_text(value: Any) -> str:
-    """Безпечне текстове представлення службового значення для HTML-таблиці."""
+    """Перетворює будь-яке службове значення на простий текст для st.dataframe."""
     if value is None:
         return ""
 
@@ -292,18 +241,18 @@ def _display_cell_text(value: Any) -> str:
                     return f"{quarter} кв. {year}"
             except (TypeError, ValueError):
                 pass
-        return " · ".join(_display_cell_text(item) for item in value)
+        return " · ".join(_display_cell_text(v) for v in value)
 
     if isinstance(value, list):
-        return "; ".join(_display_cell_text(item) for item in value)
+        return "; ".join(_display_cell_text(v) for v in value)
 
     if isinstance(value, set):
-        return "; ".join(sorted(_display_cell_text(item) for item in value))
+        return "; ".join(sorted(_display_cell_text(v) for v in value))
 
     if isinstance(value, dict):
         return "; ".join(
-            f"{_display_cell_text(key)}: {_display_cell_text(item)}"
-            for key, item in value.items()
+            f"{_display_cell_text(k)}: {_display_cell_text(v)}"
+            for k, v in value.items()
         )
 
     try:
@@ -318,94 +267,59 @@ def _display_cell_text(value: Any) -> str:
     if isinstance(value, pd.Timestamp):
         return value.strftime("%d.%m.%Y %H:%M:%S")
 
-    try:
-        if isinstance(value, float):
-            if value.is_integer():
-                return str(int(value))
-            return f"{value:.6f}".rstrip("0").rstrip(".")
-    except (TypeError, ValueError):
-        pass
-
     return str(value)
 
 
-def _html_safe_display_frame(frame: pd.DataFrame) -> pd.DataFrame:
-    """Копія лише для відображення: усі складні значення перетворені на текст."""
+def _safe_display_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    """Display-only копія: усі колонки і значення строкові та Arrow-safe."""
     safe = frame.copy()
-
-    column_names = []
-    used = {}
+    names = []
+    used: dict[str, int] = {}
     for idx, column in enumerate(safe.columns, start=1):
         base = _display_cell_text(column).strip() or f"Колонка {idx}"
         count = used.get(base, 0)
         used[base] = count + 1
-        column_names.append(base if count == 0 else f"{base} ({count + 1})")
-    safe.columns = column_names
-
+        names.append(base if count == 0 else f"{base} ({count + 1})")
+    safe.columns = names
     for column in safe.columns:
-        safe[column] = safe[column].map(_display_cell_text)
-
+        safe[column] = safe[column].map(_display_cell_text).astype("string")
     return safe
 
 
 def _display_df(
     frame: pd.DataFrame,
     *,
-    max_height: int = 520,
-    min_height: int = 120,
+    max_height: int = 430,
+    max_rows: int | None = None,
 ) -> None:
-    """Показує таблицю БЕЗ st.dataframe/PyArrow.
-
-    Усі діагностичні таблиці цієї сторінки рендеряться звичайним HTML.
-    Це повністю прибирає клас помилок pyarrow.lib.ArrowInvalid на змішаних
-    службових типах (tuple/list/dict/object) і не змінює вихідні DataFrame.
-    """
+    """Безпечна таблиця. Великі масиви можна свідомо обрізати для UI."""
     if frame is None or frame.empty:
         st.caption("Немає рядків для відображення.")
-        st.markdown('<div class="calc-after-table"></div>', unsafe_allow_html=True)
         return
 
-    visible_rows = min(len(frame), 12)
-    calculated = 40 * (visible_rows + 1) + 16
-    height = min(max_height, max(min_height, calculated))
+    data = frame
+    if max_rows is not None and len(data) > max_rows:
+        st.caption(
+            f"Для швидкого перегляду показано перші {max_rows} із {len(data)} рядків. "
+            "Розрахунок виконується по повному масиву."
+        )
+        data = data.head(max_rows).copy()
 
-    display_frame = _html_safe_display_frame(frame)
-    html_table = display_frame.to_html(
-        index=False,
-        escape=True,
-        classes="calc-html-table",
-        border=0,
-    )
+    display = _safe_display_frame(data)
+    visible_rows = min(len(display), 10)
+    height = min(max_height, max(120, 38 * (visible_rows + 1) + 12))
 
-    st.markdown(
-        f'<div class="calc-table-scroll" style="max-height:{height}px">{html_table}</div>',
-        unsafe_allow_html=True,
-    )
-    st.markdown('<div class="calc-after-table"></div>', unsafe_allow_html=True)
-
-def _raw_table(
-    title: str,
-    frame: pd.DataFrame,
-    *,
-    note: str = "",
-    max_height: int = 520,
-    expanded: bool = False,
-) -> None:
-    with st.expander(title, expanded=expanded):
-        if note:
-            st.caption(note)
-        _display_df(frame, max_height=max_height)
-
-
-def _section(title: str, note: str | None = None) -> None:
-    st.markdown(f'<div class="calc-section-title">{title}</div>', unsafe_allow_html=True)
-    if note:
-        st.markdown(f'<div class="calc-section-note">{note}</div>', unsafe_allow_html=True)
-
-
-def _callout(text: str, *, warning: bool = False) -> None:
-    cls = "calc-callout calc-warning" if warning else "calc-callout"
-    st.markdown(f'<div class="{cls}">{text}</div>', unsafe_allow_html=True)
+    try:
+        st.dataframe(
+            display,
+            use_container_width=True,
+            height=height,
+            hide_index=True,
+        )
+    except Exception as exc:
+        # Сторінка не повинна падати через renderer технічної таблиці.
+        st.warning(f"Таблицю не вдалося відобразити інтерактивно: {type(exc).__name__}.")
+        st.code(display.head(40).to_string(index=False), language="text")
 
 
 def _show_formula(
@@ -457,16 +371,17 @@ def _quarter_result_table(results: dict) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _q1_q4_delta(frame: pd.DataFrame, value_col: str) -> float | None:
-    if frame is None or frame.empty or "Квартал" not in frame.columns:
-        return None
-    q1 = frame.loc[frame["Квартал"].eq("I"), value_col]
-    q4 = frame.loc[frame["Квартал"].eq("IV"), value_col]
-    if q1.empty or q4.empty:
-        return None
-    a = _num(q1.iloc[0])
-    b = _num(q4.iloc[0])
-    return None if a is None or b is None else b - a
+def _status_counts(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame is None or frame.empty or "status" not in frame.columns:
+        return pd.DataFrame()
+    return (
+        frame["status"]
+        .fillna("—")
+        .astype(str)
+        .value_counts(dropna=False)
+        .rename_axis("Статус")
+        .reset_index(name="Кількість")
+    )
 
 
 def _reason_table(snapshot: pd.DataFrame) -> pd.DataFrame:
@@ -476,6 +391,7 @@ def _reason_table(snapshot: pd.DataFrame) -> pd.DataFrame:
     risk_level = snapshot.get(
         "risk_level", pd.Series("", index=snapshot.index, dtype=object)
     ).astype(str)
+
     final_failure = (
         snapshot.get(
             "forecast_kind", pd.Series("", index=snapshot.index, dtype=object)
@@ -493,68 +409,21 @@ def _reason_table(snapshot: pd.DataFrame) -> pd.DataFrame:
     }
 
     rows = [
-        {"Причина": label, "Кількість рядків Q4": int(mask.fillna(False).sum())}
+        {"Причина": label, "Кількість": int(mask.fillna(False).sum())}
         for label, mask in reasons.items()
     ]
     union = attention_mask(snapshot).reindex(snapshot.index, fill_value=False)
     rows.append(
         {
             "Причина": "Унікальний UNION: потребує уваги хоча б з однієї причини",
-            "Кількість рядків Q4": int(union.sum()),
+            "Кількість": int(union.sum()),
         }
     )
     return pd.DataFrame(rows)
 
 
-def _status_counts(frame: pd.DataFrame) -> pd.DataFrame:
-    if frame is None or frame.empty or "status" not in frame.columns:
-        return pd.DataFrame()
-    return (
-        frame["status"]
-        .fillna("—")
-        .astype(str)
-        .value_counts(dropna=False)
-        .rename_axis("Статус")
-        .reset_index(name="Кількість")
-    )
-
-
-def _format_fact_value(value: Any, unit: str) -> str:
-    if value is None:
-        return "—"
-    if unit == "percent":
-        return _pct(value, 2)
-    if unit == "pp":
-        return _pp(value, 2)
-    if unit == "count":
-        return _n(value, 0)
-    return _n(value, 2)
-
-
-def _metric_group(code: str) -> str:
-    prefix = str(code).split(".", 1)[0]
-    labels = {
-        "plan": "Стратегічний план",
-        "dashboard": "Dashboard",
-        "risk": "Ризик і увага",
-        "goal": "Стратегічні цілі",
-        "task": "Завдання",
-        "department": "ССП",
-        "product": "Типи продукту",
-        "status": "Статуси",
-        "dynamics": "Динаміка",
-        "yoy": "Рік до року",
-        "mio": "МіО",
-        "finance": "Фінансування",
-    }
-    return labels.get(prefix, prefix or "Інше")
-
-
-# =============================================================================
-# ЗАВАНТАЖЕННЯ ДАНИХ
-# =============================================================================
-
-try:
+def _load_base_data():
+    """Завантаження БД виконується лише у розділах, де воно реально потрібне."""
     strat_df = load_strat_matrix()
     all_monitoring = monitoring_data.load_monitoring_requests()
     measure_requests = monitoring_data.measures_only(all_monitoring)
@@ -562,283 +431,158 @@ try:
         measure_requests,
         include_incomplete=True,
     )
-    # МіО працює з повним потоком, включно з indicator rows.
-    mio_monitoring = append_confirmed_closeout_facts(
-        all_monitoring,
-        include_incomplete=False,
+    return strat_df, all_monitoring, measure_requests
+
+
+def _build_dashboard_context(strat_df, measure_requests):
+    period_sources = dashboard_sources.build_period_source_overrides(
+        PAIRS,
+        operational_mode=False,
     )
-except Exception as exc:
-    st.exception(exc)
-    st.stop()
-
-matrix_measures = (
-    strat_df[
-        strat_df.get("object_type", pd.Series(index=strat_df.index)).astype(str).eq("measure")
-    ].copy()
-    if strat_df is not None and not strat_df.empty
-    else pd.DataFrame()
-)
-
-# Dashboard: archive-aware production contour.
-dashboard_period_sources = dashboard_sources.build_period_source_overrides(
-    PAIRS,
-    operational_mode=False,
-)
-dashboard_results = build_period_results(
-    strat_df,
-    measure_requests,
-    PAIRS,
-    period_sources=dashboard_period_sources,
-)
-dashboard_aggregate = aggregate_plan(dashboard_results)
-dashboard_q = _quarter_result_table(dashboard_results)
-dashboard_latest = dashboard_results.get(LATEST_KEY, {})
-dashboard_snapshot = dashboard_latest.get("snapshot", pd.DataFrame())
-dashboard_risk = dashboard_latest.get("risk_summary") or risk_summary(dashboard_snapshot)
-
-# Analytics: current production full-scope contour (without Dashboard archive overrides).
-analytics_results, analytics_active = analytics_calculations.prepare_analysis_context(
-    strat_df,
-    measure_requests,
-    [YEAR],
-    QUARTERS,
-)
-analytics_plan = analytics_calculations.build_analytics_plan_summary(analytics_results)
-analytics_metrics = analytics_calculations.build_metrics(analytics_active)
-analytics_metrics["completion"] = analytics_plan.get("execution_by_measures_average")
-analytics_metrics["coverage"] = analytics_plan.get("coverage_average")
-analytics_metrics["completion_latest"] = analytics_plan.get("execution_by_measures_latest")
-analytics_metrics["completion_change"] = analytics_plan.get("execution_by_measures_change")
-analytics_metrics["goal_completion"] = analytics_plan.get("execution_by_goals_average")
-analytics_metrics["goal_completion_latest"] = analytics_plan.get("execution_by_goals_latest")
-analytics_metrics["goal_completion_change"] = analytics_plan.get("execution_by_goals_change")
-analytics_metrics["coverage_latest"] = analytics_plan.get("coverage_latest")
-analytics_metrics["coverage_change"] = analytics_plan.get("coverage_change")
-analytics_metrics["latest_period"] = analytics_plan.get("latest_period")
-analytics_metrics["latest_risk_summary"] = analytics_plan.get("latest_risk_summary") or {}
-
-analytics_q = _quarter_result_table(analytics_results)
-analytics_latest = analytics_results.get(LATEST_KEY, {})
-analytics_q4_snapshot = analytics_latest.get("snapshot", pd.DataFrame())
-analytics_goals = analytics_calculations.build_analytics_goal_summary(
-    analytics_results, analytics_active
-)
-analytics_tasks = analytics_calculations.build_analytics_task_summary(
-    analytics_results, analytics_active
-)
-analytics_ssp = analytics_calculations.build_analytics_ssp_summary(
-    analytics_results,
-    analytics_active,
-    base_results=analytics_results,
-)
-analytics_products = analytics_calculations.aggregate_product_progress(
-    analytics_results, analytics_active
-)
-analytics_statuses = _status_counts(analytics_active).rename(columns={"Статус": "status"})
-analytics_dynamics = analytics_calculations.build_analytics_dynamics(analytics_results)
-
-# Same year-over-year comparison logic as Analytics for a default 2026 selection.
-try:
-    comparison_years = [YEAR - 1, YEAR]
-    yoy_base_results, _ = analytics_calculations.prepare_analysis_context(
+    results = build_period_results(
         strat_df,
         measure_requests,
-        comparison_years,
+        PAIRS,
+        period_sources=period_sources,
+    )
+    aggregate = aggregate_plan(results)
+    latest = results.get(LATEST_KEY, {})
+    snapshot = latest.get("snapshot", pd.DataFrame())
+    rsum = latest.get("risk_summary") or risk_summary(snapshot)
+    return period_sources, results, aggregate, latest, snapshot, rsum
+
+
+def _build_analytics_context(strat_df, measure_requests):
+    results, active = analytics_calculations.prepare_analysis_context(
+        strat_df,
+        measure_requests,
+        [YEAR],
         QUARTERS,
     )
-    yoy_comparison = analytics_calculations.build_year_over_year_comparison(yoy_base_results)
-except Exception:
-    yoy_comparison = pd.DataFrame()
-
-# Reusable annual MіO outputs. Failure here must not break the diagnostic page.
-try:
-    mio_outputs = mio_shared.build_mio_analytics(strat_df, mio_monitoring, [YEAR])
-except Exception:
-    mio_outputs = {}
-
-mio_goals = mio_outputs.get("goals", pd.DataFrame()) if isinstance(mio_outputs, dict) else pd.DataFrame()
-mio_goal_tasks = mio_outputs.get("goals_tasks", pd.DataFrame()) if isinstance(mio_outputs, dict) else pd.DataFrame()
-mio_measures = mio_outputs.get("measures", pd.DataFrame()) if isinstance(mio_outputs, dict) else pd.DataFrame()
-mio_financing = mio_outputs.get("financing", pd.DataFrame()) if isinstance(mio_outputs, dict) else pd.DataFrame()
-
-# Prepared factual metric registry used by the rule-based analytical text engine.
-analytics_text_context = None
-analytics_fact_error = None
-try:
-    fixed_filters = {
-        "years": [YEAR],
-        "quarters": QUARTERS.copy(),
-        "ssp": [],
-        "ssp_indices": [],
-        "deputies": [],
-        "goal_labels": [],
-        "task_labels": [],
-        "product_types": [],
-    }
-    analytics_text_context = build_analytics_text_context(
-        filters=fixed_filters,
-        metrics=analytics_metrics,
-        goal_progress=analytics_goals,
-        task_progress=analytics_tasks,
-        department_progress=analytics_ssp,
-        product_progress=analytics_products,
-        status_counts=analytics_statuses,
-        period_dynamics=analytics_dynamics,
-        yoy_comparison=yoy_comparison,
-        active=analytics_active,
-        mio_goal_evaluation=mio_goals,
-        mio_goal_task_evaluation=mio_goal_tasks,
-        mio_measure_evaluation=mio_measures,
-        mio_financing=mio_financing,
-    )
-except Exception as exc:
-    analytics_fact_error = exc
+    plan = analytics_calculations.build_analytics_plan_summary(results)
+    metrics = analytics_calculations.build_metrics(active)
+    metrics["completion"] = plan.get("execution_by_measures_average")
+    metrics["coverage"] = plan.get("coverage_average")
+    metrics["completion_latest"] = plan.get("execution_by_measures_latest")
+    metrics["completion_change"] = plan.get("execution_by_measures_change")
+    metrics["goal_completion"] = plan.get("execution_by_goals_average")
+    metrics["goal_completion_latest"] = plan.get("execution_by_goals_latest")
+    metrics["goal_completion_change"] = plan.get("execution_by_goals_change")
+    metrics["coverage_latest"] = plan.get("coverage_latest")
+    metrics["coverage_change"] = plan.get("coverage_change")
+    metrics["latest_period"] = plan.get("latest_period")
+    metrics["latest_risk_summary"] = plan.get("latest_risk_summary") or {}
+    return results, active, plan, metrics
 
 
 # =============================================================================
-# ВЕРХНЯ ЗВІРКА
+# LIGHT NAVIGATION
 # =============================================================================
 
-input_summary = pd.DataFrame(
+section = st.radio(
+    "Що показати",
     [
-        {
-            "Масив": "Заходи у стратегічній матриці",
-            "Кількість": len(matrix_measures),
-            "Одиниця спостереження": "унікальний захід",
-            "Навіщо потрібен": "визначає повний портфель, ієрархію, строки, план та атрибути заходу",
-        },
-        {
-            "Масив": "Усі записи monitoring_requests",
-            "Кількість": 0 if all_monitoring is None else len(all_monitoring),
-            "Одиниця спостереження": "запис БД",
-            "Навіщо потрібен": "джерело подань заходів та індикаторів; для Dashboard indicator rows відсікаються",
-        },
-        {
-            "Масив": "Подання заходів після фільтрації та closeouts",
-            "Кількість": len(measure_requests),
-            "Одиниця спостереження": "подання заходу за період",
-            "Навіщо потрібен": "з них формується квартальний snapshot і execution_score",
-        },
-    ]
-)
-
-reconciliation = pd.DataFrame(
-    [
-        {
-            "Показник": "Виконання за заходами",
-            "Dashboard Q4": dashboard_latest.get("execution_by_measures"),
-            "Analytics KPI зараз": analytics_metrics.get("completion"),
-            "Analytics latest Q4": analytics_plan.get("execution_by_measures_latest"),
-            "Причина можливої різниці": "Dashboard = Q4; Analytics KPI = середнє квартальних KPI I–IV",
-        },
-        {
-            "Показник": "Покриття моніторингом",
-            "Dashboard Q4": dashboard_latest.get("coverage"),
-            "Analytics KPI зараз": analytics_metrics.get("coverage"),
-            "Analytics latest Q4": analytics_plan.get("coverage_latest"),
-            "Причина можливої різниці": "Dashboard = Q4; Analytics KPI = середнє квартальних coverage I–IV",
-        },
-        {
-            "Показник": "Виконання за стратегічними цілями",
-            "Dashboard Q4": dashboard_latest.get("execution_by_goals"),
-            "Analytics KPI зараз": analytics_plan.get("execution_by_goals_average"),
-            "Analytics latest Q4": analytics_plan.get("execution_by_goals_latest"),
-            "Причина можливої різниці": "Dashboard = Q4; Analytics = average I–IV або latest залежно від поля",
-        },
-    ]
-)
-
-_section("Швидка звірка перед деталями")
-_c1, _c2, _c3, _c4 = st.columns(4)
-_c1.metric("Dashboard · виконання Q4", _pct(dashboard_latest.get("execution_by_measures")))
-_c2.metric("Analytics · виконання I–IV", _pct(analytics_metrics.get("completion")))
-_c3.metric("Dashboard · покриття Q4", _pct(dashboard_latest.get("coverage")))
-_c4.metric("Analytics · покриття I–IV", _pct(analytics_metrics.get("coverage")))
-
-_display_df(reconciliation, max_height=270)
-
-if _close(
-    dashboard_latest.get("execution_by_measures"),
-    analytics_plan.get("execution_by_measures_latest"),
-):
-    st.success(
-        "Dashboard Q4 і Analytics latest-Q4 за виконанням збігаються. "
-        "Різниця основної картки Analytics пояснюється тим, що вона показує average I–IV."
-    )
-else:
-    st.warning(
-        "Dashboard Q4 і Analytics latest-Q4 за виконанням не збігаються. "
-        "Це вже не лише average-vs-latest: потрібно дивитися джерело кварталу (archive vs live)."
-    )
-
-with st.expander("Короткий словник термінів", expanded=False):
-    glossary = pd.DataFrame(
-        [
-            {
-                "Термін": "Snapshot кварталу",
-                "Пояснення": "Один канонічний рядок на захід, який належить до оцінюваного стану цього кварталу, з обраним підтвердженим фактом і розрахованими службовими полями.",
-            },
-            {
-                "Термін": "execution_score",
-                "Пояснення": "Уніфікована управлінська оцінка виконання одного заходу у відсотках. Саме вона агрегується вище — у завдання, цілі та план.",
-            },
-            {
-                "Термін": "Покриття",
-                "Пояснення": "Частка заходів, для яких у конкретному кварталі подання було обов'язковим і фактично подане саме за цей квартал.",
-            },
-            {
-                "Термін": "measure-period",
-                "Пояснення": "Спостереження «один захід × один квартал». Один код заходу може мати до чотирьох таких рядків за I–IV квартали.",
-            },
-            {
-                "Термін": "unique measure",
-                "Пояснення": "Унікальний код заходу незалежно від кількості кварталів, у яких він зустрічається.",
-            },
-            {
-                "Термін": "average / latest / change",
-                "Пояснення": "average — середнє доступних квартальних KPI; latest — останній доступний квартал; change — latest мінус перший доступний квартал у відсоткових пунктах.",
-            },
-        ]
-    )
-    _display_df(glossary, max_height=360)
-
-
-# =============================================================================
-# ОСНОВНІ ВКЛАДКИ
-# =============================================================================
-
-_tab_dash, _tab_ana, _tab_charts, _tab_metrics, _tab_tech = st.tabs(
-    [
-        "Dashboard: як рахується",
-        "Аналітика: як рахується",
+        "Огляд",
+        "Dashboard — розрахунки",
+        "Аналітика — розрахунки",
         "Графіки Аналітики",
         "Показники аналітичної довідки",
         "Технічна звірка",
-    ]
+    ],
+    horizontal=True,
+    key="calc_light_section",
+)
+
+st.caption(
+    "Перемикання розділу запускає тільки потрібний контур. "
+    "Великі технічні таблиці додатково відкриваються окремим прапорцем."
 )
 
 
 # =============================================================================
-# TAB 1 — DASHBOARD
+# 1. OVERVIEW — ZERO HEAVY CALCULATIONS
 # =============================================================================
 
-with _tab_dash:
+if section == "Огляд":
     _section(
-        "1. Джерело даних Dashboard за кожним кварталом",
-        "Dashboard має archive resolver. Якщо для кварталу є валідний архівний snapshot, "
-        "розрахунок відтворює зафіксований історичний стан; якщо архіву немає — використовуються live-дані.",
+        "Як користуватися сторінкою",
+        "Ця версія навмисно не намагається показати все одразу. "
+        "Саме попереднє одночасне виконання Dashboard, Analytics, МіО, factual registry "
+        "та десятків великих таблиць робило сторінку надмірно важкою.",
     )
 
-    source_rows = []
+    overview = pd.DataFrame(
+        [
+            {
+                "Розділ": "Dashboard — розрахунки",
+                "Що пояснює": "snapshot кварталу, execution_score, покриття, ієрархічну агрегацію, ризик, динаміку",
+                "Важкість": "середня",
+            },
+            {
+                "Розділ": "Аналітика — розрахунки",
+                "Що пояснює": "average/latest/change, measure-period vs unique measure, проблемні та без даних, МіО за вимогою",
+                "Важкість": "середня",
+            },
+            {
+                "Розділ": "Графіки Аналітики",
+                "Що пояснює": "точну назву кожного графіка, осі, одиницю спостереження та правильну інтерпретацію",
+                "Важкість": "дуже легка — без БД",
+            },
+            {
+                "Розділ": "Показники аналітичної довідки",
+                "Що пояснює": "усі ключові показники, які згадує rule-based аналітика; технічний registry — лише за вимогою",
+                "Важкість": "легка / важка лише для registry",
+            },
+            {
+                "Розділ": "Технічна звірка",
+                "Що пояснює": "Dashboard vs Analytics по кварталах та джерелах",
+                "Важкість": "середня",
+            },
+        ]
+    )
+    _display_df(overview, max_height=320)
+
+    _callout(
+        "<b>Головний принцип.</b> Формули не змінені. Змінено лише спосіб роботи сторінки: "
+        "розрахунок виконується тоді, коли він потрібен, а великі таблиці не створюють тисячі DOM-елементів під час старту."
+    )
+
+
+# =============================================================================
+# 2. DASHBOARD
+# =============================================================================
+
+elif section == "Dashboard — розрахунки":
+    with st.spinner("Формую Dashboard-контекст..."):
+        try:
+            strat_df, all_monitoring, measure_requests = _load_base_data()
+            (
+                dashboard_period_sources,
+                dashboard_results,
+                dashboard_aggregate,
+                dashboard_latest,
+                dashboard_snapshot,
+                dashboard_risk,
+            ) = _build_dashboard_context(strat_df, measure_requests)
+        except Exception as exc:
+            st.exception(exc)
+            st.stop()
+
+    _section(
+        "1. Джерело даних за кварталами",
+        "Dashboard використовує archive resolver: історичний квартал може брати архівний snapshot, "
+        "а за відсутності архіву — live-дані.",
+    )
+
+    rows = []
     for q in QUARTERS:
         key = (YEAR, q)
         item = dashboard_results.get(key, {})
         snap = item.get("snapshot", pd.DataFrame())
-        source_rows.append(
+        rows.append(
             {
                 "Квартал": q,
                 "Джерело": _source_label(dashboard_period_sources, key),
-                "Рядків snapshot": len(snap) if isinstance(snap, pd.DataFrame) else 0,
                 "Унікальних заходів": (
                     snap["code"].nunique()
                     if isinstance(snap, pd.DataFrame) and not snap.empty and "code" in snap.columns
@@ -849,557 +593,321 @@ with _tab_dash:
                 "Покриття, %": item.get("coverage"),
             }
         )
-    _display_df(pd.DataFrame(source_rows), max_height=280)
+    _display_df(pd.DataFrame(rows), max_height=260)
 
     _section(
-        "2. Як формується snapshot IV кварталу",
-        "Перед будь-яким середнім система визначає, чи захід взагалі належить до поточного зрізу, "
-        "і який саме підтверджений результат треба використати.",
+        "2. Як формується IV квартал",
+        "Спочатку визначається стан заходу та джерело факту, і лише після цього формується execution_score.",
     )
 
     if dashboard_snapshot.empty:
-        st.error("Q4 snapshot порожній — подальші Q4-формули неможливо показати.")
+        st.error("Q4 snapshot порожній.")
     else:
         period_state = dashboard_snapshot.get(
             "period_state", pd.Series("", index=dashboard_snapshot.index)
         ).astype(str)
+
         snapshot_structure = pd.DataFrame(
             [
-                {
-                    "Категорія": "Усього рядків Q4 snapshot",
-                    "Кількість": len(dashboard_snapshot),
-                    "Що це означає": "підсумкова робоча вибірка IV кварталу; один рядок відповідає одному заходу",
-                },
-                {
-                    "Категорія": "Active",
-                    "Кількість": int(period_state.eq("active").sum()),
-                    "Що це означає": "строк виконання заходу охоплює IV квартал",
-                },
-                {
-                    "Категорія": "Ended",
-                    "Кількість": int(period_state.eq("ended").sum()),
-                    "Що це означає": "захід завершився раніше; оцінюється останній належний підтверджений результат",
-                },
-                {
-                    "Категорія": "Unknown period",
-                    "Кількість": int(period_state.eq("unknown_period").sum()),
-                    "Що це означає": "строки неможливо однозначно інтерпретувати з матриці",
-                },
-                {
-                    "Категорія": "Подано саме за Q4",
-                    "Кількість": int(_safe_bool_series(dashboard_snapshot, "submitted_current_period").sum()),
-                    "Що це означає": "є погоджене поточне подання за IV квартал",
-                },
-                {
-                    "Категорія": "Використано попередній підтверджений результат",
-                    "Кількість": int(_safe_bool_series(dashboard_snapshot, "carry_forward").sum()),
-                    "Що це означає": "нового Q4-подання немає, але для execution використано останній підтверджений факт цього року",
-                },
-                {
-                    "Категорія": "Немає обов'язкового поточного подання",
-                    "Кількість": int(_safe_bool_series(dashboard_snapshot, "missing_required_submission").sum()),
-                    "Що це означає": "захід мав податися в Q4, але поточного подання немає",
-                },
+                {"Категорія": "Усього рядків Q4 snapshot", "Кількість": len(dashboard_snapshot), "Пояснення": "один рядок = один захід у поточному Q4-зрізі"},
+                {"Категорія": "Active", "Кількість": int(period_state.eq("active").sum()), "Пояснення": "строк заходу охоплює IV квартал"},
+                {"Категорія": "Ended", "Кількість": int(period_state.eq("ended").sum()), "Пояснення": "захід завершився раніше"},
+                {"Категорія": "Unknown period", "Кількість": int(period_state.eq("unknown_period").sum()), "Пояснення": "строк неможливо однозначно визначити"},
+                {"Категорія": "Подано саме за Q4", "Кількість": int(_safe_bool_series(dashboard_snapshot, "submitted_current_period").sum()), "Пояснення": "є поточне погоджене Q4-подання"},
+                {"Категорія": "Carry-forward", "Кількість": int(_safe_bool_series(dashboard_snapshot, "carry_forward").sum()), "Пояснення": "для execution використано попередній підтверджений факт цього року"},
+                {"Категорія": "Немає обов'язкового поточного подання", "Кількість": int(_safe_bool_series(dashboard_snapshot, "missing_required_submission").sum()), "Пояснення": "Q4-подання мало бути, але його немає"},
             ]
         )
-        _display_df(snapshot_structure, max_height=420)
+        _display_df(snapshot_structure, max_height=350)
 
         _callout(
-            "<b>Послідовність вибору факту.</b> Спочатку визначається стан заходу у періоді. "
-            "Майбутній захід не потрапляє в оцінюваний snapshot. Для активного заходу система "
-            "шукає погоджене подання саме за Q4. Якщо його немає, але є раніший підтверджений "
-            "результат 2026 року, цей факт може бути перенесений для оцінки виконання. "
-            "Водночас carry-forward не вважається новим Q4-поданням, тому покриття не поліпшується."
+            "<b>Carry-forward не дорівнює новому поданню.</b> Попередній підтверджений факт може підтримати execution, "
+            "але покриття Q4 від цього не стає кращим."
         )
 
-        _section(
-            "3. Як один захід отримує execution_score",
-            "Усі різні типи результатів зводяться до однієї шкали 0–100%, щоб їх можна було агрегувати.",
-        )
+        _section("3. Як захід отримує execution_score")
         score_rules = pd.DataFrame(
             [
-                {
-                    "Тип даних": "Числовий показник",
-                    "Правило": "факт / річний план × 100",
-                    "Управлінська оцінка": "результат для execution обмежується зверху 100%",
-                    "Приклад": "факт 150, план 200 → 75%; факт 280, план 200 → execution_score 100%",
-                },
-                {
-                    "Тип даних": "Так / Ні",
-                    "Правило": "так = досягнуто; ні = не досягнуто",
-                    "Управлінська оцінка": "так = 100%; ні = 0%",
-                    "Приклад": "«так» → 100%",
-                },
-                {
-                    "Тип даних": "Якісний статус без числової пари",
-                    "Правило": "Виконано / Частково виконано / Не виконано / Не подано",
-                    "Управлінська оцінка": "100% / 75% / 0% / 0%",
-                    "Приклад": "«Частково виконано» → 75%",
-                },
-                {
-                    "Тип даних": "Не настав час / Втратило актуальність",
-                    "Правило": "захід не повинен штучно погіршувати середнє",
-                    "Управлінська оцінка": "execution_score не включається до середнього",
-                    "Приклад": "немає числового балу для агрегації",
-                },
-                {
-                    "Тип даних": "Активний захід без жодного підтвердженого результату року",
-                    "Правило": "дані мали бути, але підтвердженого результату немає",
-                    "Управлінська оцінка": "0% для управлінського execution",
-                    "Приклад": "це не тотожне підтвердженому фактичному нулю",
-                },
+                {"Тип": "Числовий показник", "Правило": "факт / річний план × 100", "Бал": "0–100%; перевиконання не піднімає execution вище 100%"},
+                {"Тип": "Так / Ні", "Правило": "так = досягнуто; ні = не досягнуто", "Бал": "100% / 0%"},
+                {"Тип": "Якісний статус", "Правило": "Виконано / Частково виконано / Не виконано / Не подано", "Бал": "100% / 75% / 0% / 0%"},
+                {"Тип": "Не настав час / Втратило актуальність", "Правило": "не повинно штучно псувати середнє", "Бал": "не входить у execution-середнє"},
+                {"Тип": "Активний захід без підтвердженого результату", "Правило": "дані мали бути, але їх немає", "Бал": "0% для управлінської оцінки"},
             ]
         )
-        _display_df(score_rules, max_height=420)
+        _display_df(score_rules, max_height=300)
 
-        _callout(
-            "<b>Перевиконання не компенсує невиконання іншого заходу.</b> Якщо факт перевищив план, "
-            "raw attainment може бути вищим за 100%, але execution_score для поточної управлінської "
-            "агрегації обмежується 100%."
-        )
-
-        score_table_columns = [
-            "code", "parent_goal_code", "parent_task_code", "period_state", "status",
-            "submitted_current_period", "carry_forward", "source_quarter", "actual",
-            "annual_target", "raw_attainment_pct", "execution_score", "result_achieved",
-            "coverage_eligible", "missing_required_submission", "data_quality_conflict",
-        ]
-        score_table = dashboard_snapshot[
-            [c for c in score_table_columns if c in dashboard_snapshot.columns]
+        assessed = dashboard_snapshot[
+            _safe_numeric_series(dashboard_snapshot, "execution_score").notna()
         ].copy()
-        _raw_table(
-            "Технічна деталізація: бал кожного заходу",
-            score_table,
-            note="Тут видно службові поля, з яких безпосередньо формується Q4 execution.",
-            max_height=520,
-        )
-
-        _section("4. Головні KPI IV кварталу")
-
-        assessed_mask = _safe_numeric_series(dashboard_snapshot, "execution_score").notna()
-        assessed = dashboard_snapshot[assessed_mask].copy()
         score_sum = _safe_numeric_series(assessed, "execution_score").sum(min_count=1)
         assessed_count = len(assessed)
         diagnostic_execution = (
-            None if assessed_count == 0 or pd.isna(score_sum)
+            None
+            if assessed_count == 0 or pd.isna(score_sum)
             else float(score_sum) / assessed_count
         )
+
+        _section("4. Головні KPI Q4")
         _show_formula(
             "Рівень виконання Стратегічного плану за заходами",
-            meaning=(
-                "Середній управлінський бал усіх заходів, які мають числовий execution_score у Q4. "
-                "Показує, наскільки в середньому виконано оцінюваний портфель заходів."
-            ),
-            population=(
-                "Усі рядки Q4 snapshot із непорожнім execution_score. Майбутні та методологічно "
-                "виключені заходи без score у знаменник не потрапляють."
-            ),
+            meaning="Середній execution_score оцінених заходів IV кварталу.",
+            population="Q4-заходи з непорожнім execution_score.",
             formula="сума execution_score / кількість оцінених заходів",
-            substitution=(
-                f"{_n(score_sum)} / {assessed_count}" if assessed_count else "немає оцінених заходів"
-            ),
+            substitution=f"{_n(score_sum)} / {assessed_count}" if assessed_count else "немає оцінених заходів",
             result=_pct(dashboard_latest.get("execution_by_measures")),
             interpretation=(
-                f"У IV кварталі оцінено {assessed_count} заходів. Сума їхніх балів становить "
-                f"{_n(score_sum)}. Контрольний перерахунок = {_pct(diagnostic_execution)}; "
+                f"Контрольний перерахунок = {_pct(diagnostic_execution)}; "
                 f"shared Dashboard = {_pct(dashboard_latest.get('execution_by_measures'))} "
                 f"({_parity_text(diagnostic_execution, dashboard_latest.get('execution_by_measures'))})."
             ),
-            caveat=(
-                "Це середнє за заходами. Велика стратегічна ціль із великою кількістю заходів має "
-                "більшу вагу в цьому KPI, ніж ціль із малою кількістю заходів. Для рівного зважування "
-                "цілей існує окремий KPI «Виконання за стратегічними цілями»."
-            ),
+            caveat="Це середнє за заходами, а не рівне зважування стратегічних цілей.",
         )
 
-        coverage_mask = _safe_bool_series(dashboard_snapshot, "coverage_eligible")
-        coverage_pop = dashboard_snapshot[coverage_mask].copy()
+        coverage_pop = dashboard_snapshot[
+            _safe_bool_series(dashboard_snapshot, "coverage_eligible")
+        ].copy()
         coverage_den = len(coverage_pop)
         coverage_num = int(_safe_bool_series(coverage_pop, "submitted").sum())
-        diagnostic_coverage = None if coverage_den == 0 else coverage_num / coverage_den * 100.0
-        _show_formula(
-            "Покриття моніторингом",
-            meaning=(
-                "Частка заходів, які повинні були мати поточне подання саме за Q4 і справді його мають. "
-                "Показник оцінює повноту збору поточних даних, а не рівень виконання."
-            ),
-            population=(
-                "Знаменник — лише coverage_eligible заходи Q4. Чисельник — ті з них, для яких "
-                "поточне подання Q4 зараховано як submitted."
-            ),
-            formula="поточні Q4-подання / coverage_eligible заходи × 100",
-            substitution=f"{coverage_num} / {coverage_den} × 100",
-            result=_pct(dashboard_latest.get("coverage")),
-            interpretation=(
-                f"Із {coverage_den} заходів, які мали бути охоплені моніторингом, Q4-подання є за "
-                f"{coverage_num}. Контрольний розрахунок = {_pct(diagnostic_coverage)}; shared Dashboard = "
-                f"{_pct(dashboard_latest.get('coverage'))}."
-            ),
-            caveat=(
-                "Carry-forward може дати заходу execution_score, але не закриває вимогу нового "
-                "квартального подання. Тому виконання може залишатися відносно високим, а покриття — нижчим."
-            ),
+        diagnostic_coverage = (
+            None if coverage_den == 0 else coverage_num / coverage_den * 100.0
         )
 
-        _section(
-            "5. Агрегація: захід → завдання → стратегічна ціль → весь план",
-            "Цей ланцюжок потрібен, щоб окремо бачити середнє за всіма заходами і середнє за ієрархією цілей.",
+        _show_formula(
+            "Покриття моніторингом",
+            meaning="Частка заходів, які повинні були податися саме в Q4 і мають поточне подання.",
+            population="coverage_eligible заходи IV кварталу.",
+            formula="поточні Q4-подання / coverage_eligible × 100",
+            substitution=f"{coverage_num} / {coverage_den} × 100",
+            result=_pct(dashboard_latest.get("coverage")),
+            interpretation=f"Контрольний перерахунок = {_pct(diagnostic_coverage)}.",
+            caveat="Високе execution не гарантує високе покриття: carry-forward може підтримати перше, але не друге.",
         )
 
         task_scores = dashboard_latest.get("task_scores", pd.DataFrame())
         goal_scores = dashboard_latest.get("goal_scores", pd.DataFrame())
-
-        st.markdown(
-            "**Рівень завдання.** Для кожного завдання береться середнє арифметичне execution_score "
-            "усіх його оцінених заходів. Після цього кожне завдання стає одним окремим значенням на рівні цілі."
-        )
-        _raw_table(
-            "Технічна деталізація: оцінки завдань Q4",
-            task_scores,
-            max_height=480,
-        )
-
-        st.markdown(
-            "**Рівень стратегічної цілі.** `by_measures` — середній бал усіх заходів цілі; "
-            "`by_tasks` — середнє виконання завдань цієї цілі. Саме `by_tasks` використовується "
-            "для головного KPI «Виконання за стратегічними цілями»."
-        )
-        _raw_table(
-            "Технічна деталізація: оцінки стратегічних цілей Q4",
-            goal_scores,
-            max_height=480,
-        )
-
         if isinstance(goal_scores, pd.DataFrame) and not goal_scores.empty:
             goal_by_tasks = _safe_numeric_series(goal_scores, "by_tasks").dropna()
-            diagnostic_goal_execution = (
-                None if goal_by_tasks.empty else float(goal_by_tasks.mean())
-            )
+            diagnostic_goal = None if goal_by_tasks.empty else float(goal_by_tasks.mean())
             _show_formula(
                 "Виконання за стратегічними цілями",
-                meaning=(
-                    "Показує середній рівень виконання стратегічних цілей так, щоб кожна оцінена ціль "
-                    "мала однакову вагу незалежно від кількості заходів усередині неї."
-                ),
-                population="Стратегічні цілі, для яких сформовано by_tasks у Q4.",
-                formula="сума by_tasks усіх оцінених цілей / кількість оцінених цілей",
-                substitution=(
-                    f"{_n(goal_by_tasks.sum())} / {len(goal_by_tasks)}"
-                    if not goal_by_tasks.empty else "немає оцінених цілей"
-                ),
+                meaning="Рівне зважування оцінених стратегічних цілей через ланцюжок заходи → завдання → ціль.",
+                population="Цілі з розрахованим by_tasks.",
+                formula="сума by_tasks цілей / кількість оцінених цілей",
+                substitution=f"{_n(goal_by_tasks.sum())} / {len(goal_by_tasks)}",
                 result=_pct(dashboard_latest.get("execution_by_goals")),
-                interpretation=(
-                    f"Контрольний розрахунок = {_pct(diagnostic_goal_execution)}; shared Dashboard = "
-                    f"{_pct(dashboard_latest.get('execution_by_goals'))}."
-                ),
-                caveat=(
-                    "Цей KPI не тотожний простому середньому всіх заходів. Різниця між двома KPI є нормальною: "
-                    "вони відповідають на різні управлінські питання і по-різному зважують структуру плану."
-                ),
+                interpretation=f"Контрольний перерахунок = {_pct(diagnostic_goal)}.",
+                caveat="Цей KPI закономірно може відрізнятися від простого середнього всіх заходів.",
             )
 
-        _section("6. Досягнення результату, ризик і «потребує уваги»")
-
-        risk_denom_mask = _safe_numeric_series(dashboard_snapshot, "execution_score").notna()
-        risk_denom = int(risk_denom_mask.sum())
-        achieved_num = int(
-            (_safe_bool_series(dashboard_snapshot, "result_achieved") & risk_denom_mask).sum()
-        )
-        achieved_pct = None if risk_denom == 0 else achieved_num / risk_denom * 100
-        _show_formula(
-            "Частка результатів, які вже досягнуто",
-            meaning="Показує, для якої частини оцінених заходів цільовий результат уже вважається досягнутим.",
-            population="Заходи Q4 з розрахованим execution_score.",
-            formula="досягнуті результати / оцінені заходи × 100",
-            substitution=f"{achieved_num} / {risk_denom} × 100",
-            result=_pct(dashboard_risk.get("share_results_achieved")),
-            interpretation=(
-                f"Контрольний розрахунок = {_pct(achieved_pct)}; shared risk_summary = "
-                f"{_pct(dashboard_risk.get('share_results_achieved'))}."
-            ),
-        )
-
+        _section("5. Ризик і потреба в увазі")
         q4_attention = attention_mask(dashboard_snapshot).reindex(
             dashboard_snapshot.index, fill_value=False
         )
-        q4_attention_count = int(q4_attention.sum())
-        q4_unique = (
-            dashboard_snapshot["code"].nunique()
-            if "code" in dashboard_snapshot.columns else len(dashboard_snapshot)
-        )
         st.markdown(
-            f"**Потребує уваги в Q4: {q4_attention_count} із {q4_unique} унікальних заходів snapshot.**"
+            f"**Потребують уваги в Q4: {int(q4_attention.sum())} заходів.** "
+            "Один захід у підсумковому UNION рахується один раз незалежно від кількості причин."
         )
-        st.markdown(
-            "`attention_mask` об'єднує причини логічним **АБО**. Якщо один захід одночасно має, наприклад, "
-            "високий ризик, пропущене подання і конфлікт даних, у загальному UNION він усе одно рахується один раз."
-        )
-        _display_df(_reason_table(dashboard_snapshot), max_height=380)
-        _callout(
-            "Кількості окремих причин можуть перекриватися. Їх не можна просто скласти між собою: "
-            "сума причин може бути більшою за кількість унікальних заходів, що потребують уваги.",
-            warning=True,
-        )
+        _display_df(_reason_table(dashboard_snapshot), max_height=300)
 
-        _raw_table(
-            "Технічна деталізація: поля risk_summary Q4",
-            pd.DataFrame(
-                [
-                    {"Поле risk_summary": key, "Значення": value}
-                    for key, value in dashboard_risk.items()
-                    if not isinstance(value, (dict, list, pd.DataFrame, pd.Series))
-                ]
-            ),
-            note=(
-                "У фінальному Q4 прогнозні категорії ризику можуть бути н/д, бо Q4 є фінальним результатом, "
-                "а не прогнозним кварталом. Частки досягнення та інші factual metrics при цьому залишаються валідними."
-            ),
-            max_height=420,
-        )
-
-        _section("7. Динаміка I → IV квартал та average / latest / change")
-        _display_df(dashboard_q, max_height=300)
-
-        dash_exec_delta = _q1_q4_delta(dashboard_q, "Виконання за заходами, %")
-        q1_exec_series = dashboard_q.loc[
-            dashboard_q["Квартал"].eq("I"), "Виконання за заходами, %"
-        ]
-        q4_exec_series = dashboard_q.loc[
-            dashboard_q["Квартал"].eq("IV"), "Виконання за заходами, %"
-        ]
-        q1_exec = q1_exec_series.iloc[0] if not q1_exec_series.empty else None
-        q4_exec = q4_exec_series.iloc[0] if not q4_exec_series.empty else None
-        _show_formula(
-            "Зміна виконання I → IV квартал",
-            meaning="Чиста зміна готового квартального KPI між першим і четвертим кварталом.",
-            population="Два квартальні значення одного й того самого KPI.",
-            formula="виконання Q4 − виконання Q1",
-            substitution=f"{_pct(q4_exec)} − {_pct(q1_exec)}",
-            result=_pp(dash_exec_delta),
-            interpretation="Позитивне значення означає зростання рівня виконання; від'ємне — зниження.",
-            caveat="Це відсоткові пункти, а не відсоткова зміна відносно Q1.",
-        )
+        _section("6. Динаміка I–IV та часова семантика")
+        dashboard_q = _quarter_result_table(dashboard_results)
+        _display_df(dashboard_q, max_height=260)
 
         aggregate_view = pd.DataFrame(
             [
                 {
                     "Показник": "Виконання за заходами",
                     "Average I–IV": dashboard_aggregate.get("execution_by_measures_average"),
-                    "Latest Q4": dashboard_aggregate.get("execution_by_measures_latest"),
-                    "Q4 − Q1": dashboard_aggregate.get("execution_by_measures_change"),
+                    "Latest": dashboard_aggregate.get("execution_by_measures_latest"),
+                    "Change": dashboard_aggregate.get("execution_by_measures_change"),
                 },
                 {
-                    "Показник": "Виконання за стратегічними цілями",
+                    "Показник": "Виконання за цілями",
                     "Average I–IV": dashboard_aggregate.get("execution_by_goals_average"),
-                    "Latest Q4": dashboard_aggregate.get("execution_by_goals_latest"),
-                    "Q4 − Q1": dashboard_aggregate.get("execution_by_goals_change"),
+                    "Latest": dashboard_aggregate.get("execution_by_goals_latest"),
+                    "Change": dashboard_aggregate.get("execution_by_goals_change"),
                 },
                 {
                     "Показник": "Покриття",
                     "Average I–IV": dashboard_aggregate.get("coverage_average"),
-                    "Latest Q4": dashboard_aggregate.get("coverage_latest"),
-                    "Q4 − Q1": dashboard_aggregate.get("coverage_change"),
+                    "Latest": dashboard_aggregate.get("coverage_latest"),
+                    "Change": dashboard_aggregate.get("coverage_change"),
                 },
             ]
         )
-        _display_df(aggregate_view, max_height=260)
+        _display_df(aggregate_view, max_height=240)
         _callout(
-            "<b>Ключова відмінність.</b> `average` — середнє квартальних KPI, `latest` — останній доступний квартал, "
-            "`change` — останній мінус перший. Ці три поля не можна називати одним і тим самим показником без уточнення часу."
+            "`average` = середнє доступних квартальних KPI; `latest` = останній квартал; "
+            "`change` = останній мінус перший у відсоткових пунктах."
         )
 
-        _raw_table(
-            "Технічна деталізація: shared dynamics_frame",
-            dynamics_frame(dashboard_results),
-            max_height=420,
-        )
-        _raw_table(
-            "Технічна деталізація: стратегічні цілі — average / latest / change",
-            aggregate_objects(dashboard_results, object_type="goal"),
-            max_height=520,
-        )
-        _raw_table(
-            "Технічна деталізація: завдання — average / latest / change",
-            aggregate_objects(dashboard_results, object_type="task"),
-            max_height=520,
-        )
-
-        _section("8. ССП, заступники Міністра та фінансування")
-        st.markdown(
-            "На рівні ССП і заступників використовуються ті самі квартальні execution-показники, "
-            "після чого shared-агрегація формує average, latest і change для відповідного портфеля."
-        )
-        _raw_table(
-            "ССП: детальна таблиця",
-            ssp_summary(dashboard_results, base_results=dashboard_results),
-            note=(
-                "Вага портфеля, якщо присутня, базується на унікальному портфелі shared-модуля, "
-                "а не на сумі measure-period рядків."
-            ),
-            max_height=520,
-        )
-        _raw_table(
-            "Заступники Міністра: детальна таблиця",
-            deputy_summary(dashboard_results),
-            max_height=520,
-        )
-
-        try:
-            finance_frame = build_finance_frame(dashboard_snapshot, YEAR)
-            fin_kpi = finance_kpis(finance_frame)
-            _show_formula(
-                "Фінансове виконання",
-                meaning="Частка сукупного фактичного фінансування від сукупного річного плану фінансування портфеля.",
-                population="Унікальні заходи Q4, для яких фінансовий shared-модуль сформував валідні план/факт.",
-                formula="сума факту / сума плану × 100",
-                substitution=f"{_n(fin_kpi.get('fact_bln'))} / {_n(fin_kpi.get('plan_bln'))} × 100",
-                result=_pct(fin_kpi.get("financial_execution_pct")),
-                interpretation="Показує виконання фінансового плану всього портфеля в цілому.",
-                caveat="Це ratio of sums, а не середнє індивідуальних відсотків фінансового виконання заходів.",
-            )
-            _raw_table(
-                "Фінансування: вхідна таблиця",
-                finance_frame,
+        st.markdown("### Технічна деталізація — лише за вимогою")
+        if st.checkbox("Показати таблицю балів заходів", key="calc_dash_scores"):
+            columns = [
+                "code", "parent_goal_code", "parent_task_code", "period_state", "status",
+                "submitted_current_period", "carry_forward", "source_quarter", "actual",
+                "annual_target", "raw_attainment_pct", "execution_score", "result_achieved",
+                "coverage_eligible", "missing_required_submission", "data_quality_conflict",
+            ]
+            _display_df(
+                dashboard_snapshot[[c for c in columns if c in dashboard_snapshot.columns]].copy(),
                 max_height=520,
+                max_rows=250,
+            )
+
+        if st.checkbox("Показати завдання та стратегічні цілі", key="calc_dash_hierarchy"):
+            st.markdown("**Завдання**")
+            _display_df(task_scores, max_height=450, max_rows=200)
+            st.markdown("**Стратегічні цілі**")
+            _display_df(goal_scores, max_height=450, max_rows=100)
+
+        if st.checkbox("Показати ССП, заступників та фінансування", key="calc_dash_org"):
+            with st.spinner("Формую організаційні та фінансові таблиці..."):
+                st.markdown("**ССП**")
+                _display_df(
+                    ssp_summary(dashboard_results, base_results=dashboard_results),
+                    max_height=480,
+                    max_rows=150,
+                )
+                st.markdown("**Заступники Міністра**")
+                _display_df(
+                    deputy_summary(dashboard_results),
+                    max_height=420,
+                    max_rows=100,
+                )
+                try:
+                    finance_frame = build_finance_frame(dashboard_snapshot, YEAR)
+                    fin_kpi = finance_kpis(finance_frame)
+                    _show_formula(
+                        "Фінансове виконання",
+                        meaning="Частка сукупного факту від сукупного річного плану фінансування.",
+                        population="Валідні фінансові рядки у shared finance frame.",
+                        formula="сума факту / сума плану × 100",
+                        substitution=f"{_n(fin_kpi.get('fact_bln'))} / {_n(fin_kpi.get('plan_bln'))} × 100",
+                        result=_pct(fin_kpi.get("financial_execution_pct")),
+                        interpretation="Це ratio of sums для всього портфеля.",
+                        caveat="Це не середнє індивідуальних фінансових відсотків заходів.",
+                    )
+                    _display_df(finance_frame, max_height=450, max_rows=200)
+                except Exception as exc:
+                    st.warning(f"Фінансовий блок не сформовано: {exc}")
+
+
+# =============================================================================
+# 3. ANALYTICS
+# =============================================================================
+
+elif section == "Аналітика — розрахунки":
+    with st.spinner("Формую Analytics-контекст..."):
+        try:
+            strat_df, all_monitoring, measure_requests = _load_base_data()
+            analytics_results, analytics_active, analytics_plan, analytics_metrics = (
+                _build_analytics_context(strat_df, measure_requests)
             )
         except Exception as exc:
-            st.warning(f"Фінансовий блок не вдалося відтворити: {exc}")
-
-
-# =============================================================================
-# TAB 2 — ANALYTICS
-# =============================================================================
-
-with _tab_ana:
-    _section(
-        "1. Що саме є вибіркою сторінки «Аналітика»",
-        "За фіксованого вибору I, II, III, IV кварталів Analytics створює квартальні snapshots, "
-        "а потім вертикально об'єднує їх у `active`. Саме тому один захід може повторюватися кілька разів.",
-    )
+            st.exception(exc)
+            st.stop()
 
     active_rows = len(analytics_active)
     active_unique = (
         analytics_active["code"].nunique()
-        if not analytics_active.empty and "code" in analytics_active.columns else 0
+        if not analytics_active.empty and "code" in analytics_active.columns
+        else 0
     )
-    _a1, _a2, _a3, _a4 = st.columns(4)
-    _a1.metric("Рядків захід × квартал", active_rows)
-    _a2.metric("Унікальних заходів", active_unique)
-    _a3.metric("Потребують уваги", _int(analytics_metrics.get("problem")))
-    _a4.metric("Без даних", _int(analytics_metrics.get("no_data")))
+
+    _section(
+        "1. Що є одиницею спостереження",
+        "При виборі I–IV Analytics склеює квартальні snapshots. "
+        "Тому один код заходу може з'явитися до чотирьох разів.",
+    )
+
+    a1, a2, a3, a4 = st.columns(4)
+    a1.metric("Рядків захід × квартал", active_rows)
+    a2.metric("Унікальних заходів", active_unique)
+    a3.metric("Потребують уваги", _int(analytics_metrics.get("problem")))
+    a4.metric("Без даних", _int(analytics_metrics.get("no_data")))
 
     _callout(
-        "<b>Найважливіше для читання Analytics.</b> `active_rows` і частина problem/no_data-показників мають одиницю "
-        "<b>захід × квартал</b>, тоді як картка «Заходів у вибірці» має одиницю <b>унікальний захід</b>. "
-        "Такі числа не можна автоматично трактувати як «X із Y», якщо одиниці різні."
+        "<b>Не змішуємо одиниці.</b> «Потребують уваги» та «Без даних» можуть бути measure-period counts, "
+        "а «Заходів у вибірці» — unique measures. Це не автоматично «X із Y»."
     )
 
-    analytics_source_rows = []
-    for q in QUARTERS:
-        key = (YEAR, q)
-        item = analytics_results.get(key, {})
-        snap = item.get("snapshot", pd.DataFrame())
-        analytics_source_rows.append(
-            {
-                "Квартал": q,
-                "Джерело поточного Analytics": "Поточний live-контур",
-                "Dashboard мав архів": "так" if key in dashboard_period_sources else "ні",
-                "Рядків snapshot": len(snap) if isinstance(snap, pd.DataFrame) else 0,
-                "Унікальних заходів": (
-                    snap["code"].nunique()
-                    if isinstance(snap, pd.DataFrame) and not snap.empty and "code" in snap.columns
-                    else 0
-                ),
-                "Виконання, %": item.get("execution_by_measures"),
-                "Покриття, %": item.get("coverage"),
-            }
-        )
-    _display_df(pd.DataFrame(analytics_source_rows), max_height=300)
-
     _section("2. Чотири головні картки Analytics")
-    analytics_kpi_guide = pd.DataFrame(
+    kpi_guide = pd.DataFrame(
         [
             {
-                "Назва в Analytics": "Рівень виконання Стратегічного плану в обраному періоді",
-                "Що показує зараз": "execution_by_measures_average",
+                "Назва": "Рівень виконання Стратегічного плану в обраному періоді",
+                "Що показує": "execution_by_measures_average",
                 "Одиниця": "%",
-                "Як рахується за I–IV": "середнє чотирьох квартальних KPI виконання",
-                "Важливе уточнення": "це не Q4; для Q4 існує completion_latest",
+                "Розрахунок за I–IV": "середнє квартальних KPI",
+                "Уточнення": "не тотожне latest Q4",
             },
             {
-                "Назва в Analytics": "Потребують управлінської уваги",
-                "Що показує зараз": "сума is_problem_status по active",
+                "Назва": "Потребують управлінської уваги",
+                "Що показує": "сума is_problem_status по active",
                 "Одиниця": "захід × квартал",
-                "Як рахується за I–IV": "сума проблемних measure-period рядків усіх обраних кварталів",
-                "Важливе уточнення": "один захід може бути порахований у кількох кварталах",
+                "Розрахунок за I–IV": "сума проблемних measure-period rows",
+                "Уточнення": "один захід може повторюватися",
             },
             {
-                "Назва в Analytics": "Покриття моніторингом",
-                "Що показує зараз": "coverage_average",
+                "Назва": "Покриття моніторингом",
+                "Що показує": "coverage_average",
                 "Одиниця": "%",
-                "Як рахується за I–IV": "середнє готових квартальних coverage",
-                "Важливе уточнення": "це не частка всіх річних подань від усіх річних обов'язкових подань одним ratio",
+                "Розрахунок за I–IV": "середнє квартальних coverage",
+                "Уточнення": "не один річний ratio сум",
             },
             {
-                "Назва в Analytics": "Заходів у вибірці",
-                "Що показує зараз": "unique_measures",
+                "Назва": "Заходів у вибірці",
+                "Що показує": "nunique(code)",
                 "Одиниця": "унікальний захід",
-                "Як рахується за I–IV": "nunique(code) у склеєному active",
-                "Важливе уточнення": "не дорівнює кількості active rows",
+                "Розрахунок за I–IV": "кількість різних кодів у active",
+                "Уточнення": "не дорівнює кількості active rows",
             },
         ]
     )
-    _display_df(analytics_kpi_guide, max_height=360)
+    _display_df(kpi_guide, max_height=320)
 
-    analytics_exec_values = analytics_q["Виконання за заходами, %"].dropna().tolist()
-    analytics_exec_mean_check = _mean(analytics_exec_values)
-    expression = " + ".join(_pct(v) for v in analytics_exec_values)
-    denominator = len(analytics_exec_values)
+    analytics_q = _quarter_result_table(analytics_results)
+    exec_values = analytics_q["Виконання за заходами, %"].dropna().tolist()
+    cov_values = analytics_q["Покриття, %"].dropna().tolist()
+
     _show_formula(
-        "Картка Analytics «Рівень виконання Стратегічного плану в обраному періоді»",
-        meaning="Середній рівень квартального виконання за всіма обраними кварталами.",
-        population="Готові квартальні KPI execution_by_measures за I, II, III, IV квартали, де значення доступне.",
-        formula="(Q1 + Q2 + Q3 + Q4) / кількість доступних квартальних KPI",
+        "Analytics «Рівень виконання»",
+        meaning="Середній рівень готових квартальних execution KPI за обраними кварталами.",
+        population="Доступні квартальні execution_by_measures.",
+        formula="(Q1 + Q2 + Q3 + Q4) / кількість доступних кварталів",
         substitution=(
-            f"({expression}) / {denominator}" if denominator else "немає квартальних значень"
+            f"({' + '.join(_pct(v) for v in exec_values)}) / {len(exec_values)}"
+            if exec_values else "немає значень"
         ),
         result=_pct(analytics_metrics.get("completion")),
         interpretation=(
-            f"Контрольне середнє = {_pct(analytics_exec_mean_check)}. Latest Q4 окремо = "
-            f"{_pct(analytics_plan.get('execution_by_measures_latest'))}; Dashboard Q4 = "
-            f"{_pct(dashboard_latest.get('execution_by_measures'))}."
+            f"Контрольне середнє = {_pct(_mean(exec_values))}; "
+            f"latest Q4 = {_pct(analytics_plan.get('execution_by_measures_latest'))}."
         ),
-        caveat="Якщо вибрано кілька кварталів, назва «в обраному періоді» означає average квартальних KPI, а не стан на останню дату.",
+        caveat="Назва «в обраному періоді» при multi-quarter вибірці фактично означає average квартальних KPI.",
     )
 
-    analytics_cov_values = analytics_q["Покриття, %"].dropna().tolist()
-    analytics_cov_mean_check = _mean(analytics_cov_values)
-    cov_expression = " + ".join(_pct(v) for v in analytics_cov_values)
-    cov_denominator = len(analytics_cov_values)
     _show_formula(
-        "Картка Analytics «Покриття моніторингом»",
-        meaning="Середнє квартальних показників повноти поточних подань у межах вибраних кварталів.",
-        population="Готові квартальні coverage за I–IV, де значення доступне.",
+        "Analytics «Покриття моніторингом»",
+        meaning="Середнє готових квартальних coverage.",
+        population="Доступні квартальні coverage.",
         formula="(coverage Q1 + Q2 + Q3 + Q4) / кількість доступних кварталів",
         substitution=(
-            f"({cov_expression}) / {cov_denominator}" if cov_denominator else "немає квартальних значень"
+            f"({' + '.join(_pct(v) for v in cov_values)}) / {len(cov_values)}"
+            if cov_values else "немає значень"
         ),
         result=_pct(analytics_metrics.get("coverage")),
-        interpretation=(
-            f"Контрольне середнє = {_pct(analytics_cov_mean_check)}. Latest Q4 = "
-            f"{_pct(analytics_plan.get('coverage_latest'))}; Dashboard Q4 = {_pct(dashboard_latest.get('coverage'))}."
-        ),
-        caveat="Average квартальних відсотків не обов'язково дорівнює ratio суми всіх подань до суми всіх eligible-спостережень за рік.",
+        interpretation=f"Контрольне середнє = {_pct(_mean(cov_values))}.",
+        caveat="Average квартальних відсотків не обов'язково дорівнює одному ratio всіх річних подань.",
     )
 
-    _section("3. «Потребують управлінської уваги» та «Без даних»")
-    if analytics_active.empty:
-        st.caption("Analytics active порожній.")
-    else:
-        active_attention = _safe_bool_series(analytics_active, "is_problem_status")
-        attention_rows = int(active_attention.sum())
-        attention_by_quarter = (
-            analytics_active.assign(_attention=active_attention)
+    _section("3. Потребують уваги")
+    if not analytics_active.empty:
+        attention = _safe_bool_series(analytics_active, "is_problem_status")
+        by_q = (
+            analytics_active.assign(_attention=attention)
             .groupby("report_quarter", dropna=False)
             .agg(
                 Рядків_з_увагою=("_attention", "sum"),
@@ -1409,510 +917,435 @@ with _tab_ana:
             .reset_index()
             .rename(columns={"report_quarter": "Квартал"})
         )
-        _display_df(attention_by_quarter, max_height=300)
-
-        unique_attention_codes = (
-            analytics_active.loc[active_attention, "code"].nunique()
+        _display_df(by_q, max_height=260)
+        unique_attention = (
+            analytics_active.loc[attention, "code"].nunique()
             if "code" in analytics_active.columns else 0
         )
         _show_formula(
             "Поточне число «Потребують управлінської уваги»",
-            meaning="Кількість проблемних спостережень у склеєному масиві I–IV.",
-            population="Усі active measure-period rows, для яких is_problem_status=True.",
+            meaning="Кількість проблемних спостережень у склеєному I–IV масиві.",
+            population="active rows, де is_problem_status=True.",
             formula="attention rows Q1 + Q2 + Q3 + Q4",
-            substitution=" + ".join(
-                str(int(v)) for v in attention_by_quarter["Рядків_з_увагою"].tolist()
-            ),
-            result=str(attention_rows),
-            interpretation=(
-                f"Це {attention_rows} спостережень «захід × квартал». Унікальних кодів заходів, які хоча б "
-                f"раз потребували уваги протягом року, — {unique_attention_codes}."
-            ),
-            caveat=(
-                "Не діліть це число на «Заходів у вибірці», якщо знаменник є unique measures. "
-                "Для відсоткової частки numerator і denominator повинні мати однакову одиницю спостереження."
-            ),
+            substitution=" + ".join(str(int(v)) for v in by_q["Рядків_з_увагою"].tolist()),
+            result=str(int(attention.sum())),
+            interpretation=f"Унікальних кодів, які хоча б раз потребували уваги: {unique_attention}.",
+            caveat="Для частки problem numerator і denominator повинні мати однакову observation unit.",
         )
 
-        missing_mask = _safe_bool_series(analytics_active, "missing_required_submission")
-        if not missing_mask.any() and "has_current_submission" in analytics_active.columns:
-            # Це лише пояснювальний fallback для відображення; production metrics уже готові.
-            missing_mask = ~_safe_bool_series(analytics_active, "has_current_submission")
-        missing_by_quarter = (
-            analytics_active.assign(_missing=missing_mask)
-            .groupby("report_quarter", dropna=False)
-            .agg(Без_даних=("_missing", "sum"), Усього_рядків=("code", "size"))
-            .reset_index()
-            .rename(columns={"report_quarter": "Квартал"})
-        )
-        _raw_table(
-            "Розклад «Без даних» за кварталами",
-            missing_by_quarter,
-            note=(
-                "Основна картка/текст використовує prepared metric із production-контексту. Ця таблиця потрібна "
-                "для розуміння, в яких кварталах концентруються пропуски."
-            ),
-            max_height=300,
-        )
-
-    _section("4. Статуси, цілі, завдання, ССП і типи продукту")
+    _section("4. Цілі, завдання, ССП та типи продукту")
     st.markdown(
-        "У багатоквартальній вибірці частина лічильників є measure-period counts. Саме тому в таблицях поряд "
-        "існують окремі поля `Заходів_періодів` і `Унікальних_заходів`."
+        "Виконання/Latest/Change походять із shared aggregation; "
+        "лічильники проблемних і без даних можуть залишатися measure-period counts."
     )
 
-    _raw_table(
-        "Статуси Analytics I–IV: measure-period rows",
-        _status_counts(analytics_active),
-        note="Один захід може потрапити в різні статуси в різних кварталах.",
-        max_height=420,
-    )
-    _raw_table(
-        "Статуси Q4 snapshot: стан унікальних заходів в останньому кварталі",
-        _status_counts(analytics_q4_snapshot),
-        note="Це інша семантика: один поточний Q4-рядок на захід.",
-        max_height=420,
-    )
-    _raw_table(
-        "Стратегічні цілі: показники, які використовує Analytics",
-        analytics_goals,
-        note=(
-            "Виконання/Останнє_виконання/Зміна походять із shared object aggregation. "
-            "Проблемних і Без_даних — counts по active; Унікальних_заходів — окрема unique-measure величина."
-        ),
-        max_height=560,
-    )
-    _raw_table(
-        "Завдання: показники, які використовує Analytics",
-        analytics_tasks,
-        max_height=560,
-    )
-    _raw_table(
-        "ССП: показники, які використовує Analytics",
-        analytics_ssp,
-        max_height=560,
-    )
-    _raw_table(
-        "Типи продукту: показники, які використовує Analytics",
-        analytics_products,
-        note=(
-            "Виконання і Покриття_% є квартально агрегованими значеннями для підмножини типу продукту; "
-            "Унікальних_заходів — висота відповідної колонки на графіку «Структура заходів за типами продукту»."
-        ),
-        max_height=520,
-    )
-
-    _section("5. Оцінка МіО — окремий річний контур")
-    st.markdown(
-        "МіО не є квартальним Dashboard snapshot. Це річна модель, яка використовує повний monitoring stream, "
-        "включно з поданнями індикаторів цілей і завдань. Для кожної стратегічної цілі інтеграл формується з трьох компонентів."
-    )
-    mio_formula = pd.DataFrame(
-        [
-            {"Компонент": "Виконання заходів цілі", "Вага": "20%", "Що означає": "середній рівень виконання заходів відповідної стратегічної цілі"},
-            {"Компонент": "Оцінка завдань цілі", "Вага": "30%", "Що означає": "середня оцінка завдань, що входять до стратегічної цілі"},
-            {"Компонент": "Прогрес індикаторів цілі", "Вага": "50%", "Що означає": "прогрес власних стратегічних індикаторів цілі"},
-        ]
-    )
-    _display_df(mio_formula, max_height=260)
-    st.markdown("**Формула інтегралу стратегічної цілі:** `0.20 × I + 0.30 × J + 0.50 × K`.")
-
-    if not mio_goals.empty:
-        try:
-            mio_summary = mio_shared.summarize_integral_goals(mio_goals, YEAR)
-            _m1, _m2, _m3, _m4 = st.columns(4)
-            _m1.metric("Інтегральна оцінка", _pct(mio_summary.average_integral))
-            _m2.metric("Виконання заходів", _pct(mio_summary.average_measure_execution))
-            _m3.metric("Оцінка завдань", _pct(mio_summary.average_task_score))
-            _m4.metric("Прогрес індикаторів", _pct(mio_summary.average_strategic_progress))
-        except Exception as exc:
-            st.warning(f"Зведення МіО не вдалося сформувати: {exc}")
-
-        # Показуємо не лише готовий інтеграл, а й підстановку трьох компонентів
-        # для кожної стратегічної цілі. Це контрольне пояснення; shared МіО не змінюється.
-        mio_check_rows = []
-        for _, row in mio_goals.iterrows():
-            i = _num(row.get(f"Заходи {YEAR}"))
-            j = _num(row.get(f"Завдання {YEAR}"))
-            k = _num(row.get(f"Прогрес {YEAR}"))
-            shared_integral = _num(row.get(f"Інтеграл {YEAR}"))
-            if i is None and j is None and k is None and shared_integral is None:
-                continue
-            i_calc, j_calc, k_calc = i or 0.0, j or 0.0, k or 0.0
-            control_integral = 0.20 * i_calc + 0.30 * j_calc + 0.50 * k_calc
-            mio_check_rows.append(
-                {
-                    "Код цілі": row.get("Код"),
-                    "Стратегічна ціль": row.get("Ціль"),
-                    "I — заходи, %": i,
-                    "J — завдання, %": j,
-                    "K — індикатори, %": k,
-                    "Підстановка у формулу": (
-                        f"0.20 × {_n(i_calc)} + 0.30 × {_n(j_calc)} + 0.50 × {_n(k_calc)}"
-                    ),
-                    "Контрольний інтеграл, %": control_integral,
-                    "Shared інтеграл, %": shared_integral,
-                    "Звірка": _parity_text(control_integral, shared_integral),
-                }
+    # Ці таблиці розраховуються лише в Analytics-розділі, але не рендеряться всі автоматично.
+    if st.checkbox("Показати агреговані таблиці Analytics", key="calc_ana_tables"):
+        with st.spinner("Формую агреговані таблиці..."):
+            goals = analytics_calculations.build_analytics_goal_summary(
+                analytics_results, analytics_active
+            )
+            tasks = analytics_calculations.build_analytics_task_summary(
+                analytics_results, analytics_active
+            )
+            ssp = analytics_calculations.build_analytics_ssp_summary(
+                analytics_results,
+                analytics_active,
+                base_results=analytics_results,
+            )
+            products = analytics_calculations.aggregate_product_progress(
+                analytics_results, analytics_active
             )
 
-        if mio_check_rows:
-            st.markdown(
-                "**Як читати інтеграл по кожній цілі.** I — виконання заходів, J — оцінка завдань, "
-                "K — прогрес стратегічних індикаторів. Колонка «Контрольний інтеграл» показує просту "
-                "підстановку у формулу 20/30/50, а «Shared інтеграл» — значення, яке реально повернув "
-                "модуль МіО. «ЗБІГАЄТЬСЯ» означає, що контрольний перерахунок підтверджує shared-результат."
-            )
-            _display_df(pd.DataFrame(mio_check_rows), max_height=520)
+        st.markdown("**Стратегічні цілі**")
+        _display_df(goals, max_height=460, max_rows=120)
+        st.markdown("**Завдання**")
+        _display_df(tasks, max_height=460, max_rows=200)
+        st.markdown("**ССП**")
+        _display_df(ssp, max_height=460, max_rows=150)
+        st.markdown("**Типи продукту**")
+        _display_df(products, max_height=420, max_rows=100)
 
-        _raw_table(
-            "МіО: інтегральні оцінки стратегічних цілей",
-            mio_goals,
-            max_height=560,
-        )
-    else:
-        st.caption("Річні МіО-дані у поточному контексті відсутні або не сформувалися.")
+    if st.checkbox("Показати статуси I–IV та Q4", key="calc_ana_status"):
+        q4_snapshot = analytics_results.get(LATEST_KEY, {}).get("snapshot", pd.DataFrame())
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**I–IV: measure-period rows**")
+            _display_df(_status_counts(analytics_active), max_height=320)
+        with c2:
+            st.markdown("**Q4: поточний snapshot**")
+            _display_df(_status_counts(q4_snapshot), max_height=320)
 
-    _section("6. Dashboard Q4 vs Analytics current — що саме відрізняється")
-    dash_q4_attention = (
-        int(attention_mask(dashboard_snapshot).sum()) if not dashboard_snapshot.empty else 0
+    _section("5. МіО — тільки за вимогою")
+    st.markdown(
+        "МіО є окремим річним контуром 20% / 30% / 50%. "
+        "Щоб не гальмувати звичайний перегляд Analytics, він не обчислюється автоматично."
     )
-    analytics_unique_attention = (
-        analytics_active.loc[
-            _safe_bool_series(analytics_active, "is_problem_status"), "code"
-        ].nunique()
-        if not analytics_active.empty and "code" in analytics_active.columns else 0
-    )
-    final_diff = pd.DataFrame(
-        [
-            {
-                "Тема": "Виконання",
-                "Dashboard": _pct(dashboard_latest.get("execution_by_measures")),
-                "Analytics": _pct(analytics_metrics.get("completion")),
-                "Одиниця": "%",
-                "Чому різниться": "Dashboard = Q4 latest; Analytics = average I–IV",
-            },
-            {
-                "Тема": "Покриття",
-                "Dashboard": _pct(dashboard_latest.get("coverage")),
-                "Analytics": _pct(analytics_metrics.get("coverage")),
-                "Одиниця": "%",
-                "Чому різниться": "Dashboard = Q4 latest; Analytics = average I–IV",
-            },
-            {
-                "Тема": "Потребують уваги",
-                "Dashboard": str(dash_q4_attention),
-                "Analytics": str(_int(analytics_metrics.get("problem"))),
-                "Одиниця": "Dashboard: unique Q4 row; Analytics: measure-period",
-                "Чому різниться": f"Analytics unique attention measures I–IV окремо = {analytics_unique_attention}",
-            },
-            {
-                "Тема": "Заходів у вибірці",
-                "Dashboard": str(
-                    dashboard_snapshot["code"].nunique()
-                    if not dashboard_snapshot.empty and "code" in dashboard_snapshot.columns else 0
-                ),
-                "Analytics": str(active_unique),
-                "Одиниця": "унікальний захід",
-                "Чому різниться": "Q4 applicable portfolio vs union заходів, які потрапили хоча б в один I–IV snapshot",
-            },
-        ]
-    )
-    _display_df(final_diff, max_height=360)
+
+    if st.checkbox("Розрахувати і показати МіО 2026", key="calc_ana_mio"):
+        with st.spinner("Формую річний контур МіО..."):
+            try:
+                mio_monitoring = append_confirmed_closeout_facts(
+                    all_monitoring,
+                    include_incomplete=False,
+                )
+                outputs = mio_shared.build_mio_analytics(
+                    strat_df,
+                    mio_monitoring,
+                    [YEAR],
+                )
+                mio_goals = outputs.get("goals", pd.DataFrame())
+            except Exception as exc:
+                st.warning(f"МіО не сформовано: {exc}")
+                mio_goals = pd.DataFrame()
+
+        if not mio_goals.empty:
+            summary = mio_shared.summarize_integral_goals(mio_goals, YEAR)
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Інтегральна оцінка", _pct(summary.average_integral))
+            m2.metric("Виконання заходів", _pct(summary.average_measure_execution))
+            m3.metric("Оцінка завдань", _pct(summary.average_task_score))
+            m4.metric("Прогрес індикаторів", _pct(summary.average_strategic_progress))
+
+            st.markdown("**Формула цілі:** `0.20 × I + 0.30 × J + 0.50 × K`.")
+            if st.checkbox("Показати деталізацію МіО по цілях", key="calc_ana_mio_detail"):
+                _display_df(mio_goals, max_height=500, max_rows=100)
 
 
 # =============================================================================
-# TAB 3 — CHART GUIDE
+# 4. GRAPH GUIDE — NO DB
 # =============================================================================
 
-with _tab_charts:
+elif section == "Графіки Аналітики":
     _section(
-        "Графіки сторінки «Аналітика»: що саме означає кожна назва",
-        "Нижче наведено точну семантику поточних графіків. Це не нові формули — це пояснення того, "
-        "які вже готові поля Analytics потрапляють на осі та в hover.",
+        "Графіки сторінки «Аналітика»",
+        "Цей розділ не звертається до БД. Він пояснює точний зміст назв, осей та показників поточних графіків.",
     )
 
     chart_guide = pd.DataFrame(
         [
             {
-                "Точна назва графіка": "Зміна ключових показників рік до року",
-                "Що на осі / у секторі": "X: показник; Y: Зміна, в.п.; групування: період порівняння",
-                "Що фактично вимірюється": "різниця між поточним і попереднім роком для покриття та рівня виконання СП",
+                "Назва графіка": "Зміна ключових показників рік до року",
+                "Осі / значення": "X: показник; Y: Зміна, в.п.; група: період порівняння",
+                "Що вимірюється": "різниця між поточним і попереднім роком для виконання та покриття",
                 "Одиниця": "відсоткові пункти",
-                "Ключове застереження": "це різниця двох відсоткових KPI, не темп приросту у %",
+                "Важливо": "це не темп приросту у %",
             },
             {
-                "Точна назва графіка": "Динаміка оціненого виконання",
-                "Що на осі / у секторі": "X: Період; Y: Виконання",
-                "Що фактично вимірюється": "готовий канонічний execution KPI кожного звітного періоду",
+                "Назва графіка": "Динаміка оціненого виконання",
+                "Осі / значення": "X: Період; Y: Виконання",
+                "Що вимірюється": "готовий execution KPI кожного звітного кварталу",
                 "Одиниця": "%",
-                "Ключове застереження": "лінія не є накопичувальною сумою; кожна точка — окремий квартальний зріз",
+                "Важливо": "кожна точка — окремий квартальний зріз, не накопичувальна сума",
             },
             {
-                "Точна назва графіка": "Виконання за стратегічними цілями",
-                "Що на осі / у секторі": "X: код СЦ; Y: поле Виконання; hover: назва, унікальні заходи, покриття, проблемні, без даних",
-                "Що фактично вимірюється": "агрегований execution стратегічної цілі за вибраними періодами",
+                "Назва графіка": "Виконання за стратегічними цілями",
+                "Осі / значення": "X: код СЦ; Y: Виконання; hover: назва, заходи, покриття, проблемні, без даних",
+                "Що вимірюється": "агрегований execution стратегічної цілі за вибраними періодами",
                 "Одиниця": "%",
-                "Ключове застереження": "за кількох кварталів поле Виконання є average; останній квартал зберігається окремо",
+                "Важливо": "при кількох кварталах поле Виконання є average; latest існує окремо",
             },
             {
-                "Точна назва графіка": "Виконання за самостійними структурними підрозділами",
-                "Що на осі / у секторі": "X: ССП; Y: поле Виконання; hover: заступник, унікальні заходи, покриття, проблемні, без даних",
-                "Що фактично вимірюється": "агрегований рівень execution портфеля заходів відповідного ССП",
+                "Назва графіка": "Виконання за самостійними структурними підрозділами",
+                "Осі / значення": "X: ССП; Y: Виконання; hover: заступник, портфель, покриття, проблемні, без даних",
+                "Що вимірюється": "агрегований execution портфеля ССП",
                 "Одиниця": "%",
-                "Ключове застереження": "порівнюються портфелі різного розміру; hover окремо показує кількість унікальних заходів",
+                "Важливо": "ССП мають різний розмір портфеля",
             },
             {
-                "Точна назва графіка": "Структура заходів за типами продукту",
-                "Що на осі / у секторі": "X: тип продукту; Y: Унікальних_заходів; hover: виконання, покриття, проблемні, без даних",
-                "Що фактично вимірюється": "розмір портфеля кожного типу продукту за кількістю унікальних заходів",
+                "Назва графіка": "Структура заходів за типами продукту",
+                "Осі / значення": "X: тип продукту; Y: Унікальних_заходів",
+                "Що вимірюється": "розмір портфеля типу продукту",
                 "Одиниця": "унікальний захід",
-                "Ключове застереження": "висота стовпчика — НЕ виконання; execution показується лише в hover",
+                "Важливо": "висота стовпчика — не execution; execution лише в hover",
             },
             {
-                "Точна назва графіка": "Структура статусів виконання",
-                "Що на осі / у секторі": "сектори: status; значення: Кількість",
-                "Що фактично вимірюється": "скільки active measure-period rows мають кожний статус у вибраних кварталах",
+                "Назва графіка": "Структура статусів виконання",
+                "Осі / значення": "сектори: status; значення: Кількість",
+                "Що вимірюється": "кількість status-спостережень у active",
                 "Одиниця": "захід × квартал",
-                "Ключове застереження": "у багатоквартальній вибірці це не структура унікальних заходів станом на Q4",
+                "Важливо": "I–IV — не структура унікальних заходів станом на Q4",
             },
             {
-                "Точна назва графіка": "Завдання з найбільшою кількістю сигналів управлінської уваги",
-                "Що на осі / у секторі": "X: код завдання; Y: Проблемних; показуються top-10",
-                "Що фактично вимірюється": "кількість проблемних measure-period rows, віднесених до кожного завдання",
-                "Одиниця": "сигнал/захід × квартал",
-                "Ключове застереження": "це кількість проблемних спостережень, а не обов'язково кількість унікальних проблемних заходів",
+                "Назва графіка": "Завдання з найбільшою кількістю сигналів управлінської уваги",
+                "Осі / значення": "X: код завдання; Y: Проблемних; top-10",
+                "Що вимірюється": "кількість проблемних measure-period rows по завданнях",
+                "Одиниця": "захід × квартал",
+                "Важливо": "не обов'язково кількість унікальних проблемних заходів",
             },
             {
-                "Точна назва графіка": "Рейтинг ССП за кількістю повернень",
-                "Що на осі / у секторі": "X: ССП; Y: кількість повернень",
-                "Що фактично вимірюється": "кількість подій повернення заявок на доопрацювання за журналом дій",
+                "Назва графіка": "Рейтинг ССП за кількістю повернень",
+                "Осі / значення": "X: ССП; Y: кількість повернень",
+                "Що вимірюється": "події повернення заявок на доопрацювання",
                 "Одиниця": "подія повернення",
-                "Ключове застереження": "це тестовий workflow-блок; одна заявка може повертатися більше одного разу",
+                "Важливо": "тестовий workflow-блок; одна заявка може повертатися кілька разів",
             },
             {
-                "Точна назва графіка": "Розподіл за ланками, які повертають",
-                "Що на осі / у секторі": "X: ланка, що повернула; Y: кількість повернень",
-                "Що фактично вимірюється": "на яких ланках workflow виникають події повернення",
+                "Назва графіка": "Розподіл за ланками, які повертають",
+                "Осі / значення": "X: ланка; Y: кількість повернень",
+                "Що вимірюється": "на яких ланках workflow відбуваються повернення",
                 "Одиниця": "подія повернення",
-                "Ключове застереження": "це тестовий workflow-блок, джерело — monitoring_logs",
+                "Важливо": "джерело — monitoring_logs",
             },
         ]
     )
-    _display_df(chart_guide, max_height=560)
+    _display_df(chart_guide, max_height=540)
 
-    chart_details = [
-        (
-            "Динаміка оціненого виконання",
-            "Кожна точка лінії — окремий квартальний KPI `execution_by_measures`. Якщо вибрано I–IV, "
-            "графік показує чотири незалежні квартальні значення у хронологічному порядку. Лінія допомагає побачити "
-            "напрям зміни, але не означає накопичення виконання від кварталу до кварталу. Для кількісного висновку "
-            "між першим і останнім кварталом використовується `change = latest − first` у відсоткових пунктах."
+    explanations = {
+        "Динаміка оціненого виконання": (
+            "Кожна точка — окремий квартальний execution KPI. Лінія показує напрям зміни, "
+            "але не означає, що Q4 є сумою Q1–Q4. Для кількісної зміни використовується "
+            "`change = latest − first` у відсоткових пунктах."
         ),
-        (
-            "Виконання за стратегічними цілями",
-            "Стовпчик відповідає полю `Виконання` з `goal_progress`. За багатоквартальної вибірки це агреговане average "
-            "по кварталах. У hover додатково показуються назва цілі, кількість унікальних заходів, покриття, проблемні "
-            "measure-period rows та рядки без даних. Тому hover поєднує показники різних одиниць, і кожен треба читати окремо."
+        "Виконання за стратегічними цілями": (
+            "Висота стовпчика походить із поля `Виконання` goal_progress. "
+            "При multi-quarter вибірці це average. Hover поєднує execution, unique measures, "
+            "coverage та measure-period counts, тому кожне поле має власну одиницю."
         ),
-        (
-            "Виконання за самостійними структурними підрозділами",
-            "Висота стовпчика — execution портфеля конкретного ССП у вибраному періоді. Поруч у hover є розмір портфеля, "
-            "покриття і кількість проблемних/безданих спостережень. Два ССП з однаковим execution можуть мати дуже різний "
-            "розмір портфеля, тому сам рейтинг виконання не є рейтингом масштабу або навантаження."
+        "Виконання за ССП": (
+            "Висота стовпчика — execution портфеля ССП. Порівняння результативності не дорівнює "
+            "порівнянню масштабу: два ССП можуть мати однаковий execution, але різну кількість заходів."
         ),
-        (
-            "Структура заходів за типами продукту",
-            "Цей графік є структурним, а не результативним: висота стовпчика показує кількість унікальних заходів певного "
-            "типу продукту. Показники виконання та покриття знаходяться лише у hover і не визначають висоту стовпчика."
+        "Структура статусів": (
+            "У вибірці I–IV один захід може потрапити в різні статуси в різних кварталах. "
+            "Для поточного стану унікальних заходів треба дивитися Q4 snapshot."
         ),
-        (
-            "Структура статусів виконання",
-            "Для вибору I–IV статуси підраховуються в склеєному `active`. Отже, один захід може дати до чотирьох внесків у "
-            "діаграму і навіть потрапити в різні сектори в різні квартали. Якщо потрібен саме поточний статус унікальних "
-            "заходів, треба дивитися Q4 snapshot, а не річний active."
+        "Сигнали уваги за завданнями": (
+            "Графік пріоритезує завдання за кількістю problem-спостережень. "
+            "Він не доводить, що ці завдання мають найнижчий execution."
         ),
-        (
-            "Завдання з найбільшою кількістю сигналів управлінської уваги",
-            "Завдання сортуються за полем `Проблемних`, а при рівності — за `Без_даних`; на графік потрапляють перші 10. "
-            "Це інструмент пріоритезації проблемних спостережень. Він не доводить, що саме ці завдання мають найнижчий "
-            "відсоток виконання: кількість сигналів і execution — різні характеристики."
-        ),
-    ]
-    for title, body in chart_details:
-        with st.expander(title, expanded=False):
+    }
+
+    for title, body in explanations.items():
+        with st.expander(title):
             st.write(body)
 
-    _callout(
-        "<b>Графіки в DOCX.</b> Експортована аналітична довідка використовує ті самі агрегати, але має трохи інші "
-        "підписи: «Динаміка оціненого виконання, %», «Розподіл заходів за статусами виконання», "
-        "«Рівень виконання за стратегічними цілями, %» та «Рівень виконання за ССП (топ-15), %». "
-        "Методологічно це ті самі джерела даних, що й екранні графіки."
-    )
-
 
 # =============================================================================
-# TAB 4 — ANALYTICAL FACT METRICS
+# 5. ANALYTICAL METRICS — STATIC FIRST, REGISTRY ON DEMAND
 # =============================================================================
 
-with _tab_metrics:
+elif section == "Показники аналітичної довідки":
     _section(
-        "Показники, які може згадувати автоматично сформована аналітична довідка",
-        "Rule-based текстовий engine не повинен вигадувати числа. Перед генерацією він отримує реєстр prepared factual metrics. "
-        "Нижче спочатку наведено людський словник ключових полів Analytics, а потім — повний фактичний реєстр поточного контексту.",
+        "Показники, які згадуються в автоматичній аналітиці",
+        "Базовий словник є статичним і відкривається миттєво. "
+        "Повний prepared factual registry будується лише за окремою командою нижче.",
     )
 
     human_metrics = pd.DataFrame(
         [
             {
                 "Показник": "Рівень виконання СП",
-                "Тип": "результативність",
                 "Одиниця": "%",
-                "Що означає": "середній execution оцінених заходів; у multi-quarter Analytics основна картка показує average квартальних KPI",
-                "Не плутати з": "latest Q4 та виконанням за стратегічними цілями",
+                "Що означає": "середній execution оцінених заходів; у multi-quarter Analytics основна картка = average квартальних KPI",
+                "Не плутати з": "latest Q4 та execution за стратегічними цілями",
             },
             {
-                "Показник": "Рівень виконання за стратегічними цілями",
-                "Тип": "ієрархічна результативність",
+                "Показник": "Виконання за стратегічними цілями",
                 "Одиниця": "%",
-                "Що означає": "середній результат цілей через ланцюжок заходи → завдання → ціль",
-                "Не плутати з": "простим середнім усіх заходів плану",
+                "Що означає": "ієрархічна оцінка через заходи → завдання → стратегічні цілі",
+                "Не плутати з": "простим середнім усіх заходів",
             },
             {
                 "Показник": "Покриття моніторингом",
-                "Тип": "якість/повнота даних",
                 "Одиниця": "%",
-                "Що означає": "частка обов'язкових поточних подань, які реально подані в кварталі; у Analytics multi-quarter — average квартальних coverage",
-                "Не плутати з": "виконанням заходів",
+                "Що означає": "частка обов'язкових поточних подань; у multi-quarter Analytics = average квартальних coverage",
+                "Не плутати з": "рівнем виконання",
             },
             {
                 "Показник": "Потребують управлінської уваги / Проблемних",
-                "Тип": "сигнал",
                 "Одиниця": "захід × квартал у current Analytics",
-                "Що означає": "кількість рядків, де канонічний attention/problem flag істинний",
-                "Не плутати з": "кількістю унікальних проблемних заходів без deduplication",
+                "Що означає": "кількість active rows, де канонічний problem flag істинний",
+                "Не плутати з": "кількістю унікальних problem-заходів без deduplication",
             },
             {
                 "Показник": "Без даних",
-                "Тип": "якість даних",
                 "Одиниця": "захід × квартал",
-                "Що означає": "кількість спостережень, для яких немає потрібного поточного/підтвердженого інформаційного покриття за правилом metric builder",
-                "Не плутати з": "фактичним значенням 0",
+                "Що означає": "кількість спостережень без потрібного інформаційного покриття за prepared metric",
+                "Не плутати з": "підтвердженим фактичним нулем",
             },
             {
                 "Показник": "Унікальних заходів",
-                "Тип": "розмір портфеля",
                 "Одиниця": "унікальний захід",
-                "Що означає": "кількість різних кодів заходів у вибірці",
+                "Що означає": "кількість різних code у вибірці",
                 "Не плутати з": "кількістю measure-period rows",
             },
             {
                 "Показник": "Average / Latest / Change",
-                "Тип": "часова семантика",
                 "Одиниця": "% / % / в.п.",
                 "Що означає": "середнє кварталів / останній квартал / останній мінус перший",
-                "Не плутати з": "трьома назвами одного й того самого числа",
+                "Не плутати з": "трьома назвами одного числа",
             },
             {
                 "Показник": "Частка високого та критичного ризику",
-                "Тип": "ризик",
                 "Одиниця": "%",
-                "Що означає": "підготовлений factual metric із risk summary; numerator і denominator мають сумісну одиницю спостереження",
-                "Не плутати з": "часткою проблемних рядків, якщо їхні критерії відрізняються",
+                "Що означає": "prepared factual metric з risk summary у сумісній популяції",
+                "Не плутати з": "будь-якою іншою problem-часткою",
             },
             {
-                "Показник": "Частка без обов'язкового/поточного подання",
-                "Тип": "покриття/ризик даних",
+                "Показник": "Частка без поточного подання",
                 "Одиниця": "%",
-                "Що означає": "підготовлена частка missing-подань у відповідній сумісній популяції",
+                "Що означає": "missing-подання / сумісна популяція",
                 "Не плутати з": "100% − execution",
             },
             {
                 "Показник": "Інтегральна оцінка МіО",
-                "Тип": "річна інтегральна оцінка",
                 "Одиниця": "%",
-                "Що означає": "середнє готових інтегральних оцінок стратегічних цілей; кожна ціль має формулу 20%/30%/50%",
+                "Що означає": "середнє готових інтегральних оцінок цілей; кожна ціль = 20% заходи + 30% завдання + 50% індикатори",
                 "Не плутати з": "20% від виконання заходів",
             },
             {
                 "Показник": "Фінансове виконання",
-                "Тип": "фінанси",
                 "Одиниця": "%",
-                "Що означає": "сума фактичного фінансування / сума планового фінансування × 100",
-                "Не плутати з": "середнім індивідуальних фінансових відсотків заходів",
+                "Що означає": "сума факту / сума плану × 100",
+                "Не плутати з": "середнім індивідуальних фінансових % заходів",
             },
         ]
     )
-    _display_df(human_metrics, max_height=560)
+    _display_df(human_metrics, max_height=520)
 
     _callout(
-        "<b>Як читати реєстр factual metrics нижче.</b> `Код` — внутрішній стабільний ідентифікатор факту. "
-        "`Джерело` показує, з якого prepared/shared масиву взято число. `Агрегація` описує операцію. "
-        "Для часток окремо зберігаються чисельник, знаменник та одиниця спостереження — це захист від ділення "
-        "несумісних величин на кшталт measure-period / unique-measure."
+        "<b>Чому factual registry винесено окремо.</b> Його побудова запускає Analytics-контекст, "
+        "річні порівняння, МіО та підготовку сотень derived facts. Це корисно для діагностики, "
+        "але не повинно виконуватися при кожному відкритті сторінки."
     )
 
-    if analytics_text_context is None:
-        st.warning(
-            "Повний factual metric registry не вдалося побудувати в цьому запуску. "
-            f"Причина: {analytics_fact_error}"
-        )
-    else:
-        facts = getattr(analytics_text_context, "analytical_facts", None)
-        metrics_map = getattr(facts, "metrics", {}) if facts is not None else {}
-        fact_rows = []
-        for code, metric in sorted(metrics_map.items(), key=lambda item: str(item[0])):
-            fact_rows.append(
-                {
-                    "Група": _metric_group(str(code)),
-                    "Код": str(code),
-                    "Значення": _format_fact_value(metric.value, metric.unit),
-                    "Одиниця": metric.unit,
-                    "Джерело": metric.source,
-                    "Агрегація": metric.aggregation,
-                    "Чисельник": metric.numerator,
-                    "Знаменник": metric.denominator,
-                    "Одиниця спостереження": metric.observation_unit or "—",
+    if st.checkbox(
+        "Побудувати повний prepared factual registry для 2026 року",
+        key="calc_metric_registry",
+    ):
+        with st.spinner("Будую factual registry — це найважчий діагностичний блок..."):
+            try:
+                strat_df, all_monitoring, measure_requests = _load_base_data()
+                analytics_results, analytics_active, analytics_plan, analytics_metrics = (
+                    _build_analytics_context(strat_df, measure_requests)
+                )
+
+                goals = analytics_calculations.build_analytics_goal_summary(
+                    analytics_results, analytics_active
+                )
+                tasks = analytics_calculations.build_analytics_task_summary(
+                    analytics_results, analytics_active
+                )
+                ssp = analytics_calculations.build_analytics_ssp_summary(
+                    analytics_results,
+                    analytics_active,
+                    base_results=analytics_results,
+                )
+                products = analytics_calculations.aggregate_product_progress(
+                    analytics_results, analytics_active
+                )
+                statuses = _status_counts(analytics_active).rename(columns={"Статус": "status"})
+                dynamics = analytics_calculations.build_analytics_dynamics(analytics_results)
+
+                try:
+                    yoy_results, _ = analytics_calculations.prepare_analysis_context(
+                        strat_df,
+                        measure_requests,
+                        [YEAR - 1, YEAR],
+                        QUARTERS,
+                    )
+                    yoy = analytics_calculations.build_year_over_year_comparison(yoy_results)
+                except Exception:
+                    yoy = pd.DataFrame()
+
+                mio_monitoring = append_confirmed_closeout_facts(
+                    all_monitoring,
+                    include_incomplete=False,
+                )
+                try:
+                    mio_outputs = mio_shared.build_mio_analytics(
+                        strat_df, mio_monitoring, [YEAR]
+                    )
+                except Exception:
+                    mio_outputs = {}
+
+                filters = {
+                    "years": [YEAR],
+                    "quarters": QUARTERS.copy(),
+                    "ssp": [],
+                    "ssp_indices": [],
+                    "deputies": [],
+                    "goal_labels": [],
+                    "task_labels": [],
+                    "product_types": [],
                 }
-            )
-        facts_df = pd.DataFrame(fact_rows)
-        _f1, _f2 = st.columns([1, 3])
-        with _f1:
+
+                context = build_analytics_text_context(
+                    filters=filters,
+                    metrics=analytics_metrics,
+                    goal_progress=goals,
+                    task_progress=tasks,
+                    department_progress=ssp,
+                    product_progress=products,
+                    status_counts=statuses,
+                    period_dynamics=dynamics,
+                    yoy_comparison=yoy,
+                    active=analytics_active,
+                    mio_goal_evaluation=mio_outputs.get("goals", pd.DataFrame()),
+                    mio_goal_task_evaluation=mio_outputs.get("goals_tasks", pd.DataFrame()),
+                    mio_measure_evaluation=mio_outputs.get("measures", pd.DataFrame()),
+                    mio_financing=mio_outputs.get("financing", pd.DataFrame()),
+                )
+
+                facts = getattr(context, "analytical_facts", None)
+                metrics_map = getattr(facts, "metrics", {}) if facts is not None else {}
+
+                rows = []
+                for code, metric in sorted(metrics_map.items(), key=lambda item: str(item[0])):
+                    rows.append(
+                        {
+                            "Код": str(code),
+                            "Значення": metric.value,
+                            "Unit": metric.unit,
+                            "Source": metric.source,
+                            "Aggregation": metric.aggregation,
+                            "Numerator": metric.numerator,
+                            "Denominator": metric.denominator,
+                            "Observation unit": metric.observation_unit or "—",
+                        }
+                    )
+                facts_df = pd.DataFrame(rows)
+            except Exception as exc:
+                st.exception(exc)
+                facts_df = pd.DataFrame()
+
+        if not facts_df.empty:
             st.metric("Prepared factual metrics", len(facts_df))
-        with _f2:
-            groups = sorted(facts_df["Група"].dropna().astype(str).unique().tolist()) if not facts_df.empty else []
-            selected_group = st.selectbox(
-                "Фільтр реєстру за групою",
-                ["Усі"] + groups,
-                key="calc_fact_metric_group",
+            _display_df(facts_df, max_height=600, max_rows=500)
+            st.caption(
+                "Registry показує prepared facts, які rule-based engine може використовувати без повторного перерахунку у тексті."
             )
-        shown_facts = facts_df if selected_group == "Усі" else facts_df[facts_df["Група"].eq(selected_group)]
-        _display_df(shown_facts, max_height=620)
-
-        with st.expander("Що означають технічні поля factual metric", expanded=False):
-            technical_glossary = pd.DataFrame(
-                [
-                    {"Поле": "source", "Пояснення": "конкретний prepared/shared масив або KPI, з якого взято факт"},
-                    {"Поле": "aggregation", "Пояснення": "спосіб отримання числа: mean, median, total, maximum, ratio, rank, latest тощо"},
-                    {"Поле": "numerator / denominator", "Пояснення": "для ratio-показників показує, які дві величини сформували частку"},
-                    {"Поле": "observation_unit", "Пояснення": "одиниця спостереження — unique-measure, measure-period, goal, task, department тощо"},
-                    {"Поле": "percent", "Пояснення": "значення зберігається у шкалі 0–100, якщо metric явно не дозволяє >100"},
-                    {"Поле": "pp", "Пояснення": "відсоткові пункти; зазвичай різниця двох відсоткових значень"},
-                ]
-            )
-            _display_df(technical_glossary, max_height=360)
 
 
 # =============================================================================
-# TAB 5 — TECHNICAL RECONCILIATION
+# 6. TECHNICAL RECONCILIATION
 # =============================================================================
 
-with _tab_tech:
+elif section == "Технічна звірка":
+    with st.spinner("Формую Dashboard та Analytics для звірки..."):
+        try:
+            strat_df, all_monitoring, measure_requests = _load_base_data()
+            (
+                dashboard_period_sources,
+                dashboard_results,
+                dashboard_aggregate,
+                dashboard_latest,
+                dashboard_snapshot,
+                dashboard_risk,
+            ) = _build_dashboard_context(strat_df, measure_requests)
+            analytics_results, analytics_active, analytics_plan, analytics_metrics = (
+                _build_analytics_context(strat_df, measure_requests)
+            )
+        except Exception as exc:
+            st.exception(exc)
+            st.stop()
+
     _section(
-        "Вхідні масиви та технічна звірка Dashboard ↔ Analytics",
-        "Ця вкладка потрібна для пошуку джерела розбіжності. Тут мінімум пояснювального тексту і максимум контрольних таблиць.",
+        "Dashboard ↔ Analytics по кварталах",
+        "Якщо різниця є вже в одному й тому самому кварталі, причина не в average-vs-latest, "
+        "а в джерелі або складі snapshot.",
     )
-    _display_df(input_summary, max_height=300)
 
     source_compare = []
     for q in QUARTERS:
@@ -1924,41 +1357,34 @@ with _tab_tech:
                 "Dashboard source": _source_label(dashboard_period_sources, (YEAR, q)),
                 "Dashboard execution": d.get("execution_by_measures"),
                 "Analytics execution": a.get("execution_by_measures"),
-                "Execution parity": _parity_text(d.get("execution_by_measures"), a.get("execution_by_measures")),
+                "Execution parity": _parity_text(
+                    d.get("execution_by_measures"), a.get("execution_by_measures")
+                ),
                 "Dashboard coverage": d.get("coverage"),
                 "Analytics coverage": a.get("coverage"),
-                "Coverage parity": _parity_text(d.get("coverage"), a.get("coverage")),
+                "Coverage parity": _parity_text(
+                    d.get("coverage"), a.get("coverage")
+                ),
             }
         )
-    _display_df(pd.DataFrame(source_compare), max_height=330)
+    _display_df(pd.DataFrame(source_compare), max_height=300)
+
+    if st.checkbox("Показати квартальні summary-таблиці", key="calc_tech_quarters"):
+        st.markdown("**Dashboard**")
+        _display_df(_quarter_result_table(dashboard_results), max_height=280)
+        st.markdown("**Analytics**")
+        _display_df(_quarter_result_table(analytics_results), max_height=280)
+
+    if st.checkbox("Показати фрагмент Q4 snapshot Dashboard", key="calc_tech_dash_snapshot"):
+        _display_df(dashboard_snapshot, max_height=520, max_rows=250)
+
+    if st.checkbox("Показати фрагмент Analytics active I–IV", key="calc_tech_active"):
+        _display_df(analytics_active, max_height=520, max_rows=300)
 
     _callout(
-        "Якщо Dashboard і Analytics відрізняються вже в одному й тому самому кварталі, це не average-vs-latest. "
-        "Тоді потрібно перевіряти source: archive snapshot Dashboard проти live-контуру Analytics, склад стратегічної "
-        "матриці, closeouts, period locks та інші джерельні відмінності.",
+        "Якщо Dashboard і Analytics не збігаються в одному кварталі, перевіряються archive/live source, "
+        "склад стратегічної матриці, closeouts і period locks.",
         warning=True,
-    )
-
-    _raw_table(
-        "Повний Dashboard Q4 snapshot",
-        dashboard_snapshot,
-        max_height=620,
-    )
-    _raw_table(
-        "Повний Analytics active I–IV",
-        analytics_active,
-        note="Один захід може повторюватися до чотирьох разів — по одному рядку на квартальний snapshot.",
-        max_height=620,
-    )
-    _raw_table(
-        "Analytics quarter summary",
-        analytics_q,
-        max_height=360,
-    )
-    _raw_table(
-        "Dashboard quarter summary",
-        dashboard_q,
-        max_height=360,
     )
 
 

@@ -126,6 +126,45 @@ st.markdown(
         width: 100%;
         clear: both;
     }
+    .calc-table-scroll {
+        width: 100%;
+        overflow: auto;
+        border: 1px solid #DCE4F0;
+        border-radius: 10px;
+        background: #FFFFFF;
+    }
+    .calc-html-table {
+        width: max-content;
+        min-width: 100%;
+        border-collapse: separate;
+        border-spacing: 0;
+        font-size: 13px;
+        line-height: 1.35;
+        color: #26364D;
+    }
+    .calc-html-table thead th {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        background: #F3F6FB;
+        color: #132238;
+        font-weight: 800;
+        text-align: left;
+        border-bottom: 1px solid #DCE4F0;
+        padding: 9px 10px;
+        white-space: nowrap;
+    }
+    .calc-html-table tbody td {
+        padding: 8px 10px;
+        border-bottom: 1px solid #E9EEF5;
+        vertical-align: top;
+        max-width: 420px;
+        white-space: normal;
+        overflow-wrap: anywhere;
+    }
+    .calc-html-table tbody tr:last-child td {
+        border-bottom: 0;
+    }
     div[data-testid="stDataFrame"] {
         margin-bottom: 0.35rem;
     }
@@ -162,6 +201,8 @@ st.info(
     "Сторінка read-only. Вона не змінює формули та не записує дані. "
     "Усі production-значення беруться з тих самих shared-модулів, що використовують Dashboard і «Аналітика»."
 )
+
+st.caption("Збірка сторінки: 21.08.2026 · HTML tables · no PyArrow")
 
 
 # =============================================================================
@@ -237,17 +278,87 @@ def _parity_text(a: Any, b: Any) -> str:
     return "ЗБІГАЄТЬСЯ" if _close(a, b) else "ВІДРІЗНЯЄТЬСЯ"
 
 
+def _display_cell_text(value: Any) -> str:
+    """Безпечне текстове представлення службового значення для HTML-таблиці."""
+    if value is None:
+        return ""
+
+    if isinstance(value, tuple):
+        if len(value) == 2:
+            try:
+                year = int(float(value[0]))
+                quarter = str(value[1]).strip()
+                if quarter in QUARTERS:
+                    return f"{quarter} кв. {year}"
+            except (TypeError, ValueError):
+                pass
+        return " · ".join(_display_cell_text(item) for item in value)
+
+    if isinstance(value, list):
+        return "; ".join(_display_cell_text(item) for item in value)
+
+    if isinstance(value, set):
+        return "; ".join(sorted(_display_cell_text(item) for item in value))
+
+    if isinstance(value, dict):
+        return "; ".join(
+            f"{_display_cell_text(key)}: {_display_cell_text(item)}"
+            for key, item in value.items()
+        )
+
+    try:
+        missing = pd.isna(value)
+        if isinstance(missing, bool) and missing:
+            return ""
+        if type(missing).__name__ == "bool_" and bool(missing):
+            return ""
+    except (TypeError, ValueError):
+        pass
+
+    if isinstance(value, pd.Timestamp):
+        return value.strftime("%d.%m.%Y %H:%M:%S")
+
+    try:
+        if isinstance(value, float):
+            if value.is_integer():
+                return str(int(value))
+            return f"{value:.6f}".rstrip("0").rstrip(".")
+    except (TypeError, ValueError):
+        pass
+
+    return str(value)
+
+
+def _html_safe_display_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    """Копія лише для відображення: усі складні значення перетворені на текст."""
+    safe = frame.copy()
+
+    column_names = []
+    used = {}
+    for idx, column in enumerate(safe.columns, start=1):
+        base = _display_cell_text(column).strip() or f"Колонка {idx}"
+        count = used.get(base, 0)
+        used[base] = count + 1
+        column_names.append(base if count == 0 else f"{base} ({count + 1})")
+    safe.columns = column_names
+
+    for column in safe.columns:
+        safe[column] = safe[column].map(_display_cell_text)
+
+    return safe
+
+
 def _display_df(
     frame: pd.DataFrame,
     *,
     max_height: int = 520,
     min_height: int = 120,
 ) -> None:
-    """Показує таблицю без накладання на наступний контент.
+    """Показує таблицю БЕЗ st.dataframe/PyArrow.
 
-    Для коротких таблиць висота обчислюється з кількості рядків, щоб не було
-    зайвого внутрішнього скролу. Для великих таблиць висота обмежена, а скрол
-    залишається всередині dataframe.
+    Усі діагностичні таблиці цієї сторінки рендеряться звичайним HTML.
+    Це повністю прибирає клас помилок pyarrow.lib.ArrowInvalid на змішаних
+    службових типах (tuple/list/dict/object) і не змінює вихідні DataFrame.
     """
     if frame is None or frame.empty:
         st.caption("Немає рядків для відображення.")
@@ -257,9 +368,20 @@ def _display_df(
     visible_rows = min(len(frame), 12)
     calculated = 40 * (visible_rows + 1) + 16
     height = min(max_height, max(min_height, calculated))
-    st.dataframe(frame, use_container_width=True, height=height, hide_index=True)
-    st.markdown('<div class="calc-after-table"></div>', unsafe_allow_html=True)
 
+    display_frame = _html_safe_display_frame(frame)
+    html_table = display_frame.to_html(
+        index=False,
+        escape=True,
+        classes="calc-html-table",
+        border=0,
+    )
+
+    st.markdown(
+        f'<div class="calc-table-scroll" style="max-height:{height}px">{html_table}</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown('<div class="calc-after-table"></div>', unsafe_allow_html=True)
 
 def _raw_table(
     title: str,

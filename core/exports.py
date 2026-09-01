@@ -66,31 +66,32 @@ _CYRILLIC_FONT_CANDIDATES = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
 ]
 
-BRAND_BLUE = (0 / 255, 91 / 255, 187 / 255)
-BRAND_YELLOW = (255 / 255, 213 / 255, 0 / 255)
-DARK = (15 / 255, 23 / 255, 42 / 255)
-GREY = (71 / 255, 85 / 255, 105 / 255)
+_PRES_BG = "#032A63"
+_PRES_WHITE = "#FFFFFF"
+_PRES_BLUE = "#005BBB"
+_PRES_YELLOW = "#FFD500"
+_PRES_METRIC_BLUE = "#4D8DFF"
+_PRES_TEAL = "#00A8A8"
+_PRES_ORANGE = "#FF7A45"
+_PRES_AMBER = "#F4B400"
+_PRES_GREY = "#8A96A8"
+_PRES_RED = "#DC4A4A"
+_PRES_GREEN = "#118847"
+_PRES_BRIGHT_GREEN = "#1E9E57"
 
 
 def _register_fonts():
-    """Реєструє кириличні шрифти DejaVu; повертає (regular, bold) або None.
-
-    Порядок пошуку: 1) шрифти, ПОКЛАДЕНІ В РЕПОЗИТОРІЙ (assets/fonts) —
-    гарантують однаковий рендер на Streamlit Cloud; 2) системні DejaVu.
-    Без кириличного шрифту reportlab малює «квадрати» замість українських
-    літер — саме тому бандл у репозиторії обов'язковий.
-    """
+    """Register bundled/system DejaVu fonts so Ukrainian text is deterministic."""
     try:
         from reportlab.pdfbase import pdfmetrics
         from reportlab.pdfbase.ttfonts import TTFont
 
-        _candidates = [
-            (Path("assets/fonts/DejaVuSans.ttf"),
-             Path("assets/fonts/DejaVuSans-Bold.ttf")),
+        candidates = [
+            (Path("assets/fonts/DejaVuSans.ttf"), Path("assets/fonts/DejaVuSans-Bold.ttf")),
             (Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
              Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")),
         ]
-        for regular_path, bold_path in _candidates:
+        for regular_path, bold_path in candidates:
             if not regular_path.exists():
                 continue
             pdfmetrics.registerFont(TTFont("DejaVu", str(regular_path)))
@@ -103,157 +104,461 @@ def _register_fonts():
         return None
 
 
-def build_presentation_pdf(
-    title: str,
-    period_text: str,
-    kpi_items: list[tuple[str, str]],
-    verdict_text: str,
-    verdict_level: str,
-    insight_lines: list[str],
-    figures: list[tuple[str, object]],
-    logo_path: str = "assets/Мінекономіки.png",
-) -> bytes | None:
-    """
-    Збирає PDF-презентацію у форматі слайдів 16:9 (як presentation mode):
-    титульний слайд → слайд KPI → по слайду на кожен графік → висновок.
+def build_presentation_pdf(presentation_payload: dict) -> bytes | None:
+    """Render the canonical seven-slide Dashboard presentation payload as PDF.
 
-    figures: [(назва слайда, plotly_fig), ...]
-    verdict_level: "high" | "medium" | "low" (колір плашки висновку).
-    Повертає bytes або None (якщо reportlab недоступний).
+    No Dashboard analytics are recalculated here. The renderer only consumes
+    display-ready values, ordering and rows prepared by Presentation mode.
     """
     try:
-        from reportlab.lib.pagesizes import landscape
-        from reportlab.lib.units import mm
+        from reportlab.pdfbase import pdfmetrics
         from reportlab.pdfgen import canvas as pdf_canvas
     except Exception:
         return None
 
+    from core.presentation import validate_presentation_payload
+
+    validate_presentation_payload(presentation_payload)
     fonts = _register_fonts()
-    if fonts is None:
-        font_r, font_b = "Helvetica", "Helvetica-Bold"  # запасний варіант
-    else:
-        font_r, font_b = fonts
+    font_r, font_b = fonts if fonts is not None else ("Helvetica", "Helvetica-Bold")
 
-    page_w, page_h = 338.7 * mm / 1.27, 190.5 * mm / 1.27  # ~16:9
-    page_size = (960, 540)
-    page_w, page_h = page_size
-
+    page_w, page_h = 960, 540
     buffer = io.BytesIO()
-    c = pdf_canvas.Canvas(buffer, pagesize=page_size)
+    c = pdf_canvas.Canvas(buffer, pagesize=(page_w, page_h))
+
+    def rgb(value):
+        value = str(value or "#000000").lstrip("#")
+        return tuple(int(value[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+
+    def blend(fg, alpha, bg=_PRES_BG):
+        fr, fg_, fb = rgb(fg)
+        br, bg_, bb = rgb(bg)
+        return (
+            br * (1 - alpha) + fr * alpha,
+            bg_ * (1 - alpha) + fg_ * alpha,
+            bb * (1 - alpha) + fb * alpha,
+        )
+
+    def set_fill(value):
+        c.setFillColorRGB(*rgb(value))
+
+    def set_stroke(value):
+        c.setStrokeColorRGB(*rgb(value))
+
+    unsupported = (
+        "🇺🇦", "🔴", "🟡", "🟢", "ℹ️", "📅", "🗓", "🏢", "📌", "🕐",
+        "📋", "📊", "🎯", "⬆", "⛶", "✕",
+    )
+
+    def clean_text(value):
+        text = str(value if value is not None else "")
+        for token in unsupported:
+            text = text.replace(token, "")
+        return text.replace("\ufe0f", "").strip()
+
+    def wrap_lines(text, font_name, font_size, max_width):
+        paragraphs = clean_text(text).splitlines() or [""]
+        lines = []
+        for paragraph in paragraphs:
+            words = paragraph.split()
+            if not words:
+                lines.append("")
+                continue
+            line = ""
+            for word in words:
+                candidate = word if not line else f"{line} {word}"
+                if pdfmetrics.stringWidth(candidate, font_name, font_size) <= max_width:
+                    line = candidate
+                    continue
+                if line:
+                    lines.append(line)
+                    line = ""
+                if pdfmetrics.stringWidth(word, font_name, font_size) <= max_width:
+                    line = word
+                    continue
+                part = ""
+                for ch in word:
+                    candidate = part + ch
+                    if pdfmetrics.stringWidth(candidate, font_name, font_size) <= max_width:
+                        part = candidate
+                    else:
+                        if part:
+                            lines.append(part)
+                        part = ch
+                line = part
+            if line:
+                lines.append(line)
+        return lines or [""]
+
+    def draw_wrapped(
+        text, x, y, max_width, *, font=font_r, size=13, leading=None,
+        color=_PRES_WHITE, max_lines=None, ellipsis=False,
+    ):
+        leading = leading or size * 1.35
+        lines = wrap_lines(text, font, size, max_width)
+        if max_lines is not None and len(lines) > max_lines:
+            lines = lines[:max_lines]
+            if ellipsis and lines:
+                last = lines[-1].rstrip("… ")
+                while last and pdfmetrics.stringWidth(last + "…", font, size) > max_width:
+                    last = last[:-1]
+                lines[-1] = last.rstrip() + "…"
+        set_fill(color)
+        c.setFont(font, size)
+        current_y = y
+        for line in lines:
+            c.drawString(x, current_y, line)
+            current_y -= leading
+        return current_y, len(lines)
 
     def slide_bg():
-        c.setFillColorRGB(0.97, 0.98, 0.99)
+        set_fill(_PRES_BG)
         c.rect(0, 0, page_w, page_h, fill=1, stroke=0)
-        c.setFillColorRGB(*BRAND_BLUE)
-        c.rect(0, page_h - 8, page_w, 8, fill=1, stroke=0)
-        c.setFillColorRGB(*BRAND_YELLOW)
-        c.rect(0, page_h - 12, page_w, 4, fill=1, stroke=0)
 
-    def footer(page_no: int):
-        c.setFont(font_r, 9)
-        c.setFillColorRGB(*GREY)
-        c.drawString(30, 16, "Мінекономіки · Система моніторингу стратегічного плану")
-        c.drawRightString(page_w - 30, 16, f"Слайд {page_no}")
+    def slide_num(page_no):
+        c.setFillColorRGB(*blend(_PRES_WHITE, 0.20))
+        c.setFont(font_b, 11)
+        c.drawRightString(page_w - 40, page_h - 31, f"{page_no:02d} / 07")
 
-    def slide_title(text: str):
-        c.setFont(font_b, 24)
-        c.setFillColorRGB(*DARK)
-        c.drawString(40, page_h - 58, text[:80])
+    def section_heading(section, title, subtitle=""):
+        c.setFillColorRGB(*blend(_PRES_WHITE, 0.35))
+        c.setFont(font_b, 11)
+        c.drawString(64, 464, clean_text(section).upper())
+        draw_wrapped(title, 64, 424, 820, font=font_b, size=31, leading=35, max_lines=2)
+        if subtitle:
+            c.setFillColorRGB(*blend(_PRES_WHITE, 0.40))
+            c.setFont(font_r, 13)
+            c.drawString(64, 382, clean_text(subtitle))
 
-    page_no = 1
+    def card_rect(x, y, w, h, *, border_alpha=0.08, fill_alpha=0.04, radius=12):
+        c.setFillColorRGB(*blend(_PRES_WHITE, fill_alpha))
+        c.setStrokeColorRGB(*blend(_PRES_WHITE, border_alpha))
+        c.setLineWidth(1)
+        c.roundRect(x, y, w, h, radius, fill=1, stroke=1)
 
-    # ── Титульний слайд ──
-    slide_bg()
-    try:
-        if Path(logo_path).exists():
-            c.drawImage(logo_path, 40, page_h - 170, width=420,
-                        preserveAspectRatio=True, anchor="nw", mask="auto")
-    except Exception as exc:
-        log_cosmetic_error("Додавання логотипа до PDF-презентації", exc)
-    c.setFont(font_b, 34)
-    c.setFillColorRGB(*DARK)
-    c.drawString(40, page_h / 2 + 10, title[:60])
-    c.setFont(font_r, 18)
-    c.setFillColorRGB(*GREY)
-    c.drawString(40, page_h / 2 - 26, period_text[:90])
-    c.setFont(font_r, 12)
-    c.drawString(40, 60, f"Сформовано: {now_kyiv().strftime('%d.%m.%Y %H:%M')}")
-    footer(page_no)
-    c.showPage()
-
-    # ── Слайд KPI ──
-    page_no += 1
-    slide_bg()
-    slide_title("Ключові показники")
-    cols, card_w, card_h, gap = 4, 205, 120, 18
-    x0, y0 = 40, page_h - 110 - card_h
-    for i, (label, value) in enumerate(kpi_items[:8]):
-        row, col = divmod(i, cols)
-        x = x0 + col * (card_w + gap)
-        y = y0 - row * (card_h + gap)
-        c.setFillColorRGB(1, 1, 1)
-        c.roundRect(x, y, card_w, card_h, 12, fill=1, stroke=0)
-        c.setFillColorRGB(*BRAND_BLUE)
-        c.rect(x, y + card_h - 6, card_w, 6, fill=1, stroke=0)
-        c.setFont(font_b, 30)
-        c.setFillColorRGB(*DARK)
-        c.drawString(x + 16, y + card_h - 58, str(value)[:12])
-        c.setFont(font_r, 11)
-        c.setFillColorRGB(*GREY)
-        # перенос підпису на 2 рядки
-        words, line1, line2 = str(label).split(), "", ""
-        for w in words:
-            if len(line1) + len(w) < 30:
-                line1 += (" " if line1 else "") + w
-            else:
-                line2 += (" " if line2 else "") + w
-        c.drawString(x + 16, y + 34, line1[:34])
-        if line2:
-            c.drawString(x + 16, y + 20, line2[:34])
-    footer(page_no)
-    c.showPage()
-
-    # ── Слайди-графіки ──
-    for fig_title, fig in figures:
-        png = fig_png_bytes(fig, scale=2, width=1100, height=560)
-        if png is None:
-            continue
-        page_no += 1
-        slide_bg()
-        slide_title(fig_title)
+    def draw_metric_bar(x, y, label, value, value_text, color, width=430):
+        c.setFillColorRGB(*blend(_PRES_WHITE, 0.55))
+        c.setFont(font_b, 12)
+        c.drawString(x, y + 3, clean_text(label))
+        track_x = x + 220
+        track_w = width
+        c.setFillColorRGB(*blend(_PRES_WHITE, 0.06))
+        c.roundRect(track_x, y, track_w, 10, 5, fill=1, stroke=0)
         try:
-            from reportlab.lib.utils import ImageReader
-            img = ImageReader(io.BytesIO(png))
-            c.drawImage(img, 40, 50, width=page_w - 80, height=page_h - 140,
-                        preserveAspectRatio=True, anchor="c")
-        except Exception as exc:
-            log_cosmetic_error("Додавання графіка до PDF-презентації", exc)
-        footer(page_no)
-        c.showPage()
+            pct = min(max(float(value or 0), 0), 100)
+        except (TypeError, ValueError):
+            pct = 0
+        if pct > 0:
+            set_fill(color)
+            c.roundRect(track_x, y, track_w * pct / 100.0, 10, 5, fill=1, stroke=0)
+        set_fill(_PRES_WHITE)
+        c.setFont(font_b, 13)
+        c.drawRightString(track_x + track_w + 88, y - 1, clean_text(value_text))
 
-    # ── Слайд висновку ──
-    page_no += 1
-    slide_bg()
-    slide_title("Висновок")
-    verdict_colors = {
-        "high": (220 / 255, 38 / 255, 38 / 255),
-        "medium": (180 / 255, 83 / 255, 9 / 255),
-        "low": (21 / 255, 128 / 255, 61 / 255),
+    def render_title(slide):
+        # Vector Ukrainian flag avoids unsupported emoji glyphs.
+        flag_x, flag_y, flag_w, flag_h = 64, 470, 20, 12
+        set_fill(_PRES_BLUE)
+        c.rect(flag_x, flag_y + flag_h / 2, flag_w, flag_h / 2, fill=1, stroke=0)
+        set_fill(_PRES_YELLOW)
+        c.rect(flag_x, flag_y, flag_w, flag_h / 2, fill=1, stroke=0)
+        set_fill(_PRES_YELLOW)
+        c.setFont(font_b, 11)
+        c.drawString(92, 470, clean_text(slide.get("eyebrow", "")).upper())
+
+        y, _ = draw_wrapped(
+            slide.get("title", ""), 64, 408, 820,
+            font=font_b, size=42, leading=46, max_lines=3, ellipsis=True,
+        )
+        y -= 8
+        y, _ = draw_wrapped(
+            slide.get("subtitle", ""), 64, y, 620,
+            font=font_r, size=15, leading=24, color="#8799B6", max_lines=4,
+        )
+        pills = list(slide.get("filter_pills") or [])
+        x, py = 64, max(78, y - 24)
+        for pill in pills:
+            text = clean_text(pill)
+            w = pdfmetrics.stringWidth(text, font_b, 11) + 26
+            if x + w > page_w - 64:
+                x = 64
+                py -= 34
+            c.setFillColorRGB(*blend(_PRES_WHITE, 0.06))
+            c.setStrokeColorRGB(*blend(_PRES_WHITE, 0.12))
+            c.roundRect(x, py, w, 26, 13, fill=1, stroke=1)
+            c.setFillColorRGB(*blend(_PRES_WHITE, 0.70))
+            c.setFont(font_b, 11)
+            c.drawString(x + 13, py + 8, text)
+            x += w + 10
+
+    def render_verdict(slide):
+        c.setFillColorRGB(*blend(_PRES_WHITE, 0.35))
+        c.setFont(font_b, 11)
+        c.drawString(64, 464, clean_text(slide.get("section", "")).upper())
+        severity = str(slide.get("severity") or "medium")
+        accent = {"high": _PRES_RED, "medium": _PRES_AMBER, "low": _PRES_GREEN}.get(severity, _PRES_AMBER)
+        title = clean_text(slide.get("title", ""))
+        badge_w = min(780, pdfmetrics.stringWidth(title, font_b, 23) + 68)
+        c.setFillColorRGB(*blend(accent, 0.18))
+        set_stroke(accent)
+        c.setLineWidth(1.5)
+        c.roundRect(64, 393, badge_w, 50, 10, fill=1, stroke=1)
+        set_fill(accent)
+        c.circle(84, 418, 6, fill=1, stroke=0)
+        c.setFont(font_b, 23)
+        c.drawString(102, 410, title)
+
+        body_y, line_count = draw_wrapped(
+            slide.get("text", ""), 64, 365, 700,
+            font=font_r, size=14, leading=21, color="#8DA0BB",
+        )
+        cards_y = min(184, body_y - 20)
+        cards_y = max(cards_y, 82)
+        cards = list(slide.get("cards") or [])
+        gap = 16
+        card_w = (700 - gap * 2) / 3
+        for i, item in enumerate(cards[:3]):
+            x = 64 + i * (card_w + gap)
+            card_rect(x, cards_y, card_w, 98)
+            c.setFillColorRGB(*blend(_PRES_WHITE, 0.35))
+            c.setFont(font_b, 10)
+            c.drawString(x + 16, cards_y + 72, clean_text(item.get("label", "")).upper())
+            set_fill(item.get("color") or _PRES_WHITE)
+            c.setFont(font_b, 31)
+            c.drawString(x + 16, cards_y + 37, clean_text(item.get("value_text", "")))
+            c.setFillColorRGB(*blend(_PRES_WHITE, 0.35))
+            c.setFont(font_r, 9.5)
+            draw_wrapped(item.get("subtitle", ""), x + 16, cards_y + 18, card_w - 32,
+                         font=font_r, size=9.5, leading=12, color="#788AA5", max_lines=2)
+
+    def render_key_metrics(slide):
+        section_heading(slide.get("section", ""), slide.get("title", ""), slide.get("subtitle", ""))
+        cards = list(slide.get("cards") or [])
+        cols, gap, card_h = 4, 14, 74
+        card_w = (page_w - 128 - gap * 3) / cols
+        top_y = 280
+        for i, item in enumerate(cards[:8]):
+            row, col = divmod(i, cols)
+            x = 64 + col * (card_w + gap)
+            y = top_y - row * (card_h + 12)
+            card_rect(x, y, card_w, card_h)
+            accent = item.get("color") or _PRES_METRIC_BLUE
+            set_fill(accent)
+            c.rect(x, y + card_h - 3, card_w, 3, fill=1, stroke=0)
+            c.setFillColorRGB(*blend(_PRES_WHITE, 0.40))
+            c.setFont(font_b, 9)
+            label_lines = wrap_lines(item.get("label", ""), font_b, 9, card_w - 24)[:2]
+            ly = y + card_h - 20
+            for line in label_lines:
+                c.drawString(x + 12, ly, line.upper())
+                ly -= 11
+            set_fill(_PRES_WHITE)
+            c.setFont(font_b, 24)
+            c.drawString(x + 12, y + 22, clean_text(item.get("value_text", "")))
+            c.setFillColorRGB(*blend(_PRES_WHITE, 0.35))
+            c.setFont(font_b, 9)
+            c.drawRightString(x + card_w - 12, y + 12, clean_text(item.get("sub_text", "")))
+
+        bar_y = 156
+        for item in list(slide.get("bars") or [])[:4]:
+            draw_metric_bar(
+                64, bar_y, item.get("label", ""), item.get("value"),
+                item.get("value_text", ""), item.get("color") or _PRES_BLUE, width=430,
+            )
+            bar_y -= 31
+
+    def render_goals(slide):
+        section_heading(slide.get("section", ""), slide.get("title", ""), slide.get("subtitle", ""))
+        rows = list(slide.get("rows") or [])
+        if not rows:
+            c.setFillColorRGB(*blend(_PRES_WHITE, 0.30))
+            c.setFont(font_r, 13)
+            c.drawString(64, 330, clean_text(slide.get("empty_text", "Дані відсутні за обраними фільтрами")))
+            return
+        available = 300
+        step = min(38, available / max(len(rows), 1))
+        y = 344
+        for row in rows:
+            c.setFillColorRGB(*blend(_PRES_WHITE, 0.40))
+            c.setFont(font_b, 10)
+            c.drawRightString(98, y, clean_text(row.get("code", "")))
+            c.setFillColorRGB(*blend(_PRES_WHITE, 0.70))
+            c.setFont(font_r, 11)
+            name = clean_text(row.get("name", ""))
+            c.drawString(114, y, name)
+            track_x, track_w = 460, 360
+            c.setFillColorRGB(*blend(_PRES_WHITE, 0.06))
+            c.roundRect(track_x, y - 1, track_w, 9, 4.5, fill=1, stroke=0)
+            try:
+                pct = min(max(float(row.get("value") or 0), 0), 100)
+            except (TypeError, ValueError):
+                pct = 0
+            if pct > 0:
+                set_fill(row.get("color") or _PRES_GREY)
+                c.roundRect(track_x, y - 1, track_w * pct / 100.0, 9, 4.5, fill=1, stroke=0)
+            set_fill(_PRES_WHITE)
+            c.setFont(font_b, 11)
+            c.drawRightString(878, y, clean_text(row.get("value_text", "")))
+            y -= step
+
+    def render_risks(slide):
+        section_heading(slide.get("section", ""), slide.get("title", ""), slide.get("subtitle", ""))
+        cards = list(slide.get("cards") or [])
+        gap, card_w, card_h = 18, 260, 118
+        x0, y = 64, 238
+        accents = [_PRES_RED, _PRES_AMBER, _PRES_BRIGHT_GREEN]
+        for i, item in enumerate(cards[:3]):
+            x = x0 + i * (card_w + gap)
+            accent = item.get("color") or accents[i]
+            c.setFillColorRGB(*blend(accent, 0.10))
+            c.setStrokeColorRGB(*blend(accent, 0.30))
+            c.roundRect(x, y, card_w, card_h, 14, fill=1, stroke=1)
+            set_fill(accent)
+            c.setFont(font_b, 9.5)
+            lines = wrap_lines(item.get("label", ""), font_b, 9.5, card_w - 28)[:2]
+            ly = y + 91
+            for line in lines:
+                c.drawString(x + 14, ly, line.upper())
+                ly -= 12
+            c.setFont(font_b, 36)
+            c.drawString(x + 14, y + 37, clean_text(item.get("value_text", "")))
+            c.setFillColorRGB(*blend(_PRES_WHITE, 0.40))
+            c.setFont(font_b, 9.5)
+            c.drawString(x + 14, y + 18, clean_text(item.get("sub_text", "")))
+
+        panel_y, panel_h = 58, 146
+        card_rect(64, panel_y, 650, panel_h, border_alpha=0.07, fill_alpha=0.03, radius=14)
+        c.setFillColorRGB(*blend(_PRES_WHITE, 0.30))
+        c.setFont(font_b, 10)
+        c.drawString(88, panel_y + panel_h - 25, clean_text(slide.get("summary_label", "")).upper())
+        draw_wrapped(
+            slide.get("summary_text", ""), 88, panel_y + panel_h - 48, 602,
+            font=font_r, size=12, leading=17, color="#A3B1C6", max_lines=5, ellipsis=False,
+        )
+        tags = list(slide.get("tags") or [])
+        tx = 88
+        for tag in tags[:2]:
+            text = clean_text(tag)
+            w = pdfmetrics.stringWidth(text, font_b, 9.5) + 22
+            c.setFillColorRGB(*blend(_PRES_WHITE, 0.06))
+            c.setStrokeColorRGB(*blend(_PRES_WHITE, 0.10))
+            c.roundRect(tx, panel_y + 14, w, 24, 6, fill=1, stroke=1)
+            c.setFillColorRGB(*blend(_PRES_WHITE, 0.50))
+            c.setFont(font_b, 9.5)
+            c.drawString(tx + 11, panel_y + 22, text)
+            tx += w + 10
+
+    def render_top5(slide):
+        section_heading(slide.get("section", ""), slide.get("title", ""), slide.get("subtitle", ""))
+        rows = list(slide.get("rows") or [])
+        if not rows:
+            c.setFillColorRGB(*blend(_PRES_WHITE, 0.30))
+            c.setFont(font_r, 13)
+            c.drawString(64, 330, clean_text(slide.get("empty_text", "Критичних заходів не виявлено")))
+            return
+        y = 335
+        for row in rows[:5]:
+            color = row.get("risk_color") or _PRES_GREY
+            badge_text = clean_text(row.get("risk_label", ""))
+            bw = min(150, pdfmetrics.stringWidth(badge_text, font_b, 8.5) + 18)
+            set_fill(color)
+            c.roundRect(64, y - 4, bw, 22, 6, fill=1, stroke=0)
+            set_fill(_PRES_BG)
+            c.setFont(font_b, 8.5)
+            c.drawString(73, y + 3, badge_text)
+            name_x = 64 + bw + 16
+            draw_wrapped(row.get("name", ""), name_x, y + 10, 720 - bw,
+                         font=font_b, size=11, leading=14, color="#D5DCE7", max_lines=2, ellipsis=True)
+            meta = (
+                f'{clean_text(row.get("code", ""))}  ·  '
+                f'{clean_text(row.get("department", ""))}  ·  '
+                f'{clean_text(row.get("status", ""))}  ·  '
+                f'Виконання: {clean_text(row.get("performance_text", ""))}'
+            )
+            c.setFillColorRGB(*blend(_PRES_WHITE, 0.35))
+            c.setFont(font_r, 8.5)
+            c.drawString(name_x, y - 21, meta)
+            c.setStrokeColorRGB(*blend(_PRES_WHITE, 0.06))
+            c.line(64, y - 34, 900, y - 34)
+            y -= 62
+
+    def render_finance(slide):
+        section_heading(slide.get("section", ""), slide.get("title", ""), slide.get("subtitle", ""))
+        left_x, right_x = 64, 520
+        c.setFillColorRGB(*blend(_PRES_WHITE, 0.30))
+        c.setFont(font_b, 10)
+        c.drawString(left_x, 348, clean_text(slide.get("sources_label", "")).upper())
+        y = 315
+        for item in list(slide.get("groups") or [])[:4]:
+            c.setFillColorRGB(*blend(_PRES_WHITE, 0.70))
+            c.setFont(font_b, 11)
+            c.drawString(left_x, y + 8, clean_text(item.get("label", "")))
+            set_fill(_PRES_WHITE)
+            c.drawRightString(left_x + 390, y + 8, clean_text(item.get("display", "")))
+            c.setFillColorRGB(*blend(_PRES_WHITE, 0.07))
+            c.roundRect(left_x, y - 7, 390, 9, 4.5, fill=1, stroke=0)
+            try:
+                pct = min(max(float(item.get("percent") or 0), 0), 100)
+            except (TypeError, ValueError):
+                pct = 0
+            if pct > 0:
+                set_fill(item.get("color") or _PRES_GREY)
+                c.roundRect(left_x, y - 7, 390 * pct / 100.0, 9, 4.5, fill=1, stroke=0)
+            y -= 48
+
+        budget = dict(slide.get("budget") or {})
+        c.setFillColorRGB(*blend(_PRES_BLUE, 0.12))
+        c.setStrokeColorRGB(*blend(_PRES_BLUE, 0.25))
+        c.roundRect(left_x, 70, 390, 102, 12, fill=1, stroke=1)
+        c.setFillColorRGB(*blend(_PRES_WHITE, 0.30))
+        c.setFont(font_b, 10)
+        c.drawString(left_x + 18, 144, clean_text(budget.get("label", "")).upper())
+        set_fill(_PRES_WHITE)
+        c.setFont(font_b, 28)
+        c.drawString(left_x + 18, 108, clean_text(budget.get("value_text", "")))
+        c.setFillColorRGB(*blend(_PRES_WHITE, 0.30))
+        c.setFont(font_r, 9.5)
+        c.drawString(left_x + 18, 86, clean_text(budget.get("subtitle", "")))
+
+        c.setFillColorRGB(*blend(_PRES_WHITE, 0.30))
+        c.setFont(font_b, 10)
+        c.drawString(right_x, 348, clean_text(slide.get("kpkvk_label", "")).upper())
+        rows = list(slide.get("kpkvk_rows") or [])
+        if not rows:
+            c.setFillColorRGB(*blend(_PRES_WHITE, 0.30))
+            c.setFont(font_r, 12)
+            c.drawString(right_x, 315, clean_text(slide.get("kpkvk_empty_text", "КПКВК не визначено")))
+            return
+        y = 315
+        for row in rows[:6]:
+            set_fill(_PRES_YELLOW)
+            c.setFont(font_b, 12)
+            c.drawString(right_x, y, clean_text(row.get("code", "")))
+            c.setFillColorRGB(*blend(_PRES_WHITE, 0.50))
+            c.setFont(font_r, 10)
+            c.drawString(right_x + 110, y, clean_text(row.get("count_text", "")))
+            c.setFillColorRGB(*blend(_PRES_WHITE, 0.70))
+            c.setFont(font_b, 10)
+            c.drawRightString(900, y, clean_text(row.get("budget_text", "")))
+            c.setStrokeColorRGB(*blend(_PRES_WHITE, 0.06))
+            c.line(right_x, y - 13, 900, y - 13)
+            y -= 43
+
+    renderers = {
+        "title": render_title,
+        "verdict": render_verdict,
+        "key_metrics": render_key_metrics,
+        "strategic_goals": render_goals,
+        "risks": render_risks,
+        "top5": render_top5,
+        "finance": render_finance,
     }
-    c.setFillColorRGB(*verdict_colors.get(verdict_level, GREY))
-    c.roundRect(40, page_h - 150, page_w - 80, 56, 12, fill=1, stroke=0)
-    c.setFont(font_b, 16)
-    c.setFillColorRGB(1, 1, 1)
-    c.drawString(58, page_h - 128, verdict_text[:110])
 
-    c.setFont(font_r, 13)
-    c.setFillColorRGB(*DARK)
-    y = page_h - 190
-    for line in insight_lines[:9]:
-        c.drawString(48, y, ("• " + str(line))[:130])
-        y -= 24
-    footer(page_no)
-    c.showPage()
+    for page_no, slide in enumerate(presentation_payload["slides"], start=1):
+        slide_bg()
+        slide_num(page_no)
+        renderers[slide["key"]](slide)
+        c.showPage()
 
     c.save()
     return buffer.getvalue()

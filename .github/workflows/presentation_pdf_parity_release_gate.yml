@@ -41,8 +41,7 @@ jobs:
           cp core/exports.py core/presentation.py /tmp/presentation_pdf_parity/core/
           cp scripts/test_presentation_pdf.py /tmp/presentation_pdf_parity/scripts/
           cp IMPLEMENTATION_NOTES.md /tmp/presentation_pdf_parity/
-          cd /tmp/presentation_pdf_parity
-          zip -r "$GITHUB_WORKSPACE/presentation_pdf_parity.zip" .
+          python -c "import pathlib, zipfile; root=pathlib.Path('/tmp/presentation_pdf_parity'); z=zipfile.ZipFile(pathlib.Path('$GITHUB_WORKSPACE')/'presentation_pdf_parity.zip','w',zipfile.ZIP_DEFLATED); [z.write(p, p.relative_to(root)) for p in root.rglob('*') if p.is_file()]; z.close()"
 
       - name: Upload self-contained ZIP
         if: success()

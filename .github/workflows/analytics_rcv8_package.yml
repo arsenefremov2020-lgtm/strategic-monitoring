@@ -1,0 +1,135 @@
+name: Package Analytics RCv8 Final
+
+on:
+  push:
+    branches:
+      - analytics-rcv8-package-only
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout validated release commit
+        uses: actions/checkout@v4
+        with:
+          ref: 0a9aa8de547c7e4c30bc630c1ad3b7e21099e7e9
+          fetch-depth: 0
+
+      - name: Verify validated commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "0a9aa8de547c7e4c30bc630c1ad3b7e21099e7e9"
+          test "$(git hash-object core/analytics_text/composer.py)" = "6e3e1f41526628cab3becaae1c28d8534f1ff987"
+
+      - name: Update packaging notes only
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/release_gate_notes.md <<'EOF'
+          # Authoritative clean GitHub Actions release gate
+
+          This final packaging section is the authoritative release-gate record for the distributable RCv8 overlay. It supersedes earlier local/scaffold execution notes as evidence of release readiness.
+
+          - **Repository:** `arsenefremov2020-lgtm/strategic-monitoring`
+          - **Production base:** `87277fe2755471cd3defb2efa622cffee25cd661`
+          - **Validated release-gate branch HEAD:** `0a9aa8de547c7e4c30bc630c1ad3b7e21099e7e9`
+          - **GitHub Actions run:** `33502010947`
+          - **Runner:** GitHub-hosted clean Ubuntu runner using `actions/checkout`
+          - **Production `core/analytics_text/composer.py` blob SHA:** `6e3e1f41526628cab3becaae1c28d8534f1ff987`
+          - **Overlay manifest:** PASS — exactly the 19 self-contained overlay files; the temporary release-gate workflow is not part of the distributable ZIP.
+          - **Protected production files:** `core/analytics_text/composer.py`, `core/dashboard_risk.py`, and `core/mio_shared.py` unchanged from the production base.
+          - **Overlay Python compile gate:** PASS.
+
+          Clean-run suite results:
+
+          - `scripts.test_analytics_v3` — **70/70 PASS**
+          - `scripts.test_analytics_compatibility` — **35/35 PASS**
+          - `scripts.test_analytics_edge_cases` — **10/10 PASS**
+          - `scripts.test_analytics_comparative_extrema` — **20/20 PASS**
+
+          Behavioral release invariants in the same run:
+
+          - unique SSP contribution uses normalized `ССП N` — **PASS**
+          - tied SSP contribution does not create an artificial unique leader — **PASS**
+          - unique department-missing uses normalized `ССП N` — **PASS**
+          - tied/distributed department-missing does not create an artificial unique leader — **PASS**
+          - narrow one-SSP `ssp_drilldown` remains rendered — **PASS**
+          - `ССП «ССП ` leakage is absent in behavioral outputs — **PASS**
+          - `reference` is absent from behavioral `result.text` — **PASS**
+          - `best/worst` is absent from behavioral `result.text` — **PASS**
+          - silent `except Exception: mio = {}` — **0 matches / PASS**
+
+          No production or test logic is changed by this packaging step. Only this documentation section is added to the distributable `IMPLEMENTATION_NOTES.md`.
+
+          ---
+          EOF
+          sed -i 's/^          //' /tmp/release_gate_notes.md
+          cat /tmp/release_gate_notes.md IMPLEMENTATION_NOTES.md > /tmp/IMPLEMENTATION_NOTES.md
+          mv /tmp/IMPLEMENTATION_NOTES.md IMPLEMENTATION_NOTES.md
+
+          changed="$(git status --short)"
+          echo "$changed"
+          test "$(printf '%s\n' "$changed" | sed '/^$/d' | wc -l | tr -d ' ')" -eq 1
+          printf '%s\n' "$changed" | grep -F "IMPLEMENTATION_NOTES.md"
+
+      - name: Build self-contained ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import zipfile
+
+          files = [
+              "core/analytics_calculations.py",
+              "core/analytics_text/__init__.py",
+              "core/analytics_text/analytical_metrics.py",
+              "core/analytics_text/compatibility.py",
+              "core/analytics_text/composer_overlay.py",
+              "core/analytics_text/context.py",
+              "core/analytics_text/findings_current.py",
+              "core/analytics_text/models.py",
+              "core/analytics_text/planner.py",
+              "core/analytics_text/scenarios_current.py",
+              "core/analytics_text/signals_current.py",
+              "core/analytics_text/validation.py",
+              "pages/7_Аналітика.py",
+              "pages/9_Розрахунки.py",
+              "scripts/test_analytics_compatibility.py",
+              "scripts/test_analytics_v3.py",
+              "scripts/test_analytics_edge_cases.py",
+              "scripts/test_analytics_comparative_extrema.py",
+              "IMPLEMENTATION_NOTES.md",
+          ]
+
+          out = Path("strategic_monitoring_analytics_RCv8_RELEASE_FINAL_GITHUB_VALIDATED.zip")
+          with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
+              for item in files:
+                  p = Path(item)
+                  if not p.is_file():
+                      raise SystemExit(f"missing package file: {item}")
+                  zf.write(p, arcname=item)
+
+          with zipfile.ZipFile(out) as zf:
+              names = zf.namelist()
+              if names != files:
+                  raise SystemExit(f"manifest mismatch: {names!r}")
+              if any(name.startswith(".github/") for name in names):
+                  raise SystemExit("temporary workflow leaked into release ZIP")
+
+          print(f"ZIP={out}")
+          print(f"FILES={len(files)}")
+          PY
+          sha256sum strategic_monitoring_analytics_RCv8_RELEASE_FINAL_GITHUB_VALIDATED.zip
+
+      - name: Upload final release ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: strategic_monitoring_analytics_RCv8_RELEASE_FINAL_GITHUB_VALIDATED
+          path: strategic_monitoring_analytics_RCv8_RELEASE_FINAL_GITHUB_VALIDATED.zip
+          if-no-files-found: error
+          retention-days: 7

@@ -1,0 +1,64 @@
+name: Presentation PDF parity v2 release gate
+
+on:
+  push:
+    branches:
+      - fix/presentation-pdf-parity
+
+permissions:
+  contents: read
+
+jobs:
+  presentation-parity-v2:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pandas==2.2.3 reportlab==4.4.9 streamlit==1.59.1 pypdf playwright pymupdf pillow numpy
+          python -m playwright install --with-deps chromium
+
+      - name: Compile changed Python files
+        run: |
+          python -m py_compile core/presentation.py core/exports.py pages/2_Dashboard.py pages/3_Оцінка_МіО.py scripts/test_presentation_pdf.py scripts/test_presentation_visual.py
+
+      - name: Runtime semantic and PDF content tests
+        run: python scripts/test_presentation_pdf.py
+
+      - name: Browser versus PDF visual regression
+        run: python scripts/test_presentation_visual.py presentation_visual_artifacts
+
+      - name: Existing Dashboard regression tests
+        run: python scripts/test_dashboard_v2.py
+
+      - name: Upload visual regression evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: presentation_visual_artifacts
+          path: presentation_visual_artifacts/
+          if-no-files-found: warn
+
+      - name: Package self-contained changed-file ZIP
+        if: success()
+        run: |
+          mkdir -p /tmp/presentation_pdf_parity/pages /tmp/presentation_pdf_parity/core /tmp/presentation_pdf_parity/scripts
+          cp pages/2_Dashboard.py pages/3_Оцінка_МіО.py /tmp/presentation_pdf_parity/pages/
+          cp core/exports.py core/presentation.py /tmp/presentation_pdf_parity/core/
+          cp scripts/test_presentation_pdf.py scripts/test_presentation_visual.py /tmp/presentation_pdf_parity/scripts/
+          cp IMPLEMENTATION_NOTES.md /tmp/presentation_pdf_parity/
+          python -c "import pathlib, zipfile; root=pathlib.Path('/tmp/presentation_pdf_parity'); z=zipfile.ZipFile(pathlib.Path('$GITHUB_WORKSPACE')/'presentation_pdf_parity_v2.zip','w',zipfile.ZIP_DEFLATED); [z.write(p, p.relative_to(root)) for p in root.rglob('*') if p.is_file()]; z.close()"
+
+      - name: Upload final ZIP
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: presentation_pdf_parity_v2
+          path: presentation_pdf_parity_v2.zip
+          if-no-files-found: error

@@ -416,6 +416,7 @@ def build_presentation_pdf(presentation_payload: dict) -> bytes | None:
                 x + width - text_width(value, font, size, char_space),
                 baseline_for_top(top, font, size, line_height),
             )
+        text_obj.textOut(value)
         c.drawText(text_obj)
 
     def draw_text_block(

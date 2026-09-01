@@ -68,7 +68,10 @@ def _blurred_mae(a: Image.Image, b: Image.Image):
 
 
 def _region_mae(a: Image.Image, b: Image.Image, box):
-    x, y, w, h = box
+    x = float(box["x"])
+    y = float(box["y"])
+    w = float(box["width"])
+    h = float(box["height"])
     left = max(0, int(round(x)))
     top = max(0, int(round(y)))
     right = min(REFERENCE_WIDTH, int(round(x + w)))

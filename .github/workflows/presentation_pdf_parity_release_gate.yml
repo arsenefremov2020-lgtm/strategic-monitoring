@@ -25,7 +25,7 @@ jobs:
 
       - name: Compile changed Python files
         run: |
-          python -m py_compile core/presentation.py core/exports.py pages/2_Dashboard.py scripts/test_presentation_pdf.py
+          python -m py_compile core/presentation.py core/exports.py pages/2_Dashboard.py pages/3_Оцінка_МіО.py scripts/test_presentation_pdf.py
 
       - name: Run Presentation PDF parity tests
         run: python scripts/test_presentation_pdf.py
@@ -37,7 +37,7 @@ jobs:
         if: success()
         run: |
           mkdir -p /tmp/presentation_pdf_parity/pages /tmp/presentation_pdf_parity/core /tmp/presentation_pdf_parity/scripts
-          cp pages/2_Dashboard.py /tmp/presentation_pdf_parity/pages/
+          cp pages/2_Dashboard.py pages/3_Оцінка_МіО.py /tmp/presentation_pdf_parity/pages/
           cp core/exports.py core/presentation.py /tmp/presentation_pdf_parity/core/
           cp scripts/test_presentation_pdf.py /tmp/presentation_pdf_parity/scripts/
           cp IMPLEMENTATION_NOTES.md /tmp/presentation_pdf_parity/

@@ -26,6 +26,7 @@ jobs:
           set -euo pipefail
           BASE="87277fe2755471cd3defb2efa622cffee25cd661"
           WORKFLOW=".github/workflows/analytics_rcv8_release_gate.yml"
+          git config core.quotePath false
 
           echo "HEAD=$(git rev-parse HEAD)"
           echo "Changed files from base:"

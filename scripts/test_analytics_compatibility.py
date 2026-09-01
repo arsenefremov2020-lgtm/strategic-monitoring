@@ -487,7 +487,10 @@ class CompatibilityRegistryBehaviorTests(unittest.TestCase):
         self.assertIn("фактично розрахований дочірній розподіл за завданнями", result.text.lower())
         self.assertNotIn("ССП «ССП 1»", result.text)
         self.assertIn("ССП 1", result.text)
-        self.assertIn("У портфелі ССП 1 фактично розрахований дочірній розподіл за завданнями", result.text)
+        self.assertIn(
+            "у портфелі ссп 1 фактично розрахований дочірній розподіл за завданнями",
+            result.text.lower(),
+        )
         _assert_compatibility_invariant(self, findings, plan, result)
 
     def test_ssp_without_child_evidence_is_supporting_only_without_inference(self):

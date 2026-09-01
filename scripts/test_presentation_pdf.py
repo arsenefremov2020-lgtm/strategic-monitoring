@@ -169,6 +169,25 @@ def test_cases_e_f_dashboard_uses_one_payload_for_all_filters_and_renderers():
     assert "_pdf_kpis" not in source
     assert "_pdf_figures" not in source
     assert "conclusion_text[:110]" not in source
+
+    usages = []
+    for path in ROOT.rglob("*.py"):
+        if any(part in {".git", "__pycache__"} for part in path.parts):
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for line_no, line in enumerate(text.splitlines(), start=1):
+            if "build_presentation_pdf(" in line and not line.lstrip().startswith("def build_presentation_pdf"):
+                usages.append((path.relative_to(ROOT).as_posix(), line_no, line.strip()))
+    assert usages == [
+        ("pages/2_Dashboard.py", next(line_no for path, line_no, line in usages if path == "pages/2_Dashboard.py"), "_pdf_bytes = build_presentation_pdf(_presentation_payload)")
+    ], usages
+
+    exports_source = (ROOT / "core" / "exports.py").read_text(encoding="utf-8")
+    assert "kpi_items:" not in exports_source
+    assert "figures:" not in exports_source
+    assert "Мінекономіки · Система моніторингу стратегічного плану" not in exports_source
+    assert "setFillColorRGB(0.97, 0.98, 0.99)" not in exports_source
+
     for key in (
         '"departments": list(selected_department_indices or [])',
         '"goals": list(selected_goals or [])',

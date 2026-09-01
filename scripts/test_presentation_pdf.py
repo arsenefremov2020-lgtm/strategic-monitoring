@@ -4,11 +4,10 @@ Run from repository root:
     python scripts/test_presentation_pdf.py
 
 Test-only dependency for text extraction:
-    pypdf
+    pymupdf
 """
 from __future__ import annotations
 
-import io
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pypdf import PdfReader  # noqa: E402
+import fitz  # noqa: E402
 
 from core.exports import (  # noqa: E402
     build_legacy_presentation_pdf,
@@ -263,11 +262,11 @@ def _pdf_reader(payload):
     pdf = build_presentation_pdf(payload)
     assert pdf is not None
     assert pdf.startswith(b"%PDF")
-    return pdf, PdfReader(io.BytesIO(pdf))
+    return pdf, fitz.open(stream=pdf, filetype="pdf")
 
 
 def _page_text(reader, index):
-    return (reader.pages[index].extract_text() or "").replace("\u00a0", " ")
+    return (reader[index].get_text("text") or "").replace("\u00a0", " ")
 
 
 def _without_marker(value):
@@ -287,10 +286,10 @@ def test_case_a_canonical_payload_and_pdf_content():
     assert slides["finance"]["budget"]["value"] == 141.258414
 
     pdf, reader = _pdf_reader(payload)
-    assert len(reader.pages) == 7
-    for page in reader.pages:
-        assert round(float(page.mediabox.width)) == REFERENCE_WIDTH
-        assert round(float(page.mediabox.height)) == REFERENCE_HEIGHT
+    assert len(reader) == 7
+    for page in reader:
+        assert round(float(page.rect.width)) == REFERENCE_WIDTH
+        assert round(float(page.rect.height)) == REFERENCE_HEIGHT
 
     expected_page_text = [
         "Аналітичний дашборд результативності стратегічного плану",
@@ -411,8 +410,9 @@ def test_mio_legacy_pdf_runtime_smoke():
     )
     assert pdf is not None
     assert pdf.startswith(b"%PDF")
-    reader = PdfReader(io.BytesIO(pdf))
-    assert len(reader.pages) == 3
+    reader = fitz.open(stream=pdf, filetype="pdf")
+    assert len(reader) == 3
+    assert "test" in reader[0].get_text("text")
 
 
 def test_dashboard_uses_one_payload_for_browser_and_pdf():

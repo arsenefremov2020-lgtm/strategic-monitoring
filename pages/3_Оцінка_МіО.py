@@ -21,7 +21,7 @@ from core.excel_loader import read_excel_sheet
 from core import operational
 from core import mio_shared as mio_shared_calculations
 from core.closeouts import load_manual_closeouts, load_manual_closeout_records, manual_closeout_record_index
-from core.exports import fig_png_bytes, render_png_download, write_styled_excel, build_presentation_pdf
+from core.exports import fig_png_bytes, render_png_download, write_styled_excel, build_legacy_presentation_pdf
 from core.errors import log_cosmetic_error, show_warning
 from core.access import filter_actions_for_user, filter_requests_for_user
 
@@ -4800,7 +4800,7 @@ def render_mio_export_block(mio_years: list[int]) -> None:
                         ("Частково", str(sum(f["partial"] for f in facts))),
                         ("Не виконано", str(sum(f["notdone"] for f in facts))),
                     ]
-                    pdf_bytes = build_presentation_pdf(
+                    pdf_bytes = build_legacy_presentation_pdf(
                         "Оцінка МіО стратегічного плану",
                         f"Роки: {', '.join(str(y) for y in mio_years)} · {mio_data_mode}",
                         kpi_items, verdict_text, verdict_level,

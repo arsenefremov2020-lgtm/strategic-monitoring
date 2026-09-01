@@ -1,0 +1,234 @@
+name: Analytics RCv8 Release Gate
+
+on:
+  push:
+    branches:
+      - analytics-rcv8-release-gate
+
+permissions:
+  contents: read
+
+jobs:
+  release-gate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout release-gate branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify production base and manifest
+        id: manifest
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="87277fe2755471cd3defb2efa622cffee25cd661"
+          WORKFLOW=".github/workflows/analytics_rcv8_release_gate.yml"
+
+          echo "HEAD=$(git rev-parse HEAD)"
+          echo "Changed files from base:"
+          git diff --name-only "$BASE..HEAD" | sort
+
+          cat > /tmp/expected_overlay.txt <<'EOF'
+          IMPLEMENTATION_NOTES.md
+          core/analytics_calculations.py
+          core/analytics_text/__init__.py
+          core/analytics_text/analytical_metrics.py
+          core/analytics_text/compatibility.py
+          core/analytics_text/composer_overlay.py
+          core/analytics_text/context.py
+          core/analytics_text/findings_current.py
+          core/analytics_text/models.py
+          core/analytics_text/planner.py
+          core/analytics_text/scenarios_current.py
+          core/analytics_text/signals_current.py
+          core/analytics_text/validation.py
+          pages/7_Аналітика.py
+          pages/9_Розрахунки.py
+          scripts/test_analytics_comparative_extrema.py
+          scripts/test_analytics_compatibility.py
+          scripts/test_analytics_edge_cases.py
+          scripts/test_analytics_v3.py
+          EOF
+          sed -i 's/^          //' /tmp/expected_overlay.txt
+          sort -o /tmp/expected_overlay.txt /tmp/expected_overlay.txt
+
+          git diff --name-only "$BASE..HEAD" | grep -vFx "$WORKFLOW" | sort > /tmp/actual_overlay.txt
+          echo "Overlay-only manifest:"
+          cat /tmp/actual_overlay.txt
+          diff -u /tmp/expected_overlay.txt /tmp/actual_overlay.txt
+
+          total_changed="$(git diff --name-only "$BASE..HEAD" | wc -l | tr -d ' ')"
+          test "$total_changed" -eq 20
+
+          composer_sha="$(git hash-object core/analytics_text/composer.py)"
+          echo "composer.py blob SHA=$composer_sha"
+          test "$composer_sha" = "6e3e1f41526628cab3becaae1c28d8534f1ff987"
+
+          for path in core/analytics_text/composer.py core/dashboard_risk.py core/mio_shared.py; do
+            if ! git diff --quiet "$BASE" -- "$path"; then
+              echo "::error::$path differs from production base"
+              exit 1
+            fi
+            echo "$path unchanged from base"
+          done
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install requirements
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Compile release overlay Python
+        id: compile
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            core/analytics_calculations.py \
+            core/analytics_text/__init__.py \
+            core/analytics_text/analytical_metrics.py \
+            core/analytics_text/compatibility.py \
+            core/analytics_text/composer_overlay.py \
+            core/analytics_text/context.py \
+            core/analytics_text/findings_current.py \
+            core/analytics_text/models.py \
+            core/analytics_text/planner.py \
+            core/analytics_text/scenarios_current.py \
+            core/analytics_text/signals_current.py \
+            core/analytics_text/validation.py \
+            "pages/7_Аналітика.py" \
+            "pages/9_Розрахунки.py" \
+            scripts/test_analytics_comparative_extrema.py \
+            scripts/test_analytics_compatibility.py \
+            scripts/test_analytics_edge_cases.py \
+            scripts/test_analytics_v3.py
+          echo "COMPILE_STATUS=PASS"
+
+      - name: Run all four Analytics suites
+        id: suites
+        shell: bash
+        run: |
+          set +e
+          export PYTHONPATH=.
+
+          run_suite() {
+            local module="$1"
+            local key="$2"
+            echo
+            echo "===== RUNNING $module ====="
+            python -m unittest "$module" -v
+            local rc=$?
+            if [ "$rc" -eq 0 ]; then
+              echo "===== STATUS $module: PASS ====="
+            else
+              echo "===== STATUS $module: FAIL (exit $rc) ====="
+            fi
+            echo "$key=$rc" >> "$GITHUB_OUTPUT"
+          }
+
+          run_suite scripts.test_analytics_v3 v3
+          run_suite scripts.test_analytics_compatibility compatibility
+          run_suite scripts.test_analytics_edge_cases edge_cases
+          run_suite scripts.test_analytics_comparative_extrema comparative_extrema
+          exit 0
+
+      - name: Run behavioral release invariants
+        id: invariants
+        shell: bash
+        run: |
+          set +e
+          export PYTHONPATH=.
+
+          run_check() {
+            local label="$1"
+            shift
+            echo
+            echo "===== INVARIANT $label ====="
+            "$@"
+            local rc=$?
+            if [ "$rc" -eq 0 ]; then
+              echo "===== INVARIANT $label: PASS ====="
+            else
+              echo "===== INVARIANT $label: FAIL (exit $rc) ====="
+            fi
+            echo "$label=$rc" >> "$GITHUB_OUTPUT"
+          }
+
+          run_check unique_ssp_contribution python -m unittest \
+            scripts.test_analytics_comparative_extrema.AnalyticsRCv8ComparativeExtremaTests.test_unique_ssp_portfolio_sentence_normalizes_prefixed_label -v
+
+          run_check tied_ssp_contribution python -m unittest \
+            scripts.test_analytics_comparative_extrema.AnalyticsRCv8ComparativeExtremaTests.test_two_ssp_equal_underperformance_contribution_have_no_unique_negative_ssp_in_final -v
+
+          run_check unique_department_missing python -m unittest \
+            scripts.test_analytics_comparative_extrema.AnalyticsRCv8ComparativeExtremaTests.test_unique_department_missing_final_sentence_normalizes_prefixed_label -v
+
+          run_check tied_department_missing python -m unittest \
+            scripts.test_analytics_comparative_extrema.AnalyticsRCv8ComparativeExtremaTests.test_tied_distributed_department_missing_has_no_legacy_unique_final_sentence -v
+
+          run_check narrow_ssp_drilldown python -m unittest \
+            scripts.test_analytics_compatibility.CompatibilityRegistryBehaviorTests.test_one_ssp_with_multiple_children_survives_narrow_pruning -v
+
+          echo
+          echo "===== STATIC INVARIANT silent_mio_except ====="
+          if grep -Fq 'except Exception: mio = {}' "pages/9_Розрахунки.py"; then
+            echo "silent_mio_except=1" >> "$GITHUB_OUTPUT"
+            echo "===== STATIC INVARIANT silent_mio_except: FAIL ====="
+          else
+            echo "silent_mio_except=0" >> "$GITHUB_OUTPUT"
+            echo "===== STATIC INVARIANT silent_mio_except: PASS ====="
+          fi
+          exit 0
+
+      - name: Final gate verdict
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          failed=0
+
+          echo "manifest outcome: ${{ steps.manifest.outcome }}"
+          echo "compile outcome: ${{ steps.compile.outcome }}"
+          [ "${{ steps.manifest.outcome }}" = "success" ] || failed=1
+          [ "${{ steps.compile.outcome }}" = "success" ] || failed=1
+
+          declare -A suites=(
+            [scripts.test_analytics_v3]="${{ steps.suites.outputs.v3 }}"
+            [scripts.test_analytics_compatibility]="${{ steps.suites.outputs.compatibility }}"
+            [scripts.test_analytics_edge_cases]="${{ steps.suites.outputs.edge_cases }}"
+            [scripts.test_analytics_comparative_extrema]="${{ steps.suites.outputs.comparative_extrema }}"
+          )
+          for name in "${!suites[@]}"; do
+            rc="${suites[$name]}"
+            echo "$name exit_code=${rc:-missing}"
+            [ "$rc" = "0" ] || failed=1
+          done
+
+          declare -A invariants=(
+            [unique_ssp_contribution]="${{ steps.invariants.outputs.unique_ssp_contribution }}"
+            [tied_ssp_contribution]="${{ steps.invariants.outputs.tied_ssp_contribution }}"
+            [unique_department_missing]="${{ steps.invariants.outputs.unique_department_missing }}"
+            [tied_department_missing]="${{ steps.invariants.outputs.tied_department_missing }}"
+            [narrow_ssp_drilldown]="${{ steps.invariants.outputs.narrow_ssp_drilldown }}"
+            [silent_mio_except]="${{ steps.invariants.outputs.silent_mio_except }}"
+          )
+          for name in "${!invariants[@]}"; do
+            rc="${invariants[$name]}"
+            echo "$name exit_code=${rc:-missing}"
+            [ "$rc" = "0" ] || failed=1
+          done
+
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::Analytics RCv8 release gate FAILED"
+            exit 1
+          fi
+          echo "Analytics RCv8 release gate PASSED"

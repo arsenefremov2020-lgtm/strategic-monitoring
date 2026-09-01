@@ -269,6 +269,16 @@ def _page_text(reader, index):
     return (reader[index].get_text("text") or "").replace("\u00a0", " ")
 
 
+def _norm(value):
+    return "".join(str(value or "").split())
+
+
+def _assert_page_contains(reader, index, *values):
+    page = _norm(_page_text(reader, index))
+    for value in values:
+        assert _norm(value) in page, (index + 1, value, _page_text(reader, index))
+
+
 def _without_marker(value):
     return str(value).replace("🔴 ", "").replace("🟡 ", "").replace("🟢 ", "")
 
@@ -301,28 +311,23 @@ def test_case_a_canonical_payload_and_pdf_content():
         "Структура та обсяги фінансування",
     ]
     for idx, expected in enumerate(expected_page_text):
-        assert expected in _page_text(reader, idx), (idx + 1, expected, _page_text(reader, idx))
+        _assert_page_contains(reader, idx, expected)
 
-    page3 = _page_text(reader, 2)
-    for value in ("191", "92", "182", "41", "7", "24", "27", "Погоджено", "Не подано"):
-        assert value in page3, value
+    _assert_page_contains(
+        reader, 2,
+        "191", "92", "182", "41", "7", "24", "27", "Погоджено", "Не подано",
+    )
+    _assert_page_contains(reader, 3, "75%", "69%", "71%", "55%", "49%", "74%", "48%", "76%")
+    _assert_page_contains(reader, 4, "14", "34", "Частка з ризиком: 10%", "Без даних: 6 заходів")
+    _assert_page_contains(
+        reader, 6,
+        "141.258414 млрд грн",
+        "1201030", "1201010", "1201350", "1201150", "1201450", "1201220",
+    )
 
-    page4 = _page_text(reader, 3)
-    for value in ("75%", "69%", "71%", "55%", "49%", "74%", "48%", "76%"):
-        assert value in page4, value
-
-    page5 = _page_text(reader, 4)
-    for value in ("14", "34", "Частка з ризиком: 10%", "Без даних: 6 заходів"):
-        assert value in page5, value
-
-    page7 = _page_text(reader, 6)
-    assert "141.258414 млрд грн" in page7
-    for code in ("1201030", "1201010", "1201350", "1201150", "1201450", "1201220"):
-        assert code in page7
-
-    all_text = "\n".join(_page_text(reader, i) for i in range(7))
-    assert "Мінекономіки · Система моніторингу стратегічного плану" not in all_text
-    assert "Статуси виконання заходів" not in all_text
+    all_text = _norm("\n".join(_page_text(reader, i) for i in range(7)))
+    assert _norm("Мінекономіки · Система моніторингу стратегічного плану") not in all_text
+    assert _norm("Статуси виконання заходів") not in all_text
 
 
 def test_q1_semantics_exact_and_rendered():
@@ -341,17 +346,16 @@ def test_q1_semantics_exact_and_rendered():
     assert slides["key_metrics"]["bars"][3]["label"] == "Середнє попереднє досягнення"
 
     _, reader = _pdf_reader(payload)
-    page5 = _page_text(reader, 4)
-    for value in (
+    _assert_page_contains(
+        reader, 4,
         "Попередні сигнали I кварталу",
         "Попередній прогноз без стандартної категоризації ризику",
         "Сигнали уваги",
         "Сформовано попередніх прогнозів",
         "Стандартних категорій ризику",
         "Попередніх сигналів уваги: 12%",
-    ):
-        assert value in page5, value
-    assert "Середнє попереднє досягнення" in _page_text(reader, 2)
+    )
+    _assert_page_contains(reader, 2, "Середнє попереднє досягнення")
 
 
 def test_q4_semantics_exact_and_rendered():
@@ -369,17 +373,16 @@ def test_q4_semantics_exact_and_rendered():
     assert slides["key_metrics"]["bars"][3]["label"] == "Результатів досягнуто"
 
     _, reader = _pdf_reader(payload)
-    page5 = _page_text(reader, 4)
-    for value in (
+    _assert_page_contains(
+        reader, 4,
         "Підсумок року",
         "Фактичні річні результати",
         "Результат не досягнуто",
         "Частково виконано",
         "Результат досягнуто",
         "Не досягнуто: 12.6%",
-    ):
-        assert value in page5, value
-    assert "Результатів досягнуто" in _page_text(reader, 2)
+    )
+    _assert_page_contains(reader, 2, "Результатів досягнуто")
 
 
 def test_operational_semantics_filter_label_value_and_pdf_text():
@@ -392,10 +395,10 @@ def test_operational_semantics_filter_label_value_and_pdf_text():
     assert approval["value_text"] == "184"
 
     _, reader = _pdf_reader(payload)
-    page3 = _page_text(reader, 2)
-    assert "Пройшли координатора" in page3
+    page3 = _norm(_page_text(reader, 2))
+    assert _norm("Пройшли координатора") in page3
     assert "184" in page3
-    assert "Погоджено" not in page3
+    assert _norm("Погоджено") not in page3
 
 
 def test_mio_legacy_pdf_runtime_smoke():
@@ -412,7 +415,7 @@ def test_mio_legacy_pdf_runtime_smoke():
     assert pdf.startswith(b"%PDF")
     reader = fitz.open(stream=pdf, filetype="pdf")
     assert len(reader) == 3
-    assert "test" in reader[0].get_text("text")
+    assert "test" in _norm(reader[0].get_text("text"))
 
 
 def test_dashboard_uses_one_payload_for_browser_and_pdf():

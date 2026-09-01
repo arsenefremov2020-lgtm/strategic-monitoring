@@ -270,7 +270,7 @@ def _page_text(reader, index):
 
 
 def _norm(value):
-    return "".join(str(value or "").split())
+    return "".join(str(value or "").split()).casefold()
 
 
 def _assert_page_contains(reader, index, *values):

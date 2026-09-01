@@ -480,8 +480,10 @@ def build_presentation_pdf(presentation_payload: dict) -> bytes | None:
         text_obj = c.beginText()
         text_obj.setTextOrigin(x, baseline_for_top(top, font, size, line_height))
         text_obj.setFont(font, size)
-        if char_space:
-            text_obj.setCharSpace(char_space)
+        # ReportLab Tc persists in the PDF text state across BT/ET blocks.
+        # Reset it explicitly so CSS letter-spacing never leaks from section
+        # labels/eyebrows into ordinary headings and body text.
+        text_obj.setCharSpace(char_space)
         if align == "right" and width is not None:
             text_obj.setTextOrigin(
                 x + width - text_width(value, font, size, char_space),

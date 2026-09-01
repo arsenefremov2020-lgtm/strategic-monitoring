@@ -1,0 +1,53 @@
+name: Presentation PDF parity release gate
+
+on:
+  push:
+    branches:
+      - fix/presentation-pdf-parity
+
+permissions:
+  contents: read
+
+jobs:
+  presentation-pdf-parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install focused test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pandas==2.2.3 reportlab==4.4.9
+
+      - name: Compile changed Python files
+        run: |
+          python -m py_compile core/presentation.py core/exports.py pages/2_Dashboard.py scripts/test_presentation_pdf.py
+
+      - name: Run Presentation PDF parity tests
+        run: python scripts/test_presentation_pdf.py
+
+      - name: Run existing Dashboard v2 regression tests
+        run: python scripts/test_dashboard_v2.py
+
+      - name: Package self-contained changed-file ZIP
+        if: success()
+        run: |
+          mkdir -p /tmp/presentation_pdf_parity/pages /tmp/presentation_pdf_parity/core /tmp/presentation_pdf_parity/scripts
+          cp pages/2_Dashboard.py /tmp/presentation_pdf_parity/pages/
+          cp core/exports.py core/presentation.py /tmp/presentation_pdf_parity/core/
+          cp scripts/test_presentation_pdf.py /tmp/presentation_pdf_parity/scripts/
+          cp IMPLEMENTATION_NOTES.md /tmp/presentation_pdf_parity/
+          cd /tmp/presentation_pdf_parity
+          zip -r "$GITHUB_WORKSPACE/presentation_pdf_parity.zip" .
+
+      - name: Upload self-contained ZIP
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: presentation_pdf_parity
+          path: presentation_pdf_parity.zip
+          if-no-files-found: error

@@ -137,17 +137,22 @@ def _register_presentation_fonts():
             except Exception:
                 return None
 
+        arimo_pair = (
+            Path("/usr/share/fonts/truetype/croscore/Arimo-Regular.ttf"),
+            Path("/usr/share/fonts/truetype/croscore/Arimo-Bold.ttf"),
+        )
         dynamic_pairs = [
-            # Chromium skips an unavailable literal Helvetica Neue face and
-            # falls through to Arial; mirror that CSS stack order by resolving
-            # the actual Arial-compatible face first.
             (fc_file("Arial"), fc_file("Arial:style=Bold")),
             (fc_file("Helvetica Neue"), fc_file("Helvetica Neue:style=Bold")),
         ]
         static_pairs = [
             (
-                Path("/usr/share/fonts/truetype/croscore/Arimo-Regular.ttf"),
-                Path("/usr/share/fonts/truetype/croscore/Arimo-Bold.ttf"),
+                Path("/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf"),
+                Path("/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf"),
+            ),
+            (
+                Path("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"),
+                Path("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"),
             ),
             (
                 Path("/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"),
@@ -162,7 +167,7 @@ def _register_presentation_fonts():
                 Path("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"),
             ),
         ]
-        for regular_path, bold_path in [*dynamic_pairs, *static_pairs]:
+        for regular_path, bold_path in [arimo_pair, *dynamic_pairs, *static_pairs]:
             if regular_path is None or not regular_path.exists():
                 continue
             pdfmetrics.registerFont(TTFont("PresentationSans", str(regular_path)))

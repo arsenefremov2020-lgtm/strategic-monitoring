@@ -141,6 +141,7 @@ def main():
 
     pdf_images = _pdf_pages(payload, output_dir)
     results = []
+    failures = []
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=True)
@@ -154,20 +155,19 @@ def main():
             deltas = _bbox_delta(browser_bbox, pdf_bbox)
             mae = _blurred_mae(browser_image, pdf_image)
 
-            # Global content envelope: protects vertical centering and overall proportions.
-            assert deltas[0] <= 12, (key, "left", browser_bbox, pdf_bbox)
-            assert deltas[1] <= 24, (key, "top", browser_bbox, pdf_bbox)
-            assert deltas[2] <= 24, (key, "right", browser_bbox, pdf_bbox)
-            assert deltas[3] <= 28, (key, "bottom", browser_bbox, pdf_bbox)
-
-            # Same-color/background geometry plus tolerant text rasterization.
-            assert mae <= 0.075, (key, "global_mae", mae)
+            limits = (12, 24, 24, 28)
+            for side, delta, limit in zip(("left", "top", "right", "bottom"), deltas, limits):
+                if delta > limit:
+                    failures.append((key, side, delta, limit, browser_bbox, pdf_bbox))
+            if mae > 0.075:
+                failures.append((key, "global_mae", mae, 0.075))
 
             region_scores = {}
             for selector, box in regions.items():
                 score = _region_mae(browser_image, pdf_image, box)
                 region_scores[selector] = score
-                assert score <= 0.16, (key, selector, score, box)
+                if score > 0.16:
+                    failures.append((key, selector, score, 0.16, box))
 
             results.append((key, browser_bbox, pdf_bbox, mae, region_scores))
         browser.close()
@@ -177,6 +177,8 @@ def main():
             f"VISUAL {key}: browser_bbox={browser_bbox} pdf_bbox={pdf_bbox} "
             f"mae={mae:.4f} regions={region_scores}"
         )
+    if failures:
+        raise AssertionError(f"visual parity failures: {failures}")
     print("test_presentation_visual: PASS")
 
 

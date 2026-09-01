@@ -13,7 +13,6 @@ _MISSING_TEXT = {"", "—", "–", "-", "н/д", "n/a", "na", "none", "null", "n
 
 
 def safe_number(value: Any) -> float | None:
-    """Normalize a scalar to float without raising on production missing values."""
     if value is None:
         return None
     if isinstance(value, str) and value.strip().lower() in _MISSING_TEXT:
@@ -46,12 +45,7 @@ def safe_text(value: Any) -> str:
 
 
 def safe_dataframe(frame: pd.DataFrame | None) -> pd.DataFrame:
-    """Return a detached production-safe frame; optional/missing values stay missing.
-
-    This layer intentionally does not invent columns or recalculate KPI values. It
-    only converts common textual missing markers to ``pd.NA`` so downstream
-    analytics can use numeric coercion consistently.
-    """
+    """Normalize textual missing markers without inventing analytical values."""
     if frame is None:
         return pd.DataFrame()
     out = frame.copy()
@@ -108,7 +102,6 @@ def build_context(
     product_progress: pd.DataFrame,
     status_counts: pd.DataFrame,
     period_dynamics: pd.DataFrame,
-    yoy_comparison: pd.DataFrame,
     active: pd.DataFrame,
     mio_goal_evaluation: pd.DataFrame | None = None,
     mio_goal_task_evaluation: pd.DataFrame | None = None,
@@ -121,7 +114,6 @@ def build_context(
     product_progress = safe_dataframe(product_progress)
     status_counts = safe_dataframe(status_counts)
     period_dynamics = safe_dataframe(period_dynamics)
-    yoy_comparison = safe_dataframe(yoy_comparison)
     active = safe_dataframe(active)
     mio_goal_evaluation = safe_dataframe(mio_goal_evaluation)
     mio_goal_task_evaluation = safe_dataframe(mio_goal_task_evaluation)
@@ -134,7 +126,6 @@ def build_context(
         "product": product_progress,
         "status": status_counts,
         "dynamics": period_dynamics,
-        "yoy": yoy_comparison,
         "mio_goals": mio_goal_evaluation,
         "mio_goal_tasks": mio_goal_task_evaluation,
         "mio_measures": mio_measure_evaluation,
@@ -143,21 +134,15 @@ def build_context(
     analytical_facts = build_analytical_facts(
         filters=filters, metrics=metrics, goal_progress=goal_progress, task_progress=task_progress,
         department_progress=department_progress, product_progress=product_progress, status_counts=status_counts,
-        period_dynamics=period_dynamics, yoy_comparison=yoy_comparison, active=active,
+        period_dynamics=period_dynamics, active=active,
         mio_goal_evaluation=mio_goal_evaluation, mio_goal_task_evaluation=mio_goal_task_evaluation,
         mio_measure_evaluation=mio_measure_evaluation, mio_financing=mio_financing,
     )
     return AnalyticsContext(
-        filters=dict(filters),
-        metrics=dict(metrics),
-        goal_progress=goal_progress,
-        task_progress=task_progress,
-        department_progress=department_progress,
-        product_progress=product_progress,
-        status_counts=status_counts,
-        period_dynamics=period_dynamics,
-        yoy_comparison=yoy_comparison,
-        active=active,
+        filters=dict(filters), metrics=dict(metrics), goal_progress=goal_progress,
+        task_progress=task_progress, department_progress=department_progress,
+        product_progress=product_progress, status_counts=status_counts,
+        period_dynamics=period_dynamics, active=active,
         signature=build_signature(filters, metrics, frames),
         mio_goal_evaluation=mio_goal_evaluation,
         mio_goal_task_evaluation=mio_goal_task_evaluation,

@@ -74,7 +74,9 @@ class TextPlan:
     scenario_mix: tuple[str, ...] = ()
     complexity: str = "standard"
     block_plans: tuple[BlockPlan, ...] = ()
-    target_paragraphs: tuple[int, int] = (6, 8)
+    # Retained as optional debug metadata for API compatibility.  It is no
+    # longer a generation quota: content selection determines note length.
+    target_paragraphs: tuple[int, int] | None = None
 
     @property
     def scenario_key(self) -> str:
@@ -126,6 +128,12 @@ class GenerationDebug:
     facts_used: list[str] = field(default_factory=list)
     important_findings_used: list[str] = field(default_factory=list)
     important_findings_skipped: list[str] = field(default_factory=list)
+    planned_findings: dict[str, list[str]] = field(default_factory=dict)
+    block_findings: dict[str, list[str]] = field(default_factory=dict)
+    finding_dispositions: dict[str, str] = field(default_factory=dict)
+    finding_disposition_reasons: dict[str, str] = field(default_factory=dict)
+    supporting_findings: list[str] = field(default_factory=list)
+    internal_findings: list[str] = field(default_factory=list)
     word_count: int = 0
     quality_metrics: NoteQualityMetrics | None = None
     validation_warnings: list[str] = field(default_factory=list)
@@ -151,7 +159,6 @@ class AnalyticsContext:
     product_progress: pd.DataFrame
     status_counts: pd.DataFrame
     period_dynamics: pd.DataFrame
-    yoy_comparison: pd.DataFrame
     active: pd.DataFrame
     signature: str
     mio_goal_evaluation: pd.DataFrame = field(default_factory=pd.DataFrame)
@@ -178,11 +185,8 @@ class AnalyticsContext:
                 return 0
         except (TypeError, ValueError):
             return 0
-        try:
-            number = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
-            return 0 if pd.isna(number) else int(number)
-        except (TypeError, ValueError, OverflowError):
-            return 0
+        number = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+        return 0 if pd.isna(number) else int(number)
 
     @property
     def sample_size(self) -> int:

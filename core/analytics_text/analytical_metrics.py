@@ -1,27 +1,20 @@
 from __future__ import annotations
 
-"""Prepared numerical facts for the rule-based Analytics narrative.
+"""Prepared factual registry for the deterministic Analytics narrative.
 
-This module is the only analytics-text layer allowed to create user-facing
-numerical derivatives. Dashboard and MIO values are consumed as prepared shared
-outputs; additional descriptive metrics are calculated here once, before
-signals/findings/composition. Percentage values are stored in percentage form
-(0..100 unless the metric explicitly allows values above 100).
+Only this layer may create user-facing numerical derivatives.  Every number
+available to findings/composition is registered with source, aggregation and,
+where relevant, an explicit observation unit.
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Mapping
 from statistics import pstdev
+from typing import Any, Mapping
 
 import pandas as pd
 
-from .config import DELTA_LANGUAGE_BANDS
-
-
-
 
 class MetricFloat(float):
-    """Numeric fact value bound to one concrete factual metric code."""
     def __new__(cls, value: float, metric_code: str):
         obj = float.__new__(cls, value)
         obj.metric_code = metric_code
@@ -29,7 +22,6 @@ class MetricFloat(float):
 
 
 class MetricInt(int):
-    """Integer fact value bound to one concrete factual metric code."""
     def __new__(cls, value: int, metric_code: str):
         obj = int.__new__(cls, value)
         obj.metric_code = metric_code
@@ -42,16 +34,14 @@ def metric_code_of(value: Any) -> str | None:
 
 
 def bind_metric_value(metric: "FactualMetric") -> int | float:
-    if metric.unit == "count":
-        return MetricInt(int(metric.value), metric.code)
-    return MetricFloat(float(metric.value), metric.code)
+    return MetricInt(int(metric.value), metric.code) if metric.unit == "count" else MetricFloat(float(metric.value), metric.code)
 
 
 @dataclass(frozen=True)
 class FactualMetric:
     code: str
     value: float | int
-    unit: str  # percent | pp | count | number | currency
+    unit: str
     source: str
     aggregation: str
     numerator: float | int | None = None
@@ -81,9 +71,11 @@ class _Builder:
         self.metrics: dict[str, FactualMetric] = {}
         self.structures: dict[str, Any] = {}
 
-    def add(self, code: str, value: Any, *, unit: str, source: str, aggregation: str,
-            numerator: Any = None, denominator: Any = None, dependencies: tuple[str, ...] = (),
-            allow_over_100: bool = False, observation_unit: str | None = None) -> Any:
+    def add(
+        self, code: str, value: Any, *, unit: str, source: str, aggregation: str,
+        numerator: Any = None, denominator: Any = None, dependencies: tuple[str, ...] = (),
+        allow_over_100: bool = False, observation_unit: str | None = None,
+    ) -> Any:
         if value is None or isinstance(value, bool):
             return None
         try:
@@ -95,15 +87,10 @@ class _Builder:
             number = int(value) if unit == "count" else float(value)
         except (TypeError, ValueError, OverflowError):
             return None
-        if unit == "percent" and not allow_over_100 and not (0.0 <= float(number) <= 100.0):
+        if unit == "percent" and not allow_over_100 and not 0.0 <= float(number) <= 100.0:
             raise ValueError(f"Analytical metric {code} outside 0..100%: {number}")
-        if denominator is not None:
-            try:
-                den = float(denominator)
-                if den <= 0:
-                    raise ValueError(f"Analytical metric {code} has non-positive denominator: {denominator}")
-            except (TypeError, ValueError):
-                raise ValueError(f"Analytical metric {code} has invalid denominator: {denominator}")
+        if denominator is not None and float(denominator) <= 0:
+            raise ValueError(f"Analytical metric {code} has non-positive denominator: {denominator}")
         metric = FactualMetric(
             code=code, value=number, unit=unit, source=source, aggregation=aggregation,
             numerator=numerator, denominator=denominator, dependencies=dependencies,
@@ -112,8 +99,10 @@ class _Builder:
         self.metrics[code] = metric
         return bind_metric_value(metric)
 
-    def ratio_pct(self, code: str, numerator: Any, denominator: Any, *, source: str, aggregation: str,
-                  numerator_unit: str, denominator_unit: str, dependencies: tuple[str, ...] = ()) -> float | None:
+    def ratio_pct(
+        self, code: str, numerator: Any, denominator: Any, *, source: str, aggregation: str,
+        numerator_unit: str, denominator_unit: str, dependencies: tuple[str, ...] = (),
+    ) -> float | None:
         if numerator_unit != denominator_unit:
             raise ValueError(f"Incompatible units for {code}: {numerator_unit} / {denominator_unit}")
         try:
@@ -122,10 +111,11 @@ class _Builder:
             return None
         if den <= 0:
             return None
-        value = num / den * 100.0
-        return self.add(code, value, unit="percent", source=source, aggregation=aggregation,
-                        numerator=numerator, denominator=denominator, dependencies=dependencies,
-                        observation_unit=numerator_unit)
+        return self.add(
+            code, num / den * 100.0, unit="percent", source=source, aggregation=aggregation,
+            numerator=numerator, denominator=denominator, dependencies=dependencies,
+            observation_unit=numerator_unit,
+        )
 
     def pp(self, code: str, left: Any, right: Any, *, source: str, aggregation: str,
            dependencies: tuple[str, ...] = ()) -> float | None:
@@ -133,8 +123,7 @@ class _Builder:
             value = float(left) - float(right)
         except (TypeError, ValueError):
             return None
-        return self.add(code, value, unit="pp", source=source, aggregation=aggregation,
-                        dependencies=dependencies)
+        return self.add(code, value, unit="pp", source=source, aggregation=aggregation, dependencies=dependencies)
 
 
 def _safe_number(value: Any) -> float | None:
@@ -142,540 +131,967 @@ def _safe_number(value: Any) -> float | None:
         if value is None or pd.isna(value):
             return None
         return float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
 def _safe_int(value: Any) -> int:
-    try:
-        if value is None or pd.isna(value):
-            return 0
-        return int(value)
-    except (TypeError, ValueError, OverflowError):
-        return 0
+    number = _safe_number(value)
+    return 0 if number is None else int(number)
+
+
+def _numeric(frame: pd.DataFrame, column: str, default: float | None = None) -> pd.Series:
+    if frame is not None and column in frame.columns:
+        return pd.to_numeric(frame[column], errors="coerce")
+    fill = float("nan") if default is None else default
+    return pd.Series(fill, index=getattr(frame, "index", None), dtype=float)
 
 
 def _label(row: pd.Series, kind: str) -> str:
-    def s(v: Any) -> str:
+    def text(v: Any) -> str:
         try:
-            if v is None or pd.isna(v): return ""
-        except (TypeError, ValueError): return ""
+            if v is None or pd.isna(v):
+                return ""
+        except (TypeError, ValueError):
+            return ""
         return str(v).strip()
     if kind == "goal":
-        code=s(row.get("goal_code")); return f"СЦ {code}" if code and not code.upper().startswith("СЦ") else code
+        code = text(row.get("goal_code"))
+        return f"СЦ {code}" if code and not code.upper().startswith("СЦ") else code
     if kind == "task":
-        code=s(row.get("task_code")); name=s(row.get("task_name")); return f"{code} — {name}" if code and name else (code or name)
-    if kind == "department": return s(row.get("department")) or s(row.get("ssp_index"))
-    if kind == "product": return s(row.get("product_type"))
+        code, name = text(row.get("task_code")), text(row.get("task_name"))
+        return f"{code} — {name}" if code and name else (code or name)
+    if kind == "department":
+        return text(row.get("department")) or text(row.get("ssp_index"))
+    if kind == "product":
+        return text(row.get("product_type"))
     return ""
 
 
-def _numeric(frame: pd.DataFrame, col: str, default: float | None = None) -> pd.Series:
-    if col in frame.columns: return pd.to_numeric(frame[col], errors="coerce")
-    fill=float("nan") if default is None else default
-    return pd.Series(fill,index=frame.index,dtype=float)
-
-
-def _prepare_distribution(b: _Builder, frame: pd.DataFrame, kind: str, overall: float | None) -> None:
-    if frame is None or frame.empty or "Виконання" not in frame.columns: return
-    d=frame.copy(); d["_exec"]=_numeric(d,"Виконання"); d=d.dropna(subset=["_exec"])
-    if d.empty: return
-    d["_label"]=[_label(r,kind) for _,r in d.iterrows()]; d=d[d["_label"].astype(bool)].copy()
-    if d.empty: return
-    vals=d["_exec"].astype(float); src=f"analytics.{kind}_progress"
-    best=d.loc[vals.idxmax()]; worst=d.loc[vals.idxmin()]
-    prefix=f"{kind}.distribution"
-    facts={
-        "count": b.add(f"{prefix}.count",len(d),unit="count",source=src,aggregation="entities",observation_unit=kind),
-        "mean": b.add(f"{prefix}.mean",vals.mean(),unit="percent",source=src,aggregation="mean execution"),
-        "median": b.add(f"{prefix}.median",vals.median(),unit="percent",source=src,aggregation="median execution"),
-        "reference": b.add(f"{prefix}.reference",overall if overall is not None else vals.mean(),unit="percent",source="dashboard.execution" if overall is not None else src,aggregation="reference execution"),
-        "best_label":best["_label"],"best_value":b.add(f"{prefix}.best",best["_exec"],unit="percent",source=src,aggregation="maximum execution"),
-        "worst_label":worst["_label"],"worst_value":b.add(f"{prefix}.worst",worst["_exec"],unit="percent",source=src,aggregation="minimum execution"),
-    }
-    facts["gap"]=b.pp(f"{prefix}.gap_pp",facts["best_value"],facts["worst_value"],source=src,aggregation="best minus worst",dependencies=(f"{prefix}.best",f"{prefix}.worst"))
-    ref=float(facts["reference"]); above=int((vals>ref).sum()); below=int((vals<ref).sum()); equal=int(len(vals)-above-below)
-    facts.update({
-        "above_reference":b.add(f"{prefix}.above_reference",above,unit="count",source=src,aggregation="entities above reference",observation_unit=kind),
-        "below_reference":b.add(f"{prefix}.below_reference",below,unit="count",source=src,aggregation="entities below reference",observation_unit=kind),
-        "equal_reference":b.add(f"{prefix}.equal_reference",equal,unit="count",source=src,aggregation="entities equal reference",observation_unit=kind),
-        "top":[(r["_label"],b.add(f"{prefix}.top.{i}.value",r["_exec"],unit="percent",source=src,aggregation=f"rank {i} execution")) for i,(_,r) in enumerate(d.sort_values("_exec",ascending=False).head(3).iterrows(),1)],
-        "bottom":[(r["_label"],b.add(f"{prefix}.bottom.{i}.value",r["_exec"],unit="percent",source=src,aggregation=f"bottom rank {i} execution")) for i,(_,r) in enumerate(d.sort_values("_exec").head(3).iterrows(),1)],
-    })
-    b.structures[prefix]=facts
-    if "Зміна" in d.columns:
-        d["_change"]=_numeric(d,"Зміна"); c=d.dropna(subset=["_change"])
-        if not c.empty:
-            small=float(DELTA_LANGUAGE_BANDS["small"]); stable=c[c["_change"].abs()<small]; improved=c[c["_change"]>=small]; declined=c[c["_change"]<=-small]
-            hi=c.loc[c["_change"].idxmax()]; lo=c.loc[c["_change"].idxmin()]; cp=f"{kind}.change"
-            cf={
-                "count_with_change":b.add(f"{cp}.count",len(c),unit="count",source=src,aggregation="comparable entities",observation_unit=kind),
-                "improved":b.add(f"{cp}.improved_count",len(improved),unit="count",source=src,aggregation="improved entities",observation_unit=kind),
-                "declined":b.add(f"{cp}.declined_count",len(declined),unit="count",source=src,aggregation="declined entities",observation_unit=kind),
-                "stable":b.add(f"{cp}.stable_count",len(stable),unit="count",source=src,aggregation="stable entities",observation_unit=kind),
-                "largest_improvement_label":hi["_label"],"largest_improvement":b.add(f"{cp}.largest_improvement_pp",hi["_change"],unit="pp",source=src,aggregation="maximum change"),
-                "largest_deterioration_label":lo["_label"],"largest_deterioration":b.add(f"{cp}.largest_deterioration_pp",lo["_change"],unit="pp",source=src,aggregation="minimum change"),
-            }
-            cf["improved_share"]=b.ratio_pct(f"{cp}.improved_share_pct",len(improved),len(c),source=src,aggregation="share improved",numerator_unit=kind,denominator_unit=kind)
-            cf["declined_share"]=b.ratio_pct(f"{cp}.declined_share_pct",len(declined),len(c),source=src,aggregation="share declined",numerator_unit=kind,denominator_unit=kind)
-            b.structures[cp]=cf
-
-
-def _prepare_concentration(b:_Builder, frame:pd.DataFrame, kind:str, count_col:str, topic:str, active:pd.DataFrame)->None:
-    key=f"{kind}.{topic}"; src=f"analytics.{kind}_progress.{count_col}"
-    if frame is None or frame.empty or count_col not in frame.columns:return
-    d=frame.copy(); counts=pd.to_numeric(d[count_col],errors="coerce").fillna(0); total=int(counts.sum())
-    if total<=0:
-        b.structures[key]={"total":b.add(f"{key}.total",0,unit="count",source=src,aggregation="total",observation_unit="measure-period")};return
-    d["_count"]=counts.astype(int); d["_label"]=[_label(r,kind) for _,r in d.iterrows()]; ranked=d.sort_values("_count",ascending=False); top=ranked.iloc[0]; top3=ranked.head(3); top3_count=int(top3["_count"].sum()); affected=int((d["_count"]>0).sum())
-    f={
-      "total":b.add(f"{key}.total",total,unit="count",source=src,aggregation="total",observation_unit="measure-period"),
-      "affected_entities":b.add(f"{key}.affected_entities",affected,unit="count",source=src,aggregation="affected entities",observation_unit=kind),
-      "entity_count":b.add(f"{key}.entity_count",len(d),unit="count",source=src,aggregation="entities",observation_unit=kind),
-      "top_label":top["_label"],"top_count":b.add(f"{key}.top_count",int(top["_count"]),unit="count",source=src,aggregation="top count",observation_unit="measure-period"),
-      "top3_count":b.add(f"{key}.top3_count",top3_count,unit="count",source=src,aggregation="top3 count",observation_unit="measure-period"),
-      "top3":[(r["_label"],int(r["_count"])) for _,r in top3.iterrows() if int(r["_count"])>0],
-    }
-    f["top_share"]=b.ratio_pct(f"{key}.top_share_pct",f["top_count"],f["total"],source=src,aggregation="top1 concentration",numerator_unit="measure-period",denominator_unit="measure-period")
-    f["top3_share"]=b.ratio_pct(f"{key}.top3_share_pct",f["top3_count"],f["total"],source=src,aggregation="top3 concentration",numerator_unit="measure-period",denominator_unit="measure-period")
-    portfolios=None
-    if "Унікальних_заходів" in d.columns: portfolios=pd.to_numeric(d["Унікальних_заходів"],errors="coerce").fillna(0)
-    elif "portfolio_measure_count" in d.columns: portfolios=pd.to_numeric(d["portfolio_measure_count"],errors="coerce").fillna(0)
-    if portfolios is not None:
-        idx=top.name; portfolio=int(portfolios.loc[idx]) if idx in portfolios.index else 0; total_portfolio=int(portfolios.sum())
-        f["top_portfolio_size"]=b.add(f"{key}.top_portfolio_size",portfolio,unit="count",source=f"analytics.{kind}_portfolio",aggregation="top portfolio size",observation_unit="unique-measure")
-        # Never divide measure-period problem/missing rows by a unique-measure portfolio.
-        # If row-level canonical data are available, prepare the internal rate from
-        # compatible measure-period numerator and denominator instead.
-        f["top_internal_rate"] = None
-        dim_col = {"goal": "goal_code", "task": "task_code", "department": "department"}.get(kind)
-        flag_col = "is_problem_status" if topic == "problems" else "missing_required_submission"
-        if active is not None and not active.empty and dim_col in active.columns and flag_col in active.columns:
-            raw_label = str(top["_label"] or "").strip()
-            lookup_label = raw_label[3:].strip() if kind == "goal" and raw_label.startswith("СЦ ") else raw_label
-            part = active[active[dim_col].astype(str).eq(lookup_label)]
-            denominator_rows = int(len(part))
-            numerator_rows = int(part[flag_col].fillna(False).astype(bool).sum()) if denominator_rows else 0
-            f["top_internal_row_count"] = b.add(f"{key}.top_internal_row_count", numerator_rows, unit="count", source=f"analytics.active.{flag_col}", aggregation="flagged rows in top entity", observation_unit="measure-period")
-            f["top_internal_row_denominator"] = b.add(f"{key}.top_internal_row_denominator", denominator_rows, unit="count", source="analytics.active", aggregation="rows in top entity", observation_unit="measure-period")
-            if denominator_rows > 0:
-                f["top_internal_rate"] = b.ratio_pct(f"{key}.top_internal_rate_pct", numerator_rows, denominator_rows, source=f"analytics.active.{flag_col}", aggregation="internal flagged-row rate", numerator_unit="measure-period", denominator_unit="measure-period")
-        if total_portfolio>0:
-            f["top_portfolio_share"]=b.ratio_pct(f"{key}.top_portfolio_share_pct",portfolio,total_portfolio,source=f"analytics.{kind}_portfolio",aggregation="portfolio weight",numerator_unit="unique-measure",denominator_unit="unique-measure")
-            if f["top_share"] is not None:
-                f["concentration_excess_pp"]=b.pp(f"{key}.concentration_excess_pp",f["top_share"],f["top_portfolio_share"],source="analytics.derived",aggregation="concentration minus portfolio weight",dependencies=(f"{key}.top_share_pct",f"{key}.top_portfolio_share_pct"))
-    b.structures[key]=f
-
-
-def _prepare_trajectory(b:_Builder, period:pd.DataFrame)->None:
-    if period is None or period.empty or "Виконання" not in period.columns:return
-    d=period.copy(); qmap={"I":1,"II":2,"III":3,"IV":4,"1":1,"2":2,"3":3,"4":4}; d["_year"]=pd.to_numeric(d.get("report_year"),errors="coerce"); d["_q"]=d.get("report_quarter",pd.Series(index=d.index,dtype=object)).astype(str).map(qmap); d=d.sort_values(["_year","_q"],na_position="last"); d["_exec"]=_numeric(d,"Виконання"); d=d.dropna(subset=["_exec"])
-    if d.empty:return
-    periods=[str(x).strip() for x in d.get("Період",pd.Series(range(len(d)))).tolist()]; raw_vals=[float(x) for x in d["_exec"]]
-    vals=[b.add(f"trajectory.period.{i}.execution", value, unit="percent", source="dashboard.period_dynamics", aggregation=f"period {i} execution") for i,value in enumerate(raw_vals)]
-    f={"period_count":b.add("trajectory.period_count",len(vals),unit="count",source="dashboard.period_dynamics",aggregation="evaluated periods",observation_unit="period"),"periods":periods,"values":vals,"first_period":periods[0],"last_period":periods[-1]}
-    f["first"]=b.add("trajectory.first_execution",vals[0],unit="percent",source="dashboard.period_dynamics",aggregation="first period execution"); f["last"]=b.add("trajectory.last_execution",vals[-1],unit="percent",source="dashboard.period_dynamics",aggregation="last period execution")
-    if len(vals)>=2:
-        deltas=[]
-        for i in range(1,len(vals)):
-            delta=b.pp(f"trajectory.step.{i}.delta_pp",vals[i],vals[i-1],source="dashboard.period_dynamics",aggregation="period over period delta"); deltas.append(delta)
-        f["deltas"]=deltas; f["cumulative_delta"]=b.pp("trajectory.cumulative_delta_pp",vals[-1],vals[0],source="dashboard.period_dynamics",aggregation="last minus first")
-        max_up=max(deltas); max_down=min(deltas); f["max_increase"]=max_up; f["max_decrease"]=max_down; f["max_increase_period"]=periods[deltas.index(max_up)+1]; f["max_decrease_period"]=periods[deltas.index(max_down)+1]
-        small=float(DELTA_LANGUAGE_BANDS["small"])
-        f["positive_steps"]=b.add("trajectory.positive_step_count",sum(x>=small for x in deltas),unit="count",source="analytics.derived.trajectory",aggregation="positive period changes",observation_unit="period-transition")
-        f["negative_steps"]=b.add("trajectory.negative_step_count",sum(x<=-small for x in deltas),unit="count",source="analytics.derived.trajectory",aggregation="negative period changes",observation_unit="period-transition")
-        f["flat_steps"]=b.add("trajectory.flat_step_count",sum(abs(x)<small for x in deltas),unit="count",source="analytics.derived.trajectory",aggregation="near-flat period changes",observation_unit="period-transition")
-        if len(deltas)>=2: f["previous_delta"]=deltas[-2]; f["latest_delta"]=deltas[-1]
-        if len(vals)>=3:
-            f["volatility_stddev"]=b.add("trajectory.volatility_stddev_pp",pstdev(vals),unit="pp",source="analytics.derived.trajectory",aggregation="population stddev of period execution",dependencies=tuple(f"trajectory.step.{i}.delta_pp" for i in range(1,len(vals))))
-    cov=_numeric(d,"Покриття_%")
-    if cov.notna().any():
-        cv=[None if pd.isna(x) else b.add(f"trajectory.period.{i}.coverage",float(x),unit="percent",source="dashboard.period_dynamics",aggregation=f"period {i} coverage") for i,x in enumerate(cov.tolist())]; f["coverage_values"]=cv
-        coverage_deltas=[]
-        for i in range(1,len(cv)):
-            if cv[i] is not None and cv[i-1] is not None:
-                coverage_deltas.append(b.pp(f"trajectory.coverage_step.{i}.delta_pp",cv[i],cv[i-1],source="dashboard.period_dynamics",aggregation="coverage period over period delta"))
-            else:
-                coverage_deltas.append(None)
-        f["coverage_deltas"]=coverage_deltas
-        if cv[0] is not None and cv[-1] is not None:
-            f["coverage_first"]=b.add("trajectory.coverage_first",cv[0],unit="percent",source="dashboard.period_dynamics",aggregation="first coverage"); f["coverage_last"]=b.add("trajectory.coverage_last",cv[-1],unit="percent",source="dashboard.period_dynamics",aggregation="last coverage"); f["coverage_cumulative_delta"]=b.pp("trajectory.coverage_cumulative_delta_pp",cv[-1],cv[0],source="dashboard.period_dynamics",aggregation="coverage last minus first")
-    b.structures["trajectory"]=f
-
-
-def _prepare_status(b:_Builder,status_counts:pd.DataFrame,active:pd.DataFrame)->None:
-    if status_counts is None or status_counts.empty or not {"status","Кількість"}.issubset(status_counts.columns):return
-    raw_rows=[(str(r["status"]),_safe_int(r["Кількість"])) for _,r in status_counts.iterrows()]; total=sum(v for _,v in raw_rows)
-    rows=[(label,b.add(f"status.count.{i}",count,unit="count",source="dashboard.status_counts",aggregation=f"status {label} count",observation_unit="measure-period")) for i,(label,count) in enumerate(raw_rows)]
-    if total<=0:return
-    ranked=sorted(rows,key=lambda x:x[1],reverse=True); shares={}
-    for label,count in rows: shares[label]=b.ratio_pct(f"status.share.{label}",count,total,source="dashboard.status_counts",aggregation="status share",numerator_unit="measure-period",denominator_unit="measure-period")
-    f={"total":b.add("status.total",total,unit="count",source="dashboard.status_counts",aggregation="total statuses",observation_unit="measure-period"),"ranked":ranked,"shares":shares,"dominant_label":ranked[0][0],"dominant_count":ranked[0][1],"dominant_share":shares.get(ranked[0][0])}
-    # period comparison shares
-    if active is not None and not active.empty and {"report_year","report_quarter","status"}.issubset(active.columns):
-        d=active.copy(); qmap={"I":1,"II":2,"III":3,"IV":4,"1":1,"2":2,"3":3,"4":4}; d["_year"]=pd.to_numeric(d["report_year"],errors="coerce"); d["_q"]=d["report_quarter"].astype(str).map(qmap); d=d.dropna(subset=["_year","_q"]); periods=sorted({(int(y),int(q)) for y,q in zip(d["_year"],d["_q"])})
-        if len(periods)>=2:
-            inv={1:"I",2:"II",3:"III",4:"IV"}; pk,lk=periods[-2],periods[-1]
-            def one(key):
-                y,q=key; part=d[(d["_year"]==y)&(d["_q"]==q)]; counts={str(k):int(v) for k,v in part["status"].fillna("н/д").astype(str).value_counts().to_dict().items()}; n=len(part); sh={}
-                for lab,c in counts.items(): sh[lab]=b.ratio_pct(f"status.period.{y}.{q}.{lab}.share_pct",c,n,source="analytics.active.status",aggregation="period status share",numerator_unit="measure-period",denominator_unit="measure-period") if n else None
-                total_metric=b.add(f"status.period.{y}.{q}.total",n,unit="count",source="analytics.active.status",aggregation="period status total",observation_unit="measure-period")
-                return total_metric,counts,sh
-            pn,pc,ps=one(pk); ln,lc,ls=one(lk); changes={};
-            for lab in sorted(set(ps)|set(ls)):
-                changes[lab]=b.pp(f"status.period_change.{lab}.pp",ls.get(lab,0.0) or 0.0,ps.get(lab,0.0) or 0.0,source="analytics.active.status",aggregation="latest share minus previous")
-            f["period_comparison"]={"previous_period":f"{pk[0]} {inv.get(pk[1],pk[1])}","latest_period":f"{lk[0]} {inv.get(lk[1],lk[1])}","previous_total":pn,"latest_total":ln,"previous_counts":pc,"latest_counts":lc,"previous_shares":ps,"latest_shares":ls,"share_changes_pp":changes}
-    b.structures["status"]=f
-
-
-def _prepare_product(b:_Builder,frame:pd.DataFrame)->None:
-    if frame is None or frame.empty:return
-    d=frame.copy(); d["_portfolio"]=_numeric(d,"Унікальних_заходів",0).fillna(0); d["_exec"]=_numeric(d,"Виконання"); d["_problems"]=_numeric(d,"Проблемних",0).fillna(0); d["_missing"]=_numeric(d,"Без_даних",0).fillna(0); ranked=d.sort_values("_portfolio",ascending=False); top=ranked.iloc[0]; total_size=int(d["_portfolio"].sum()); problem_total=int(d["_problems"].sum()); missing_total=int(d["_missing"].sum()); f={"count":b.add("product.count",len(d),unit="count",source="dashboard.product_progress",aggregation="product types",observation_unit="product"),"largest_label":_label(top,"product"),"largest_size":b.add("product.largest_size",int(top["_portfolio"]),unit="count",source="dashboard.product_progress",aggregation="largest product portfolio size",observation_unit="unique-measure"),"total_size":b.add("product.total_size",total_size,unit="count",source="dashboard.product_progress",aggregation="total product portfolio size",observation_unit="unique-measure"),"problem_total":b.add("product.problem_total",problem_total,unit="count",source="dashboard.product_progress",aggregation="product problem rows",observation_unit="measure-period"),"missing_total":b.add("product.missing_total",missing_total,unit="count",source="dashboard.product_progress",aggregation="product missing rows",observation_unit="measure-period")}
-    if total_size: f["largest_share"]=b.ratio_pct("product.largest_share_pct",f["largest_size"],total_size,source="dashboard.product_progress",aggregation="largest product portfolio share",numerator_unit="unique-measure",denominator_unit="unique-measure")
-    valid=d.dropna(subset=["_exec"])
-    if len(valid)>=2:
-        best=valid.loc[valid["_exec"].idxmax()]; worst=valid.loc[valid["_exec"].idxmin()]; f.update({"best_label":_label(best,"product"),"best_value":b.add("product.best_execution",best["_exec"],unit="percent",source="dashboard.product_progress",aggregation="maximum execution"),"worst_label":_label(worst,"product"),"worst_value":b.add("product.worst_execution",worst["_exec"],unit="percent",source="dashboard.product_progress",aggregation="minimum execution")}); f["gap"]=b.pp("product.execution_gap_pp",f["best_value"],f["worst_value"],source="dashboard.product_progress",aggregation="best minus worst")
-    if problem_total>0:
-        r=d.loc[d["_problems"].idxmax()]; c=int(r["_problems"]); f.update({"top_problem_label":_label(r,"product"),"top_problem_count":b.add("product.top_problem_count",c,unit="count",source="dashboard.product_progress",aggregation="top product problem rows",observation_unit="measure-period"),"top_problem_share":b.ratio_pct("product.top_problem_share_pct",c,problem_total,source="dashboard.product_progress",aggregation="problem concentration",numerator_unit="measure-period",denominator_unit="measure-period")})
-    if missing_total>0:
-        r=d.loc[d["_missing"].idxmax()]; c=int(r["_missing"]); f.update({"top_missing_label":_label(r,"product"),"top_missing_count":b.add("product.top_missing_count",c,unit="count",source="dashboard.product_progress",aggregation="top product missing rows",observation_unit="measure-period"),"top_missing_share":b.ratio_pct("product.top_missing_share_pct",c,missing_total,source="dashboard.product_progress",aggregation="missing concentration",numerator_unit="measure-period",denominator_unit="measure-period")})
-    b.structures["product"]=f
-
-
-def _prepare_mio(b:_Builder,goals:pd.DataFrame,tasks:pd.DataFrame,measures:pd.DataFrame,fin:pd.DataFrame,year:int,task_progress:pd.DataFrame)->None:
-    int_col,meas_col,task_col,prog_col=(f"Інтеграл {year}",f"Заходи {year}",f"Завдання {year}",f"Прогрес {year}")
-    if goals is not None and not goals.empty and int_col in goals.columns:
-        d=goals.copy()
-        for c in (int_col,meas_col,task_col,prog_col):
-            if c in d.columns:d[c]=pd.to_numeric(d[c],errors="coerce")
-        v=d.dropna(subset=[int_col])
-        if not v.empty:
-            best=v.sort_values(int_col,ascending=False).iloc[0]; worst=v.sort_values(int_col).iloc[0]
-            f={
-                "year":year,
-                "goals_count":b.add("mio.goal_count",len(v),unit="count",source="mio_shared.goal_evaluation",aggregation="evaluated goals",observation_unit="goal"),
-                "average_integral":b.add("mio.average_integral",v[int_col].mean(),unit="percent",source="mio_shared.goal_evaluation",aggregation="mean goal integral",allow_over_100=True),
-                "best_code":str(best.get("Код","")),"best_name":str(best.get("Ціль","")),
-                "best_integral":b.add("mio.best_integral",best[int_col],unit="percent",source="mio_shared.goal_evaluation",aggregation="maximum integral",allow_over_100=True),
-                "worst_code":str(worst.get("Код","")),"worst_name":str(worst.get("Ціль","")),
-                "worst_integral":b.add("mio.worst_integral",worst[int_col],unit="percent",source="mio_shared.goal_evaluation",aggregation="minimum integral",allow_over_100=True),
-            }
-            f["gap"]=b.pp("mio.integral_gap_pp",f["best_integral"],f["worst_integral"],source="mio_shared.goal_evaluation",aggregation="best minus worst")
-            for c,key,code in ((meas_col,"average_measures","mio.average_measures"),(task_col,"average_tasks","mio.average_tasks"),(prog_col,"average_progress","mio.average_progress")):
-                if c in v.columns and v[c].notna().any():f[key]=b.add(code,v[c].dropna().mean(),unit="percent",source="mio_shared.goal_evaluation",aggregation="mean component",allow_over_100=True)
-            div=[]
-            for i,(_,r) in enumerate(v.iterrows()):
-                m=_safe_number(r.get(meas_col)); integ=_safe_number(r.get(int_col)); prog=_safe_number(r.get(prog_col))
-                if m is not None and integ is not None:
-                    m_metric=b.add(f"mio.goal.{i}.measure_execution_pct",m,unit="percent",source="mio_shared.goal_evaluation",aggregation="goal measure component",allow_over_100=True)
-                    integ_metric=b.add(f"mio.goal.{i}.integral_pct",integ,unit="percent",source="mio_shared.goal_evaluation",aggregation="goal integral",allow_over_100=True)
-                    prog_metric=b.add(f"mio.goal.{i}.progress_pct",prog,unit="percent",source="mio_shared.goal_evaluation",aggregation="goal strategic progress",allow_over_100=True) if prog is not None else None
-                    gap=b.pp(f"mio.goal.{i}.measure_integral_gap_pp",m_metric,integ_metric,source="mio_shared.goal_evaluation",aggregation="measure execution minus integral")
-                    if abs(float(gap))>=10:div.append({"code":str(r.get("Код","")),"name":str(r.get("Ціль","")),"measure_execution":m_metric,"integral":integ_metric,"gap":gap,"progress":prog_metric})
-            f["divergences"]=sorted(div,key=lambda x:abs(float(x["gap"])),reverse=True)[:4]; b.structures["mio.goals"]=f
-    score_col=f"Оцінка {year}"
-    if tasks is not None and not tasks.empty and {"Рівень","Код",score_col}.issubset(tasks.columns):
-        t=tasks[tasks["Рівень"].astype(str).eq("task")].copy(); t[score_col]=pd.to_numeric(t[score_col],errors="coerce"); scores=t.groupby(t["Код"].astype(str))[score_col].mean().dropna()
-        if not scores.empty:
-            f={
-                "year":year,
-                "tasks_count":b.add("mio.task_count",len(scores),unit="count",source="mio_shared.goal_task_evaluation",aggregation="evaluated tasks",observation_unit="task"),
-                "average_task_indicator_progress":b.add("mio.task.average_indicator_progress",scores.mean(),unit="percent",source="mio_shared.goal_task_evaluation",aggregation="mean task indicator progress",allow_over_100=True),
-                "best_task":str(scores.idxmax()),"best_task_progress":b.add("mio.task.best_progress",scores.max(),unit="percent",source="mio_shared.goal_task_evaluation",aggregation="maximum task progress",allow_over_100=True),
-                "worst_task":str(scores.idxmin()),"worst_task_progress":b.add("mio.task.worst_progress",scores.min(),unit="percent",source="mio_shared.goal_task_evaluation",aggregation="minimum task progress",allow_over_100=True),
-            }; f["gap"]=b.pp("mio.task.progress_gap_pp",f["best_task_progress"],f["worst_task_progress"],source="mio_shared.goal_task_evaluation",aggregation="best minus worst")
-            div=[]
-            if task_progress is not None and not task_progress.empty and {"task_code","Виконання"}.issubset(task_progress.columns):
-                tp=task_progress.copy();tp["_code"]=tp["task_code"].astype(str);tp["_exec"]=pd.to_numeric(tp["Виконання"],errors="coerce"); execs=tp.dropna(subset=["_exec"]).groupby("_code")["_exec"].mean()
-                for i,(code,progress) in enumerate(scores.items()):
-                    if code in execs.index:
-                        ex_metric=b.add(f"mio.task.{i}.execution_pct",float(execs.loc[code]),unit="percent",source="dashboard.task_progress",aggregation="task execution")
-                        prog_metric=b.add(f"mio.task.{i}.indicator_progress_pct",float(progress),unit="percent",source="mio_shared.goal_task_evaluation",aggregation="task indicator progress",allow_over_100=True)
-                        gap=b.pp(f"mio.task.{i}.execution_indicator_gap_pp",ex_metric,prog_metric,source="mio_shared+dashboard.task_progress",aggregation="task execution minus indicator progress")
-                        if abs(float(gap))>=10:div.append({"code":code,"execution":ex_metric,"indicator_progress":prog_metric,"gap":gap})
-            f["divergences"]=sorted(div,key=lambda x:abs(float(x["gap"])),reverse=True)[:4];b.structures["mio.tasks"]=f
-    if measures is not None and not measures.empty and "Факт/План, %" in measures.columns:
-        ratios=pd.to_numeric(measures["Факт/План, %"],errors="coerce").dropna()
-        if not ratios.empty:b.structures["mio.measures"]={"year":year,"measures_count":b.add("mio.measure_count",len(measures),unit="count",source="mio_shared.measure_evaluation",aggregation="measure rows",observation_unit="measure"),"evaluated_measures":b.add("mio.measure_evaluated_count",len(ratios),unit="count",source="mio_shared.measure_evaluation",aggregation="evaluated measures",observation_unit="measure"),"average_fact_plan":b.add("mio.measure.average_fact_plan",ratios.mean(),unit="percent",source="mio_shared.measure_evaluation",aggregation="mean fact/plan",allow_over_100=True),"median_fact_plan":b.add("mio.measure.median_fact_plan",ratios.median(),unit="percent",source="mio_shared.measure_evaluation",aggregation="median fact/plan",allow_over_100=True)}
-    if fin is not None and not fin.empty:
-        d=fin.copy()
-        for c in ("% виконання","Стан виконання заходу, %","План, млрд грн","Факт, млрд грн"):
-            if c in d.columns:d[c]=pd.to_numeric(d[c],errors="coerce")
-        f={"rows":b.add("mio.fin.rows",len(d),unit="count",source="mio_shared.financing",aggregation="financing rows",observation_unit="measure")}
-        if "План, млрд грн" in d.columns and d["План, млрд грн"].notna().any():f["plan_total"]=b.add("mio.fin.plan_total",d["План, млрд грн"].sum(),unit="currency",source="mio_shared.financing",aggregation="sum plan")
-        if "Факт, млрд грн" in d.columns and d["Факт, млрд грн"].notna().any():f["fact_total"]=b.add("mio.fin.fact_total",d["Факт, млрд грн"].sum(),unit="currency",source="mio_shared.financing",aggregation="sum fact")
-        if {"% виконання","Стан виконання заходу, %"}.issubset(d.columns):
-            p=d.dropna(subset=["% виконання","Стан виконання заходу, %"]).copy()
-            if not p.empty:
-                f["paired_count"]=b.add("mio.fin.paired_count",len(p),unit="count",source="mio_shared.financing",aggregation="paired financial/physical rows",observation_unit="measure")
-                f["avg_financial_execution"]=b.add("mio.fin.avg_financial_execution",p["% виконання"].mean(),unit="percent",source="mio_shared.financing",aggregation="mean financial execution",allow_over_100=True)
-                f["avg_physical_execution"]=b.add("mio.fin.avg_physical_execution",p["Стан виконання заходу, %"].mean(),unit="percent",source="mio_shared.financing",aggregation="mean physical execution",allow_over_100=True)
-                gaps=[]
-                for i,(_,r) in enumerate(p.iterrows()):
-                    fin_metric=b.add(f"mio.fin.row.{i}.financial_execution_pct",r["% виконання"],unit="percent",source="mio_shared.financing",aggregation="row financial execution",allow_over_100=True)
-                    phys_metric=b.add(f"mio.fin.row.{i}.physical_execution_pct",r["Стан виконання заходу, %"],unit="percent",source="mio_shared.financing",aggregation="row physical execution",allow_over_100=True)
-                    g=b.pp(f"mio.fin.row.{i}.gap_pp",fin_metric,phys_metric,source="mio_shared.financing",aggregation="financial minus physical");gaps.append((abs(float(g)),r,g,fin_metric,phys_metric))
-                top=[]
-                for _,r,g,fin_metric,phys_metric in sorted(gaps,key=lambda x:x[0],reverse=True)[:4]:
-                    item={k:r.get(k) for k in ("Захід","Назва заходу") if k in p.columns}
-                    item.update({"% виконання":fin_metric,"Стан виконання заходу, %":phys_metric,"_gap":g});top.append(item)
-                f["largest_gaps"]=top
-        b.structures["mio.financing"]=f
-
-
-
-def _prepare_yoy(b: _Builder, frame: pd.DataFrame) -> None:
-    if frame is None or frame.empty:
-        return
-    pairs = [str(x) for x in frame["Період порівняння"].dropna().drop_duplicates().tolist()] if "Період порівняння" in frame.columns else [""]
-    comparisons: list[dict[str, Any]] = []
-    for pair_index, pair in enumerate(pairs):
-        for year_token in __import__("re").findall(r"\b20\d{2}\b", pair):
-            year_value = int(year_token)
-            if f"scope.year.{year_value}" not in b.metrics:
-                b.add(f"scope.year.{year_value}", year_value, unit="number", source="dashboard.yoy_comparison.Період порівняння", aggregation="comparison year")
-        data = frame[frame["Період порівняння"].astype(str).eq(pair)].copy() if "Період порівняння" in frame.columns else frame.copy()
-        metrics: dict[str, dict[str, Any]] = {}
-        for row_index, (_, row) in enumerate(data.iterrows()):
-            label = str(row.get("Показник") or "").strip()
-            if not label:
-                continue
-            prev = _safe_number(row.get("Попередній рік")); cur = _safe_number(row.get("Поточний рік")); change = _safe_number(row.get("Зміна"))
-            base = f"yoy.pair{pair_index}.{row_index}"
-            previous = b.add(f"{base}.previous", prev, unit="percent" if "%" in str(row.get("Одиниця") or "") or "викон" in label.lower() or "покрит" in label.lower() else "number", source="dashboard.yoy_comparison", aggregation=f"{label} previous", allow_over_100=(prev is not None and prev > 100)) if prev is not None else None
-            current = b.add(f"{base}.current", cur, unit="percent" if "%" in str(row.get("Одиниця") or "") or "викон" in label.lower() or "покрит" in label.lower() else "number", source="dashboard.yoy_comparison", aggregation=f"{label} current", allow_over_100=(cur is not None and cur > 100)) if cur is not None else None
-            # The page already supplies YoY change. Register it; do not recompute.
-            unit_text = str(row.get("Одиниця") or "").strip()
-            change_unit = "pp" if "в.п" in unit_text.lower() or "викон" in label.lower() or "покрит" in label.lower() else "number"
-            change_value = b.add(f"{base}.change", change, unit=change_unit, source="dashboard.yoy_comparison", aggregation=f"{label} change") if change is not None else None
-            metrics[label] = {"previous": previous, "current": current, "change": change_value, "unit": unit_text}
-        comparisons.append({"comparison": pair, "metrics": metrics})
-    if not comparisons:
-        return
-    execution_changes = [c["metrics"].get("Рівень виконання СП", {}).get("change") for c in comparisons]
-    execution_changes = [x for x in execution_changes if x is not None]
-    coverage_changes = [c["metrics"].get("Покриття моніторингом", {}).get("change") for c in comparisons]
-    coverage_changes = [x for x in coverage_changes if x is not None]
-    f = {"comparison": comparisons[-1]["comparison"], "metrics": comparisons[-1]["metrics"], "comparisons": comparisons,
-         "pair_count": b.add("yoy.pair_count", len(comparisons), unit="count", source="dashboard.yoy_comparison", aggregation="comparison intervals", observation_unit="year-transition"),
-         "execution_changes": execution_changes, "coverage_changes": coverage_changes}
-    if execution_changes:
-        f["execution_positive_count"] = b.add("yoy.execution_positive_count", sum(x > 0 for x in execution_changes), unit="count", source="dashboard.yoy_comparison", aggregation="positive YoY execution transitions", observation_unit="year-transition")
-        f["execution_negative_count"] = b.add("yoy.execution_negative_count", sum(x < 0 for x in execution_changes), unit="count", source="dashboard.yoy_comparison", aggregation="negative YoY execution transitions", observation_unit="year-transition")
-    if coverage_changes:
-        f["coverage_positive_count"] = b.add("yoy.coverage_positive_count", sum(x > 0 for x in coverage_changes), unit="count", source="dashboard.yoy_comparison", aggregation="positive coverage transitions", observation_unit="year-transition")
-        f["coverage_negative_count"] = b.add("yoy.coverage_negative_count", sum(x < 0 for x in coverage_changes), unit="count", source="dashboard.yoy_comparison", aggregation="negative coverage transitions", observation_unit="year-transition")
-    b.structures["yoy"] = f
-
-
-def _prepare_drilldowns(b: _Builder, goal_progress: pd.DataFrame, department_progress: pd.DataFrame, active: pd.DataFrame, overall: float | None) -> None:
-    # Goal focus selection is an internal ranking; only the resulting public facts are registered.
-    if goal_progress is not None and not goal_progress.empty and "goal_code" in goal_progress.columns and active is not None and not active.empty and {"goal_code", "task_code"}.issubset(active.columns):
-        gp = goal_progress.copy(); gp["_exec"] = _numeric(gp, "Виконання"); gp["_problem"] = _numeric(gp, "Проблемних", 0).fillna(0)
-        valid = gp[gp["_exec"].notna()].copy()
-        if not valid.empty:
-            valid["_rank"] = (100 - valid["_exec"].clip(0, 100)) + valid["_problem"] * 2
-            focus = valid.sort_values("_rank", ascending=False).iloc[0]; goal_code = str(focus.get("goal_code") or "").strip()
-            subset = active[active["goal_code"].astype(str).eq(goal_code)].copy()
-            if goal_code and not subset.empty:
-                problem = subset.get("is_problem_status", pd.Series(False, index=subset.index)).fillna(False).astype(bool)
-                missing = subset.get("missing_required_submission", pd.Series(False, index=subset.index)).fillna(False).astype(bool)
-                task_name_map = subset.groupby(subset["task_code"].astype(str))["task_name"].first().to_dict() if "task_name" in subset.columns else {}
-                rows=[]
-                for task, group in subset.groupby(subset["task_code"].astype(str)):
-                    ix=group.index; rows.append({"task":task,"name":str(task_name_map.get(task) or "").strip(),"problems":int(problem.loc[ix].sum()),"missing":int(missing.loc[ix].sum())})
-                table=pd.DataFrame(rows)
-                if not table.empty:
-                    table["attention"] = table["problems"] + table["missing"]; ranked=table.sort_values(["attention","problems","missing"],ascending=False); total=int(table["attention"].sum())
-                    if total>0:
-                        top2=int(ranked.head(2)["attention"].sum()); f={"goal_label":f"СЦ {goal_code}","goal_execution":b.add("drilldown.goal.execution",focus.get("Виконання"),unit="percent",source="dashboard.goal_progress",aggregation="focused goal execution"),"task_count":b.add("drilldown.goal.task_count",len(table),unit="count",source="analytics.active",aggregation="tasks in focused goal",observation_unit="task"),"total_attention_records":b.add("drilldown.goal.total_attention",total,unit="count",source="analytics.active",aggregation="problem + missing rows",observation_unit="measure-period"),"top2_attention":b.add("drilldown.goal.top2_attention",top2,unit="count",source="analytics.active",aggregation="top2 attention rows",observation_unit="measure-period"),"top_tasks":[(f"{r['task']} — {r['name']}" if r['name'] else r['task'],int(r['problems']),int(r['missing'])) for _,r in ranked.head(3).iterrows()]}
-                        f["top2_attention_share"] = b.ratio_pct("drilldown.goal.top2_attention_share_pct", top2, total, source="analytics.active", aggregation="top2 share of problem+missing rows", numerator_unit="measure-period", denominator_unit="measure-period")
-                        b.structures["drilldown.goal"] = f
-    if department_progress is not None and not department_progress.empty and active is not None and not active.empty and "department" in active.columns:
-        dp=department_progress.copy(); dp["_exec"]=_numeric(dp,"Виконання"); dp["_contrib"]=_numeric(dp,"underperformance_contribution_pct",0).fillna(0); dp["_weight"]=_numeric(dp,"portfolio_weight_pct",0).fillna(0); dp["_problem"]=_numeric(dp,"Проблемних",0).fillna(0); valid=dp[dp["_exec"].notna()].copy()
-        if not valid.empty:
-            valid["_priority"]=valid["_contrib"]*1.5+valid["_weight"]*.35+valid["_problem"]*1.5+(100-valid["_exec"].clip(0,100))*.25
-            focus=valid.sort_values("_priority",ascending=False).iloc[0]; department=_label(focus,"department")
-            has_issue=bool(department) and (float(focus.get("Проблемних") or 0)>0 or float(focus.get("Без_даних") or 0)>0 or float(focus.get("underperformance_contribution_pct") or 0)>0 or (overall is not None and float(focus.get("Виконання")) < overall-2))
-            subset=active[active["department"].astype(str).eq(department)].copy() if has_issue else pd.DataFrame()
-            if not subset.empty:
-                problem=subset.get("is_problem_status",pd.Series(False,index=subset.index)).fillna(False).astype(bool); missing=subset.get("missing_required_submission",pd.Series(False,index=subset.index)).fillna(False).astype(bool); rows=[]
-                if "task_code" in subset.columns:
-                    for task,group in subset.groupby(subset["task_code"].astype(str)):
-                        ix=group.index;rows.append({"task":task,"problems":int(problem.loc[ix].sum()),"missing":int(missing.loc[ix].sum())})
-                table=pd.DataFrame(rows); f={"department":department,
-                    "execution":b.add("drilldown.ssp.execution",focus.get("Виконання"),unit="percent",source="dashboard.department_progress",aggregation="focused SSP execution"),
-                    "portfolio_weight":b.add("drilldown.ssp.portfolio_weight_pct",focus.get("portfolio_weight_pct"),unit="percent",source="dashboard.department_progress",aggregation="focused SSP portfolio weight"),
-                    "underperformance_contribution":b.add("drilldown.ssp.underperformance_contribution_pct",focus.get("underperformance_contribution_pct"),unit="percent",source="dashboard.department_progress",aggregation="focused SSP underperformance contribution"),
-                    "risk_contribution":b.add("drilldown.ssp.risk_contribution_pct",focus.get("risk_contribution_pct"),unit="percent",source="dashboard.department_progress",aggregation="focused SSP risk contribution"),
-                    "problem_count":b.add("drilldown.ssp.problem_count",_safe_int(focus.get("Проблемних")),unit="count",source="dashboard.department_progress",aggregation="focused SSP problem rows",observation_unit="measure-period"),
-                    "missing_count":b.add("drilldown.ssp.missing_count",_safe_int(focus.get("Без_даних")),unit="count",source="dashboard.department_progress",aggregation="focused SSP missing rows",observation_unit="measure-period")}
-                if not table.empty:
-                    table["attention"]=table["problems"]+table["missing"]; ranked=table.sort_values("attention",ascending=False).head(3); total=int(table["attention"].sum()); top=int(ranked["attention"].sum()); f["top_tasks"]=[(r["task"],int(r["problems"]),int(r["missing"])) for _,r in ranked.iterrows() if int(r["attention"])>0]
-                    if total>0:f["top_tasks_attention_share"]=b.ratio_pct("drilldown.ssp.top_tasks_attention_share_pct",top,total,source="analytics.active",aggregation="top task share of problem+missing rows",numerator_unit="measure-period",denominator_unit="measure-period")
-                b.structures["drilldown.ssp"] = f
-
-
-def _prepare_ssp_portfolio_and_risk(b: _Builder, department_progress: pd.DataFrame, metrics: Mapping[str, Any]) -> None:
-    dp=department_progress.copy() if department_progress is not None else pd.DataFrame()
-    if not dp.empty:
-        dp["_weight"]=_numeric(dp,"portfolio_weight_pct"); dp["_under"]=_numeric(dp,"underperformance_contribution_pct"); dp["_exec"]=_numeric(dp,"Виконання")
-        valid=dp.dropna(subset=["_weight"])
-        if not valid.empty:
-            largest=valid.loc[valid["_weight"].idxmax()]; f={"largest_department":_label(largest,"department"),
-                "largest_weight":b.add("ssp.largest_weight_pct",largest.get("portfolio_weight_pct"),unit="percent",source="dashboard.department_progress",aggregation="largest SSP portfolio weight"),
-                "largest_execution":b.add("ssp.largest_execution_pct",largest.get("Виконання"),unit="percent",source="dashboard.department_progress",aggregation="largest SSP execution"),
-                "largest_underperformance_contribution":b.add("ssp.largest_underperformance_contribution_pct",largest.get("underperformance_contribution_pct"),unit="percent",source="dashboard.department_progress",aggregation="largest SSP underperformance contribution")}
-            under=dp.dropna(subset=["_under"])
-            if not under.empty:
-                top=under.loc[under["_under"].idxmax()]; tu=_safe_number(top.get("underperformance_contribution_pct")); tw=_safe_number(top.get("portfolio_weight_pct")); f.update({
-                    "top_underperformance_department":_label(top,"department"),
-                    "top_underperformance_contribution":b.add("ssp.top_underperformance_contribution_pct",tu,unit="percent",source="dashboard.department_progress",aggregation="top SSP underperformance contribution"),
-                    "top_underperformance_weight":b.add("ssp.top_underperformance_weight_pct",tw,unit="percent",source="dashboard.department_progress",aggregation="top underperformance SSP portfolio weight"),
-                    "top_underperformance_execution":b.add("ssp.top_underperformance_execution_pct",top.get("Виконання"),unit="percent",source="dashboard.department_progress",aggregation="top underperformance SSP execution")})
-                if tu is not None and tw is not None:f["top_underperformance_excess_pp"]=b.pp("ssp.top_underperformance_excess_pp",tu,tw,source="dashboard.department_progress",aggregation="underperformance contribution minus portfolio weight")
-            b.structures["ssp.portfolio"] = f
-        if "risk_contribution_pct" in dp.columns:
-            values=pd.to_numeric(dp["risk_contribution_pct"],errors="coerce")
-            if values.notna().any():
-                row=dp.loc[values.idxmax()]; risk={"top_risk_department":_label(row,"department"),
-                    "top_risk_contribution":b.add("risk.top_contribution_pct",row.get("risk_contribution_pct"),unit="percent",source="dashboard.department_progress",aggregation="top SSP risk contribution"),
-                    "top_risk_portfolio_weight":b.add("risk.top_portfolio_weight_pct",row.get("portfolio_weight_pct"),unit="percent",source="dashboard.department_progress",aggregation="top risk SSP portfolio weight")}
-                if risk["top_risk_contribution"] is not None and risk["top_risk_portfolio_weight"] is not None:risk["top_risk_excess_pp"]=b.pp("risk.top_excess_pp",risk["top_risk_contribution"],risk["top_risk_portfolio_weight"],source="dashboard.department_progress",aggregation="risk contribution minus portfolio weight")
-                b.structures["risk.department"] = risk
-    summary=metrics.get("latest_risk_summary") or {}
-    if isinstance(summary,dict) and summary:
-        # Risk summary values are already canonical Dashboard outputs. Register
-        # every user-facing scalar as an explicit factual metric instead of
-        # copying anonymous numbers into findings. This keeps risk percentages
-        # provenance-traceable for narrow scopes as well as full-plan notes.
-        assessed_raw = _safe_int(summary.get("risk_assessed_count"))
-        high_raw = _safe_number(summary.get("share_high_critical_risk"))
-        without_raw = _safe_number(summary.get("share_without_substantial_risk"))
-        achieved_raw = _safe_number(summary.get("share_results_achieved"))
-        rf={
-            "assessed_count": b.add(
-                "risk.summary.assessed_count", assessed_raw, unit="count",
-                source="dashboard.latest_risk_summary.risk_assessed_count",
-                aggregation="latest risk assessed rows", observation_unit="measure-period",
-            ),
-            "high_critical_share": b.add(
-                "risk.summary.high_critical_share_pct", high_raw, unit="percent",
-                source="dashboard.latest_risk_summary.share_high_critical_risk",
-                aggregation="latest high/critical risk share",
-            ),
-            "without_substantial_risk_share": b.add(
-                "risk.summary.without_substantial_risk_share_pct", without_raw, unit="percent",
-                source="dashboard.latest_risk_summary.share_without_substantial_risk",
-                aggregation="latest share without substantial risk",
-            ),
-            "results_achieved_share": b.add(
-                "risk.summary.results_achieved_share_pct", achieved_raw, unit="percent",
-                source="dashboard.latest_risk_summary.share_results_achieved",
-                aggregation="latest results-achieved share",
-            ),
-        }
-        rf.update(b.structures.get("risk.department",{})); b.structures["risk"] = rf
-
-
-def _prepare_persistence(b:_Builder, active:pd.DataFrame)->None:
-    if active is None or active.empty or not {"report_year","report_quarter"}.issubset(active.columns):return
-    d=active.copy();d["_period"]=d["report_year"].astype(str)+" "+d["report_quarter"].astype(str)
-    if d["_period"].nunique()<3:return
-    problem=d.get("is_problem_status",pd.Series(False,index=d.index)).fillna(False).astype(bool);missing=d.get("missing_required_submission",pd.Series(False,index=d.index)).fillna(False).astype(bool);items=[]
-    for col,kind in (("goal_code","goal"),("department","department")):
-        if col not in d.columns:continue
-        rows=[]
-        for label,group in d.groupby(d[col].fillna("").astype(str)):
-            if not str(label).strip():continue
-            pp=mp=0
-            for _,pg in group.groupby("_period"):
-                ix=pg.index;pp += int(problem.loc[ix].sum()>0);mp += int(missing.loc[ix].sum()>0)
-            rows.append((label,pp,mp,int(group["_period"].nunique())))
-        if rows:
-            tp=max(rows,key=lambda x:x[1]);tm=max(rows,key=lambda x:x[2])
-            p_periods=b.add(f"persistent.{kind}.problem_periods",tp[1],unit="count",source="analytics.active",aggregation="periods with problem",observation_unit="period")
-            p_observed=b.add(f"persistent.{kind}.problem_observed",tp[3],unit="count",source="analytics.active",aggregation="periods observed",observation_unit="period")
-            m_periods=b.add(f"persistent.{kind}.missing_periods",tm[2],unit="count",source="analytics.active",aggregation="periods with missing",observation_unit="period")
-            m_observed=b.add(f"persistent.{kind}.missing_observed",tm[3],unit="count",source="analytics.active",aggregation="periods observed",observation_unit="period")
-            items.append({"kind":kind,"problem":(tp[0],p_periods,tm[2],p_observed),"missing":(tm[0],tp[1],m_periods,m_observed)})
-    if items:b.structures["persistence"] = items
-
 def _register_frame_sources(b: _Builder, name: str, frame: pd.DataFrame) -> None:
-    """Register numeric values that already exist in prepared shared outputs.
-
-    These are not recalculated. The registration gives validator/debug a stable
-    source path for values copied into findings or narrative blocks.
-    """
     if frame is None or frame.empty:
         return
-    for row_pos, (_, row) in enumerate(frame.iterrows()):
+    for pos, (_, row) in enumerate(frame.iterrows()):
         for column in frame.columns:
             value = _safe_number(row.get(column))
             if value is None:
                 continue
-            column_text = str(column).lower()
-            if "зміна" in column_text or "delta" in column_text or "gap" in column_text or "excess" in column_text:
+            low = str(column).lower()
+            if "зміна" in low or "delta" in low or "gap" in low or "excess" in low:
                 unit = "pp"
-            elif any(token in column_text for token in ("%", "виконання", "покриття", "share", "weight", "contribution", "прогрес", "інтеграл", "оцінка")):
+            elif any(t in low for t in ("%", "виконання", "покриття", "share", "weight", "contribution", "прогрес", "інтеграл", "оцінка")):
                 unit = "percent"
-            elif any(token in column_text for token in ("кількість", "проблем", "без_даних", "без даних", "унікальних_заходів", "portfolio_measure_count", "rows", "count")):
+            elif any(t in low for t in ("кількість", "без_даних", "без даних", "актуальна_увага", "унікальних_заходів", "count", "rows")):
                 unit = "count"
             else:
                 unit = "number"
+            observation = None
+            if unit == "count":
+                observation = "unique-measure" if any(t in low for t in ("актуальна_увага", "без_даних", "унікальних_заходів")) else None
             b.add(
-                f"source.{name}.row{row_pos}.{column}", value, unit=unit,
+                f"source.{name}.row{pos}.{column}", value, unit=unit,
                 source=f"shared.{name}.{column}", aggregation="prepared source value",
-                allow_over_100=(unit == "percent" and value > 100),
+                allow_over_100=(unit == "percent" and value > 100), observation_unit=observation,
             )
 
-def build_analytical_facts(*, filters:Mapping[str,Any], metrics:Mapping[str,Any], goal_progress:pd.DataFrame, task_progress:pd.DataFrame, department_progress:pd.DataFrame, product_progress:pd.DataFrame, status_counts:pd.DataFrame, period_dynamics:pd.DataFrame, yoy_comparison:pd.DataFrame, active:pd.DataFrame, mio_goal_evaluation:pd.DataFrame, mio_goal_task_evaluation:pd.DataFrame, mio_measure_evaluation:pd.DataFrame, mio_financing:pd.DataFrame) -> PreparedAnalyticalFacts:
-    b=_Builder(filters)
-    # Scope identifiers are registered separately from analytical values so debug
-    # can still trace period numbers without treating them as calculated KPIs.
-    for _year in sorted({int(y) for y in (filters.get("years", []) or []) if str(y).isdigit()}):
-        b.add(f"scope.year.{_year}", _year, unit="number", source="analytics.filters.years", aggregation="selected year")
-    # Register every numeric value that already exists in the prepared inputs.
-    for _name, _frame in (
+
+def _prepare_trajectory(b: _Builder, period: pd.DataFrame) -> None:
+    if period is None or period.empty or "Виконання" not in period.columns:
+        return
+    qmap = {"I": 1, "II": 2, "III": 3, "IV": 4, "1": 1, "2": 2, "3": 3, "4": 4}
+    d = period.copy()
+    d["_year"] = pd.to_numeric(d.get("report_year"), errors="coerce")
+    d["_q"] = d.get("report_quarter", pd.Series(index=d.index, dtype=object)).astype(str).map(qmap)
+    d = d.sort_values(["_year", "_q"], na_position="last")
+    d["_exec"] = _numeric(d, "Виконання")
+    valid = d.dropna(subset=["_exec"]).copy()
+    if valid.empty:
+        return
+    periods = [str(v).strip() for v in valid.get("Період", pd.Series(range(len(valid)))).tolist()]
+    values = [b.add(f"trajectory.period.{i}.execution", v, unit="percent", source="dashboard.period_dynamics", aggregation=f"period {i} execution", allow_over_100=True) for i, v in enumerate(valid["_exec"].tolist())]
+    facts: dict[str, Any] = {
+        "period_count": b.add("trajectory.period_count", len(values), unit="count", source="dashboard.period_dynamics", aggregation="evaluated periods", observation_unit="period"),
+        "periods": periods, "values": values, "first_period": periods[0], "last_period": periods[-1],
+        "first": b.add("trajectory.first_execution", values[0], unit="percent", source="dashboard.period_dynamics", aggregation="first evaluated period execution", allow_over_100=True),
+        "last": b.add("trajectory.last_execution", values[-1], unit="percent", source="dashboard.period_dynamics", aggregation="last evaluated period execution", allow_over_100=True),
+    }
+    if len(values) >= 2:
+        deltas = [b.pp(f"trajectory.step.{i}.delta_pp", values[i], values[i - 1], source="dashboard.period_dynamics", aggregation="period over period delta") for i in range(1, len(values))]
+        facts["deltas"] = deltas
+        facts["cumulative_delta"] = b.pp("trajectory.cumulative_delta_pp", values[-1], values[0], source="dashboard.period_dynamics", aggregation="last evaluated minus first evaluated")
+        facts["positive_steps"] = b.add("trajectory.positive_step_count", sum(float(x) > 0 for x in deltas), unit="count", source="analytics.derived.trajectory", aggregation="positive transitions", observation_unit="period-transition")
+        facts["negative_steps"] = b.add("trajectory.negative_step_count", sum(float(x) < 0 for x in deltas), unit="count", source="analytics.derived.trajectory", aggregation="negative transitions", observation_unit="period-transition")
+        facts["flat_steps"] = b.add("trajectory.flat_step_count", sum(abs(float(x)) < 0.5 for x in deltas), unit="count", source="analytics.derived.trajectory", aggregation="near-flat transitions", observation_unit="period-transition")
+        if len(deltas) >= 2:
+            facts["previous_delta"], facts["latest_delta"] = deltas[-2], deltas[-1]
+        if len(values) >= 3:
+            facts["volatility_stddev"] = b.add("trajectory.volatility_stddev_pp", pstdev(map(float, values)), unit="pp", source="analytics.derived.trajectory", aggregation="population stddev of evaluated period execution")
+    # Coverage series keeps unavailable periods unavailable.  No synthetic zero.
+    coverage = _numeric(d, "Покриття_%")
+    if coverage.notna().any():
+        cv = [None if pd.isna(v) else b.add(f"trajectory.coverage.{i}", float(v), unit="percent", source="dashboard.period_dynamics", aggregation=f"period {i} coverage") for i, v in enumerate(coverage.tolist())]
+        facts["coverage_values"] = cv
+        valid_cov = [(i, v) for i, v in enumerate(cv) if v is not None]
+        if valid_cov:
+            facts["coverage_first"] = valid_cov[0][1]
+            facts["coverage_last"] = valid_cov[-1][1]
+            if len(valid_cov) >= 2:
+                facts["coverage_cumulative_delta"] = b.pp("trajectory.coverage_cumulative_delta_pp", valid_cov[-1][1], valid_cov[0][1], source="dashboard.period_dynamics", aggregation="last evaluated coverage minus first evaluated coverage")
+    b.structures["trajectory"] = facts
+
+
+def _prepare_distribution(b: _Builder, frame: pd.DataFrame, kind: str, reference: float | None) -> None:
+    if frame is None or frame.empty or "Виконання" not in frame.columns:
+        return
+    d = frame.copy(); d["_exec"] = _numeric(d, "Виконання"); d = d.dropna(subset=["_exec"])
+    if d.empty:
+        return
+    d["_label"] = [_label(r, kind) for _, r in d.iterrows()]; d = d[d["_label"].astype(bool)]
+    if d.empty:
+        return
+    src = f"analytics.{kind}_progress.latest_execution"
+    vals = d["_exec"].astype(float)
+    max_value, min_value = float(vals.max()), float(vals.min())
+    best_rows = d[(d["_exec"].astype(float) - max_value).abs() <= 1e-9]
+    worst_rows = d[(d["_exec"].astype(float) - min_value).abs() <= 1e-9]
+    best_labels = [str(v) for v in best_rows["_label"].tolist() if str(v)]
+    worst_labels = [str(v) for v in worst_rows["_label"].tolist() if str(v)]
+    p = f"{kind}.distribution"
+    ref = reference if reference is not None else float(vals.mean())
+    count = len(d)
+    facts: dict[str, Any] = {
+        "count": b.add(f"{p}.count", count, unit="count", source=src, aggregation="evaluated entities in exact latest period", observation_unit=kind),
+        "single_entity": count == 1,
+        "mean": b.add(f"{p}.mean", vals.mean(), unit="percent", source=src, aggregation="cross-sectional mean of latest entity execution", allow_over_100=True),
+        "median": b.add(f"{p}.median", vals.median(), unit="percent", source=src, aggregation="cross-sectional median of latest entity execution", allow_over_100=True),
+        "reference": b.add(f"{p}.reference", ref, unit="percent", source="analytics.page.metrics.completion" if reference is not None else src, aggregation="latest execution reference", allow_over_100=True),
+        "best_label": best_labels[0] if best_labels else "",
+        "best_labels": best_labels,
+        "best_is_unique": len(best_labels) == 1,
+        "best_tie_count": b.add(f"{p}.best_tie_count", len(best_labels), unit="count", source=src, aggregation="entities tied at maximum latest execution", observation_unit=kind),
+        "best_value": b.add(f"{p}.best", max_value, unit="percent", source=src, aggregation="maximum latest execution", allow_over_100=True),
+        "worst_label": worst_labels[0] if worst_labels else "",
+        "worst_labels": worst_labels,
+        "worst_is_unique": len(worst_labels) == 1,
+        "worst_tie_count": b.add(f"{p}.worst_tie_count", len(worst_labels), unit="count", source=src, aggregation="entities tied at minimum latest execution", observation_unit=kind),
+        "worst_value": b.add(f"{p}.worst", min_value, unit="percent", source=src, aggregation="minimum latest execution", allow_over_100=True),
+    }
+    facts["gap"] = b.pp(f"{p}.gap_pp", facts["best_value"], facts["worst_value"], source=src, aggregation="best minus worst")
+    facts["all_equal"] = abs(float(facts["gap"] or 0.0)) <= 1e-9
+    above = int((vals > ref).sum()); below = int((vals < ref).sum()); deviation_count = above + below
+    facts["above_reference"] = b.add(f"{p}.above_reference", above, unit="count", source=src, aggregation="entities above latest reference", observation_unit=kind)
+    facts["below_reference"] = b.add(f"{p}.below_reference", below, unit="count", source=src, aggregation="entities below latest reference", observation_unit=kind)
+    facts["deviation_count"] = b.add(f"{p}.deviation_count", deviation_count, unit="count", source=src, aggregation="entities different from latest reference", observation_unit=kind)
+    facts["deviation_is_material"] = bool(count > 1 and deviation_count >= 2 and deviation_count * 2 >= count)
+
+    ranked_desc = d.sort_values(["_exec", "_label"], ascending=[False, True]).reset_index(drop=True)
+    ranked_asc = d.sort_values(["_exec", "_label"], ascending=[True, True]).reset_index(drop=True)
+    facts["top"] = [(r["_label"], b.add(f"{p}.top.{i}", r["_exec"], unit="percent", source=src, aggregation=f"rank {i} latest execution", allow_over_100=True)) for i, (_, r) in enumerate(ranked_desc.head(3).iterrows(), 1)]
+    facts["bottom"] = [(r["_label"], b.add(f"{p}.bottom.{i}", r["_exec"], unit="percent", source=src, aggregation=f"bottom rank {i} latest execution", allow_over_100=True)) for i, (_, r) in enumerate(ranked_asc.head(3).iterrows(), 1)]
+    facts["top3_boundary_unique"] = not (count > 3 and abs(float(ranked_desc.iloc[2]["_exec"]) - float(ranked_desc.iloc[3]["_exec"])) <= 1e-9)
+    facts["bottom3_boundary_unique"] = not (count > 3 and abs(float(ranked_asc.iloc[2]["_exec"]) - float(ranked_asc.iloc[3]["_exec"])) <= 1e-9)
+    b.structures[p] = facts
+
+    if "Зміна" in d.columns:
+        c = d.assign(_change=_numeric(d, "Зміна")).dropna(subset=["_change"])
+        if not c.empty:
+            cp = f"{kind}.change"; improved = c[c["_change"] > 0.5]; declined = c[c["_change"] < -0.5]; stable = c[c["_change"].abs() <= 0.5]
+            max_change, min_change = float(c["_change"].max()), float(c["_change"].min())
+            hi_rows = c[(c["_change"].astype(float) - max_change).abs() <= 1e-9]
+            lo_rows = c[(c["_change"].astype(float) - min_change).abs() <= 1e-9]
+            hi_labels = [str(v) for v in hi_rows["_label"].tolist() if str(v)]
+            lo_labels = [str(v) for v in lo_rows["_label"].tolist() if str(v)]
+            cf = {
+                "count_with_change": b.add(f"{cp}.count", len(c), unit="count", source=src, aggregation="comparable entities", observation_unit=kind),
+                "single_entity": len(c) == 1,
+                "improved": b.add(f"{cp}.improved_count", len(improved), unit="count", source=src, aggregation="improved entities", observation_unit=kind),
+                "declined": b.add(f"{cp}.declined_count", len(declined), unit="count", source=src, aggregation="declined entities", observation_unit=kind),
+                "stable": b.add(f"{cp}.stable_count", len(stable), unit="count", source=src, aggregation="stable entities", observation_unit=kind),
+                "largest_improvement_label": hi_labels[0] if hi_labels else "",
+                "largest_improvement_labels": hi_labels,
+                "largest_improvement_is_unique": len(hi_labels) == 1,
+                "largest_improvement_tie_count": b.add(f"{cp}.largest_improvement_tie_count", len(hi_labels), unit="count", source=src, aggregation="entities tied at maximum change", observation_unit=kind),
+                "largest_improvement": b.add(f"{cp}.largest_improvement_pp", max_change, unit="pp", source=src, aggregation="maximum entity change"),
+                "largest_deterioration_label": lo_labels[0] if lo_labels else "",
+                "largest_deterioration_labels": lo_labels,
+                "largest_deterioration_is_unique": len(lo_labels) == 1,
+                "largest_deterioration_tie_count": b.add(f"{cp}.largest_deterioration_tie_count", len(lo_labels), unit="count", source=src, aggregation="entities tied at minimum change", observation_unit=kind),
+                "largest_deterioration": b.add(f"{cp}.largest_deterioration_pp", min_change, unit="pp", source=src, aggregation="minimum entity change"),
+            }
+            cf["improved_share"] = b.ratio_pct(f"{cp}.improved_share_pct", len(improved), len(c), source=src, aggregation="share improved", numerator_unit=kind, denominator_unit=kind)
+            cf["declined_share"] = b.ratio_pct(f"{cp}.declined_share_pct", len(declined), len(c), source=src, aggregation="share declined", numerator_unit=kind, denominator_unit=kind)
+            b.structures[cp] = cf
+
+def _prepare_current_concentration(b: _Builder, frame: pd.DataFrame, kind: str, column: str, topic: str) -> None:
+    if frame is None or frame.empty or column not in frame.columns:
+        return
+    d = frame.copy(); d["_count"] = pd.to_numeric(d[column], errors="coerce").fillna(0).astype(int)
+    d["_label"] = [_label(r, kind) for _, r in d.iterrows()]
+    d = d[d["_label"].astype(bool)]
+    if d.empty:
+        return
+    total = int(d["_count"].sum()); key = f"{kind}.{topic}"; src = f"analytics.{kind}_progress.{column}"
+    facts: dict[str, Any] = {
+        "total": b.add(f"{key}.total", total, unit="count", source=src, aggregation="current unique measures across entities", observation_unit="unique-measure"),
+        "entity_count": b.add(f"{key}.entity_count", len(d), unit="count", source=src, aggregation="entities", observation_unit=kind),
+        "affected_entities": b.add(f"{key}.affected_entities", int((d["_count"] > 0).sum()), unit="count", source=src, aggregation="affected entities", observation_unit=kind),
+    }
+    if total > 0:
+        ranked = d.sort_values(["_count", "_label"], ascending=[False, True]).reset_index(drop=True)
+        positive = ranked[ranked["_count"] > 0].copy()
+        top = ranked.iloc[0]; top3 = ranked.head(3); top3_count = int(top3["_count"].sum())
+        top_count = int(top["_count"])
+        tied = positive[positive["_count"] == top_count]
+        top_labels = [str(value) for value in tied["_label"].tolist() if str(value)]
+        affected_entities = int((d["_count"] > 0).sum())
+        entity_count = int(len(d))
+        facts.update({
+            "top_label": top["_label"],
+            "top_count": b.add(f"{key}.top_count", top_count, unit="count", source=src, aggregation="top current count", observation_unit="unique-measure"),
+            "top3_count": b.add(f"{key}.top3_count", top3_count, unit="count", source=src, aggregation="top3 current count", observation_unit="unique-measure"),
+            "top3": [(r["_label"], int(r["_count"])) for _, r in top3.iterrows() if int(r["_count"]) > 0],
+            "top_labels": top_labels,
+            "top_tie_count": b.add(
+                f"{key}.top_tie_count", len(top_labels), unit="count", source=src,
+                aggregation="entities tied at maximum current count", observation_unit=kind,
+            ),
+            "top_is_unique": len(top_labels) == 1,
+        })
+        facts["top_share"] = b.ratio_pct(f"{key}.top_share_pct", facts["top_count"], facts["total"], source=src, aggregation="top1 concentration", numerator_unit="unique-measure", denominator_unit="unique-measure")
+        facts["top3_share"] = b.ratio_pct(f"{key}.top3_share_pct", facts["top3_count"], facts["total"], source=src, aggregation="top3 concentration", numerator_unit="unique-measure", denominator_unit="unique-measure")
+        top_share = float(facts["top_share"] or 0)
+        top3_share = float(facts["top3_share"] or 0)
+        all_affected_equal = bool(
+            affected_entities == entity_count
+            and affected_entities > 1
+            and positive["_count"].nunique() == 1
+        )
+        top3_has_distinct_boundary = False
+        if affected_entities > 3:
+            counts = positive["_count"].tolist()
+            top3_has_distinct_boundary = len(counts) >= 4 and int(counts[2]) > int(counts[3])
+        # Renderer-only comparative metadata.  This does not change the accepted
+        # attention/missing concentration mathematics: it only prevents wording
+        # such as "three largest" when the third/fourth boundary is tied.
+        facts["top3_boundary_unique"] = affected_entities <= 3 or top3_has_distinct_boundary
+
+        # Concentration is a comparative statement, not a mechanical share test.
+        # Equal 2/2, 3/3, 4/4 (and analogous fully even distributions) are
+        # distributed.  A top-3 concentration is used only when the top three
+        # form a factually distinct group rather than an arbitrary cut through a tie.
+        if all_affected_equal:
+            concentration_class = "distributed"
+        elif bool(facts["top_is_unique"]) and top_share >= 50.0:
+            concentration_class = "concentrated"
+        elif affected_entities > 3 and top3_share >= 75.0 and top3_has_distinct_boundary:
+            concentration_class = "concentrated"
+        elif affected_entities <= max(2, entity_count // 4):
+            concentration_class = "localised"
+        else:
+            concentration_class = "distributed"
+        facts["concentration_class"] = concentration_class
+    else:
+        facts["concentration_class"] = "none"
+    b.structures[key] = facts
+
+
+def _prepare_status(b: _Builder, status_counts: pd.DataFrame, active: pd.DataFrame) -> None:
+    if status_counts is None or status_counts.empty or not {"status", "Кількість"}.issubset(status_counts.columns):
+        return
+    rows = [(str(r["status"]), _safe_int(r["Кількість"])) for _, r in status_counts.iterrows()]
+    total = sum(v for _, v in rows)
+    if total <= 0:
+        return
+    bound = [(label, b.add(f"status.count.{i}", count, unit="count", source="analytics.status_counts", aggregation=f"status {label} historical count", observation_unit="measure-period")) for i, (label, count) in enumerate(rows)]
+    ranked = sorted(bound, key=lambda x: (-int(x[1]), str(x[0])))
+    shares = {label: b.ratio_pct(f"status.share.{i}", count, total, source="analytics.status_counts", aggregation="historical status share", numerator_unit="measure-period", denominator_unit="measure-period") for i, (label, count) in enumerate(bound)}
+    top_count = int(ranked[0][1])
+    dominant_labels = [str(label) for label, count in ranked if int(count) == top_count]
+    b.structures["status"] = {
+        "total": b.add("status.total", total, unit="count", source="analytics.status_counts", aggregation="historical status rows", observation_unit="measure-period"),
+        "status_count": b.add("status.distinct_count", len(ranked), unit="count", source="analytics.status_counts", aggregation="distinct status labels", observation_unit="status"),
+        "single_status": len(ranked) == 1,
+        "ranked": ranked,
+        "shares": shares,
+        "dominant_label": ranked[0][0],
+        "dominant_labels": dominant_labels,
+        "dominant_count": ranked[0][1],
+        "dominant_share": shares.get(ranked[0][0]),
+        "dominant_is_unique": len(dominant_labels) == 1 and len(ranked) > 1,
+        "dominant_tie_count": b.add("status.dominant_tie_count", len(dominant_labels), unit="count", source="analytics.status_counts", aggregation="statuses tied at maximum count", observation_unit="status"),
+    }
+
+def _prepare_product(b: _Builder, frame: pd.DataFrame) -> None:
+    if frame is None or frame.empty:
+        return
+    d = frame.copy(); d["_portfolio"] = _numeric(d, "Унікальних_заходів", 0).fillna(0); d["_exec"] = _numeric(d, "Виконання")
+    d["_attention"] = _numeric(d, "Актуальна_увага", 0).fillna(0); d["_missing"] = _numeric(d, "Без_даних", 0).fillna(0)
+    d["_label"] = [_label(row, "product") for _, row in d.iterrows()]
+    d = d[d["_label"].astype(bool)].copy()
+    if d.empty:
+        return
+    ranked = d.sort_values(["_portfolio", "_label"], ascending=[False, True]); top = ranked.iloc[0]; total_size = int(d["_portfolio"].sum())
+    max_size = float(ranked.iloc[0]["_portfolio"])
+    largest_rows = ranked[(ranked["_portfolio"].astype(float) - max_size).abs() <= 1e-9]
+    largest_labels = [str(v) for v in largest_rows["_label"].tolist() if str(v)]
+    attention_total, missing_total = int(d["_attention"].sum()), int(d["_missing"].sum())
+    facts: dict[str, Any] = {
+        "count": b.add("product.count", len(d), unit="count", source="analytics.product_progress", aggregation="product types", observation_unit="product"),
+        "single_entity": len(d) == 1,
+        "largest_label": largest_labels[0] if largest_labels else "",
+        "largest_labels": largest_labels,
+        "largest_is_unique": len(largest_labels) == 1 and len(d) > 1,
+        "largest_tie_count": b.add("product.largest_tie_count", len(largest_labels), unit="count", source="analytics.product_progress", aggregation="product types tied at largest portfolio size", observation_unit="product"),
+        "largest_size": b.add("product.largest_size", int(top["_portfolio"]), unit="count", source="analytics.product_progress", aggregation="largest product portfolio", observation_unit="unique-measure"),
+        "total_size": b.add("product.total_size", total_size, unit="count", source="analytics.product_progress", aggregation="product portfolio size", observation_unit="unique-measure"),
+        "all_equal_size": len(d) > 1 and d["_portfolio"].nunique(dropna=True) == 1,
+        "attention_total": b.add("product.attention_total", attention_total, unit="count", source="analytics.product_progress", aggregation="current attention measures", observation_unit="unique-measure"),
+        "missing_total": b.add("product.missing_total", missing_total, unit="count", source="analytics.product_progress", aggregation="current missing-submission measures", observation_unit="unique-measure"),
+    }
+    if total_size:
+        facts["largest_share"] = b.ratio_pct("product.largest_share_pct", facts["largest_size"], total_size, source="analytics.product_progress", aggregation="largest portfolio share", numerator_unit="unique-measure", denominator_unit="unique-measure")
+    valid = d.dropna(subset=["_exec"]).copy()
+    if not valid.empty:
+        max_exec, min_exec = float(valid["_exec"].max()), float(valid["_exec"].min())
+        best_rows = valid[(valid["_exec"].astype(float) - max_exec).abs() <= 1e-9]
+        worst_rows = valid[(valid["_exec"].astype(float) - min_exec).abs() <= 1e-9]
+        best_labels = [str(v) for v in best_rows["_label"].tolist() if str(v)]
+        worst_labels = [str(v) for v in worst_rows["_label"].tolist() if str(v)]
+        facts.update({
+            "execution_count": b.add("product.execution_count", len(valid), unit="count", source="analytics.product_progress", aggregation="product types with exact-latest execution", observation_unit="product"),
+            "best_label": best_labels[0] if best_labels else "",
+            "best_labels": best_labels,
+            "best_is_unique": len(best_labels) == 1 and len(valid) > 1,
+            "best_tie_count": b.add("product.best_tie_count", len(best_labels), unit="count", source="analytics.product_progress", aggregation="product types tied at maximum latest execution", observation_unit="product"),
+            "worst_label": worst_labels[0] if worst_labels else "",
+            "worst_labels": worst_labels,
+            "worst_is_unique": len(worst_labels) == 1 and len(valid) > 1,
+            "worst_tie_count": b.add("product.worst_tie_count", len(worst_labels), unit="count", source="analytics.product_progress", aggregation="product types tied at minimum latest execution", observation_unit="product"),
+            "best_value": b.add("product.best_execution", max_exec, unit="percent", source="analytics.product_progress", aggregation="maximum latest execution", allow_over_100=True),
+            "worst_value": b.add("product.worst_execution", min_exec, unit="percent", source="analytics.product_progress", aggregation="minimum latest execution", allow_over_100=True),
+        })
+        facts["gap"] = b.pp("product.execution_gap_pp", facts["best_value"], facts["worst_value"], source="analytics.product_progress", aggregation="best minus worst")
+        facts["all_equal_execution"] = abs(float(facts["gap"] or 0.0)) <= 1e-9
+    b.structures["product"] = facts
+
+def _prepare_drilldowns(
+    b: _Builder,
+    goal_progress: pd.DataFrame,
+    task_progress: pd.DataFrame,
+    department_progress: pd.DataFrame,
+    active: pd.DataFrame,
+) -> None:
+    # Deterministic drill-down selects a salient parent, then exposes prepared child
+    # facts already present in its summary rows.  It never infers an unobserved cause.
+    if goal_progress is not None and not goal_progress.empty and "Виконання" in goal_progress.columns:
+        d = goal_progress.copy(); d["_exec"] = _numeric(d, "Виконання"); d["_attention"] = _numeric(d, "Актуальна_увага", 0).fillna(0); d["_missing"] = _numeric(d, "Без_даних", 0).fillna(0)
+        valid = d.dropna(subset=["_exec"])
+        if not valid.empty:
+            valid["_salience"] = (100 - valid["_exec"].clip(0, 100)) + valid["_attention"] * 4 + valid["_missing"] * 2
+            focus = valid.sort_values(["_salience", "_exec"], ascending=[False, True]).iloc[0]
+            goal_code = str(focus.get("goal_code") or "").strip()
+            goal_facts = {
+                "goal_label": _label(focus, "goal"),
+                "execution": b.add("drilldown.goal.execution", focus["_exec"], unit="percent", source="analytics.goal_progress", aggregation="salient goal latest execution", allow_over_100=True),
+                "attention_count": b.add("drilldown.goal.attention_count", int(focus["_attention"]), unit="count", source="analytics.goal_progress", aggregation="salient goal current attention", observation_unit="unique-measure"),
+                "missing_count": b.add("drilldown.goal.missing_count", int(focus["_missing"]), unit="count", source="analytics.goal_progress", aggregation="salient goal current missing submissions", observation_unit="unique-measure"),
+            }
+            # Child tasks make the drill-down genuinely hierarchical. Only prepared
+            # task-level facts are exposed; the engine does not invent a cause.
+            children = []
+            if task_progress is not None and not task_progress.empty and goal_code and "goal_code" in task_progress.columns:
+                td = task_progress[task_progress["goal_code"].astype(str).eq(goal_code)].copy()
+                if not td.empty:
+                    td["_exec"] = _numeric(td, "Виконання")
+                    td["_attention"] = _numeric(td, "Актуальна_увага", 0).fillna(0)
+                    td["_missing"] = _numeric(td, "Без_даних", 0).fillna(0)
+                    td = td.dropna(subset=["_exec"]).copy()
+                    if not td.empty:
+                        td["_salience"] = (100 - td["_exec"].clip(0, 100)) + td["_attention"] * 4 + td["_missing"] * 2
+                        for child_pos, (_, child) in enumerate(td.sort_values(["_salience", "_exec"], ascending=[False, True]).head(3).iterrows(), start=1):
+                            children.append({
+                                "label": _label(child, "task"),
+                                "execution": b.add(f"drilldown.goal.child{child_pos}.execution", child["_exec"], unit="percent", source="analytics.task_progress", aggregation="salient child task latest execution", allow_over_100=True),
+                                "attention_count": b.add(f"drilldown.goal.child{child_pos}.attention_count", int(child["_attention"]), unit="count", source="analytics.task_progress", aggregation="salient child task current attention", observation_unit="unique-measure"),
+                                "missing_count": b.add(f"drilldown.goal.child{child_pos}.missing_count", int(child["_missing"]), unit="count", source="analytics.task_progress", aggregation="salient child task current missing submissions", observation_unit="unique-measure"),
+                            })
+            if children:
+                goal_facts["children"] = children
+            b.structures["drilldown.goal"] = goal_facts
+    if department_progress is not None and not department_progress.empty and "Виконання" in department_progress.columns:
+        d = department_progress.copy(); d["_exec"] = _numeric(d, "Виконання"); d["_attention"] = _numeric(d, "Актуальна_увага", 0).fillna(0); d["_missing"] = _numeric(d, "Без_даних", 0).fillna(0); d["_weight"] = _numeric(d, "portfolio_weight_pct", 0).fillna(0); d["_under"] = _numeric(d, "underperformance_contribution_pct", 0).fillna(0)
+        valid = d.dropna(subset=["_exec"])
+        if not valid.empty:
+            valid["_salience"] = valid["_under"] * 1.5 + valid["_attention"] * 3 + valid["_missing"] * 2 + valid["_weight"] * 0.25 + (100 - valid["_exec"].clip(0, 100)) * 0.3
+            focus = valid.sort_values("_salience", ascending=False).iloc[0]
+            department_label = _label(focus, "department")
+            ssp_index = str(focus.get("ssp_index") or "").strip()
+            ssp_facts = {
+                "department": department_label,
+                "ssp_index": ssp_index,
+                "execution": b.add("drilldown.ssp.execution", focus["_exec"], unit="percent", source="analytics.department_progress", aggregation="salient SSP latest execution", allow_over_100=True),
+                "portfolio_weight": b.add("drilldown.ssp.portfolio_weight_pct", focus["_weight"], unit="percent", source="analytics.department_progress", aggregation="salient SSP portfolio weight"),
+                "underperformance_contribution": b.add("drilldown.ssp.underperformance_contribution_pct", focus["_under"], unit="percent", source="analytics.department_progress", aggregation="salient SSP underperformance contribution"),
+                "attention_count": b.add("drilldown.ssp.attention_count", int(focus["_attention"]), unit="count", source="analytics.department_progress", aggregation="salient SSP current attention", observation_unit="unique-measure"),
+                "missing_count": b.add("drilldown.ssp.missing_count", int(focus["_missing"]), unit="count", source="analytics.department_progress", aggregation="salient SSP current missing submissions", observation_unit="unique-measure"),
+            }
+
+            # Resolve child tasks only when factual ownership evidence is available.
+            # The task metrics themselves come from the already prepared exact-latest
+            # task summary; active rows are used only to identify SSP ownership.
+            children = []
+            if (
+                task_progress is not None and not task_progress.empty
+                and active is not None and not active.empty
+                and "task_code" in task_progress.columns and "task_code" in active.columns
+            ):
+                ownership = active.copy()
+                owner_mask = pd.Series(False, index=ownership.index)
+                if department_label and "department" in ownership.columns:
+                    owner_mask = owner_mask | ownership["department"].astype(str).eq(department_label)
+                if ssp_index and "ssp_index" in ownership.columns:
+                    owner_mask = owner_mask | ownership["ssp_index"].astype(str).eq(ssp_index)
+                owned_codes = {
+                    str(value).strip()
+                    for value in ownership.loc[owner_mask, "task_code"].dropna().tolist()
+                    if str(value).strip()
+                }
+                if owned_codes:
+                    td = task_progress[task_progress["task_code"].astype(str).isin(owned_codes)].copy()
+                    if not td.empty:
+                        td["_exec"] = _numeric(td, "Виконання")
+                        td["_attention"] = _numeric(td, "Актуальна_увага", 0).fillna(0)
+                        td["_missing"] = _numeric(td, "Без_даних", 0).fillna(0)
+                        td = td.dropna(subset=["_exec"]).copy()
+                        if not td.empty:
+                            td["_salience"] = (100 - td["_exec"].clip(0, 100)) + td["_attention"] * 4 + td["_missing"] * 2
+                            for child_pos, (_, child) in enumerate(
+                                td.sort_values(["_salience", "_exec"], ascending=[False, True]).head(3).iterrows(), start=1
+                            ):
+                                children.append({
+                                    "label": _label(child, "task"),
+                                    "execution": b.add(f"drilldown.ssp.child{child_pos}.execution", child["_exec"], unit="percent", source="analytics.task_progress", aggregation="salient SSP child task exact-latest execution", allow_over_100=True),
+                                    "attention_count": b.add(f"drilldown.ssp.child{child_pos}.attention_count", int(child["_attention"]), unit="count", source="analytics.task_progress", aggregation="salient SSP child task current attention", observation_unit="unique-measure"),
+                                    "missing_count": b.add(f"drilldown.ssp.child{child_pos}.missing_count", int(child["_missing"]), unit="count", source="analytics.task_progress", aggregation="salient SSP child task current missing submissions", observation_unit="unique-measure"),
+                                })
+            if children:
+                ssp_facts["children"] = children
+            b.structures["drilldown.ssp"] = ssp_facts
+
+
+def _prepare_ssp_and_risk(b: _Builder, department_progress: pd.DataFrame, metrics: Mapping[str, Any]) -> None:
+    d = department_progress.copy() if department_progress is not None else pd.DataFrame()
+    if not d.empty:
+        d["_label"] = [_label(row, "department") for _, row in d.iterrows()]
+        d["_weight"] = _numeric(d, "portfolio_weight_pct"); d["_under"] = _numeric(d, "underperformance_contribution_pct"); d["_exec"] = _numeric(d, "Виконання")
+        d = d[d["_label"].astype(bool)].copy()
+        weighted = d.dropna(subset=["_weight"]).copy()
+        if not weighted.empty:
+            max_weight = float(weighted["_weight"].max())
+            largest_rows = weighted[(weighted["_weight"].astype(float) - max_weight).abs() <= 1e-9].sort_values("_label")
+            largest_labels = [str(v) for v in largest_rows["_label"].tolist() if str(v)]
+            largest = largest_rows.iloc[0]
+            facts = {
+                "department_count": b.add("ssp.department_count", len(d), unit="count", source="analytics.department_progress", aggregation="SSP rows", observation_unit="department"),
+                "single_entity": len(d) == 1,
+                "largest_department": largest_labels[0] if largest_labels else "",
+                "largest_departments": largest_labels,
+                "largest_weight_is_unique": len(largest_labels) == 1 and len(weighted) > 1,
+                "largest_weight_tie_count": b.add("ssp.largest_weight_tie_count", len(largest_labels), unit="count", source="analytics.department_progress", aggregation="SSP tied at maximum portfolio weight", observation_unit="department"),
+                "largest_weight": b.add("ssp.largest_weight_pct", max_weight, unit="percent", source="analytics.department_progress", aggregation="largest portfolio weight"),
+                "largest_execution": b.add("ssp.largest_execution_pct", largest.get("Виконання"), unit="percent", source="analytics.department_progress", aggregation="execution of first maximum-weight SSP for compatibility only", allow_over_100=True),
+            }
+            under = d.dropna(subset=["_under"]).copy()
+            if not under.empty:
+                max_under = float(under["_under"].max())
+                top_rows = under[(under["_under"].astype(float) - max_under).abs() <= 1e-9].sort_values("_label")
+                top_labels = [str(v) for v in top_rows["_label"].tolist() if str(v)]
+                top = top_rows.iloc[0]
+                facts["top_underperformance_department"] = top_labels[0] if top_labels else ""
+                facts["top_underperformance_departments"] = top_labels
+                facts["top_underperformance_is_unique"] = len(top_labels) == 1 and len(under) > 1
+                facts["top_underperformance_tie_count"] = b.add("ssp.top_underperformance_tie_count", len(top_labels), unit="count", source="analytics.department_progress", aggregation="SSP tied at maximum underperformance contribution", observation_unit="department")
+                facts["top_underperformance_contribution"] = b.add("ssp.top_underperformance_contribution_pct", max_under, unit="percent", source="analytics.department_progress", aggregation="top underperformance contribution")
+                facts["top_underperformance_weight"] = b.add("ssp.top_underperformance_weight_pct", top.get("portfolio_weight_pct"), unit="percent", source="analytics.department_progress", aggregation="portfolio weight of first maximum-contribution SSP for compatibility only")
+                if facts["top_underperformance_contribution"] is not None and facts["top_underperformance_weight"] is not None:
+                    facts["top_underperformance_excess_pp"] = b.pp("ssp.top_underperformance_excess_pp", facts["top_underperformance_contribution"], facts["top_underperformance_weight"], source="analytics.department_progress", aggregation="underperformance contribution minus portfolio weight for unique/top compatibility row")
+            b.structures["ssp.portfolio"] = facts
+    # Dashboard ``risk_summary()`` is intentionally unchanged. Analytics adapts its
+    # quarter-specific shape here so a single internal finding code never mixes
+    # preliminary, predictive-risk and final-outcome semantics.
+    summary = metrics.get("latest_risk_summary") or {}
+    attention_type = str(metrics.get("attention_type") or "").strip()
+    if isinstance(summary, dict) and summary and attention_type in {
+        "preliminary_attention", "forecast_risk", "final_nonachievement"
+    }:
+        risk: dict[str, Any] = {"mode": attention_type}
+        if attention_type == "preliminary_attention":
+            risk.update({
+                "preliminary_forecast_count": b.add(
+                    "risk.summary.preliminary_forecast_count", summary.get("preliminary_forecast_count"),
+                    unit="count", source="dashboard.latest_risk_summary.preliminary_forecast_count",
+                    aggregation="Q1 preliminary forecast count", observation_unit="unique-measure",
+                ),
+                "preliminary_forecast_average": b.add(
+                    "risk.summary.preliminary_forecast_average_pct", summary.get("preliminary_forecast_average"),
+                    unit="percent", source="dashboard.latest_risk_summary.preliminary_forecast_average",
+                    aggregation="Q1 average preliminary forecast attainment", allow_over_100=True,
+                ),
+                "preliminary_attention_count": b.add(
+                    "risk.summary.preliminary_attention_count", summary.get("preliminary_attention_count"),
+                    unit="count", source="dashboard.latest_risk_summary.preliminary_attention_count",
+                    aggregation="Q1 preliminary attention count", observation_unit="unique-measure",
+                ),
+            })
+        elif attention_type == "forecast_risk":
+            assessed_count = b.add(
+                    "risk.summary.assessed_count", summary.get("risk_assessed_count"), unit="count",
+                    source="dashboard.latest_risk_summary.risk_assessed_count",
+                    aggregation="Q2-Q3 predictive risk assessed measures", observation_unit="unique-measure",
+                )
+            risk.update({
+                "assessed_count": assessed_count,
+                "assessment_state": "zero_assessed" if int(assessed_count or 0) == 0 else "assessed",
+                "high_critical_share": b.add(
+                    "risk.summary.high_critical_share_pct", summary.get("share_high_critical_risk"), unit="percent",
+                    source="dashboard.latest_risk_summary.share_high_critical_risk",
+                    aggregation="Q2-Q3 high/critical predictive risk share",
+                ),
+                "without_substantial_risk_share": b.add(
+                    "risk.summary.without_substantial_risk_share_pct", summary.get("share_without_substantial_risk"), unit="percent",
+                    source="dashboard.latest_risk_summary.share_without_substantial_risk",
+                    aggregation="Q2-Q3 share without substantial predictive risk",
+                ),
+            })
+        else:
+            risk.update({
+                "assessed_count": b.add(
+                    "risk.summary.final_assessed_count", metrics.get("attention_assessed_count"), unit="count",
+                    source="analytics.page.metrics.attention_assessed_count",
+                    aggregation="Q4 final assessed measures", observation_unit="unique-measure",
+                ),
+                "results_achieved_share": b.add(
+                    "risk.summary.results_achieved_share_pct", summary.get("share_results_achieved"), unit="percent",
+                    source="dashboard.latest_risk_summary.share_results_achieved",
+                    aggregation="Q4 factual results-achieved share",
+                ),
+            })
+        b.structures["risk"] = risk
+
+
+def _prepare_missing_persistence(b: _Builder, active: pd.DataFrame) -> None:
+    if active is None or active.empty or not {"report_year", "report_quarter", "missing_required_submission"}.issubset(active.columns):
+        return
+    d = active.copy(); d["_period"] = d["report_year"].astype(str) + " " + d["report_quarter"].astype(str)
+    if d["_period"].nunique() < 2:
+        return
+    missing = _safe_int
+    out = []
+    for col, kind in (("goal_code", "goal"), ("department", "department")):
+        if col not in d.columns:
+            continue
+        rows = []
+        for label, group in d.groupby(d[col].fillna("").astype(str)):
+            if not str(label).strip():
+                continue
+            periods = 0
+            for _, pg in group.groupby("_period"):
+                periods += int(_numeric(pg.assign(_m=pg["missing_required_submission"].fillna(False).astype(int)), "_m", 0).sum() > 0)
+            if periods >= 2:
+                rows.append((str(label), periods, int(group["_period"].nunique())))
+        if rows:
+            top = max(rows, key=lambda x: x[1])
+            out.append({
+                "kind": kind, "label": top[0],
+                "periods_with_missing": b.add(f"persistence.{kind}.missing_periods", top[1], unit="count", source="analytics.active.missing_required_submission", aggregation="periods with missing submission", observation_unit="period"),
+                "periods_observed": b.add(f"persistence.{kind}.observed_periods", top[2], unit="count", source="analytics.active", aggregation="periods observed", observation_unit="period"),
+            })
+    if out:
+        b.structures["missing_persistence"] = out
+
+
+def _prepare_mio(
+    b: _Builder,
+    goals: pd.DataFrame,
+    tasks: pd.DataFrame,
+    measures: pd.DataFrame,
+    financing: pd.DataFrame,
+    year: int,
+    task_progress: pd.DataFrame,
+) -> None:
+    """Preserve the target MіO factual contract without reintroducing Analytics averages.
+
+    MіO's own annual/component averages, medians and paired finance-vs-physical
+    comparisons are part of the established MіO methodology and remain intact.
+    The only Analytics-specific adaptation is that task execution used for the
+    execution-vs-indicator divergence comes from the exact-latest task summary
+    supplied by Analytics, never from a temporal execution average.
+    """
+    int_col, meas_col, task_col, prog_col = (
+        f"Інтеграл {year}", f"Заходи {year}", f"Завдання {year}", f"Прогрес {year}"
+    )
+
+    # Strategic-goal MіO profile: restore the complete target factual contract.
+    if goals is not None and not goals.empty and int_col in goals.columns:
+        d = goals.copy()
+        for column in (int_col, meas_col, task_col, prog_col):
+            if column in d.columns:
+                d[column] = pd.to_numeric(d[column], errors="coerce")
+        valid = d.dropna(subset=[int_col]).copy()
+        if not valid.empty:
+            max_integral, min_integral = float(valid[int_col].max()), float(valid[int_col].min())
+            best_rows = valid[(valid[int_col].astype(float) - max_integral).abs() <= 1e-9].sort_values("Код")
+            worst_rows = valid[(valid[int_col].astype(float) - min_integral).abs() <= 1e-9].sort_values("Код")
+            best = best_rows.iloc[0]; worst = worst_rows.iloc[0]
+            best_codes = [str(v) for v in best_rows.get("Код", pd.Series(dtype=object)).tolist() if str(v)]
+            worst_codes = [str(v) for v in worst_rows.get("Код", pd.Series(dtype=object)).tolist() if str(v)]
+            facts: dict[str, Any] = {
+                "year": year,
+                "goals_count": b.add(
+                    "mio.goal_count", len(valid), unit="count",
+                    source="mio_shared.goal_evaluation", aggregation="evaluated goals",
+                    observation_unit="goal",
+                ),
+                "single_entity": len(valid) == 1,
+                "average_integral": b.add(
+                    "mio.average_integral", valid[int_col].mean(), unit="percent",
+                    source="mio_shared.goal_evaluation", aggregation="mean goal integral",
+                    allow_over_100=True,
+                ),
+                "best_code": str(best.get("Код", "")),
+                "best_codes": best_codes,
+                "best_is_unique": len(best_codes) == 1 and len(valid) > 1,
+                "best_tie_count": b.add("mio.goal.best_tie_count", len(best_codes), unit="count", source="mio_shared.goal_evaluation", aggregation="goals tied at maximum integral", observation_unit="goal"),
+                "best_name": str(best.get("Ціль", "")),
+                "best_integral": b.add(
+                    "mio.best_integral", max_integral, unit="percent",
+                    source="mio_shared.goal_evaluation", aggregation="maximum integral",
+                    allow_over_100=True,
+                ),
+                "worst_code": str(worst.get("Код", "")),
+                "worst_codes": worst_codes,
+                "worst_is_unique": len(worst_codes) == 1 and len(valid) > 1,
+                "worst_tie_count": b.add("mio.goal.worst_tie_count", len(worst_codes), unit="count", source="mio_shared.goal_evaluation", aggregation="goals tied at minimum integral", observation_unit="goal"),
+                "worst_name": str(worst.get("Ціль", "")),
+                "worst_integral": b.add(
+                    "mio.worst_integral", min_integral, unit="percent",
+                    source="mio_shared.goal_evaluation", aggregation="minimum integral",
+                    allow_over_100=True,
+                ),
+            }
+            facts["gap"] = b.pp(
+                "mio.integral_gap_pp", facts["best_integral"], facts["worst_integral"],
+                source="mio_shared.goal_evaluation", aggregation="best minus worst",
+            )
+            facts["all_equal"] = abs(float(facts["gap"] or 0.0)) <= 1e-9
+            for column, key, code in (
+                (meas_col, "average_measures", "mio.average_measures"),
+                (task_col, "average_tasks", "mio.average_tasks"),
+                (prog_col, "average_progress", "mio.average_progress"),
+            ):
+                if column in valid.columns and valid[column].notna().any():
+                    facts[key] = b.add(
+                        code, valid[column].dropna().mean(), unit="percent",
+                        source="mio_shared.goal_evaluation", aggregation="mean component",
+                        allow_over_100=True,
+                    )
+
+            divergences = []
+            for index, (_, row) in enumerate(valid.iterrows()):
+                measure_value = _safe_number(row.get(meas_col))
+                integral_value = _safe_number(row.get(int_col))
+                progress_value = _safe_number(row.get(prog_col))
+                if measure_value is None or integral_value is None:
+                    continue
+                measure_metric = b.add(
+                    f"mio.goal.{index}.measure_execution_pct", measure_value,
+                    unit="percent", source="mio_shared.goal_evaluation",
+                    aggregation="goal measure component", allow_over_100=True,
+                )
+                integral_metric = b.add(
+                    f"mio.goal.{index}.integral_pct", integral_value,
+                    unit="percent", source="mio_shared.goal_evaluation",
+                    aggregation="goal integral", allow_over_100=True,
+                )
+                progress_metric = (
+                    b.add(
+                        f"mio.goal.{index}.progress_pct", progress_value,
+                        unit="percent", source="mio_shared.goal_evaluation",
+                        aggregation="goal strategic progress", allow_over_100=True,
+                    ) if progress_value is not None else None
+                )
+                gap = b.pp(
+                    f"mio.goal.{index}.measure_integral_gap_pp",
+                    measure_metric, integral_metric,
+                    source="mio_shared.goal_evaluation",
+                    aggregation="measure execution minus integral",
+                )
+                if abs(float(gap)) >= 10:
+                    divergences.append({
+                        "code": str(row.get("Код", "")),
+                        "name": str(row.get("Ціль", "")),
+                        "measure_execution": measure_metric,
+                        "integral": integral_metric,
+                        "gap": gap,
+                        "progress": progress_metric,
+                    })
+            facts["divergences"] = sorted(
+                divergences, key=lambda item: abs(float(item["gap"])), reverse=True
+            )[:4]
+            b.structures["mio.goals"] = facts
+
+    # Task-indicator MіO profile. Best/worst/gap remain exactly as in target.
+    score_col = f"Оцінка {year}"
+    if tasks is not None and not tasks.empty and {"Рівень", "Код", score_col}.issubset(tasks.columns):
+        t = tasks[tasks["Рівень"].astype(str).eq("task")].copy()
+        t[score_col] = pd.to_numeric(t[score_col], errors="coerce")
+        scores = t.groupby(t["Код"].astype(str))[score_col].mean().dropna()
+        if not scores.empty:
+            max_progress, min_progress = float(scores.max()), float(scores.min())
+            best_tasks = sorted(str(idx) for idx, value in scores.items() if abs(float(value) - max_progress) <= 1e-9)
+            worst_tasks = sorted(str(idx) for idx, value in scores.items() if abs(float(value) - min_progress) <= 1e-9)
+            facts = {
+                "year": year,
+                "tasks_count": b.add(
+                    "mio.task_count", len(scores), unit="count",
+                    source="mio_shared.goal_task_evaluation", aggregation="evaluated tasks",
+                    observation_unit="task",
+                ),
+                "single_entity": len(scores) == 1,
+                "average_task_indicator_progress": b.add(
+                    "mio.task.average_indicator_progress", scores.mean(), unit="percent",
+                    source="mio_shared.goal_task_evaluation",
+                    aggregation="mean task indicator progress", allow_over_100=True,
+                ),
+                "best_task": best_tasks[0] if best_tasks else "",
+                "best_tasks": best_tasks,
+                "best_is_unique": len(best_tasks) == 1 and len(scores) > 1,
+                "best_tie_count": b.add("mio.task.best_tie_count", len(best_tasks), unit="count", source="mio_shared.goal_task_evaluation", aggregation="tasks tied at maximum indicator progress", observation_unit="task"),
+                "best_task_progress": b.add(
+                    "mio.task.best_progress", max_progress, unit="percent",
+                    source="mio_shared.goal_task_evaluation",
+                    aggregation="maximum task progress", allow_over_100=True,
+                ),
+                "worst_task": worst_tasks[0] if worst_tasks else "",
+                "worst_tasks": worst_tasks,
+                "worst_is_unique": len(worst_tasks) == 1 and len(scores) > 1,
+                "worst_tie_count": b.add("mio.task.worst_tie_count", len(worst_tasks), unit="count", source="mio_shared.goal_task_evaluation", aggregation="tasks tied at minimum indicator progress", observation_unit="task"),
+                "worst_task_progress": b.add(
+                    "mio.task.worst_progress", min_progress, unit="percent",
+                    source="mio_shared.goal_task_evaluation",
+                    aggregation="minimum task progress", allow_over_100=True,
+                ),
+            }
+            facts["gap"] = b.pp(
+                "mio.task.progress_gap_pp",
+                facts["best_task_progress"], facts["worst_task_progress"],
+                source="mio_shared.goal_task_evaluation", aggregation="best minus worst",
+            )
+            facts["all_equal"] = abs(float(facts["gap"] or 0.0)) <= 1e-9
+
+            divergences = []
+            if (
+                task_progress is not None and not task_progress.empty
+                and {"task_code", "Виконання"}.issubset(task_progress.columns)
+            ):
+                tp = task_progress.copy()
+                tp["_code"] = tp["task_code"].astype(str)
+                tp["_exec"] = pd.to_numeric(tp["Виконання"], errors="coerce")
+                # `task_progress` is already the Analytics exact-latest summary.
+                # One task must therefore contribute its latest value only; do
+                # not calculate any temporal average here.
+                exact_latest = (
+                    tp.dropna(subset=["_exec"])
+                    .drop_duplicates(subset=["_code"], keep="first")
+                    .set_index("_code")["_exec"]
+                )
+                for index, (code, progress) in enumerate(scores.items()):
+                    if code not in exact_latest.index:
+                        continue
+                    execution_metric = b.add(
+                        f"mio.task.{index}.execution_pct", float(exact_latest.loc[code]),
+                        unit="percent", source="analytics.task_progress.exact_latest",
+                        aggregation="task exact-latest execution", allow_over_100=True,
+                    )
+                    progress_metric = b.add(
+                        f"mio.task.{index}.indicator_progress_pct", float(progress),
+                        unit="percent", source="mio_shared.goal_task_evaluation",
+                        aggregation="task indicator progress", allow_over_100=True,
+                    )
+                    gap = b.pp(
+                        f"mio.task.{index}.execution_indicator_gap_pp",
+                        execution_metric, progress_metric,
+                        source="mio_shared+analytics.task_progress.exact_latest",
+                        aggregation="exact-latest task execution minus indicator progress",
+                    )
+                    if abs(float(gap)) >= 10:
+                        divergences.append({
+                            "code": code,
+                            "execution": execution_metric,
+                            "indicator_progress": progress_metric,
+                            "gap": gap,
+                        })
+            facts["divergences"] = sorted(
+                divergences, key=lambda item: abs(float(item["gap"])), reverse=True
+            )[:4]
+            b.structures["mio.tasks"] = facts
+
+    # Measure-level MіO: preserve count, evaluated count, mean and median.
+    if measures is not None and not measures.empty and "Факт/План, %" in measures.columns:
+        ratios = pd.to_numeric(measures["Факт/План, %"], errors="coerce").dropna()
+        if not ratios.empty:
+            b.structures["mio.measures"] = {
+                "year": year,
+                "measures_count": b.add(
+                    "mio.measure_count", len(measures), unit="count",
+                    source="mio_shared.measure_evaluation", aggregation="measure rows",
+                    observation_unit="measure",
+                ),
+                "evaluated_measures": b.add(
+                    "mio.measure_evaluated_count", len(ratios), unit="count",
+                    source="mio_shared.measure_evaluation", aggregation="evaluated measures",
+                    observation_unit="measure",
+                ),
+                "average_fact_plan": b.add(
+                    "mio.measure.average_fact_plan", ratios.mean(), unit="percent",
+                    source="mio_shared.measure_evaluation", aggregation="mean fact/plan",
+                    allow_over_100=True,
+                ),
+                "median_fact_plan": b.add(
+                    "mio.measure.median_fact_plan", ratios.median(), unit="percent",
+                    source="mio_shared.measure_evaluation", aggregation="median fact/plan",
+                    allow_over_100=True,
+                ),
+            }
+
+    # Financing MіO: restore paired financial/physical comparison and top gaps.
+    if financing is not None and not financing.empty:
+        d = financing.copy()
+        for column in ("% виконання", "Стан виконання заходу, %", "План, млрд грн", "Факт, млрд грн"):
+            if column in d.columns:
+                d[column] = pd.to_numeric(d[column], errors="coerce")
+        facts = {
+            "rows": b.add(
+                "mio.fin.rows", len(d), unit="count", source="mio_shared.financing",
+                aggregation="financing rows", observation_unit="measure",
+            )
+        }
+        if "План, млрд грн" in d.columns and d["План, млрд грн"].notna().any():
+            facts["plan_total"] = b.add(
+                "mio.fin.plan_total", d["План, млрд грн"].sum(), unit="currency",
+                source="mio_shared.financing", aggregation="sum plan",
+            )
+        if "Факт, млрд грн" in d.columns and d["Факт, млрд грн"].notna().any():
+            facts["fact_total"] = b.add(
+                "mio.fin.fact_total", d["Факт, млрд грн"].sum(), unit="currency",
+                source="mio_shared.financing", aggregation="sum fact",
+            )
+        if {"% виконання", "Стан виконання заходу, %"}.issubset(d.columns):
+            paired = d.dropna(subset=["% виконання", "Стан виконання заходу, %"]).copy()
+            if not paired.empty:
+                facts["paired_count"] = b.add(
+                    "mio.fin.paired_count", len(paired), unit="count",
+                    source="mio_shared.financing",
+                    aggregation="paired financial/physical rows", observation_unit="measure",
+                )
+                facts["avg_financial_execution"] = b.add(
+                    "mio.fin.avg_financial_execution", paired["% виконання"].mean(),
+                    unit="percent", source="mio_shared.financing",
+                    aggregation="mean financial execution", allow_over_100=True,
+                )
+                facts["avg_physical_execution"] = b.add(
+                    "mio.fin.avg_physical_execution", paired["Стан виконання заходу, %"].mean(),
+                    unit="percent", source="mio_shared.financing",
+                    aggregation="mean physical execution", allow_over_100=True,
+                )
+                gaps = []
+                for index, (_, row) in enumerate(paired.iterrows()):
+                    financial_metric = b.add(
+                        f"mio.fin.row.{index}.financial_execution_pct", row["% виконання"],
+                        unit="percent", source="mio_shared.financing",
+                        aggregation="row financial execution", allow_over_100=True,
+                    )
+                    physical_metric = b.add(
+                        f"mio.fin.row.{index}.physical_execution_pct", row["Стан виконання заходу, %"],
+                        unit="percent", source="mio_shared.financing",
+                        aggregation="row physical execution", allow_over_100=True,
+                    )
+                    gap = b.pp(
+                        f"mio.fin.row.{index}.gap_pp", financial_metric, physical_metric,
+                        source="mio_shared.financing", aggregation="financial minus physical",
+                    )
+                    gaps.append((abs(float(gap)), row, gap, financial_metric, physical_metric))
+                largest = []
+                for _, row, gap, financial_metric, physical_metric in sorted(
+                    gaps, key=lambda item: item[0], reverse=True
+                )[:4]:
+                    item = {
+                        key: row.get(key)
+                        for key in ("Захід", "Назва заходу")
+                        if key in paired.columns
+                    }
+                    item.update({
+                        "% виконання": financial_metric,
+                        "Стан виконання заходу, %": physical_metric,
+                        "_gap": gap,
+                    })
+                    largest.append(item)
+                facts["largest_gaps"] = largest
+        b.structures["mio.financing"] = facts
+
+
+def build_analytical_facts(
+    *, filters: Mapping[str, Any], metrics: Mapping[str, Any], goal_progress: pd.DataFrame,
+    task_progress: pd.DataFrame, department_progress: pd.DataFrame, product_progress: pd.DataFrame,
+    status_counts: pd.DataFrame, period_dynamics: pd.DataFrame, active: pd.DataFrame,
+    mio_goal_evaluation: pd.DataFrame, mio_goal_task_evaluation: pd.DataFrame,
+    mio_measure_evaluation: pd.DataFrame, mio_financing: pd.DataFrame,
+) -> PreparedAnalyticalFacts:
+    b = _Builder(filters)
+    for year in sorted({int(y) for y in (filters.get("years", []) or []) if str(y).isdigit()}):
+        b.add(f"scope.year.{year}", year, unit="number", source="analytics.filters.years", aggregation="selected year")
+    for name, frame in (
         ("goal_progress", goal_progress), ("task_progress", task_progress),
         ("department_progress", department_progress), ("product_progress", product_progress),
-        ("status_counts", status_counts), ("period_dynamics", period_dynamics),
-        ("yoy_comparison", yoy_comparison), ("active", active),
+        ("status_counts", status_counts), ("period_dynamics", period_dynamics), ("active", active),
         ("mio_goal_evaluation", mio_goal_evaluation), ("mio_goal_task_evaluation", mio_goal_task_evaluation),
         ("mio_measure_evaluation", mio_measure_evaluation), ("mio_financing", mio_financing),
     ):
-        _register_frame_sources(b, _name, _frame)
+        _register_frame_sources(b, name, frame)
+
     b.add("scope.department_count", len(department_progress) if department_progress is not None else 0, unit="count", source="analytics.department_progress", aggregation="selected departments", observation_unit="department")
     b.add("scope.product_count", len(product_progress) if product_progress is not None else 0, unit="count", source="analytics.product_progress", aggregation="selected product types", observation_unit="product")
-    # Register page/shared metrics without recalculation.
-    units={"completion":"percent","coverage":"percent","completion_latest":"percent","coverage_latest":"percent","goal_completion":"percent","goal_completion_latest":"percent"}
-    for key,value in metrics.items():
-        if _safe_number(value) is None:continue
-        unit=units.get(key,"count" if any(t in key.lower() for t in ("count","rows","measures","goals","tasks","problem","no_data","completed")) else "number")
-        allow=unit=="percent" and float(value)>100
-        b.add(f"page.{key}",value,unit=unit,source=f"analytics.page.metrics.{key}",aggregation="shared page metric",allow_over_100=allow)
-    overall=_safe_number(metrics.get("completion"))
-    latest=_safe_number(metrics.get("completion_latest"))
-    if overall is not None and latest is not None:b.pp("overall.latest_minus_average_pp",latest,overall,source="analytics.page.metrics",aggregation="latest minus selection average")
-    cov=_safe_number(metrics.get("coverage"));covl=_safe_number(metrics.get("coverage_latest"))
-    if cov is not None and covl is not None:b.pp("overall.coverage_latest_minus_average_pp",covl,cov,source="analytics.page.metrics",aggregation="latest coverage minus average")
-    g=_safe_number(metrics.get("goal_completion"));gl=_safe_number(metrics.get("goal_completion_latest"))
-    if overall is not None and g is not None:b.pp("overall.measure_goal_gap_pp",overall,g,source="dashboard.shared",aggregation="measure execution minus goal execution")
-    if latest is not None and gl is not None:b.pp("overall.latest_measure_goal_gap_pp",latest,gl,source="dashboard.shared",aggregation="latest measure execution minus latest goal execution")
-    total_rows=_safe_int(metrics.get("total_rows"))
-    if total_rows>0:
-        b.ratio_pct("overall.missing_share_pct",_safe_int(metrics.get("no_data")),total_rows,source="analytics.page.metrics",aggregation="missing rows share",numerator_unit="measure-period",denominator_unit="measure-period")
-        b.ratio_pct("overall.problem_share_pct",_safe_int(metrics.get("problem")),total_rows,source="analytics.page.metrics",aggregation="problem rows share",numerator_unit="measure-period",denominator_unit="measure-period")
-    _prepare_trajectory(b,period_dynamics)
-    for frame,kind in ((goal_progress,"goal"),(task_progress,"task"),(department_progress,"department")):
-        _prepare_distribution(b,frame,kind,overall)
-        _prepare_concentration(b,frame,kind,"Проблемних","problems",active)
-        _prepare_concentration(b,frame,kind,"Без_даних","missing",active)
-    _prepare_status(b,status_counts,active);_prepare_product(b,product_progress)
-    _prepare_yoy(b, yoy_comparison)
-    _prepare_drilldowns(b, goal_progress, department_progress, active, overall)
-    _prepare_ssp_portfolio_and_risk(b, department_progress, metrics)
-    _prepare_persistence(b, active)
-    years=sorted({int(y) for y in (filters.get("years",[]) or []) if str(y).isdigit()}); year=max(years) if years else 2026
-    _prepare_mio(b,mio_goal_evaluation,mio_goal_task_evaluation,mio_measure_evaluation,mio_financing,year,task_progress)
-    return PreparedAnalyticalFacts(metrics=dict(b.metrics),structures=dict(b.structures))
+
+    percent_keys = {"completion", "coverage", "coverage_latest", "goal_completion"}
+    count_tokens = ("count", "rows", "measures", "goals", "tasks", "no_data", "completed", "submitted", "attention")
+    for key, value in metrics.items():
+        if _safe_number(value) is None:
+            continue
+        unit = "percent" if key in percent_keys else ("count" if any(t in key.lower() for t in count_tokens) else "number")
+        observation = "unique-measure" if key in {"unique_measures", "latest_measure_count", "no_data", "completed", "submitted", "attention_count", "attention_assessed_count"} else None
+        b.add(f"page.{key}", value, unit=unit, source=f"analytics.page.metrics.{key}", aggregation="prepared page metric", allow_over_100=(unit == "percent" and float(value) > 100), observation_unit=observation)
+
+    execution = _safe_number(metrics.get("completion")); goal_execution = _safe_number(metrics.get("goal_completion"))
+    if execution is not None and goal_execution is not None:
+        b.pp("overall.measure_goal_gap_pp", execution, goal_execution, source="analytics.page.metrics", aggregation="latest measure execution minus latest goal execution")
+    coverage_avg, coverage_latest = _safe_number(metrics.get("coverage")), _safe_number(metrics.get("coverage_latest"))
+    if coverage_avg is not None and coverage_latest is not None:
+        b.pp("overall.coverage_latest_minus_average_pp", coverage_latest, coverage_avg, source="analytics.page.metrics", aggregation="latest coverage minus selected-period mean coverage")
+    latest_n = _safe_int(metrics.get("latest_measure_count")); missing_n = _safe_int(metrics.get("no_data")); attention_n = _safe_int(metrics.get("attention_count"))
+    if latest_n > 0:
+        b.ratio_pct("overall.missing_latest_share_pct", missing_n, latest_n, source="analytics.page.metrics", aggregation="current missing-submission share", numerator_unit="unique-measure", denominator_unit="unique-measure")
+        b.ratio_pct("overall.attention_latest_share_pct", attention_n, latest_n, source="analytics.page.metrics", aggregation="current management-attention share", numerator_unit="unique-measure", denominator_unit="unique-measure")
+
+    _prepare_trajectory(b, period_dynamics)
+    for frame, kind in ((goal_progress, "goal"), (task_progress, "task"), (department_progress, "department")):
+        _prepare_distribution(b, frame, kind, execution)
+        _prepare_current_concentration(b, frame, kind, "Актуальна_увага", "attention")
+        _prepare_current_concentration(b, frame, kind, "Без_даних", "missing")
+    _prepare_status(b, status_counts, active)
+    _prepare_product(b, product_progress)
+    _prepare_drilldowns(b, goal_progress, task_progress, department_progress, active)
+    _prepare_ssp_and_risk(b, department_progress, metrics)
+    _prepare_missing_persistence(b, active)
+    years = sorted({int(y) for y in (filters.get("years", []) or []) if str(y).isdigit()}); year = max(years) if years else 2026
+    _prepare_mio(b, mio_goal_evaluation, mio_goal_task_evaluation, mio_measure_evaluation, mio_financing, year, task_progress)
+    return PreparedAnalyticalFacts(metrics=dict(b.metrics), structures=dict(b.structures))

@@ -223,10 +223,15 @@ def assess_quality(
     used_findings: set[str],
     phrase_ids: Iterable[str],
     facts_used: Iterable[str],
+    expected_important_findings: set[str] | None = None,
 ) -> NoteQualityMetrics:
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
     sentence_counts = [len(_sentences(p)) for p in paragraphs]
-    important = {f.code for f in findings if f.importance >= 60}
+    important = (
+        set(expected_important_findings)
+        if expected_important_findings is not None
+        else {f.code for f in findings if f.importance >= 60}
+    )
     coverage = len(important & used_findings) / len(important) if important else 1.0
     phrase_list = list(phrase_ids)
     repeated = len(phrase_list) - len(set(phrase_list))
@@ -271,6 +276,32 @@ def validate_text(
             warnings.append(f"unsupported semantic claim: {fragment}")
     if "  " in text:
         warnings.append("double spaces")
+
+    # Semantic contradiction guards are independent of the factual renderer.
+    # A positive signed value cannot be described as a decline (and vice versa).
+    sign_patterns = (
+        (r"(?:знижен|падін|скороченн|погіршенн)[^.]{0,80}\+\s*\d+(?:[.,]\d+)?\s*(?:%|в\.п\.)", "positive value described as decline"),
+        (r"(?:зростан|приріст|покращенн)[^.]{0,80}-\s*\d+(?:[.,]\d+)?\s*(?:%|в\.п\.)", "negative value described as growth"),
+    )
+    for pattern, reason in sign_patterns:
+        if re.search(pattern, lowered, flags=re.I):
+            warnings.append(f"polarity/sign contradiction: {reason}")
+
+    # Findings themselves must remain internally coherent.  This also protects
+    # compatibility callers that may still pass a legacy-named broad movement
+    # finding to the production validator.
+    for finding in findings:
+        code = str(finding.code).lower()
+        facts = finding.facts or {}
+        try:
+            improved = int(facts.get("improved") or 0)
+            declined = int(facts.get("declined") or 0)
+        except (TypeError, ValueError, OverflowError):
+            improved = declined = 0
+        if ("broad_negative" in code or code.endswith("change_negative")) and declined <= 0 and improved > 0:
+            warnings.append(f"finding contradiction: {finding.code} declares negative breadth without observed declines")
+        if ("broad_positive" in code or code.endswith("change_positive")) and improved <= 0 and declined > 0:
+            warnings.append(f"finding contradiction: {finding.code} declares positive breadth without observed improvements")
 
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
     all_sentences: list[str] = []

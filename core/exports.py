@@ -79,6 +79,12 @@ _PRES_RED = "#DC4A4A"
 _PRES_GREEN = "#118847"
 _PRES_BRIGHT_GREEN = "#1E9E57"
 
+# Legacy generic renderer colors retained for the existing MIO consumer.
+BRAND_BLUE = (0 / 255, 91 / 255, 187 / 255)
+BRAND_YELLOW = (255 / 255, 213 / 255, 0 / 255)
+DARK = (15 / 255, 23 / 255, 42 / 255)
+GREY = (71 / 255, 85 / 255, 105 / 255)
+
 
 def _register_fonts():
     """Register bundled/system DejaVu fonts so Ukrainian text is deterministic."""

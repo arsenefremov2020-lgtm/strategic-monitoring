@@ -138,17 +138,20 @@ def _register_presentation_fonts():
                 return None
 
         dynamic_pairs = [
-            (fc_file("Helvetica Neue"), fc_file("Helvetica Neue:style=Bold")),
+            # Chromium skips an unavailable literal Helvetica Neue face and
+            # falls through to Arial; mirror that CSS stack order by resolving
+            # the actual Arial-compatible face first.
             (fc_file("Arial"), fc_file("Arial:style=Bold")),
+            (fc_file("Helvetica Neue"), fc_file("Helvetica Neue:style=Bold")),
         ]
         static_pairs = [
             (
-                Path("/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"),
-                Path("/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf"),
-            ),
-            (
                 Path("/usr/share/fonts/truetype/croscore/Arimo-Regular.ttf"),
                 Path("/usr/share/fonts/truetype/croscore/Arimo-Bold.ttf"),
+            ),
+            (
+                Path("/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"),
+                Path("/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf"),
             ),
             (
                 Path("/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf"),

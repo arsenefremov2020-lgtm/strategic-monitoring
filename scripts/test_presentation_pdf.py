@@ -184,10 +184,17 @@ def test_cases_e_f_dashboard_uses_one_payload_for_all_filters_and_renderers():
     assert usages[0][2] == "_pdf_bytes = build_presentation_pdf(_presentation_payload)", usages
 
     exports_source = (ROOT / "core" / "exports.py").read_text(encoding="utf-8")
-    assert "kpi_items:" not in exports_source
-    assert "figures:" not in exports_source
-    assert "Мінекономіки · Система моніторингу стратегічного плану" not in exports_source
-    assert "setFillColorRGB(0.97, 0.98, 0.99)" not in exports_source
+    new_renderer = exports_source.split("def build_presentation_pdf(", 1)[1]
+    assert "kpi_items:" not in new_renderer
+    assert "figures:" not in new_renderer
+    assert "Мінекономіки · Система моніторингу стратегічного плану" not in new_renderer
+    assert "setFillColorRGB(0.97, 0.98, 0.99)" not in new_renderer
+    assert "def build_legacy_presentation_pdf(" in exports_source
+
+    mio_source = (ROOT / "pages" / "3_Оцінка_МіО.py").read_text(encoding="utf-8")
+    assert "build_legacy_presentation_pdf" in mio_source
+    assert "pdf_bytes = build_legacy_presentation_pdf(" in mio_source
+    assert "pdf_bytes = build_presentation_pdf(" not in mio_source
 
     for key in (
         '"departments": list(selected_department_indices or [])',

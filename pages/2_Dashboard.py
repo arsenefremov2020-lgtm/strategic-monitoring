@@ -21,6 +21,7 @@ from core.periods import quarter_to_roman as core_quarter_to_roman
 from core import operational
 from core.closeouts import append_confirmed_closeout_facts
 from core.exports import build_presentation_pdf
+from core.presentation import build_presentation_payload, presentation_slides_by_key
 from core.errors import log_cosmetic_error, show_incident
 from core.access import (
     filter_actions_for_user,
@@ -2841,83 +2842,24 @@ if snapshot_context is not None and not snapshot_monitoring_available:
 # ============================================================
 
 if presentation_mode:
-    # ТЗ-правка (09.07.2026, п.4): кнопка повного екрана тепер ВСЕРЕДИНІ
-    # самої презентації і розгортає САМЕ презентацію, а не сторінку.
-    # ── PDF-версія презентації (той самий набір слайдів) ─────
-    with st.expander("📄 Завантажити презентацію у PDF"):
-        st.caption(
-            "PDF повторює структуру presentation mode: титул, ключові показники, "
-            "основні графіки та висновок — у фірмовому стилі, з поточними фільтрами."
-        )
-        if st.button("Сформувати PDF", key="build_pres_pdf", use_container_width=True):
-            with st.spinner("Формуємо PDF-презентацію..."):
-                try:
-                    import plotly.express as _pdf_px
-                    _pdf_kpis = [
-                        ("Всього заходів у зрізі", str(total_active)),
-                        ("Виконано", str(completed_count)),
-                        ("Частково виконано", str(partly_count)),
-                        ("Не виконано", str(not_done_count)),
-                        ("Не настав час", str(not_time_count)),
-                        ("Втратило актуальність", str(obsolete_count)),
-                        ("Виконання за заходами, %", _format_percent(completion)),
-                        ("Виконання за стратегічними цілями, %", _format_percent(goal_execution)),
-                        ("Покриття моніторингом, %", _format_percent(coverage)),
-                        (("Результатів досягнуто, %" if snapshot_quarter_num == 4 else "Високий + критичний ризик, %"),
-                         _format_percent(snapshot_context.get('period_results', {}).get((int(snapshot_pairs[0][0]), quarter_to_roman(snapshot_pairs[0][1])), {}).get('risk_summary', {}).get('share_results_achieved') if snapshot_quarter_num == 4 else risk_share)),
-                    ]
-                    _st_fig = _pdf_px.bar(
-                        x=["Виконано", "Частково виконано", "Не виконано", "Не подано", "Не настав час", "Втратило актуальність"],
-                        y=[completed_count, partly_count, not_done_count, not_counted_count, not_time_count, obsolete_count],
-                        color_discrete_sequence=["#005BBB"],
-                        title="",
-                    )
-                    _st_fig.update_layout(xaxis_title="", yaxis_title="Кількість заходів",
-                                          plot_bgcolor="white", paper_bgcolor="white")
-                    _pdf_figures = [("Статуси виконання заходів", _st_fig),
-                                    ("Виконання за заходами", gauge_chart(completion, "Виконання за заходами")),
-                                    ("Виконання за стратегічними цілями", gauge_chart(goal_execution, "Виконання за стратегічними цілями"))]
+    # Presentation data is prepared ONCE below. Both the browser renderer and
+    # PDF renderer consume the same canonical payload.
+    _presentation_generated_at = now_kyiv()
+    verdict_class = {
+        "risk-high": "high",
+        "risk-medium": "medium",
+        "risk-low": "low",
+        "risk-neutral": "medium",
+    }[conclusion_badge]
+    verdict_emoji = {
+        "risk-high": "🔴",
+        "risk-medium": "🟡",
+        "risk-low": "🟢",
+        "risk-neutral": "ℹ️",
+    }[conclusion_badge]
 
-                    _gf = weighted_failure_group(active, ["goal_code", "strategic_goal"])
-                    _de = explode_departments(active)
-                    _df_ = weighted_failure_group(_de, ["ssp_department"])
-                    _ins = []
-                    if not _gf.empty:
-                        _r = _gf.iloc[0]
-                        _ins.append(f"Найбільша концентрація невиконання: СЦ {_r['goal_code']} — "
-                                    f"{int(_r['Невиконаних'])} із {int(_r['Активних_заходів'])} "
-                                    f"(вага {_r['Вага_невиконання']}%)")
-                    if not _df_.empty:
-                        _r = _df_.iloc[0]
-                        _ins.append(f"ССП із найвищою концентрацією: {_r['ssp_department']} — "
-                                    f"{int(_r['Невиконаних'])} із {int(_r['Активних_заходів'])} "
-                                    f"(вага {_r['Вага_невиконання']}%)")
-                    _ins.append(f"Джерело даних: {data_source_mode}")
-
-                    _pdf_bytes = build_presentation_pdf(
-                        "Моніторинг стратегічного плану",
-                        f"Період: {period_label}",
-                        _pdf_kpis, conclusion_text[:110],
-                        {"risk-high": "high", "risk-medium": "medium", "risk-low": "low", "risk-neutral": "medium"}[conclusion_badge],
-                        _ins, _pdf_figures,
-                    )
-                    if _pdf_bytes:
-                        st.download_button(
-                            "⬇️ Завантажити PDF", data=_pdf_bytes,
-                            file_name=f"presentation_{now_kyiv().strftime('%Y%m%d_%H%M')}.pdf",
-                            mime="application/pdf", key="dl_pres_pdf", use_container_width=True,
-                        )
-                    else:
-                        st.warning("Для PDF потрібен пакет `reportlab` у requirements.txt.")
-                except Exception as _pdf_err:
-                    show_incident(_pdf_err, context="Формування PDF презентаційного режиму Dashboard")
-
-    # ── helpers ──────────────────────────────────────────────
-    verdict_class = {"risk-high": "high", "risk-medium": "medium", "risk-low": "low", "risk-neutral": "medium"}[conclusion_badge]
-    verdict_emoji = {"risk-high": "🔴", "risk-medium": "🟡", "risk-low": "🟢", "risk-neutral": "ℹ️"}[conclusion_badge]
-
-    # goal progress data for slide
-    goal_rows_html = ""
+    # ── Slide 4: strategic goals (presentation-only shaping, no recalculation)
+    _pres_goal_rows = []
     if not goal_progress.empty:
         gp_sorted = goal_progress.copy()
         gp_sorted["_goal_sort"] = gp_sorted["goal_code"].apply(code_sort_key)
@@ -2937,31 +2879,32 @@ if presentation_mode:
                     bar_color = "#FF7A45"
                 else:
                     bar_color = "#DC4A4A"
-            short_name = str(gr["strategic_goal"])[:45] + ("…" if len(str(gr["strategic_goal"])) > 45 else "")
-            goal_rows_html += f"""
-            <div class="pres-goal-row">
-                <div class="pres-goal-code">{gr['goal_code']}</div>
-                <div class="pres-goal-name" title="{gr['strategic_goal']}">{short_name}</div>
-                <div class="pres-goal-bar-bg">
-                    <div class="pres-goal-bar-fill" style="width:{pct}%;background:{bar_color};"></div>
-                </div>
-                <div class="pres-goal-pct">{pct_label}</div>
-            </div>"""
+            full_name = str(gr["strategic_goal"])
+            short_name = full_name[:45] + ("…" if len(full_name) > 45 else "")
+            _pres_goal_rows.append({
+                "code": str(gr["goal_code"]),
+                "name": short_name,
+                "full_name": full_name,
+                "value": pct,
+                "value_text": pct_label,
+                "color": bar_color,
+            })
 
-    # risk counts for slide
+    # ── Slide 5: risk semantics exactly as current Presentation mode
     risk_map = risk_assessed.groupby("auto_risk").size().to_dict()
-    count_high = (
-        risk_map.get("Критичний ризик", 0)
-        + risk_map.get("Високий ризик", 0)
-    )
+    count_high = risk_map.get("Критичний ризик", 0) + risk_map.get("Високий ризик", 0)
     count_medium = risk_map.get("Середній ризик", 0)
     count_low = risk_map.get("Низький ризик", 0)
     _presentation_q1 = snapshot_quarter_num == 1
     _presentation_q4 = snapshot_quarter_num == 4
     _pres_risk_share_value = risk_share
+
     if _presentation_q4:
         _assessed_final = active[active["execution_score"].notna()].copy()
-        count_low = int(_assessed_final.get("result_achieved", pd.Series(False, index=_assessed_final.index)).fillna(False).astype(bool).sum())
+        _result_achieved = _assessed_final.get(
+            "result_achieved", pd.Series(False, index=_assessed_final.index)
+        ).fillna(False).astype(bool)
+        count_low = int(_result_achieved.sum())
         count_high = int(len(_assessed_final) - count_low)
         count_medium = partly_count
         _pres_risk_section = "Підсумок року"
@@ -2997,43 +2940,38 @@ if presentation_mode:
         _pres_fourth_label = "Частка без суттєвого ризику"
         _pres_fourth_value = float(low_risk_share) if low_risk_share is not None else 0.0
 
-    # filter context label
-    filter_parts = []
-    if selected_years:
-        filter_parts.append(f"📅 {', '.join(str(y) for y in selected_years)}")
-    else:
-        filter_parts.append("📅 Усі роки")
-    if selected_quarters:
-        filter_parts.append(f"🗓 {', '.join(selected_quarters)} кв.")
-    else:
-        filter_parts.append("🗓 Усі квартали")
-    if selected_department_indices:
-        filter_parts.append(f"🏢 ССП: {', '.join(selected_department_indices)}")
-    else:
-        filter_parts.append("🏢 Усі підрозділи")
-
-    filter_pills_html = "".join(
-        f'<span class="pres-filter-pill">{p}</span>' for p in filter_parts
+    # ── Applied filter state for slide 1
+    _year_text = ", ".join(str(y) for y in selected_years) if selected_years else "Усі роки"
+    _quarter_text = ", ".join(selected_quarters) + " кв." if selected_quarters else "Усі квартали"
+    _ssp_text = (
+        f"ССП: {', '.join(selected_department_indices)}"
+        if selected_department_indices else "Усі підрозділи"
     )
+    _pres_filter_pills = [
+        f"📅 {_year_text}",
+        f"🗓 {_quarter_text}",
+        f"🏢 {_ssp_text}",
+        f"📌 {total_active} заходів у зрізі",
+        f"🕐 {_presentation_generated_at.strftime('%d.%m.%Y %H:%M')}",
+    ]
+    _applied_filter_state = {
+        "years": list(selected_years or []),
+        "quarters": list(selected_quarters or []),
+        "departments": list(selected_department_indices or []),
+        "goals": list(selected_goals or []),
+        "tasks": list(selected_tasks or []),
+        "measures": list(selected_measures or []),
+        "product_types": list(selected_product_types or []),
+        "deputies": list(selected_deputies or []),
+        "sources": list(selected_sources or []),
+        "financing": list(selected_financing or []),
+        "kpkvk": list(selected_kpkvk or []),
+        "data_source_mode": data_source_mode,
+    }
 
-    # metric bar helper
-    def pres_bar(label, value, color):
-        pct = min(max(float(value), 0), 100)
-        return f"""
-        <div class="pres-metric-row">
-            <div class="pres-metric-label">{label}</div>
-            <div class="pres-metric-bar-bg">
-                <div class="pres-metric-bar-fill" style="width:{pct}%;background:{color};"></div>
-            </div>
-            <div class="pres-metric-val">{value}%</div>
-        </div>"""
-
-    # ── фінансові дані для слайду 7 ───────────────────────────
+    # ── Slide 7: finance from the same existing Dashboard finance adapter
     pres_fin_year = _finance_selected_year(selected_years)
-    pres_fin_measures = _prepare_dashboard_finance_measures(
-        active,
-        pres_fin_year,
-    )
+    pres_fin_measures = _prepare_dashboard_finance_measures(active, pres_fin_year)
     pres_fin_total = len(pres_fin_measures)
     pres_fin_db = len(_finance_group_rows(pres_fin_measures, "state"))
     pres_fin_mtd = len(_finance_group_rows(pres_fin_measures, "mtd"))
@@ -3049,28 +2987,23 @@ if presentation_mode:
         f"{_finance_amount_text(pres_budget_sum)} млрд грн"
         if pres_budget_sum is not None else "н/д"
     )
-
-    pres_fin_bars_html = ""
-    _fin_types_slide = [
+    _pres_fin_groups = []
+    for _label, _cnt, _color in [
         ("Державний бюджет", pres_fin_db, "#005BBB"),
         ("МТД / кошти партнерів", pres_fin_mtd, "#00A8A8"),
         ("Небюджетні / інші", pres_fin_other, "#FF7A45"),
         ("Без фінансування", pres_fin_no, "#8A96A8"),
-    ]
-    for _label, _cnt, _color in _fin_types_slide:
+    ]:
         _pct_v = round(_cnt / pres_fin_total * 100, 1) if pres_fin_total else 0
-        pres_fin_bars_html += f"""
-        <div style="margin-bottom:16px;">
-            <div style="display:flex;justify-content:space-between;margin-bottom:5px;">
-                <span style="font-size:13px;font-weight:700;color:rgba(255,255,255,.7);">{_label}</span>
-                <span style="font-size:13px;font-weight:900;color:#fff;">{_cnt} <span style="font-size:11px;color:rgba(255,255,255,.35);">({_pct_v}%)</span></span>
-            </div>
-            <div style="background:rgba(255,255,255,.07);border-radius:99px;height:10px;overflow:hidden;">
-                <div style="width:{_pct_v}%;height:100%;background:{_color};border-radius:99px;"></div>
-            </div>
-        </div>"""
+        _pres_fin_groups.append({
+            "label": _label,
+            "count": int(_cnt),
+            "percent": _pct_v,
+            "display": f"{int(_cnt)} ({_pct_v}%)",
+            "color": _color,
+        })
 
-    pres_kpkvk_html = ""
+    _pres_kpkvk_rows = []
     if not pres_fin_measures.empty:
         _kp_source = pres_fin_measures[
             pres_fin_measures["_finance_kpkvk"].astype(str).str.strip() != ""
@@ -3081,7 +3014,10 @@ if presentation_mode:
                 .groupby("_finance_kpkvk", dropna=False)
                 .agg(
                     _Заходів=("code", "nunique"),
-                    _Бюджет=("_finance_plan_bln", lambda values: values.dropna().sum() if values.notna().any() else None),
+                    _Бюджет=(
+                        "_finance_plan_bln",
+                        lambda values: values.dropna().sum() if values.notna().any() else None,
+                    ),
                 )
                 .reset_index()
                 .sort_values("_Заходів", ascending=False)
@@ -3089,52 +3025,336 @@ if presentation_mode:
             )
             for _, _krow in _kp_tbl.iterrows():
                 _b_str = _finance_amount_text(_krow["_Бюджет"])
-                pres_kpkvk_html += (
-                    f'<div style="display:flex;justify-content:space-between;align-items:center;'
-                    f'padding:10px 0;border-bottom:1px solid rgba(255,255,255,.06);">'
-                    f'<span style="font-size:14px;font-weight:800;color:#FFD500;">{_krow["_finance_kpkvk"]}</span>'
-                    f'<span style="font-size:12px;color:rgba(255,255,255,.5);">{int(_krow["_Заходів"])} заходів</span>'
-                    f'<span style="font-size:12px;color:rgba(255,255,255,.7);font-weight:700;">{_b_str} млрд грн</span>'
-                    f'</div>'
-                )
-    if not pres_kpkvk_html:
-        pres_kpkvk_html = '<div style="color:rgba(255,255,255,.3);margin-top:12px;">КПКВК не визначено</div>'
+                _pres_kpkvk_rows.append({
+                    "code": str(_krow["_finance_kpkvk"]),
+                    "count": int(_krow["_Заходів"]),
+                    "count_text": f"{int(_krow['_Заходів'])} заходів",
+                    "budget_text": f"{_b_str} млрд грн",
+                })
 
-    # ── топ-5 проблемних заходів для слайду 6 ─────────────────
-    top5_html = ""
+    # ── Slide 6: current V3 attention ranking, shaped once for both renderers
+    _pres_top5_rows = []
     top5_data = active.loc[dashboard_risk_v2.attention_mask(active)].copy()
-    _severity_rank = {"Критичний ризик": 4, "Високий ризик": 3, "Середній ризик": 2, "Низький ризик": 1}
-    top5_data["_attention_rank"] = top5_data.get("risk_level", pd.Series(index=top5_data.index, dtype=object)).map(_severity_rank).fillna(0)
-    top5_data.loc[top5_data.get("final_missing_result", False).fillna(False), "_attention_rank"] = 5
-    top5_data.loc[(top5_data.get("forecast_kind", "") == "final") & ~top5_data.get("result_achieved", False).fillna(False), "_attention_rank"] = 5
-    top5_data = top5_data.sort_values(["_attention_rank", "execution_score"], ascending=[False, True], na_position="last").head(5)
+    _severity_rank = {
+        "Критичний ризик": 4,
+        "Високий ризик": 3,
+        "Середній ризик": 2,
+        "Низький ризик": 1,
+    }
+    top5_data["_attention_rank"] = top5_data.get(
+        "risk_level", pd.Series(index=top5_data.index, dtype=object)
+    ).map(_severity_rank).fillna(0)
+    _final_missing = top5_data.get(
+        "final_missing_result", pd.Series(False, index=top5_data.index)
+    ).fillna(False).astype(bool)
+    _forecast_kind = top5_data.get(
+        "forecast_kind", pd.Series("", index=top5_data.index)
+    ).fillna("")
+    _result_achieved = top5_data.get(
+        "result_achieved", pd.Series(False, index=top5_data.index)
+    ).fillna(False).astype(bool)
+    top5_data.loc[_final_missing, "_attention_rank"] = 5
+    top5_data.loc[(_forecast_kind == "final") & ~_result_achieved, "_attention_rank"] = 5
+    top5_data = top5_data.sort_values(
+        ["_attention_rank", "execution_score"],
+        ascending=[False, True],
+        na_position="last",
+    ).head(5)
 
     for _, tr in top5_data.iterrows():
-        risk_color = RISK_COLORS.get(
-            tr.get("auto_risk"), RISK_COLORS["Не оцінюється"]
-        )
+        risk_label = str(tr.get("auto_risk", "") or "")
+        risk_color = RISK_COLORS.get(risk_label, RISK_COLORS["Не оцінюється"])
         dep_short = str(tr.get("department", ""))[:12]
-        name_short = str(tr.get("name", ""))[:70] + ("…" if len(str(tr.get("name", ""))) > 70 else "")
+        full_name = str(tr.get("name", ""))
+        name_short = full_name[:70] + ("…" if len(full_name) > 70 else "")
+        _perf = pd.to_numeric(pd.Series([tr.get("performance_score")]), errors="coerce").iloc[0]
+        if pd.isna(_perf):
+            _perf = 0.0
+        _pres_top5_rows.append({
+            "risk_label": risk_label,
+            "risk_color": risk_color,
+            "name": name_short,
+            "full_name": full_name,
+            "code": str(tr.get("code", "") or ""),
+            "department": dep_short,
+            "status": str(tr.get("status_display", "") or ""),
+            "performance": float(_perf),
+            "performance_text": f"{float(_perf):.0f}%",
+        })
+
+    # Current Presentation mode historically printed the raw numeric bar value.
+    # Capture that display string in the payload so HTML and PDF cannot diverge.
+    def _pres_bar_display(value):
+        return f"{value}%"
+
+    _fourth_bar_value = round(_pres_fourth_value, 1)
+    _presentation_payload = build_presentation_payload(
+        generated_at=_presentation_generated_at,
+        applied_filters=_applied_filter_state,
+        title={
+            "eyebrow": "🇺🇦 Міністерство економіки, довкілля та сільського господарства України",
+            "title": "Аналітичний дашборд результативності стратегічного плану",
+            "subtitle": (
+                "Комплексна панель моніторингу та оцінювання стратегічних результатів — "
+                "в розрізі стратегічних цілей, завдань та самостійних структурних підрозділів."
+            ),
+            "filter_pills": _pres_filter_pills,
+        },
+        verdict={
+            "section": "Висновок системи",
+            "severity": verdict_class,
+            "emoji": verdict_emoji,
+            "title": conclusion_title,
+            "text": conclusion_text,
+            "cards": [
+                {
+                    "label": "Виконання СП",
+                    "value": completion,
+                    "value_text": _format_percent(completion),
+                    "subtitle": "Середнє по заходах у зрізі",
+                    "color": "#FFFFFF",
+                },
+                {
+                    "label": "Покриття",
+                    "value": coverage,
+                    "value_text": _format_percent(coverage),
+                    "subtitle": "Заходів з поданими даними",
+                    "color": "#FFFFFF",
+                },
+                {
+                    "label": "Виконання за цілями",
+                    "value": goal_execution,
+                    "value_text": _format_percent(goal_execution),
+                    "subtitle": "Ієрархічна оцінка через завдання",
+                    "color": "#4D8DFF",
+                },
+            ],
+        },
+        key_metrics={
+            "section": "Ключові показники",
+            "title": "Статистика виконання заходів",
+            "subtitle": f"{period_label} · {total_active} заходів у зрізі",
+            "cards": [
+                {"label": "Всього заходів", "value": total_active, "value_text": str(total_active), "sub_text": "100%", "kind": "blue", "color": "#4D8DFF"},
+                {"label": "Виконано", "value": completed_count, "value_text": str(completed_count), "sub_text": pct_value(completed_count, total_active), "kind": "green", "color": "#00A8A8"},
+                {"label": approval_metric_label, "value": approved_requests_count, "value_text": str(approved_requests_count), "sub_text": pct_value(approved_requests_count, total_active), "kind": "green", "color": "#00A8A8"},
+                {"label": "Частково виконано", "value": partly_count, "value_text": str(partly_count), "sub_text": pct_value(partly_count, total_active), "kind": "yellow", "color": "#F4B400"},
+                {"label": "Не подано", "value": not_counted_count, "value_text": str(not_counted_count), "sub_text": pct_value(not_counted_count, total_active), "kind": "red", "color": "#FF7A45"},
+                {"label": "Не виконано", "value": not_done_count, "value_text": str(not_done_count), "sub_text": pct_value(not_done_count, total_active), "kind": "red", "color": "#FF7A45"},
+                {"label": "Не настав час", "value": not_time_count, "value_text": str(not_time_count), "sub_text": pct_value(not_time_count, total_active), "kind": "gray", "color": "#8A96A8"},
+            ],
+            "bars": [
+                {"label": "Виконання за заходами", "value": completion or 0, "value_text": _pres_bar_display(completion or 0), "color": "#005BBB"},
+                {"label": "Виконання за цілями", "value": goal_execution or 0, "value_text": _pres_bar_display(goal_execution or 0), "color": "#4D8DFF"},
+                {"label": "Покриття моніторингом", "value": coverage or 0, "value_text": _pres_bar_display(coverage or 0), "color": "#00A8A8"},
+                {"label": _pres_fourth_label, "value": _fourth_bar_value, "value_text": _pres_bar_display(_fourth_bar_value), "color": "#118847"},
+            ],
+        },
+        strategic_goals={
+            "section": "Стратегічні цілі",
+            "title": "Виконання за стратегічними цілями",
+            "subtitle": f"Відсоток виконання по кожній стратегічній цілі · {period_label}",
+            "rows": _pres_goal_rows,
+            "empty_text": "Дані відсутні за обраними фільтрами",
+        },
+        risks={
+            "section": _pres_risk_section,
+            "title": _pres_risk_title,
+            "subtitle": f"{total_active} заходів у зрізі · {period_label}",
+            "cards": [
+                {"label": _pres_risk_high_label, "value": count_high, "value_text": str(count_high), "sub_text": f"{pct_value(count_high, total_active)} від усіх заходів", "kind": "high", "color": "#DC4A4A"},
+                {"label": _pres_risk_medium_label, "value": count_medium, "value_text": str(count_medium), "sub_text": f"{pct_value(count_medium, total_active)} від усіх заходів", "kind": "medium", "color": "#F4B400"},
+                {"label": _pres_risk_low_label, "value": count_low, "value_text": str(count_low), "sub_text": f"{pct_value(count_low, total_active)} від усіх заходів", "kind": "low", "color": "#1E9E57"},
+            ],
+            "summary_label": "Загальний висновок системи",
+            "summary_text": conclusion_text,
+            "tags": [
+                f"{_pres_risk_share_label}: {_format_percent(_pres_risk_share_value)}",
+                f"Без даних: {without_data} заходів",
+            ],
+            "mode": "q1" if _presentation_q1 else ("q4" if _presentation_q4 else "q2_q3"),
+        },
+        top5={
+            "section": "Увага керівництва",
+            "title": "Топ-5 проблемних заходів",
+            "subtitle": (
+                "V3 attention signals: ризик, відсутність подання, final failure "
+                f"або конфлікт даних · {period_label}"
+            ),
+            "rows": _pres_top5_rows,
+            "empty_text": "Критичних заходів не виявлено",
+        },
+        finance={
+            "section": "Фінансування заходів",
+            "title": "Структура та обсяги фінансування",
+            "subtitle": f"{period_label} · {pres_fin_total} заходів у зрізі",
+            "sources_label": "Джерела фінансування",
+            "groups": _pres_fin_groups,
+            "budget": {
+                "label": f"Бюджет ДБ {pres_fin_year}",
+                "value": pres_budget_sum,
+                "value_text": pres_budget_str,
+                "subtitle": "часткові дані — не всі заходи мають суми",
+            },
+            "kpkvk_label": "Топ КПКВК за кількістю заходів",
+            "kpkvk_rows": _pres_kpkvk_rows,
+            "kpkvk_empty_text": "КПКВК не визначено",
+        },
+    )
+    _pres = presentation_slides_by_key(_presentation_payload)
+
+    # ── PDF: renderer only, no duplicate calculations
+    with st.expander("📄 Завантажити презентацію у PDF"):
+        st.caption(
+            "PDF відтворює ті самі 7 слайдів Presentation mode і використовує "
+            "той самий canonical presentation payload."
+        )
+        if st.button("Сформувати PDF", key="build_pres_pdf", use_container_width=True):
+            with st.spinner("Формуємо PDF-презентацію..."):
+                try:
+                    _pdf_bytes = build_presentation_pdf(_presentation_payload)
+                    if _pdf_bytes:
+                        st.download_button(
+                            "⬇️ Завантажити PDF",
+                            data=_pdf_bytes,
+                            file_name=f"presentation_{_presentation_generated_at.strftime('%Y%m%d_%H%M')}.pdf",
+                            mime="application/pdf",
+                            key="dl_pres_pdf",
+                            use_container_width=True,
+                        )
+                    else:
+                        st.warning("Для PDF потрібен пакет `reportlab` у requirements.txt.")
+                except Exception as _pdf_err:
+                    show_incident(
+                        _pdf_err,
+                        context="Формування PDF презентаційного режиму Dashboard",
+                    )
+
+    # ── HTML renderer from the exact same payload
+    _title_slide = _pres["title"]
+    _verdict_slide = _pres["verdict"]
+    _metrics_slide = _pres["key_metrics"]
+    _goals_slide = _pres["strategic_goals"]
+    _risks_slide = _pres["risks"]
+    _top5_slide = _pres["top5"]
+    _finance_slide = _pres["finance"]
+
+    filter_pills_html = "".join(
+        f'<span class="pres-filter-pill">{escape(str(p))}</span>'
+        for p in _title_slide["filter_pills"]
+    )
+
+    goal_rows_html = ""
+    for _row in _goals_slide["rows"]:
+        goal_rows_html += f"""
+        <div class="pres-goal-row">
+            <div class="pres-goal-code">{escape(str(_row['code']))}</div>
+            <div class="pres-goal-name" title="{escape(str(_row['full_name']))}">{escape(str(_row['name']))}</div>
+            <div class="pres-goal-bar-bg">
+                <div class="pres-goal-bar-fill" style="width:{float(_row['value'])}%;background:{_row['color']};"></div>
+            </div>
+            <div class="pres-goal-pct">{escape(str(_row['value_text']))}</div>
+        </div>"""
+
+    def _pres_bar_html(item):
+        try:
+            _pct = min(max(float(item.get("value") or 0), 0), 100)
+        except (TypeError, ValueError):
+            _pct = 0
+        return f"""
+        <div class="pres-metric-row">
+            <div class="pres-metric-label">{escape(str(item['label']))}</div>
+            <div class="pres-metric-bar-bg">
+                <div class="pres-metric-bar-fill" style="width:{_pct}%;background:{item['color']};"></div>
+            </div>
+            <div class="pres-metric-val">{escape(str(item['value_text']))}</div>
+        </div>"""
+
+    _metric_cards_html = ""
+    for _item in _metrics_slide["cards"]:
+        _metric_cards_html += f"""
+        <div class="pres-kpi-card {_item['kind']}">
+            <div class="pres-kpi-label">{escape(str(_item['label']))}</div>
+            <div class="pres-kpi-value">{escape(str(_item['value_text']))}</div>
+            <div class="pres-kpi-sub">{escape(str(_item['sub_text']))}</div>
+        </div>"""
+    _metric_bars_html = "".join(_pres_bar_html(item) for item in _metrics_slide["bars"])
+
+    _verdict_cards_html = ""
+    for _item in _verdict_slide["cards"]:
+        _verdict_cards_html += f"""
+        <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:20px 18px;">
+            <div style="font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.35);margin-bottom:8px;">{escape(str(_item['label']))}</div>
+            <div style="font-size:44px;font-weight:900;color:{_item['color']};line-height:1;">{escape(str(_item['value_text']))}</div>
+            <div style="font-size:12px;color:rgba(255,255,255,.35);margin-top:4px;">{escape(str(_item['subtitle']))}</div>
+        </div>"""
+
+    _risk_cards_html = ""
+    for _item in _risks_slide["cards"]:
+        _risk_cards_html += f"""
+        <div class="pres-risk-card {_item['kind']}">
+            <div class="pres-risk-label">{escape(str(_item['label']))}</div>
+            <div class="pres-risk-val">{escape(str(_item['value_text']))}</div>
+            <div class="pres-risk-sub">{escape(str(_item['sub_text']))}</div>
+        </div>"""
+    _risk_tags_html = "".join(
+        f'<span style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:6px;padding:5px 12px;font-size:11px;color:rgba(255,255,255,.5);font-weight:600;">{escape(str(tag))}</span>'
+        for tag in _risks_slide["tags"]
+    )
+
+    top5_html = ""
+    for _row in _top5_slide["rows"]:
         top5_html += (
             f'<div style="display:flex;align-items:flex-start;gap:14px;padding:14px 0;'
             f'border-bottom:1px solid rgba(255,255,255,0.06);">'
-            f'<div style="background:{risk_color};color:#032A63;font-size:10px;font-weight:900;'
+            f'<div style="background:{_row["risk_color"]};color:#032A63;font-size:10px;font-weight:900;'
             f'border-radius:6px;padding:3px 8px;white-space:nowrap;margin-top:2px;">'
-            f'{tr.get("auto_risk","")}</div>'
+            f'{escape(str(_row["risk_label"]))}</div>'
             f'<div style="flex:1;">'
             f'<div style="font-size:13px;color:rgba(255,255,255,0.85);font-weight:600;line-height:1.4;">'
-            f'{name_short}</div>'
+            f'{escape(str(_row["name"]))}</div>'
             f'<div style="display:flex;gap:10px;margin-top:5px;flex-wrap:wrap;">'
-            f'<span style="font-size:10px;color:rgba(255,255,255,0.35);">📋 {tr.get("code","")}</span>'
-            f'<span style="font-size:10px;color:rgba(255,255,255,0.35);">🏢 {dep_short}</span>'
-            f'<span style="font-size:10px;color:rgba(255,255,255,0.35);">📊 {tr.get("status_display","")}</span>'
-            f'<span style="font-size:10px;color:rgba(255,255,255,0.35);">🎯 Виконання: {tr.get("performance_score", 0) or 0:.0f}%</span>'
+            f'<span style="font-size:10px;color:rgba(255,255,255,0.35);">📋 {escape(str(_row["code"]))}</span>'
+            f'<span style="font-size:10px;color:rgba(255,255,255,0.35);">🏢 {escape(str(_row["department"]))}</span>'
+            f'<span style="font-size:10px;color:rgba(255,255,255,0.35);">📊 {escape(str(_row["status"]))}</span>'
+            f'<span style="font-size:10px;color:rgba(255,255,255,0.35);">🎯 Виконання: {escape(str(_row["performance_text"]))}</span>'
             f'</div></div></div>'
         )
     if not top5_html:
-        top5_html = '<div style="color:rgba(255,255,255,0.3);margin-top:24px;">Критичних заходів не виявлено</div>'
+        top5_html = (
+            '<div style="color:rgba(255,255,255,0.3);margin-top:24px;">'
+            f'{escape(str(_top5_slide["empty_text"]))}</div>'
+        )
 
-    # ── render slides ─────────────────────────────────────────
+    pres_fin_bars_html = ""
+    for _item in _finance_slide["groups"]:
+        pres_fin_bars_html += f"""
+        <div style="margin-bottom:16px;">
+            <div style="display:flex;justify-content:space-between;margin-bottom:5px;">
+                <span style="font-size:13px;font-weight:700;color:rgba(255,255,255,.7);">{escape(str(_item['label']))}</span>
+                <span style="font-size:13px;font-weight:900;color:#fff;">{int(_item['count'])} <span style="font-size:11px;color:rgba(255,255,255,.35);">({float(_item['percent'])}%)</span></span>
+            </div>
+            <div style="background:rgba(255,255,255,.07);border-radius:99px;height:10px;overflow:hidden;">
+                <div style="width:{float(_item['percent'])}%;height:100%;background:{_item['color']};border-radius:99px;"></div>
+            </div>
+        </div>"""
+
+    pres_kpkvk_html = ""
+    for _row in _finance_slide["kpkvk_rows"]:
+        pres_kpkvk_html += (
+            f'<div style="display:flex;justify-content:space-between;align-items:center;'
+            f'padding:10px 0;border-bottom:1px solid rgba(255,255,255,.06);">'
+            f'<span style="font-size:14px;font-weight:800;color:#FFD500;">{escape(str(_row["code"]))}</span>'
+            f'<span style="font-size:12px;color:rgba(255,255,255,.5);">{escape(str(_row["count_text"]))}</span>'
+            f'<span style="font-size:12px;color:rgba(255,255,255,.7);font-weight:700;">{escape(str(_row["budget_text"]))}</span>'
+            f'</div>'
+        )
+    if not pres_kpkvk_html:
+        pres_kpkvk_html = (
+            '<div style="color:rgba(255,255,255,.3);margin-top:12px;">'
+            f'{escape(str(_finance_slide["kpkvk_empty_text"]))}</div>'
+        )
+
     import streamlit.components.v1 as components
     _pres_css = """
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -3156,8 +3376,6 @@ if presentation_mode:
     .pres-filter-pills { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
     .pres-filter-pill { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); border-radius: 20px; padding: 6px 16px; font-size: 12px; color: rgba(255,255,255,0.7); font-weight: 600; }
     .pres-slide-conclusion { background: #032A63; }
-    .pres-slide-conclusion.ok { background: #032A63; }
-    .pres-slide-conclusion.medium { background: #032A63; }
     .pres-section-label { font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: rgba(255,255,255,0.35); font-weight: 700; margin-bottom: 24px; }
     .pres-verdict-badge { display: inline-flex; align-items: center; gap: 10px; padding: 10px 24px; border-radius: 10px; font-size: clamp(18px,2vw,26px); font-weight: 900; margin-bottom: 20px; }
     .pres-verdict-badge.high { background: rgba(220,38,38,0.2); border: 1.5px solid #DC4A4A; color: #DC4A4A; }
@@ -3218,7 +3436,6 @@ if presentation_mode:
     <div class="pres-overlay">
         <div class="pres-ua-bar"></div>
 
-        <!-- FULLSCREEN (лише презентація) -->
         <button id="pres-fs-btn" style="position:fixed;top:14px;right:16px;z-index:9999;
             font-family:'Segoe UI',system-ui,sans-serif;font-size:13px;font-weight:800;
             color:#fff;background:#005BBB;border:none;border-radius:10px;
@@ -3240,202 +3457,99 @@ if presentation_mode:
           }});
         </script>
 
-        <!-- NAV BAR -->
         <div class="pres-nav">
             <div class="pres-nav-title">Стратегічний моніторинг · Presentation mode</div>
             <div class="pres-nav-dots">
                 <div class="pres-dot active"></div>
-                <div class="pres-dot"></div>
-                <div class="pres-dot"></div>
-                <div class="pres-dot"></div>
-                <div class="pres-dot"></div>
-                <div class="pres-dot"></div>
-                <div class="pres-dot"></div>
+                <div class="pres-dot"></div><div class="pres-dot"></div><div class="pres-dot"></div>
+                <div class="pres-dot"></div><div class="pres-dot"></div><div class="pres-dot"></div>
             </div>
             <div style="font-size:11px;color:rgba(255,255,255,0.3);letter-spacing:.08em;">
                 ⬆ прокрутіть для перегляду слайдів
             </div>
         </div>
 
-        <!-- ══ SLIDE 1 — TITLE ══ -->
         <div class="pres-slide pres-slide-title">
             <div class="pres-slide-num">01 / 07</div>
-            <div class="pres-title-eyebrow">🇺🇦 Міністерство економіки, довкілля та сільського господарства України</div>
-            <div class="pres-title-h1">Аналітичний дашборд результативності стратегічного плану</div>
-            <div class="pres-title-sub">
-                Комплексна панель моніторингу та оцінювання стратегічних результатів —
-                в розрізі стратегічних цілей, завдань та самостійних структурних підрозділів.
-            </div>
-            <div class="pres-filter-pills">
-                {filter_pills_html}
-                <span class="pres-filter-pill">📌 {total_active} заходів у зрізі</span>
-                <span class="pres-filter-pill">🕐 {now_kyiv().strftime('%d.%m.%Y %H:%M')}</span>
-            </div>
+            <div class="pres-title-eyebrow">{escape(str(_title_slide['eyebrow']))}</div>
+            <div class="pres-title-h1">{escape(str(_title_slide['title']))}</div>
+            <div class="pres-title-sub">{escape(str(_title_slide['subtitle']))}</div>
+            <div class="pres-filter-pills">{filter_pills_html}</div>
         </div>
 
-        <!-- ══ SLIDE 2 — VERDICT ══ -->
-        <div class="pres-slide pres-slide-conclusion {verdict_class}">
+        <div class="pres-slide pres-slide-conclusion {_verdict_slide['severity']}">
             <div class="pres-slide-num">02 / 07</div>
-            <div class="pres-section-label">Висновок системи</div>
-            <div class="pres-verdict-badge {verdict_class}">{verdict_emoji} {conclusion_title}</div>
-            <div class="pres-verdict-text">{conclusion_text}</div>
-
+            <div class="pres-section-label">{escape(str(_verdict_slide['section']))}</div>
+            <div class="pres-verdict-badge {_verdict_slide['severity']}">{escape(str(_verdict_slide['emoji']))} {escape(str(_verdict_slide['title']))}</div>
+            <div class="pres-verdict-text">{escape(str(_verdict_slide['text']))}</div>
             <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:20px;max-width:680px;">
-                <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:20px 18px;">
-                    <div style="font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.35);margin-bottom:8px;">Виконання СП</div>
-                    <div style="font-size:44px;font-weight:900;color:#fff;line-height:1;">{_format_percent(completion)}</div>
-                    <div style="font-size:12px;color:rgba(255,255,255,.35);margin-top:4px;">Середнє по заходах у зрізі</div>
-                </div>
-                <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:20px 18px;">
-                    <div style="font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.35);margin-bottom:8px;">Покриття</div>
-                    <div style="font-size:44px;font-weight:900;color:#fff;line-height:1;">{_format_percent(coverage)}</div>
-                    <div style="font-size:12px;color:rgba(255,255,255,.35);margin-top:4px;">Заходів з поданими даними</div>
-                </div>
-                <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:20px 18px;">
-                    <div style="font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.35);margin-bottom:8px;">Виконання за цілями</div>
-                    <div style="font-size:44px;font-weight:900;color:#4D8DFF;line-height:1;">{_format_percent(goal_execution)}</div>
-                    <div style="font-size:12px;color:rgba(255,255,255,.35);margin-top:4px;">Ієрархічна оцінка через завдання</div>
-                </div>
+                {_verdict_cards_html}
             </div>
         </div>
 
-        <!-- ══ SLIDE 3 — KEY METRICS ══ -->
         <div class="pres-slide pres-slide-kpis">
             <div class="pres-slide-num">03 / 07</div>
-            <div class="pres-section-label">Ключові показники</div>
-            <div class="pres-slide-h2">Статистика виконання заходів</div>
-            <div class="pres-slide-hsub">{period_label} · {total_active} заходів у зрізі</div>
-
-            <div class="pres-kpi-grid">
-                <div class="pres-kpi-card blue">
-                    <div class="pres-kpi-label">Всього заходів</div>
-                    <div class="pres-kpi-value">{total_active}</div>
-                    <div class="pres-kpi-sub">100%</div>
-                </div>
-                <div class="pres-kpi-card green">
-                    <div class="pres-kpi-label">Виконано</div>
-                    <div class="pres-kpi-value">{completed_count}</div>
-                    <div class="pres-kpi-sub">{pct_value(completed_count, total_active)}</div>
-                </div>
-                <div class="pres-kpi-card green">
-                    <div class="pres-kpi-label">{approval_metric_label}</div>
-                    <div class="pres-kpi-value">{approved_requests_count}</div>
-                    <div class="pres-kpi-sub">{pct_value(approved_requests_count, total_active)}</div>
-                </div>
-                <div class="pres-kpi-card yellow">
-                    <div class="pres-kpi-label">Частково виконано</div>
-                    <div class="pres-kpi-value">{partly_count}</div>
-                    <div class="pres-kpi-sub">{pct_value(partly_count, total_active)}</div>
-                </div>
-                <div class="pres-kpi-card red">
-                    <div class="pres-kpi-label">Не подано</div>
-                    <div class="pres-kpi-value">{not_counted_count}</div>
-                    <div class="pres-kpi-sub">{pct_value(not_counted_count, total_active)}</div>
-                </div>
-                <div class="pres-kpi-card red">
-                    <div class="pres-kpi-label">Не виконано</div>
-                    <div class="pres-kpi-value">{not_done_count}</div>
-                    <div class="pres-kpi-sub">{pct_value(not_done_count, total_active)}</div>
-                </div>
-                <div class="pres-kpi-card gray">
-                    <div class="pres-kpi-label">Не настав час</div>
-                    <div class="pres-kpi-value">{not_time_count}</div>
-                    <div class="pres-kpi-sub">{pct_value(not_time_count, total_active)}</div>
-                </div>
-            </div>
-
-            <div class="pres-metric-rows" style="max-width:680px;margin-top:40px;">
-                {pres_bar('Виконання за заходами', completion or 0, '#005BBB')}
-                {pres_bar('Виконання за цілями', goal_execution or 0, '#4D8DFF')}
-                {pres_bar('Покриття моніторингом', coverage or 0, '#00A8A8')}
-                {pres_bar(_pres_fourth_label, round(_pres_fourth_value, 1), '#118847')}
-            </div>
+            <div class="pres-section-label">{escape(str(_metrics_slide['section']))}</div>
+            <div class="pres-slide-h2">{escape(str(_metrics_slide['title']))}</div>
+            <div class="pres-slide-hsub">{escape(str(_metrics_slide['subtitle']))}</div>
+            <div class="pres-kpi-grid">{_metric_cards_html}</div>
+            <div class="pres-metric-rows" style="max-width:680px;margin-top:40px;">{_metric_bars_html}</div>
         </div>
 
-        <!-- ══ SLIDE 4 — STRATEGIC GOALS ══ -->
         <div class="pres-slide pres-slide-goals">
             <div class="pres-slide-num">04 / 07</div>
-            <div class="pres-section-label">Стратегічні цілі</div>
-            <div class="pres-slide-h2">Виконання за стратегічними цілями</div>
-            <div class="pres-slide-hsub">Відсоток виконання по кожній стратегічній цілі · {period_label}</div>
+            <div class="pres-section-label">{escape(str(_goals_slide['section']))}</div>
+            <div class="pres-slide-h2">{escape(str(_goals_slide['title']))}</div>
+            <div class="pres-slide-hsub">{escape(str(_goals_slide['subtitle']))}</div>
             <div class="pres-goal-bar-wrap">
-                {goal_rows_html if goal_rows_html else '<div style="color:rgba(255,255,255,0.3);margin-top:24px;">Дані відсутні за обраними фільтрами</div>'}
+                {goal_rows_html if goal_rows_html else f'<div style="color:rgba(255,255,255,0.3);margin-top:24px;">{escape(str(_goals_slide["empty_text"]))}</div>'}
             </div>
         </div>
 
-        <!-- ══ SLIDE 5 — RISKS ══ -->
         <div class="pres-slide pres-slide-risks">
             <div class="pres-slide-num">05 / 07</div>
-            <div class="pres-section-label">{_pres_risk_section}</div>
-            <div class="pres-slide-h2">{_pres_risk_title}</div>
-            <div class="pres-slide-hsub">{total_active} заходів у зрізі · {period_label}</div>
-
-            <div class="pres-risk-grid">
-                <div class="pres-risk-card high">
-                    <div class="pres-risk-label">{_pres_risk_high_label}</div>
-                    <div class="pres-risk-val">{count_high}</div>
-                    <div class="pres-risk-sub">{pct_value(count_high, total_active)} від усіх заходів</div>
-                </div>
-                <div class="pres-risk-card medium">
-                    <div class="pres-risk-label">{_pres_risk_medium_label}</div>
-                    <div class="pres-risk-val">{count_medium}</div>
-                    <div class="pres-risk-sub">{pct_value(count_medium, total_active)} від усіх заходів</div>
-                </div>
-                <div class="pres-risk-card low">
-                    <div class="pres-risk-label">{_pres_risk_low_label}</div>
-                    <div class="pres-risk-val">{count_low}</div>
-                    <div class="pres-risk-sub">{pct_value(count_low, total_active)} від усіх заходів</div>
-                </div>
-            </div>
-
+            <div class="pres-section-label">{escape(str(_risks_slide['section']))}</div>
+            <div class="pres-slide-h2">{escape(str(_risks_slide['title']))}</div>
+            <div class="pres-slide-hsub">{escape(str(_risks_slide['subtitle']))}</div>
+            <div class="pres-risk-grid">{_risk_cards_html}</div>
             <div style="margin-top:48px;padding:24px 28px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:14px;max-width:640px;">
-                <div style="font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.3);margin-bottom:12px;">Загальний висновок системи</div>
-                <div style="font-size:15px;color:rgba(255,255,255,.7);line-height:1.7;">{conclusion_text}</div>
-                <div style="margin-top:16px;display:flex;gap:12px;flex-wrap:wrap;">
-                    <span style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:6px;padding:5px 12px;font-size:11px;color:rgba(255,255,255,.5);font-weight:600;">{_pres_risk_share_label}: {_format_percent(_pres_risk_share_value)}</span>
-                    <span style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:6px;padding:5px 12px;font-size:11px;color:rgba(255,255,255,.5);font-weight:600;">Без даних: {without_data} заходів</span>
-                </div>
+                <div style="font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.3);margin-bottom:12px;">{escape(str(_risks_slide['summary_label']))}</div>
+                <div style="font-size:15px;color:rgba(255,255,255,.7);line-height:1.7;">{escape(str(_risks_slide['summary_text']))}</div>
+                <div style="margin-top:16px;display:flex;gap:12px;flex-wrap:wrap;">{_risk_tags_html}</div>
             </div>
         </div>
 
         <div class="pres-exit-hint">↑ прокрутіть вверх · вимкніть тумблер щоб вийти</div>
 
-        <!-- ══ SLIDE 6 — TOP-5 ПРОБЛЕМНІ ЗАХОДИ ══ -->
         <div class="pres-slide" style="background:#032A63;">
             <div class="pres-slide-num">06 / 07</div>
-            <div class="pres-section-label">Увага керівництва</div>
-            <div class="pres-slide-h2">Топ-5 проблемних заходів</div>
-            <div class="pres-slide-hsub">V3 attention signals: ризик, відсутність подання, final failure або конфлікт даних · {period_label}</div>
-            <div style="margin-top:28px;max-width:860px;">
-                {top5_html}
-            </div>
+            <div class="pres-section-label">{escape(str(_top5_slide['section']))}</div>
+            <div class="pres-slide-h2">{escape(str(_top5_slide['title']))}</div>
+            <div class="pres-slide-hsub">{escape(str(_top5_slide['subtitle']))}</div>
+            <div style="margin-top:28px;max-width:860px;">{top5_html}</div>
         </div>
 
-
-        <!-- ══ SLIDE 7 — ФІНАНСУВАННЯ ══ -->
         <div class="pres-slide" style="background:#032A63;">
             <div class="pres-slide-num">07 / 07</div>
-            <div class="pres-section-label">Фінансування заходів</div>
-            <div class="pres-slide-h2">Структура та обсяги фінансування</div>
-            <div class="pres-slide-hsub">{period_label} · {pres_fin_total} заходів у зрізі</div>
-
+            <div class="pres-section-label">{escape(str(_finance_slide['section']))}</div>
+            <div class="pres-slide-h2">{escape(str(_finance_slide['title']))}</div>
+            <div class="pres-slide-hsub">{escape(str(_finance_slide['subtitle']))}</div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-top:36px;max-width:900px;">
                 <div>
-                    <div style="font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.3);margin-bottom:20px;">Джерела фінансування</div>
+                    <div style="font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.3);margin-bottom:20px;">{escape(str(_finance_slide['sources_label']))}</div>
                     {pres_fin_bars_html}
                     <div style="margin-top:24px;background:rgba(0,91,187,.12);border:1px solid rgba(0,91,187,.25);border-radius:12px;padding:20px 22px;">
-                        <div style="font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.3);margin-bottom:8px;">Бюджет ДБ {pres_fin_year}</div>
-                        <div style="font-size:36px;font-weight:900;color:#fff;line-height:1;">{pres_budget_str}</div>
-                        <div style="font-size:12px;color:rgba(255,255,255,.3);margin-top:4px;">часткові дані — не всі заходи мають суми</div>
+                        <div style="font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.3);margin-bottom:8px;">{escape(str(_finance_slide['budget']['label']))}</div>
+                        <div style="font-size:36px;font-weight:900;color:#fff;line-height:1;">{escape(str(_finance_slide['budget']['value_text']))}</div>
+                        <div style="font-size:12px;color:rgba(255,255,255,.3);margin-top:4px;">{escape(str(_finance_slide['budget']['subtitle']))}</div>
                     </div>
                 </div>
                 <div>
-                    <div style="font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.3);margin-bottom:20px;">Топ КПКВК за кількістю заходів</div>
+                    <div style="font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.3);margin-bottom:20px;">{escape(str(_finance_slide['kpkvk_label']))}</div>
                     {pres_kpkvk_html}
                 </div>
             </div>
         </div>
-
     </div>
 </body></html>""", height=600, scrolling=True)
     render_footer()

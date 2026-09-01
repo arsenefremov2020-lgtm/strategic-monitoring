@@ -111,17 +111,37 @@ def _register_fonts():
 
 
 def _register_presentation_fonts():
-    """Match the browser Helvetica Neue/Arial fallback without changing legacy MIO.
+    """Use the same Linux fontconfig fallback as browser Helvetica Neue/Arial.
 
-    On the Linux environments used by Chromium, Helvetica Neue resolves to
-    Noto Sans (and Arial commonly resolves to Arimo). Prefer the same metrics
-    for Dashboard PDF, then fall back to the existing bundled DejaVu fonts.
+    Dashboard HTML declares Helvetica Neue, Arial, sans-serif. Chromium resolves
+    that stack through fontconfig on Linux. Ask fontconfig for the same physical
+    regular/bold font files so ReportLab uses matching metrics. Legacy MIO keeps
+    the existing DejaVu resolver.
     """
     try:
+        import subprocess
         from reportlab.pdfbase import pdfmetrics
         from reportlab.pdfbase.ttfonts import TTFont
 
-        candidates = [
+        def fc_file(pattern):
+            try:
+                result = subprocess.run(
+                    ["fc-match", "-f", "%{file}", pattern],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                )
+                path = Path(result.stdout.strip())
+                return path if path.exists() else None
+            except Exception:
+                return None
+
+        dynamic_pairs = [
+            (fc_file("Helvetica Neue"), fc_file("Helvetica Neue:style=Bold")),
+            (fc_file("Arial"), fc_file("Arial:style=Bold")),
+        ]
+        static_pairs = [
             (
                 Path("/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"),
                 Path("/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf"),
@@ -134,15 +154,20 @@ def _register_presentation_fonts():
                 Path("/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf"),
                 Path("/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf"),
             ),
+            (
+                Path("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"),
+                Path("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"),
+            ),
         ]
-        for regular_path, bold_path in candidates:
-            if not regular_path.exists():
+        for regular_path, bold_path in [*dynamic_pairs, *static_pairs]:
+            if regular_path is None or not regular_path.exists():
                 continue
             pdfmetrics.registerFont(TTFont("PresentationSans", str(regular_path)))
-            if bold_path.exists():
+            if bold_path is not None and bold_path.exists():
                 pdfmetrics.registerFont(TTFont("PresentationSans-Bold", str(bold_path)))
                 return "PresentationSans", "PresentationSans-Bold"
-            return "PresentationSans", "PresentationSans"
+            pdfmetrics.registerFont(TTFont("PresentationSans-Bold", str(regular_path)))
+            return "PresentationSans", "PresentationSans-Bold"
     except Exception:
         pass
     return _register_fonts()

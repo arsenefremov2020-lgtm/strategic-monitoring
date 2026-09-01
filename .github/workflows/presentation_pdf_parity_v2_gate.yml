@@ -18,11 +18,10 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install test dependencies
+      - name: Install runtime test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pandas==2.2.3 reportlab==4.4.9 streamlit==1.59.1 pypdf playwright pymupdf pillow numpy
-          python -m playwright install --with-deps chromium
+          python -m pip install pandas==2.2.3 reportlab==4.4.9 streamlit==1.59.1 pymupdf pillow numpy
 
       - name: Compile changed Python files
         run: |
@@ -30,6 +29,11 @@ jobs:
 
       - name: Runtime semantic and PDF content tests
         run: python scripts/test_presentation_pdf.py
+
+      - name: Install browser visual-test dependencies
+        run: |
+          python -m pip install playwright
+          python -m playwright install --with-deps chromium
 
       - name: Browser versus PDF visual regression
         run: python scripts/test_presentation_visual.py presentation_visual_artifacts

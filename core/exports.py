@@ -110,6 +110,44 @@ def _register_fonts():
         return None
 
 
+def _register_presentation_fonts():
+    """Match the browser Helvetica Neue/Arial fallback without changing legacy MIO.
+
+    On the Linux environments used by Chromium, Helvetica Neue resolves to
+    Noto Sans (and Arial commonly resolves to Arimo). Prefer the same metrics
+    for Dashboard PDF, then fall back to the existing bundled DejaVu fonts.
+    """
+    try:
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+
+        candidates = [
+            (
+                Path("/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"),
+                Path("/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf"),
+            ),
+            (
+                Path("/usr/share/fonts/truetype/croscore/Arimo-Regular.ttf"),
+                Path("/usr/share/fonts/truetype/croscore/Arimo-Bold.ttf"),
+            ),
+            (
+                Path("/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf"),
+                Path("/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf"),
+            ),
+        ]
+        for regular_path, bold_path in candidates:
+            if not regular_path.exists():
+                continue
+            pdfmetrics.registerFont(TTFont("PresentationSans", str(regular_path)))
+            if bold_path.exists():
+                pdfmetrics.registerFont(TTFont("PresentationSans-Bold", str(bold_path)))
+                return "PresentationSans", "PresentationSans-Bold"
+            return "PresentationSans", "PresentationSans"
+    except Exception:
+        pass
+    return _register_fonts()
+
+
 def build_legacy_presentation_pdf(
     title: str,
     period_text: str,
@@ -286,7 +324,7 @@ def build_presentation_pdf(presentation_payload: dict) -> bytes | None:
     )
 
     validate_presentation_payload(presentation_payload)
-    fonts = _register_fonts()
+    fonts = _register_presentation_fonts()
     font_r, font_b = fonts if fonts is not None else ("Helvetica", "Helvetica-Bold")
 
     page_w = float(REFERENCE_WIDTH)

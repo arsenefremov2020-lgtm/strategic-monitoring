@@ -66,6 +66,20 @@ _CYRILLIC_FONT_CANDIDATES = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
 ]
 
+_PRES_BG = "#032A63"
+_PRES_WHITE = "#FFFFFF"
+_PRES_BLUE = "#005BBB"
+_PRES_YELLOW = "#FFD500"
+_PRES_METRIC_BLUE = "#4D8DFF"
+_PRES_TEAL = "#00A8A8"
+_PRES_ORANGE = "#FF7A45"
+_PRES_AMBER = "#F4B400"
+_PRES_GREY = "#8A96A8"
+_PRES_RED = "#DC4A4A"
+_PRES_GREEN = "#118847"
+_PRES_BRIGHT_GREEN = "#1E9E57"
+
+# Legacy generic renderer colors retained for the existing MIO consumer.
 BRAND_BLUE = (0 / 255, 91 / 255, 187 / 255)
 BRAND_YELLOW = (255 / 255, 213 / 255, 0 / 255)
 DARK = (15 / 255, 23 / 255, 42 / 255)
@@ -73,24 +87,17 @@ GREY = (71 / 255, 85 / 255, 105 / 255)
 
 
 def _register_fonts():
-    """Реєструє кириличні шрифти DejaVu; повертає (regular, bold) або None.
-
-    Порядок пошуку: 1) шрифти, ПОКЛАДЕНІ В РЕПОЗИТОРІЙ (assets/fonts) —
-    гарантують однаковий рендер на Streamlit Cloud; 2) системні DejaVu.
-    Без кириличного шрифту reportlab малює «квадрати» замість українських
-    літер — саме тому бандл у репозиторії обов'язковий.
-    """
+    """Register bundled/system DejaVu fonts so Ukrainian text is deterministic."""
     try:
         from reportlab.pdfbase import pdfmetrics
         from reportlab.pdfbase.ttfonts import TTFont
 
-        _candidates = [
-            (Path("assets/fonts/DejaVuSans.ttf"),
-             Path("assets/fonts/DejaVuSans-Bold.ttf")),
+        candidates = [
+            (Path("assets/fonts/DejaVuSans.ttf"), Path("assets/fonts/DejaVuSans-Bold.ttf")),
             (Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
              Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")),
         ]
-        for regular_path, bold_path in _candidates:
+        for regular_path, bold_path in candidates:
             if not regular_path.exists():
                 continue
             pdfmetrics.registerFont(TTFont("DejaVu", str(regular_path)))
@@ -103,7 +110,78 @@ def _register_fonts():
         return None
 
 
-def build_presentation_pdf(
+def _register_presentation_fonts():
+    """Use the same Linux fontconfig fallback as browser Helvetica Neue/Arial.
+
+    Dashboard HTML declares Helvetica Neue, Arial, sans-serif. Chromium resolves
+    that stack through fontconfig on Linux. Ask fontconfig for the same physical
+    regular/bold font files so ReportLab uses matching metrics. Legacy MIO keeps
+    the existing DejaVu resolver.
+    """
+    try:
+        import subprocess
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+
+        def fc_file(pattern):
+            try:
+                result = subprocess.run(
+                    ["fc-match", "-f", "%{file}", pattern],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                )
+                path = Path(result.stdout.strip())
+                return path if path.exists() else None
+            except Exception:
+                return None
+
+        arimo_pair = (
+            Path("/usr/share/fonts/truetype/croscore/Arimo-Regular.ttf"),
+            Path("/usr/share/fonts/truetype/croscore/Arimo-Bold.ttf"),
+        )
+        dynamic_pairs = [
+            (fc_file("Arial"), fc_file("Arial:style=Bold")),
+            (fc_file("Helvetica Neue"), fc_file("Helvetica Neue:style=Bold")),
+        ]
+        static_pairs = [
+            (
+                Path("/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf"),
+                Path("/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf"),
+            ),
+            (
+                Path("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"),
+                Path("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"),
+            ),
+            (
+                Path("/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"),
+                Path("/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf"),
+            ),
+            (
+                Path("/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf"),
+                Path("/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf"),
+            ),
+            (
+                Path("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"),
+                Path("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"),
+            ),
+        ]
+        for regular_path, bold_path in [arimo_pair, *dynamic_pairs, *static_pairs]:
+            if regular_path is None or not regular_path.exists():
+                continue
+            pdfmetrics.registerFont(TTFont("PresentationSans", str(regular_path)))
+            if bold_path is not None and bold_path.exists():
+                pdfmetrics.registerFont(TTFont("PresentationSans-Bold", str(bold_path)))
+                return "PresentationSans", "PresentationSans-Bold"
+            pdfmetrics.registerFont(TTFont("PresentationSans-Bold", str(regular_path)))
+            return "PresentationSans", "PresentationSans-Bold"
+    except Exception:
+        pass
+    return _register_fonts()
+
+
+def build_legacy_presentation_pdf(
     title: str,
     period_text: str,
     kpi_items: list[tuple[str, str]],
@@ -114,7 +192,7 @@ def build_presentation_pdf(
     logo_path: str = "assets/Мінекономіки.png",
 ) -> bytes | None:
     """
-    Збирає PDF-презентацію у форматі слайдів 16:9 (як presentation mode):
+    Legacy generic PDF renderer retained only for non-Dashboard consumers:
     титульний слайд → слайд KPI → по слайду на кожен графік → висновок.
 
     figures: [(назва слайда, plotly_fig), ...]
@@ -254,6 +332,934 @@ def build_presentation_pdf(
         y -= 24
     footer(page_no)
     c.showPage()
+
+    c.save()
+    return buffer.getvalue()
+
+
+def build_presentation_pdf(presentation_payload: dict) -> bytes | None:
+    """Render the canonical seven-slide Dashboard Presentation payload.
+
+    Geometry follows the production CSS box model at the deterministic
+    1366x768 reference viewport. This function does not recalculate analytics,
+    risk, finance, source, status, filter, Top-5, or KPI semantics.
+    """
+    try:
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfgen import canvas as pdf_canvas
+    except Exception:
+        return None
+
+    from core.presentation import (
+        REFERENCE_HEIGHT,
+        REFERENCE_WIDTH,
+        validate_presentation_payload,
+    )
+
+    validate_presentation_payload(presentation_payload)
+    fonts = _register_presentation_fonts()
+    font_r, font_b = fonts if fonts is not None else ("Helvetica", "Helvetica-Bold")
+
+    page_w = float(REFERENCE_WIDTH)
+    page_h = float(REFERENCE_HEIGHT)
+    content_w = page_w - 128.0
+    buffer = io.BytesIO()
+    c = pdf_canvas.Canvas(buffer, pagesize=(page_w, page_h))
+
+    TITLE_SIZE = min(max(page_w * 0.04, 32.0), 56.0)
+    TITLE_LH = TITLE_SIZE * 1.1
+    TITLE_SUB_SIZE = min(max(page_w * 0.014, 14.0), 18.0)
+    TITLE_SUB_LH = TITLE_SUB_SIZE * 1.6
+    H2_SIZE = min(max(page_w * 0.028, 24.0), 38.0)
+    H2_LH = H2_SIZE * 1.15
+    HSUB_SIZE = min(max(page_w * 0.011, 12.0), 15.0)
+    HSUB_LH = HSUB_SIZE * 1.2
+    KPI_VALUE_SIZE = min(max(page_w * 0.04, 36.0), 56.0)
+    RISK_VALUE_SIZE = min(max(page_w * 0.05, 40.0), 64.0)
+    VERDICT_BADGE_SIZE = min(max(page_w * 0.02, 18.0), 26.0)
+    VERDICT_BODY_SIZE = min(max(page_w * 0.012, 13.0), 16.0)
+
+    EMOJI_TOKENS = (
+        "🇺🇦", "🔴", "🟡", "🟢", "ℹ️", "📅", "🗓", "🏢", "📌", "🕐",
+        "📋", "📊", "🎯", "⬆", "⛶", "✕",
+    )
+
+    def rgb(value):
+        value = str(value or "#000000").lstrip("#")
+        return tuple(int(value[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+
+    def blend(fg, alpha, bg=_PRES_BG):
+        fr, fg_, fb = rgb(fg)
+        br, bg_, bb = rgb(bg)
+        return (
+            br * (1 - alpha) + fr * alpha,
+            bg_ * (1 - alpha) + fg_ * alpha,
+            bb * (1 - alpha) + fb * alpha,
+        )
+
+    def set_fill(value):
+        c.setFillColorRGB(*rgb(value))
+
+    def set_stroke(value):
+        c.setStrokeColorRGB(*rgb(value))
+
+    def plain(value):
+        text = str(value if value is not None else "")
+        for token in EMOJI_TOKENS:
+            text = text.replace(token, "")
+        return text.replace("\ufe0f", "").strip()
+
+    def leading_marker(value):
+        text = str(value if value is not None else "").strip()
+        for token in EMOJI_TOKENS:
+            if text.startswith(token):
+                return token, text[len(token):].replace("\ufe0f", "").strip()
+        return "", plain(text)
+
+    def text_width(text, font_name, font_size, char_space=0.0):
+        value = str(text or "")
+        width = pdfmetrics.stringWidth(value, font_name, font_size)
+        if char_space and len(value) > 1:
+            width += char_space * (len(value) - 1)
+        return width
+
+    def wrap_lines(text, font_name, font_size, max_width, char_space=0.0):
+        paragraphs = plain(text).splitlines() or [""]
+        lines = []
+        for paragraph in paragraphs:
+            words = paragraph.split()
+            if not words:
+                lines.append("")
+                continue
+            current = ""
+            for word in words:
+                candidate = word if not current else f"{current} {word}"
+                if text_width(candidate, font_name, font_size, char_space) <= max_width:
+                    current = candidate
+                    continue
+                if current:
+                    lines.append(current)
+                    current = ""
+                if text_width(word, font_name, font_size, char_space) <= max_width:
+                    current = word
+                    continue
+                part = ""
+                for ch in word:
+                    candidate = part + ch
+                    if text_width(candidate, font_name, font_size, char_space) <= max_width:
+                        part = candidate
+                    else:
+                        if part:
+                            lines.append(part)
+                        part = ch
+                current = part
+            if current:
+                lines.append(current)
+        return lines or [""]
+
+    def ellipsize(text, font_name, font_size, max_width, char_space=0.0):
+        value = plain(text)
+        if text_width(value, font_name, font_size, char_space) <= max_width:
+            return value
+        value = value.rstrip("… ")
+        while value and text_width(value + "…", font_name, font_size, char_space) > max_width:
+            value = value[:-1]
+        return value.rstrip() + "…"
+
+    def baseline_for_top(top, font_name, font_size, line_height):
+        ascent = pdfmetrics.getAscent(font_name) * font_size / 1000.0
+        return page_h - (top + (line_height - font_size) / 2.0 + ascent)
+
+    def draw_line(
+        text, x, top, *, font=font_r, size=13.0, line_height=None,
+        color=_PRES_WHITE, char_space=0.0, align="left", width=None,
+    ):
+        line_height = float(line_height or size * 1.2)
+        value = plain(text)
+        c.setFillColorRGB(*rgb(color) if isinstance(color, str) else color)
+        text_obj = c.beginText()
+        text_obj.setTextOrigin(x, baseline_for_top(top, font, size, line_height))
+        text_obj.setFont(font, size)
+        # ReportLab Tc persists in the PDF text state across BT/ET blocks.
+        # Reset it explicitly so CSS letter-spacing never leaks from section
+        # labels/eyebrows into ordinary headings and body text.
+        text_obj.setCharSpace(char_space)
+        if align == "right" and width is not None:
+            text_obj.setTextOrigin(
+                x + width - text_width(value, font, size, char_space),
+                baseline_for_top(top, font, size, line_height),
+            )
+        text_obj.textOut(value)
+        c.drawText(text_obj)
+
+    def draw_text_block(
+        text, x, top, max_width, *, font=font_r, size=13.0,
+        line_height=None, color=_PRES_WHITE, char_space=0.0,
+        max_lines=None, ellipsis=False,
+    ):
+        line_height = float(line_height or size * 1.2)
+        lines = wrap_lines(text, font, size, max_width, char_space)
+        if max_lines is not None and len(lines) > max_lines:
+            lines = lines[:max_lines]
+            if ellipsis and lines:
+                lines[-1] = ellipsize(lines[-1], font, size, max_width, char_space)
+        for idx, line in enumerate(lines):
+            draw_line(
+                line, x, top + idx * line_height,
+                font=font, size=size, line_height=line_height,
+                color=color, char_space=char_space,
+            )
+        return len(lines) * line_height
+
+    def text_block_height(text, font, size, line_height, max_width, char_space=0.0):
+        return len(wrap_lines(text, font, size, max_width, char_space)) * line_height
+
+    def to_rl_y(top, height):
+        return page_h - top - height
+
+    def round_rect_top(x, top, w, h, radius, *, fill=None, stroke=None, line_width=1.0):
+        if fill is not None:
+            c.setFillColorRGB(*(rgb(fill) if isinstance(fill, str) else fill))
+        if stroke is not None:
+            c.setStrokeColorRGB(*(rgb(stroke) if isinstance(stroke, str) else stroke))
+        c.setLineWidth(line_width)
+        c.roundRect(x, to_rl_y(top, h), w, h, radius, fill=1 if fill is not None else 0, stroke=1 if stroke is not None else 0)
+
+    def rect_top(x, top, w, h, *, fill):
+        c.setFillColorRGB(*(rgb(fill) if isinstance(fill, str) else fill))
+        c.rect(x, to_rl_y(top, h), w, h, fill=1, stroke=0)
+
+    def line_top(x1, top, x2, *, color):
+        c.setStrokeColorRGB(*(rgb(color) if isinstance(color, str) else color))
+        c.line(x1, page_h - top, x2, page_h - top)
+
+    def circle_top(cx, cy_top, radius, *, fill=None, stroke=None, line_width=1.0):
+        if fill is not None:
+            c.setFillColorRGB(*(rgb(fill) if isinstance(fill, str) else fill))
+        if stroke is not None:
+            c.setStrokeColorRGB(*(rgb(stroke) if isinstance(stroke, str) else stroke))
+        c.setLineWidth(line_width)
+        c.circle(cx, page_h - cy_top, radius, fill=1 if fill is not None else 0, stroke=1 if stroke is not None else 0)
+
+    def slide_bg():
+        rect_top(0, 0, page_w, page_h, fill=_PRES_BG)
+
+    def slide_num(page_no):
+        draw_line(
+            f"{page_no:02d} / 07", page_w - 140, 24,
+            font=font_b, size=11, line_height=13.2,
+            color=blend(_PRES_WHITE, 0.20), align="right", width=100,
+            char_space=1.1,
+        )
+
+    def centered_top(content_height):
+        return (page_h - content_height) / 2.0
+
+    def section_metrics(slide):
+        section_h = 13.2 + 24.0
+        h2_h = text_block_height(slide.get("title", ""), font_b, H2_SIZE, H2_LH, content_w) + 4.0
+        hsub_h = text_block_height(slide.get("subtitle", ""), font_r, HSUB_SIZE, HSUB_LH, content_w)
+        return section_h, h2_h, hsub_h
+
+    def draw_section_header(slide, top):
+        draw_line(
+            str(slide.get("section", "")).upper(), 64, top,
+            font=font_b, size=11, line_height=13.2,
+            color=blend(_PRES_WHITE, 0.35), char_space=11 * 0.18,
+        )
+        top += 13.2 + 24.0
+        h2_h = draw_text_block(
+            slide.get("title", ""), 64, top, content_w,
+            font=font_b, size=H2_SIZE, line_height=H2_LH, color=_PRES_WHITE,
+        )
+        top += h2_h + 4.0
+        hsub_h = draw_text_block(
+            slide.get("subtitle", ""), 64, top, content_w,
+            font=font_r, size=HSUB_SIZE, line_height=HSUB_LH,
+            color=blend(_PRES_WHITE, 0.40),
+        )
+        return top + hsub_h
+
+    def draw_flag_icon(x, top):
+        rect_top(x, top, 20, 6, fill=_PRES_BLUE)
+        rect_top(x, top + 6, 20, 6, fill=_PRES_YELLOW)
+
+    def draw_calendar_icon(x, top, *, quarter=False):
+        color = blend(_PRES_WHITE, 0.55)
+        c.setStrokeColorRGB(*color)
+        c.setLineWidth(1.2)
+        c.roundRect(x, to_rl_y(top + 1, 12), 13, 12, 2, fill=0, stroke=1)
+        line_top(x + 1, top + 5, x + 12, color=color)
+        line_top(x + 4, top, x + 4, color=color)
+        line_top(x + 9, top, x + 9, color=color)
+        if quarter:
+            circle_top(x + 9.5, top + 9, 1.5, fill=color)
+
+    def draw_building_icon(x, top):
+        color = blend(_PRES_WHITE, 0.55)
+        c.setStrokeColorRGB(*color)
+        c.setLineWidth(1.2)
+        c.rect(x, to_rl_y(top + 1, 12), 14, 12, fill=0, stroke=1)
+        for dx in (3, 7, 11):
+            line_top(x + dx, top + 4, x + dx, color=color)
+            line_top(x + dx, top + 10, x + dx, color=color)
+
+    def draw_pin_icon(x, top):
+        color = blend(_PRES_WHITE, 0.55)
+        circle_top(x + 6, top + 5, 4.5, stroke=color, line_width=1.2)
+        line_top(x + 6, top + 9, x + 6, color=color)
+        line_top(x + 6, top + 9, x + 3, color=color)
+        line_top(x + 6, top + 9, x + 9, color=color)
+
+    def draw_clock_icon(x, top):
+        color = blend(_PRES_WHITE, 0.55)
+        circle_top(x + 6.5, top + 6.5, 6, stroke=color, line_width=1.2)
+        line_top(x + 6.5, top + 6.5, x + 6.5, color=color)
+        c.line(x + 6.5, page_h - (top + 6.5), x + 10, page_h - (top + 8.5))
+
+    def draw_doc_icon(x, top, color):
+        c.setStrokeColorRGB(*color)
+        c.setLineWidth(1.0)
+        c.rect(x, to_rl_y(top, 10), 8, 10, fill=0, stroke=1)
+        line_top(x + 2, top + 3, x + 6, color=color)
+        line_top(x + 2, top + 6, x + 6, color=color)
+
+    def draw_chart_icon(x, top, color):
+        for idx, height in enumerate((4, 7, 10)):
+            rect_top(x + idx * 3.5, top + 10 - height, 2.2, height, fill=color)
+
+    def draw_target_icon(x, top, color):
+        circle_top(x + 5, top + 5, 4.5, stroke=color, line_width=1.0)
+        circle_top(x + 5, top + 5, 1.6, stroke=color, line_width=1.0)
+
+    def filter_icon(marker, index, x, top):
+        if marker == "📅" or index == 0:
+            draw_calendar_icon(x, top)
+        elif marker == "🗓" or index == 1:
+            draw_calendar_icon(x, top, quarter=True)
+        elif marker == "🏢" or index == 2:
+            draw_building_icon(x, top)
+        elif marker == "📌" or index == 3:
+            draw_pin_icon(x, top)
+        else:
+            draw_clock_icon(x, top)
+
+    def pill_layout(pills):
+        rows = []
+        row = []
+        row_w = 0.0
+        for index, raw in enumerate(pills):
+            marker, text = leading_marker(raw)
+            width = 16.0 + 14.0 + 6.0 + text_width(text, font_b, 12) + 16.0
+            if row and row_w + 10.0 + width > content_w:
+                rows.append(row)
+                row = []
+                row_w = 0.0
+            if row:
+                row_w += 10.0
+            row.append((index, marker, text, width, row_w))
+            row_w += width
+        if row:
+            rows.append(row)
+        return rows
+
+    def render_title(slide):
+        eyebrow_h = 13.2
+        title_h = text_block_height(slide.get("title", ""), font_b, TITLE_SIZE, TITLE_LH, 800.0)
+        sub_h = text_block_height(slide.get("subtitle", ""), font_r, TITLE_SUB_SIZE, TITLE_SUB_LH, 600.0)
+        pill_rows = pill_layout(list(slide.get("filter_pills") or []))
+        pill_h = len(pill_rows) * 26.4 + max(0, len(pill_rows) - 1) * 10.0
+        total_h = eyebrow_h + 20.0 + title_h + 16.0 + sub_h + 40.0 + 8.0 + pill_h
+        top = centered_top(total_h)
+
+        marker, eyebrow = leading_marker(slide.get("eyebrow", ""))
+        draw_flag_icon(64, top + 0.6)
+        draw_line(
+            eyebrow.upper(), 92, top,
+            font=font_b, size=11, line_height=13.2,
+            color=_PRES_YELLOW, char_space=11 * 0.20,
+        )
+        top += eyebrow_h + 20.0
+        top += draw_text_block(
+            slide.get("title", ""), 64, top, 800.0,
+            font=font_b, size=TITLE_SIZE, line_height=TITLE_LH, color=_PRES_WHITE,
+        ) + 16.0
+        top += draw_text_block(
+            slide.get("subtitle", ""), 64, top, 600.0,
+            font=font_r, size=TITLE_SUB_SIZE, line_height=TITLE_SUB_LH,
+            color=blend(_PRES_WHITE, 0.50),
+        ) + 40.0 + 8.0
+
+        for row_index, row in enumerate(pill_rows):
+            row_top = top + row_index * (26.4 + 10.0)
+            x = 64.0
+            for index, marker, text, width, _ in row:
+                round_rect_top(
+                    x, row_top, width, 26.4, 13.2,
+                    fill=blend(_PRES_WHITE, 0.06),
+                    stroke=blend(_PRES_WHITE, 0.12),
+                )
+                filter_icon(marker, index, x + 16.0, row_top + 6.2)
+                draw_line(
+                    text, x + 36.0, row_top + 6.0,
+                    font=font_b, size=12, line_height=14.4,
+                    color=blend(_PRES_WHITE, 0.70),
+                )
+                x += width + 10.0
+
+    def verdict_card_height(item, card_w):
+        inner_w = card_w - 36.0
+        label_h = text_block_height(item.get("label", ""), font_b, 11, 13.2, inner_w, 11 * 0.10)
+        sub_h = text_block_height(item.get("subtitle", ""), font_r, 12, 14.4, inner_w)
+        return 20.0 + label_h + 8.0 + 44.0 + 4.0 + sub_h + 20.0
+
+    def render_verdict(slide):
+        section_h = 13.2 + 24.0
+        badge_h = 20.0 + VERDICT_BADGE_SIZE * 1.2
+        verdict_text_h = text_block_height(
+            slide.get("text", ""), font_r, VERDICT_BODY_SIZE,
+            VERDICT_BODY_SIZE * 1.7, 680.0,
+        )
+        cards = list(slide.get("cards") or [])[:3]
+        card_w = (680.0 - 40.0) / 3.0
+        grid_h = max([verdict_card_height(item, card_w) for item in cards] or [0.0])
+        total_h = section_h + badge_h + 20.0 + verdict_text_h + 40.0 + grid_h
+        top = centered_top(total_h)
+
+        draw_line(
+            str(slide.get("section", "")).upper(), 64, top,
+            font=font_b, size=11, line_height=13.2,
+            color=blend(_PRES_WHITE, 0.35), char_space=11 * 0.18,
+        )
+        top += section_h
+
+        severity = str(slide.get("severity") or "medium")
+        accent = {"high": _PRES_RED, "medium": _PRES_AMBER, "low": _PRES_GREEN}.get(severity, _PRES_AMBER)
+        _, verdict_title = leading_marker(slide.get("title", ""))
+        title_w = text_width(verdict_title, font_b, VERDICT_BADGE_SIZE)
+        badge_w = 24.0 + 12.0 + 10.0 + title_w + 24.0
+        round_rect_top(
+            64, top, badge_w, badge_h, 10,
+            fill=blend(accent, 0.18), stroke=accent, line_width=1.5,
+        )
+        circle_top(64 + 24 + 6, top + badge_h / 2.0, 6, fill=accent)
+        draw_line(
+            verdict_title, 64 + 24 + 12 + 10, top + 10.0,
+            font=font_b, size=VERDICT_BADGE_SIZE,
+            line_height=VERDICT_BADGE_SIZE * 1.2, color=accent,
+        )
+        top += badge_h + 20.0
+
+        top += draw_text_block(
+            slide.get("text", ""), 64, top, 680.0,
+            font=font_r, size=VERDICT_BODY_SIZE,
+            line_height=VERDICT_BODY_SIZE * 1.7,
+            color=blend(_PRES_WHITE, 0.55),
+        ) + 40.0
+
+        for idx, item in enumerate(cards):
+            x = 64.0 + idx * (card_w + 20.0)
+            round_rect_top(
+                x, top, card_w, grid_h, 12,
+                fill=blend(_PRES_WHITE, 0.04),
+                stroke=blend(_PRES_WHITE, 0.08),
+            )
+            inner_x = x + 18.0
+            inner_w = card_w - 36.0
+            cursor = top + 20.0
+            label_h = draw_text_block(
+                str(item.get("label", "")).upper(), inner_x, cursor, inner_w,
+                font=font_b, size=11, line_height=13.2,
+                color=blend(_PRES_WHITE, 0.35), char_space=11 * 0.10,
+            )
+            cursor += label_h + 8.0
+            draw_line(
+                item.get("value_text", ""), inner_x, cursor,
+                font=font_b, size=44, line_height=44, color=item.get("color") or _PRES_WHITE,
+            )
+            cursor += 44.0 + 4.0
+            draw_text_block(
+                item.get("subtitle", ""), inner_x, cursor, inner_w,
+                font=font_r, size=12, line_height=14.4,
+                color=blend(_PRES_WHITE, 0.35),
+            )
+
+    def kpi_card_height(item, card_w):
+        inner_w = card_w - 48.0
+        label_h = text_block_height(item.get("label", ""), font_b, 11, 13.2, inner_w, 11 * 0.08)
+        return 28.0 + label_h + 6.0 + KPI_VALUE_SIZE + 6.0 + 15.6 + 28.0
+
+    def render_key_metrics(slide):
+        section_h, h2_h, hsub_h = section_metrics(slide)
+        cards = list(slide.get("cards") or [])[:8]
+        card_w = (content_w - 60.0) / 4.0
+        row1 = cards[:4]
+        row2 = cards[4:8]
+        row_heights = []
+        for row in (row1, row2):
+            if row:
+                row_heights.append(max(kpi_card_height(item, card_w) for item in row))
+        grid_h = sum(row_heights) + 20.0 * max(0, len(row_heights) - 1)
+        metric_row_h = 19.2
+        bars = list(slide.get("bars") or [])[:4]
+        bars_h = len(bars) * metric_row_h + 20.0 * max(0, len(bars) - 1)
+        total_h = section_h + h2_h + hsub_h + 32.0 + grid_h + 40.0 + bars_h
+        top = centered_top(total_h)
+        top = draw_section_header(slide, top)
+        top += 32.0
+
+        row_top = top
+        card_index = 0
+        for row_height, row in zip(row_heights, (row1, row2)):
+            for col, item in enumerate(row):
+                x = 64.0 + col * (card_w + 20.0)
+                round_rect_top(
+                    x, row_top, card_w, row_height, 14,
+                    fill=blend(_PRES_WHITE, 0.04),
+                    stroke=blend(_PRES_WHITE, 0.08),
+                )
+                rect_top(x, row_top, card_w, 3.0, fill=item.get("color") or _PRES_METRIC_BLUE)
+                cursor = row_top + 28.0
+                inner_x = x + 24.0
+                inner_w = card_w - 48.0
+                label_h = draw_text_block(
+                    str(item.get("label", "")).upper(), inner_x, cursor, inner_w,
+                    font=font_b, size=11, line_height=13.2,
+                    color=blend(_PRES_WHITE, 0.40), char_space=11 * 0.08,
+                )
+                cursor += label_h + 6.0
+                draw_line(
+                    item.get("value_text", ""), inner_x, cursor,
+                    font=font_b, size=KPI_VALUE_SIZE,
+                    line_height=KPI_VALUE_SIZE, color=_PRES_WHITE,
+                )
+                cursor += KPI_VALUE_SIZE + 6.0
+                draw_line(
+                    item.get("sub_text", ""), inner_x, cursor,
+                    font=font_b, size=13, line_height=15.6,
+                    color=blend(_PRES_WHITE, 0.35),
+                )
+                card_index += 1
+            row_top += row_height + 20.0
+
+        top += grid_h + 40.0
+        metric_w = 680.0
+        label_w = 220.0
+        value_w = 56.0
+        track_w = metric_w - label_w - value_w - 40.0
+        for idx, item in enumerate(bars):
+            row_y = top + idx * (metric_row_h + 20.0)
+            draw_line(
+                item.get("label", ""), 64, row_y + (metric_row_h - 15.6) / 2.0,
+                font=font_b, size=13, line_height=15.6,
+                color=blend(_PRES_WHITE, 0.55),
+            )
+            track_x = 64.0 + label_w + 20.0
+            track_top = row_y + (metric_row_h - 12.0) / 2.0
+            round_rect_top(
+                track_x, track_top, track_w, 12.0, 6.0,
+                fill=blend(_PRES_WHITE, 0.06),
+            )
+            try:
+                pct = min(max(float(item.get("value") or 0), 0), 100)
+            except (TypeError, ValueError):
+                pct = 0.0
+            if pct > 0:
+                round_rect_top(
+                    track_x, track_top, track_w * pct / 100.0, 12.0, 6.0,
+                    fill=item.get("color") or _PRES_BLUE,
+                )
+            draw_line(
+                item.get("value_text", ""),
+                track_x + track_w + 20.0, row_y,
+                font=font_b, size=16, line_height=19.2,
+                color=_PRES_WHITE, align="right", width=value_w,
+            )
+
+    def render_goals(slide):
+        section_h, h2_h, hsub_h = section_metrics(slide)
+        rows = list(slide.get("rows") or [])
+        row_h = 15.6
+        rows_h = len(rows) * row_h + 14.0 * max(0, len(rows) - 1)
+        if not rows:
+            rows_h = 15.6
+        total_h = section_h + h2_h + hsub_h + 28.0 + rows_h
+        top = centered_top(total_h)
+        top = draw_section_header(slide, top)
+        top += 28.0
+        if not rows:
+            draw_line(
+                slide.get("empty_text", "Дані відсутні за обраними фільтрами"),
+                64, top, font=font_r, size=13, line_height=15.6,
+                color=blend(_PRES_WHITE, 0.30),
+            )
+            return
+
+        code_w = 36.0
+        name_w = 320.0
+        pct_w = 44.0
+        bar_w = content_w - code_w - name_w - pct_w - 48.0
+        code_x = 64.0
+        name_x = code_x + code_w + 16.0
+        bar_x = name_x + name_w + 16.0
+        pct_x = bar_x + bar_w + 16.0
+        for idx, row in enumerate(rows):
+            row_top = top + idx * (row_h + 14.0)
+            draw_line(
+                row.get("code", ""), code_x, row_top,
+                font=font_b, size=11, line_height=13.2,
+                color=blend(_PRES_WHITE, 0.40), align="right", width=code_w,
+            )
+            name = ellipsize(row.get("name", ""), font_r, 13, name_w)
+            draw_line(
+                name, name_x, row_top,
+                font=font_r, size=13, line_height=15.6,
+                color=blend(_PRES_WHITE, 0.70),
+            )
+            track_top = row_top + (row_h - 10.0) / 2.0
+            round_rect_top(
+                bar_x, track_top, bar_w, 10.0, 5.0,
+                fill=blend(_PRES_WHITE, 0.06),
+            )
+            try:
+                pct = min(max(float(row.get("value") or 0), 0), 100)
+            except (TypeError, ValueError):
+                pct = 0.0
+            if pct > 0:
+                round_rect_top(
+                    bar_x, track_top, bar_w * pct / 100.0, 10.0, 5.0,
+                    fill=row.get("color") or _PRES_GREY,
+                )
+            draw_line(
+                row.get("value_text", ""), pct_x, row_top,
+                font=font_b, size=13, line_height=15.6,
+                color=_PRES_WHITE, align="right", width=pct_w,
+            )
+
+    def risk_card_height(item, card_w):
+        inner_w = card_w - 48.0
+        _, label = leading_marker(item.get("label", ""))
+        label_h = text_block_height(label, font_b, 11, 13.2, inner_w - 15.0, 11 * 0.10)
+        return 28.0 + label_h + 8.0 + RISK_VALUE_SIZE + 8.0 + 15.6 + 28.0
+
+    def tag_layout(tags, max_width):
+        result = []
+        x = 0.0
+        row = 0
+        for tag in tags:
+            text = plain(tag)
+            width = text_width(text, font_b, 11) + 24.0
+            if x and x + 12.0 + width > max_width:
+                row += 1
+                x = 0.0
+            if x:
+                x += 12.0
+            result.append((row, x, width, text))
+            x += width
+        rows = (max((item[0] for item in result), default=-1) + 1)
+        height = rows * 23.2 + max(0, rows - 1) * 12.0
+        return result, height
+
+    def render_risks(slide):
+        section_h, h2_h, hsub_h = section_metrics(slide)
+        cards = list(slide.get("cards") or [])[:3]
+        card_w = (content_w - 40.0) / 3.0
+        grid_h = max([risk_card_height(item, card_w) for item in cards] or [0.0])
+        summary_inner_w = 640.0 - 56.0
+        summary_text_h = text_block_height(
+            slide.get("summary_text", ""), font_r, 15, 25.5, summary_inner_w,
+        )
+        tags = list(slide.get("tags") or [])[:2]
+        tag_positions, tags_h = tag_layout(tags, summary_inner_w)
+        summary_h = 24.0 + 13.2 + 12.0 + summary_text_h + 16.0 + tags_h + 24.0
+        total_h = section_h + h2_h + hsub_h + 32.0 + grid_h + 48.0 + summary_h
+        top = centered_top(total_h)
+        top = draw_section_header(slide, top)
+        top += 32.0
+
+        for idx, item in enumerate(cards):
+            x = 64.0 + idx * (card_w + 20.0)
+            accent = item.get("color") or (_PRES_RED, _PRES_AMBER, _PRES_BRIGHT_GREEN)[idx]
+            round_rect_top(
+                x, top, card_w, grid_h, 14,
+                fill=blend(accent, 0.10),
+                stroke=blend(accent, 0.30), line_width=1.5,
+            )
+            cursor = top + 28.0
+            marker, label = leading_marker(item.get("label", ""))
+            circle_top(x + 24.0 + 5.0, cursor + 6.6, 4.5, fill=accent)
+            label_h = draw_text_block(
+                label.upper(), x + 24.0 + 15.0, cursor,
+                card_w - 48.0 - 15.0,
+                font=font_b, size=11, line_height=13.2,
+                color=accent, char_space=11 * 0.10,
+            )
+            cursor += label_h + 8.0
+            draw_line(
+                item.get("value_text", ""), x + 24.0, cursor,
+                font=font_b, size=RISK_VALUE_SIZE,
+                line_height=RISK_VALUE_SIZE, color=accent,
+            )
+            cursor += RISK_VALUE_SIZE + 8.0
+            draw_line(
+                item.get("sub_text", ""), x + 24.0, cursor,
+                font=font_b, size=13, line_height=15.6,
+                color=blend(_PRES_WHITE, 0.40),
+            )
+
+        top += grid_h + 48.0
+        round_rect_top(
+            64.0, top, 640.0, summary_h, 14,
+            fill=blend(_PRES_WHITE, 0.03),
+            stroke=blend(_PRES_WHITE, 0.07),
+        )
+        cursor = top + 24.0
+        draw_line(
+            str(slide.get("summary_label", "")).upper(), 92.0, cursor,
+            font=font_b, size=11, line_height=13.2,
+            color=blend(_PRES_WHITE, 0.30), char_space=11 * 0.12,
+        )
+        cursor += 13.2 + 12.0
+        cursor += draw_text_block(
+            slide.get("summary_text", ""), 92.0, cursor, summary_inner_w,
+            font=font_r, size=15, line_height=25.5,
+            color=blend(_PRES_WHITE, 0.70),
+        ) + 16.0
+        for row, x_off, width, text in tag_positions:
+            tag_top = cursor + row * (23.2 + 12.0)
+            round_rect_top(
+                92.0 + x_off, tag_top, width, 23.2, 6,
+                fill=blend(_PRES_WHITE, 0.06),
+                stroke=blend(_PRES_WHITE, 0.10),
+            )
+            draw_line(
+                text, 92.0 + x_off + 12.0, tag_top + 5.0,
+                font=font_b, size=11, line_height=13.2,
+                color=blend(_PRES_WHITE, 0.50),
+            )
+
+    def top5_meta_layout(row, available_width):
+        items = [
+            ("doc", plain(row.get("code", ""))),
+            ("building", plain(row.get("department", ""))),
+            ("chart", plain(row.get("status", ""))),
+            ("target", f"Виконання: {plain(row.get('performance_text', ''))}"),
+        ]
+        result = []
+        x = 0.0
+        line = 0
+        for kind, text in items:
+            width = 10.0 + 5.0 + text_width(text, font_r, 10)
+            if x and x + 10.0 + width > available_width:
+                line += 1
+                x = 0.0
+            if x:
+                x += 10.0
+            result.append((line, x, width, kind, text))
+            x += width
+        lines = max((item[0] for item in result), default=-1) + 1
+        height = lines * 12.0 + max(0, lines - 1) * 10.0
+        return result, height
+
+    def top5_row_metrics(row):
+        badge_text = plain(row.get("risk_label", ""))
+        badge_w = text_width(badge_text, font_b, 10) + 16.0
+        right_w = 860.0 - badge_w - 14.0
+        name_h = text_block_height(row.get("name", ""), font_b, 13, 18.2, right_w)
+        meta, meta_h = top5_meta_layout(row, right_w)
+        content_h = name_h + 5.0 + meta_h
+        row_h = 28.0 + max(20.0, content_h)
+        return badge_w, right_w, name_h, meta, meta_h, row_h
+
+    def draw_meta_icon(kind, x, top, color):
+        if kind == "doc":
+            draw_doc_icon(x, top + 1.0, color)
+        elif kind == "building":
+            draw_building_icon(x, top - 1.0)
+        elif kind == "chart":
+            draw_chart_icon(x, top + 1.0, color)
+        else:
+            draw_target_icon(x, top + 1.0, color)
+
+    def render_top5(slide):
+        section_h, h2_h, hsub_h = section_metrics(slide)
+        rows = list(slide.get("rows") or [])[:5]
+        metrics = [top5_row_metrics(row) for row in rows]
+        list_h = sum(item[-1] for item in metrics)
+        if not rows:
+            list_h = 15.6
+        total_h = section_h + h2_h + hsub_h + 28.0 + list_h
+        top = centered_top(total_h)
+        top = draw_section_header(slide, top)
+        top += 28.0
+        if not rows:
+            draw_line(
+                slide.get("empty_text", "Критичних заходів не виявлено"), 64, top,
+                font=font_r, size=13, line_height=15.6,
+                color=blend(_PRES_WHITE, 0.30),
+            )
+            return
+
+        row_top = top
+        meta_color = blend(_PRES_WHITE, 0.35)
+        for row, metric in zip(rows, metrics):
+            badge_w, right_w, name_h, meta, meta_h, row_h = metric
+            badge_text = plain(row.get("risk_label", ""))
+            badge_top = row_top + 14.0 + 2.0
+            round_rect_top(
+                64.0, badge_top, badge_w, 18.0, 6,
+                fill=row.get("risk_color") or _PRES_GREY,
+            )
+            draw_line(
+                badge_text, 72.0, badge_top + 3.0,
+                font=font_b, size=10, line_height=12.0, color=_PRES_BG,
+            )
+            right_x = 64.0 + badge_w + 14.0
+            cursor = row_top + 14.0
+            name_h_drawn = draw_text_block(
+                row.get("name", ""), right_x, cursor, right_w,
+                font=font_b, size=13, line_height=18.2,
+                color=blend(_PRES_WHITE, 0.85),
+            )
+            cursor += name_h_drawn + 5.0
+            for line_idx, x_off, width, kind, text in meta:
+                item_top = cursor + line_idx * (12.0 + 10.0)
+                draw_meta_icon(kind, right_x + x_off, item_top, meta_color)
+                draw_line(
+                    text, right_x + x_off + 15.0, item_top,
+                    font=font_r, size=10, line_height=12.0,
+                    color=meta_color,
+                )
+            line_top(64.0, row_top + row_h, 924.0, color=blend(_PRES_WHITE, 0.06))
+            row_top += row_h
+
+    def render_finance(slide):
+        section_h, h2_h, hsub_h = section_metrics(slide)
+        groups = list(slide.get("groups") or [])[:4]
+        source_header_h = 13.2 + 20.0
+        source_item_h = 15.6 + 5.0 + 10.0 + 16.0
+        budget_h = 20.0 + 13.2 + 8.0 + 36.0 + 4.0 + 14.4 + 20.0
+        left_h = source_header_h + len(groups) * source_item_h + 24.0 + budget_h
+        kpkvk_rows = list(slide.get("kpkvk_rows") or [])[:6]
+        right_header_h = 13.2 + 20.0
+        kpkvk_row_h = 20.0 + 16.8
+        right_h = right_header_h + max(15.6, len(kpkvk_rows) * kpkvk_row_h)
+        grid_h = max(left_h, right_h)
+        total_h = section_h + h2_h + hsub_h + 36.0 + grid_h
+        top = centered_top(total_h)
+        top = draw_section_header(slide, top)
+        top += 36.0
+
+        left_x = 64.0
+        right_x = 64.0 + 430.0 + 40.0
+        col_w = 430.0
+
+        draw_line(
+            str(slide.get("sources_label", "")).upper(), left_x, top,
+            font=font_b, size=11, line_height=13.2,
+            color=blend(_PRES_WHITE, 0.30), char_space=11 * 0.12,
+        )
+        cursor = top + source_header_h
+        for item in groups:
+            draw_line(
+                item.get("label", ""), left_x, cursor,
+                font=font_b, size=13, line_height=15.6,
+                color=blend(_PRES_WHITE, 0.70),
+            )
+            display = str(item.get("display", ""))
+            draw_line(
+                display, left_x, cursor,
+                font=font_b, size=13, line_height=15.6,
+                color=_PRES_WHITE, align="right", width=col_w,
+            )
+            bar_top = cursor + 15.6 + 5.0
+            round_rect_top(
+                left_x, bar_top, col_w, 10.0, 5.0,
+                fill=blend(_PRES_WHITE, 0.07),
+            )
+            try:
+                pct = min(max(float(item.get("percent") or 0), 0), 100)
+            except (TypeError, ValueError):
+                pct = 0.0
+            if pct > 0:
+                round_rect_top(
+                    left_x, bar_top, col_w * pct / 100.0, 10.0, 5.0,
+                    fill=item.get("color") or _PRES_GREY,
+                )
+            cursor += source_item_h
+
+        cursor += 24.0
+        budget = dict(slide.get("budget") or {})
+        round_rect_top(
+            left_x, cursor, col_w, budget_h, 12,
+            fill=blend(_PRES_BLUE, 0.12),
+            stroke=blend(_PRES_BLUE, 0.25),
+        )
+        bcur = cursor + 20.0
+        draw_line(
+            str(budget.get("label", "")).upper(), left_x + 22.0, bcur,
+            font=font_b, size=11, line_height=13.2,
+            color=blend(_PRES_WHITE, 0.30), char_space=11 * 0.10,
+        )
+        bcur += 13.2 + 8.0
+        draw_line(
+            budget.get("value_text", ""), left_x + 22.0, bcur,
+            font=font_b, size=36, line_height=36, color=_PRES_WHITE,
+        )
+        bcur += 36.0 + 4.0
+        draw_line(
+            budget.get("subtitle", ""), left_x + 22.0, bcur,
+            font=font_r, size=12, line_height=14.4,
+            color=blend(_PRES_WHITE, 0.30),
+        )
+
+        draw_line(
+            str(slide.get("kpkvk_label", "")).upper(), right_x, top,
+            font=font_b, size=11, line_height=13.2,
+            color=blend(_PRES_WHITE, 0.30), char_space=11 * 0.12,
+        )
+        rcur = top + right_header_h
+        if not kpkvk_rows:
+            draw_line(
+                slide.get("kpkvk_empty_text", "КПКВК не визначено"), right_x, rcur,
+                font=font_r, size=12, line_height=14.4,
+                color=blend(_PRES_WHITE, 0.30),
+            )
+            return
+        for row in kpkvk_rows:
+            row_top = rcur + 10.0
+            draw_line(
+                row.get("code", ""), right_x, row_top,
+                font=font_b, size=14, line_height=16.8, color=_PRES_YELLOW,
+            )
+            draw_line(
+                row.get("count_text", ""), right_x + 150.0, row_top,
+                font=font_r, size=12, line_height=14.4,
+                color=blend(_PRES_WHITE, 0.50),
+            )
+            draw_line(
+                row.get("budget_text", ""), right_x, row_top,
+                font=font_b, size=12, line_height=14.4,
+                color=blend(_PRES_WHITE, 0.70), align="right", width=col_w,
+            )
+            rcur += kpkvk_row_h
+            line_top(right_x, rcur, right_x + col_w, color=blend(_PRES_WHITE, 0.06))
+
+    renderers = {
+        "title": render_title,
+        "verdict": render_verdict,
+        "key_metrics": render_key_metrics,
+        "strategic_goals": render_goals,
+        "risks": render_risks,
+        "top5": render_top5,
+        "finance": render_finance,
+    }
+
+    for page_no, slide in enumerate(presentation_payload["slides"], start=1):
+        slide_bg()
+        slide_num(page_no)
+        renderers[slide["key"]](slide)
+        c.showPage()
 
     c.save()
     return buffer.getvalue()

@@ -438,9 +438,17 @@ def test_dashboard_uses_one_payload_for_browser_and_pdf():
         for line_no, line in enumerate(text.splitlines(), start=1):
             if "build_presentation_pdf(" in line and not line.lstrip().startswith("def build_presentation_pdf"):
                 usages.append((path.relative_to(ROOT).as_posix(), line_no, line.strip()))
-    assert len(usages) == 1, usages
-    assert usages[0][0] == "pages/2_Dashboard.py", usages
-    assert usages[0][2] == "_pdf_bytes = build_presentation_pdf(_presentation_payload)", usages
+    # Production Dashboard remains the control implementation; the isolated test
+    # Dashboard is allowed one identical renderer call. Neither may build a second
+    # PDF-specific calculation payload.
+    expected_pages = {"pages/2_Dashboard.py", "pages/2_Дашборди_тест.py"}
+    assert {item[0] for item in usages} == expected_pages, usages
+    assert len(usages) == 2, usages
+    assert all(item[2] == "_pdf_bytes = build_presentation_pdf(_presentation_payload)" for item in usages), usages
+    test_source = (ROOT / "pages" / "2_Дашборди_тест.py").read_text(encoding="utf-8")
+    assert test_source.count("build_presentation_payload(") == 1
+    assert "build_presentation_html(_presentation_payload)" in test_source
+    assert "presentation_slides_by_key(_presentation_payload)" in test_source
 
     mio_source = (ROOT / "pages" / "3_Оцінка_МіО.py").read_text(encoding="utf-8")
     assert "pdf_bytes = build_legacy_presentation_pdf(" in mio_source

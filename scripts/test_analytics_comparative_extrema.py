@@ -238,10 +238,12 @@ class AnalyticsRCv8ComparativeExtremaTests(unittest.TestCase):
         self.assertNotIn("найбільший за масштабом портфель має ссп «ссп 2»", low)
 
 
-    def test_calculations_page_does_not_swallow_mio_registry_errors(self):
-        source = Path("pages/9_Розрахунки.py").read_text(encoding="utf-8")
+    def test_removed_calculations_page_does_not_remove_mio_runtime_contract(self):
+        self.assertFalse(Path("pages/9_Розрахунки.py").exists())
+        source = Path("pages/7_Аналітика.py").read_text(encoding="utf-8")
+        self.assertIn("mio_shared.build_mio_analytics", source)
+        self.assertIn('log_exception("Analytics reusable MіO outputs", exc)', source)
         self.assertNotIn("except Exception:\n                    mio = {}", source)
-        self.assertIn("mio = mio_shared.build_mio_analytics", source)
 
     def test_unique_ssp_portfolio_sentence_normalizes_prefixed_label(self):
         ctx = _neutral_context()

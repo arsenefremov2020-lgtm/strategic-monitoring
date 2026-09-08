@@ -91,8 +91,10 @@ def _browser_render(browser, payload, key, out_dir: Path):
     html_path.write_text(html, encoding="utf-8")
 
     page = browser.new_page(viewport={"width": REFERENCE_WIDTH, "height": REFERENCE_HEIGHT})
-    page.goto(html_path.resolve().as_uri())
-    page.wait_for_load_state("load")
+    # Some CI/container policies block file:// navigation even for local fixtures.
+    # Loading the exact generated HTML directly preserves the visual contract
+    # while avoiding an environment-specific browser permission dependency.
+    page.set_content(html, wait_until="load")
     locator = page.locator(f'[data-slide-key="{key}"]')
     bbox = locator.bounding_box()
     assert bbox is not None

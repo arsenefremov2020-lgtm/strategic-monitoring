@@ -647,7 +647,12 @@ def test_stage4_and_analytics_untouched_contract():
     assert forbidden.isdisjoint(deliverable)
     assert "pages/2_Dashboard.py" not in deliverable
     assert "core/measure_card.py" not in deliverable
-    assert "pages/4_Картка_заходу_тест.py" not in deliverable
+    for removed_page in (
+        "pages/0_Центр_задач.py", "pages/4_Картка_заходу_тест.py",
+        "pages/B_Довідка.py", "pages/9_Розрахунки.py",
+    ):
+        assert removed_page not in deliverable
+    assert (ROOT / "pages" / "2_Дашборди_тест.py").exists()
 
 
 def main():

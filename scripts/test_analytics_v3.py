@@ -515,15 +515,19 @@ class RebaseRegressionTests(unittest.TestCase):
         # A goal filter alone is not part of the incompatibility tuple for integral MIO.
         self.assertIn("(selected_ssp, selected_deputies, selected_tasks, selected_products)",source)
 
-    def test_calculations_page_retains_light_service_structure(self):
-        source=(Path(__file__).resolve().parents[1]/"pages"/"9_Розрахунки.py").read_text(encoding="utf-8")
-        for token in (
-            "def _safe_display_frame", "def _quarter_result_table", "def _reason_table",
-            "Dashboard — розрахунки", "Аналітика — розрахунки", "Графіки Аналітики",
-            "Показники аналітичної довідки", "Технічна звірка",
-        ):
-            self.assertIn(token,source)
-        self.assertGreaterEqual(len(source.splitlines()),650)
+    def test_calculations_page_removed_but_shared_calculation_services_retained(self):
+        root = Path(__file__).resolve().parents[1]
+        self.assertFalse((root / "pages" / "9_Розрахунки.py").exists())
+        dashboard_execution = (root / "core" / "dashboard_execution.py").read_text(encoding="utf-8")
+        dashboard_breakdowns = (root / "core" / "dashboard_breakdowns.py").read_text(encoding="utf-8")
+        analytics_calc = (root / "core" / "analytics_calculations.py").read_text(encoding="utf-8")
+        mio_shared_source = (root / "core" / "mio_shared.py").read_text(encoding="utf-8")
+        for token in ("def build_quarter_snapshot", "def snapshot_execution", "def task_scores", "def goal_scores"):
+            self.assertIn(token, dashboard_execution)
+        for token in ("def build_period_results", "def aggregate_objects", "def ssp_summary", "def deputy_summary"):
+            self.assertIn(token, dashboard_breakdowns)
+        self.assertIn("def build_metrics", analytics_calc)
+        self.assertIn("def build_mio_analytics", mio_shared_source)
 
     def test_runtime_overlay_preserves_base_composer_instead_of_replacing_it(self):
         overlay=(Path(__file__).resolve().parents[1]/"core"/"analytics_text"/"composer_overlay.py").read_text(encoding="utf-8")

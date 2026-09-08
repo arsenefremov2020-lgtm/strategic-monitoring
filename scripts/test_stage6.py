@@ -108,18 +108,26 @@ def main() -> int:
     check(len(xlsx) > 1000 and len(docx) > 1000 and len(pdf) > 1000, "Excel, Word і PDF архіву формуються")
     check(marker.startswith("Сформовано з архівного знімка від"), "Експорт має обов’язкову архівну позначку")
 
-    # 4. Навігація і доступи.
+    # 4. Навігація і доступи. Видалені сторінки не лишають битих маршрутів;
+    # тестовий Dashboard доступний тільки супер-адміну.
     roles_text = (ROOT / "config" / "roles.py").read_text(encoding="utf-8")
     navigation_text = (ROOT / "core" / "navigation.py").read_text(encoding="utf-8")
-    check(roles_text.count('"Довідка"') >= 8, "Довідка додана для всіх ролей і до ALL_PAGES")
+    for removed in ("Центр задач", "Картка заходу (тест)", "Довідка", "Розрахунки"):
+        check(f'"{removed}"' not in roles_text, f"{removed}: прибрано з рольових списків")
+        check(f'"{removed}":' not in navigation_text, f"{removed}: прибрано з маршрутів")
     check('"Архів": "pages/A_Архів.py"' in navigation_text, "Архів підключено до рольового меню")
-    check('"Довідка": "pages/B_Довідка.py"' in navigation_text, "Довідка підключена до рольового меню")
+    check('"Дашборди (тест)": "pages/2_Дашборди_тест.py"' in navigation_text, "Тестовий Dashboard підключено")
+    check(roles_text.count('"Дашборди (тест)"') == 2, "Тестовий Dashboard є лише у super_admin та ALL_PAGES")
 
     # 5. Футер.
     config_text = (ROOT / "core" / "config.py").read_text(encoding="utf-8")
     footer_text = (ROOT / "core" / "page_setup.py").read_text(encoding="utf-8")
     check('APP_VERSION: str = "ДЕМО 2.0"' in config_text, "Версія системи у футері — ДЕМО 2.0")
-    check("a.efremov@me.gov.ua" in footer_text, "Футер містить контактну адресу")
+    check(
+        "Розроблено департаментом стратегічного планування" in footer_text
+        and "Версія {APP_VERSION}" in footer_text,
+        "Футер перевіряється за чинним production-контрактом, без застарілої контактної адреси",
+    )
 
     # 6. Незмінність і автоматичний workflow закладені в коді/SQL.
     migration = (ROOT / "migrations" / "015_archive_full.sql").read_text(encoding="utf-8")
@@ -127,8 +135,14 @@ def main() -> int:
     script = (ROOT / "scripts" / "create_archive_snapshot.py").read_text(encoding="utf-8")
     archive_page = (ROOT / "pages" / "A_Архів.py").read_text(encoding="utf-8")
     check("trg_archive_snapshots_immutable" in migration and "before update or delete" in migration.lower(), "SQL блокує UPDATE і DELETE знімків")
-    check('cron: "0 15 15 1,4,7,10 *"' in workflow and 'cron: "0 16 15 1,4,7,10 *"' in workflow, "Workflow враховує літній і зимовий час Києва")
-    check('ZoneInfo("Europe/Kyiv")' in script and "now.hour == 18" in script, "Автознімок перевіряє 18:00 Europe/Kyiv")
+    check(
+        'cron: "0 15 15 1,4,7,10 *"' in workflow and workflow.count("cron:") == 1,
+        "Workflow використовує чинний єдиний квартальний UTC-розклад",
+    )
+    check(
+        "now_kyiv()" in script and "now.day in {15, 16}" in script and "now.hour ==" not in script,
+        "Автознімок використовує Europe/Kyiv через now_kyiv і date-driven grace window",
+    )
     check(".update(" not in archive_page and ".delete(" not in archive_page, "Сторінка Архіву не містить дій редагування або видалення")
 
     print("OK: перевірки Етапу 6 завершено.")

@@ -1045,7 +1045,7 @@ section[data-testid="stSidebar"] [data-auth-sidebar-profile="true"] a:hover {
     text-decoration-line: underline !important;
 }
 
-/* ─── KPI CARDS (глобально: Паспорт ССП, Фільтр за документом, Центр задач) ─── */
+/* ─── KPI CARDS (глобально: Паспорт ССП, Фільтр за документом) ─── */
 .admin-kpi-card {
     background: #F7F9FC;
     border: 1px solid #DCE4F0;

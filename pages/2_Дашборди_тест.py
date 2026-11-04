@@ -15,6 +15,7 @@ from core import dashboard_filters as dashboard_filters_v2
 from core import dashboard_finance as dashboard_finance_v2
 from core import dashboard_sources as dashboard_sources_v3
 from core import dashboard_portfolio as dashboard_portfolio_v1
+from core.dashboard_portfolio_ui import render_portfolio_overview
 from core import dashboard_matrices as dashboard_matrices_v1
 from core.periods import parse_period as core_parse_period
 from core.periods import period_number as core_period_number
@@ -1396,11 +1397,6 @@ st.markdown("""
 }
 .dashboard-test-kpi-value {font-size:26px;line-height:1;font-weight:900;color:#032A63;margin-bottom:8px;}
 .dashboard-test-kpi-label {font-size:11px;line-height:1.25;font-weight:700;color:#61708A;}
-.dashboard-test-chip-wrap {display:flex;flex-wrap:wrap;gap:7px;margin:6px 0 2px 0;}
-.dashboard-test-chip {background:#F7F9FC;border:1px solid #DCE4F0;border-radius:999px;padding:5px 9px;font-size:11px;color:#132238;}
-.dashboard-test-scroll-list {max-height:220px;overflow-y:auto;border:1px solid #DCE4F0;border-radius:9px;padding:8px 10px;background:#F7F9FC;margin-top:7px;}
-.dashboard-test-scroll-item {padding:5px 2px;border-bottom:1px solid #E9EEF6;font-size:11px;color:#132238;}
-.dashboard-test-scroll-item:last-child {border-bottom:0;}
 .dashboard-test-mode-title {font-size:15px;font-weight:800;color:#032A63;margin:4px 0 8px 0;}
 /* Streamlit segmented-control/radio fallback: four equal brand buttons, wrapping when needed. */
 .st-key-dashboard_test_analytic_mode [role="radiogroup"],
@@ -2885,67 +2881,11 @@ _portfolio_summary = dashboard_portfolio_v1.build_portfolio_summary(_structural_
 _portfolio_goal_sections = dashboard_portfolio_v1.goal_sections(_structural_portfolio)
 
 
-def _render_portfolio_chip_group(title, values, key, limit=5):
-    values = list(values or [])
-    st.markdown(f'<div class="filter-field-label">{escape(title)}</div>', unsafe_allow_html=True)
-    visible = values[:limit]
-    chips = "".join(f'<span class="dashboard-test-chip">{escape(str(value))}</span>' for value in visible)
-    st.markdown(f'<div class="dashboard-test-chip-wrap">{chips}</div>', unsafe_allow_html=True)
-    remaining = max(0, len(values) - len(visible))
-    state_key = f"dashboard_test_portfolio_more_state_{key}"
-    st.session_state.setdefault(state_key, False)
-    if remaining:
-        label = "Згорнути" if st.session_state[state_key] else f"Ще +{remaining}"
-        if st.button(label, key=f"dashboard_test_portfolio_more_button_{key}", use_container_width=False):
-            st.session_state[state_key] = not st.session_state[state_key]
-    if st.session_state[state_key] and values:
-        items = "".join(f'<div class="dashboard-test-scroll-item">{escape(str(value))}</div>' for value in values)
-        st.markdown(f'<div class="dashboard-test-scroll-list">{items}</div>', unsafe_allow_html=True)
+# KPI tiles stay stable; controls are isolated in a Streamlit fragment.
+# All navigator rows originate from the same structural cohort as the KPIs.
+_portfolio_navigation = dashboard_portfolio_v1.build_portfolio_navigation(_structural_portfolio)
+render_portfolio_overview(_portfolio_summary, _portfolio_navigation)
 
-
-with st.container(key="dashboard_test_portfolio_card"):
-    st.markdown('<div class="section-title">Обраний портфель</div>', unsafe_allow_html=True)
-    kpi_items = [
-        ("Заходи", _portfolio_summary["measure_count"]),
-        ("ССП", _portfolio_summary["ssp_count"]),
-        ("Стратегічні цілі", _portfolio_summary["goal_count"]),
-        ("Завдання", _portfolio_summary["task_count"]),
-        ("Охоплено НПА", _portfolio_summary["npa_count"]),
-        ("Заступники", _portfolio_summary["deputy_count"]),
-    ]
-    kpi_html = "".join(
-        f'<div class="dashboard-test-kpi"><div class="dashboard-test-kpi-value">{int(value)}</div>'
-        f'<div class="dashboard-test-kpi-label">{escape(label)}</div></div>'
-        for label, value in kpi_items
-    )
-    st.markdown(f'<div class="dashboard-test-kpi-grid">{kpi_html}</div>', unsafe_allow_html=True)
-
-    st.markdown('<div class="section-title" style="font-size:14px;margin-top:14px;">Що саме входить у портфель</div>', unsafe_allow_html=True)
-    chip_cols = st.columns(3)
-    with chip_cols[0]:
-        _render_portfolio_chip_group("ССП", _portfolio_summary["ssps"], "ssp")
-    with chip_cols[1]:
-        _render_portfolio_chip_group("Стратегічні цілі", _portfolio_summary["goals"], "goals")
-    with chip_cols[2]:
-        _render_portfolio_chip_group("Завдання", _portfolio_summary["tasks"], "tasks")
-
-    with st.expander("Детальний склад портфеля", expanded=False):
-        detail_groups = [
-            ("ССП", _portfolio_summary["ssps"]),
-            ("Стратегічні цілі", _portfolio_summary["goals"]),
-            ("Завдання", _portfolio_summary["tasks"]),
-            ("Заступники Міністра", _portfolio_summary["deputies"]),
-            ("Типи продуктів", _portfolio_summary["product_types"]),
-            ("НПА / стратегічні документи", _portfolio_summary["documents"]),
-            ("Джерела фінансування", _portfolio_summary["financing"]),
-            ("КПКВК", _portfolio_summary["kpkvk"]),
-        ]
-        for title, values in detail_groups:
-            st.markdown(f"**{title}**")
-            if values:
-                st.markdown("<br>".join(escape(str(value)) for value in values), unsafe_allow_html=True)
-            else:
-                st.caption("Немає значень у поточному структурному портфелі.")
 
 _snapshot_description = "Що маємо на кінець обраного кварталу?"
 _breakdown_description = "Де виконання вище, а де нижче за обраний період?"

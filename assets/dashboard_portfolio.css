@@ -1,0 +1,109 @@
+/* Scope every rule to the test Dashboard portfolio card. */
+.st-key-dashboard_test_portfolio_card .dpt-portfolio-subtitle {
+    color: #61708A; font-size: 12px; margin: -1px 0 14px;
+}
+.st-key-dashboard_test_portfolio_card .dpt-section-title {
+    color: #032A63; font-size: 15px; font-weight: 800; margin: 10px 0 7px;
+}
+.st-key-dashboard_test_portfolio_card .dpt-section-description {
+    color: #61708A; text-align: right; font-size: 11px; margin: 7px 0;
+}
+.st-key-dashboard_test_portfolio_card .dpt-list-heading,
+.st-key-dashboard_test_portfolio_card .dpt-measures-header {
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 8px; color: #032A63; font-size: 12px; font-weight: 800;
+    margin: 10px 0 9px;
+}
+.st-key-dashboard_test_portfolio_card .dpt-list-heading span,
+.st-key-dashboard_test_portfolio_card .dpt-measures-header span {
+    background: #F0F5FC; border: 1px solid #DCE4F0; border-radius: 999px;
+    padding: 2px 8px; color: #52657D; font-size: 11px;
+}
+.st-key-dashboard_test_portfolio_card .dpt-pane-header {
+    margin: 0 0 16px; padding-bottom: 12px; border-bottom: 1px solid #E6EDF6;
+}
+.st-key-dashboard_test_portfolio_card .dpt-pane-title {
+    color: #032A63; font-size: 14px; font-weight: 800; line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+.st-key-dashboard_test_portfolio_card .dpt-pane-subtitle {
+    color: #61708A; font-size: 11px; margin-top: 5px; line-height: 1.5;
+}
+.st-key-dashboard_test_portfolio_card .dpt-subheading {
+    font-size: 12px; font-weight: 800; color: #132238; margin: 0 0 9px;
+}
+.st-key-dashboard_test_portfolio_card .dpt-measure-list {
+    border: 1px solid #E0E8F3; border-radius: 9px; background: #FBFCFE;
+    max-height: 300px; overflow: auto; margin-top: 6px;
+}
+.st-key-dashboard_test_portfolio_card .dpt-measure-row {
+    display: grid; grid-template-columns: minmax(90px, 105px) minmax(0, 1fr);
+    column-gap: 12px; padding: 9px 11px; border-bottom: 1px solid #E9EEF5;
+    color: #132238; font-size: 11px; line-height: 1.45;
+}
+.st-key-dashboard_test_portfolio_card .dpt-measure-row:last-child {border-bottom: 0;}
+.st-key-dashboard_test_portfolio_card .dpt-measure-code {
+    color: #005BBB; font-weight: 750; overflow-wrap: anywhere;
+}
+.st-key-dashboard_test_portfolio_card .dpt-measure-name {overflow-wrap: anywhere;}
+.st-key-dashboard_test_portfolio_card .st-key-dpt_details_pane {
+    background: #FFFFFF; border: 1px solid #DCE4F0; border-radius: 10px;
+    padding: 14px 16px; min-height: 150px;
+}
+/* Streamlit controls are native buttons: keyboard accessible, focusable,
+   and fragment-local. Long strategic titles must wrap rather than clip. */
+.st-key-dashboard_test_portfolio_card [class*="st-key-dpt_"] button {
+    transition: background-color .12s ease, border-color .12s ease;
+}
+.st-key-dashboard_test_portfolio_card [class*="st-key-dpt_goals_"] button,
+.st-key-dashboard_test_portfolio_card [class*="st-key-dpt_ssps_"] button,
+.st-key-dashboard_test_portfolio_card [class*="st-key-dpt_tasks_"] button,
+.st-key-dashboard_test_portfolio_card [class*="st-key-dpt_documents_"] button,
+.st-key-dashboard_test_portfolio_card [class*="st-key-dpt_deputies_"] button,
+.st-key-dashboard_test_portfolio_card [class*="st-key-dpt_product_types_"] button,
+.st-key-dashboard_test_portfolio_card [class*="st-key-dpt_financing_"] button,
+.st-key-dashboard_test_portfolio_card [class*="st-key-dpt_kpkvk_"] button,
+.st-key-dashboard_test_portfolio_card [class*="st-key-dpt_goal_task_"] button {
+    width: 100%; text-align: left; justify-content: flex-start;
+    white-space: pre-line; height: auto; min-height: 43px;
+    border-radius: 8px; padding: 8px 10px; margin-bottom: 2px;
+    font-size: 11px; line-height: 1.45;
+    border: 1px solid #DCE4F0; color: #132238; background: #FFFFFF;
+}
+.st-key-dashboard_test_portfolio_card [class*="st-key-dpt_"] button[kind="primary"] {
+    background: #EAF1FF; color: #032A63; border-color: #99B9E7;
+    font-weight: 750; box-shadow: inset 3px 0 0 #005BBB;
+}
+.st-key-dashboard_test_portfolio_card [class*="st-key-dpt_"] button:hover {
+    border-color: #005BBB;
+}
+.st-key-dashboard_test_portfolio_card [class*="st-key-dpt_"] button:focus-visible {
+    outline: 2px solid #005BBB; outline-offset: 2px;
+}
+.st-key-dashboard_test_portfolio_card [class*="st-key-dpt_more_"] button {
+    border: 1px solid #DCE4F0; color: #005BBB; background: #FFFFFF;
+    border-radius: 8px; padding: 6px 12px; font-size: 11px;
+}
+.st-key-dashboard_test_portfolio_card .st-key-dpt_portfolio_tab [data-testid="stButtonGroup"],
+.st-key-dashboard_test_portfolio_card .st-key-dpt_extra_tab [data-testid="stButtonGroup"] {
+    display: flex; flex-wrap: wrap; width: 100%; gap: 6px;
+}
+.st-key-dashboard_test_portfolio_card .st-key-dpt_portfolio_tab [data-testid="stButtonGroup"] > *,
+.st-key-dashboard_test_portfolio_card .st-key-dpt_extra_tab [data-testid="stButtonGroup"] > * {
+    flex: 1 1 92px;
+}
+.st-key-dashboard_test_portfolio_card .st-key-dpt_portfolio_tab button,
+.st-key-dashboard_test_portfolio_card .st-key-dpt_extra_tab button {
+    border: 1px solid #DCE4F0; background: #FFFFFF;
+    font-size: 12px; font-weight: 650;
+}
+.st-key-dashboard_test_portfolio_card .st-key-dpt_portfolio_tab button[aria-pressed="true"],
+.st-key-dashboard_test_portfolio_card .st-key-dpt_extra_tab button[aria-pressed="true"] {
+    background: #005BBB; color: #FFFFFF; border-color: #005BBB;
+}
+@media (max-width: 900px) {
+    .st-key-dashboard_test_portfolio_card .dpt-section-description {text-align: left;}
+    .st-key-dashboard_test_portfolio_card .dpt-measure-row {
+        grid-template-columns: minmax(70px, 90px) minmax(0, 1fr);
+    }
+}

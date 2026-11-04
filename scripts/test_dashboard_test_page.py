@@ -35,6 +35,7 @@ from core.dashboard_portfolio import (  # noqa: E402
     canonical_documents,
     goal_sections,
     structural_portfolio,
+    build_portfolio_navigation,
 )
 
 PRODUCTION_DASHBOARD_SHA256 = "25c049bca422089957533460de52a1296c51c31eeaee172c9f50073f1295f56a"
@@ -156,8 +157,12 @@ def test_large_portfolio_keeps_every_ssp_and_goal() -> None:
     assert math.isclose(sum(section["portfolio_share_pct"] for section in sections), 100.0, abs_tol=1e-9)
 
     page = (ROOT / "pages/2_Дашборди_тест.py").read_text(encoding="utf-8")
-    assert "Ще +{remaining}" in page
-    assert "dashboard-test-scroll-list" in page
+    ui = (ROOT / "core/dashboard_portfolio_ui.py").read_text(encoding="utf-8")
+    css = (ROOT / "assets/dashboard_portfolio.css").read_text(encoding="utf-8")
+    assert "build_portfolio_navigation(_structural_portfolio)" in page
+    assert "render_portfolio_overview(_portfolio_summary, _portfolio_navigation)" in page
+    assert "Ще +{remaining} цілі" in ui
+    assert "dpt-measure-list" in css
     assert ".head(" not in (ROOT / "core/dashboard_matrices.py").read_text(encoding="utf-8")
     assert '"Інше"' not in (ROOT / "core/dashboard_matrices.py").read_text(encoding="utf-8")
 
@@ -285,6 +290,148 @@ def test_portfolio_is_structural_not_status_bound() -> None:
     source = (ROOT / "core/dashboard_portfolio.py").read_text(encoding="utf-8")
     assert "statuses=" not in source
     assert "Status is deliberately absent" in source
+
+
+def test_navigation_integrity_and_interactive_contract() -> None:
+    """Drill-down retains the filtered unique-measure population and overlaps."""
+    first, second = CANONICAL_NPA_DOCUMENTS[:2]
+    data = pd.DataFrame([
+        _measure(1, ssp=20, goal="1", task="1.1", source_global=first),
+        _measure(2, ssp=20, goal="1", task="1.2", source_global=f"{first}; {second}"),
+        _measure(3, ssp=21, goal="2", task="2.1", source_national=second),
+        _measure(3, ssp=21, goal="2", task="2.1", source_national=second),
+    ])
+    summary = build_portfolio_summary(data)
+    nav = build_portfolio_navigation(data)
+    assert summary["measure_count"] == 3
+    assert len(nav["goals"]) == summary["goal_count"] == 2
+    assert len(nav["tasks"]) == summary["task_count"] == 3
+    assert len(nav["ssps"]) == summary["ssp_count"] == 2
+    assert len(nav["documents"]) == summary["npa_count"] == 2
+    assert sum(g["measure_count"] for g in nav["goals"]) == 3
+    assert sum(t["measure_count"] for t in nav["tasks"]) == 3
+    assert sum(s["measure_count"] for s in nav["ssps"]) == 3
+    assert all(len(x["measures"]) == x["measure_count"] for key in nav for x in nav[key])
+    assert {t["code"] for t in nav["goals"][0]["tasks"]} == {"1.1", "1.2"}
+    assert nav["documents"][0]["measure_count"] + nav["documents"][1]["measure_count"] == 4
+    # Filtering must still determine the whole navigable population.
+    narrowed = structural_portfolio(data, ssp=["21"])
+    assert [g["code"] for g in build_portfolio_navigation(narrowed)["goals"]] == ["2"]
+    assert all(not values for values in build_portfolio_navigation(pd.DataFrame()).values())
+
+
+def test_portfolio_fragment_buttons_expand_collapse_and_switch_views() -> None:
+    """Exercise every category with a minimal Streamlit stand-in.
+
+    This checks state transitions and keyboard-accessible native button
+    registrations without depending on a remote Streamlit/Supabase runtime.
+    """
+    import importlib.util
+    from contextlib import nullcontext
+
+    class FakeStreamlit:
+        def __init__(self):
+            self.session_state: dict = {}
+            self.buttons: dict = {}
+            self.markup: list[str] = []
+            self.fragment = lambda fn: fn
+
+        def markdown(self, message, **kwargs):
+            self.markup.append(message)
+
+        def columns(self, specs, **kwargs):
+            size = len(specs) if isinstance(specs, (list, tuple)) else specs
+            return [nullcontext() for _ in range(size)]
+
+        def container(self, **kwargs):
+            return nullcontext()
+
+        def segmented_control(self, label, options, *, key, default=None, **kwargs):
+            return self.session_state.setdefault(key, default)
+
+        def text_input(self, label, *, key, **kwargs):
+            return self.session_state.setdefault(key, "")
+
+        def button(self, label, *, key, on_click=None, args=(), **kwargs):
+            assert key not in self.buttons, key
+            self.buttons[key] = (label, on_click, args)
+            return False
+
+        def caption(self, message):
+            self.markup.append(message)
+
+        def info(self, message):
+            self.markup.append(message)
+
+        def click(self, key):
+            label, callback, args = self.buttons[key]
+            assert callback is not None, (key, label)
+            callback(*args)
+
+    ui_path = ROOT / "core/dashboard_portfolio_ui.py"
+    source = ui_path.read_text(encoding="utf-8")
+    assert "@st.fragment" in source
+    assert "st.rerun(" not in source
+    assert "get_supabase_client" not in source
+    assert "load_strat_matrix" not in source
+
+    fake = FakeStreamlit()
+    module_name = "_test_portfolio_ui_fake_streamlit"
+    spec = importlib.util.spec_from_file_location(module_name, ui_path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    previous = sys.modules.get("streamlit")
+    sys.modules["streamlit"] = fake
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        if previous is None:
+            del sys.modules["streamlit"]
+        else:
+            sys.modules["streamlit"] = previous
+
+    data = pd.DataFrame([
+        _measure(i, ssp=20 + i, goal=str(i), task=f"{i}.1")
+        for i in range(1, 9)
+    ])
+    nav = build_portfolio_navigation(data)
+
+    def render():
+        fake.buttons.clear()
+        fake.markup.clear()
+        module._portfolio_navigator_fragment(nav)
+
+    render()
+    assert "dpt_more_goals" in fake.buttons
+    goal8 = "dpt_goals_" + module._widget_suffix("|8")
+    assert goal8 not in fake.buttons  # The first five are initially visible.
+    fake.click("dpt_more_goals")
+    render()
+    assert goal8 in fake.buttons
+    assert fake.buttons["dpt_more_goals"][0] == "Згорнути"
+    fake.click(goal8)
+    render()
+    assert fake.session_state["dpt_selected_goals"] == "|8"
+    assert "8 — Goal 8" in " ".join(fake.markup)
+    fake.click("dpt_more_goals")
+    render()
+    assert goal8 not in fake.buttons
+    assert fake.session_state["dpt_selected_goals"] == "|1"
+
+    for category, tab in (("ssps", "ССП"), ("tasks", "Завдання"), ("documents", "Документи")):
+        fake.session_state["dpt_portfolio_tab"] = tab
+        render()
+        if category != "documents":
+            assert "dpt_more_" + category in fake.buttons
+            fake.click("dpt_more_" + category)
+            render()
+            assert fake.buttons["dpt_more_" + category][0] == "Згорнути"
+
+    fake.session_state["dpt_portfolio_tab"] = "Інше"
+    for label in ("Заступники", "Типи продуктів", "Фінансування", "КПКВК"):
+        fake.session_state["dpt_extra_tab"] = label
+        render()
+    assert "st.button" not in " ".join(fake.markup)
 
 
 def run() -> None:

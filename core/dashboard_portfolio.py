@@ -166,3 +166,117 @@ def goal_sections(portfolio: pd.DataFrame) -> list[dict[str, Any]]:
         nums = re.findall(r"\d+", row["goal_code"])
         return tuple(int(v) for v in nums) if nums else (9999,)
     return sorted(rows, key=key)
+
+
+def build_portfolio_navigation(portfolio: pd.DataFrame) -> dict[str, list[dict[str, Any]]]:
+    """Prepare drill-down navigation from the *same* deduplicated structural cohort.
+
+    Each measure belongs to one strategic goal, task and main SSP. Documents,
+    deputy and financing memberships may overlap; counts in those categories
+    therefore need not add up to the number of measures in the portfolio.
+    All output is plain Python data, with no Streamlit state or period logic.
+    """
+    empty = {
+        "goals": [], "tasks": [], "ssps": [], "documents": [],
+        "deputies": [], "product_types": [], "financing": [], "kpkvk": [],
+    }
+    if portfolio is None or portfolio.empty or "code" not in portfolio.columns:
+        return empty
+
+    data = portfolio.drop_duplicates(subset=["code"], keep="first")
+    goals: dict[str, dict[str, Any]] = {}
+    tasks: dict[tuple[str, str], dict[str, Any]] = {}
+    ssps: dict[str, dict[str, Any]] = {}
+    extras: dict[str, dict[str, dict[str, Any]]] = {
+        "deputies": {}, "product_types": {}, "financing": {}, "kpkvk": {},
+    }
+    documents: dict[str, dict[str, Any]] = {}
+    document_matches = [
+        (label, normalize_for_match(label))
+        for label in dict.fromkeys(CANONICAL_NPA_DOCUMENTS)
+    ]
+
+    def add_measure(
+        group: dict[str, dict[str, Any]], key: str, measure: dict[str, str],
+        **metadata: Any,
+    ) -> None:
+        if not key:
+            return
+        item = group.setdefault(key, {**metadata, "label": metadata.get("label", key), "measures": []})
+        item["measures"].append(measure)
+
+    for row in data.to_dict("records"):
+        code = clean(row.get("code"))
+        if not code:
+            continue
+        measure = {"code": code, "name": clean(row.get("name"))}
+        goal_code = clean(row.get("parent_goal_code"))
+        goal_name = clean(row.get("parent_goal_name"))
+        task_code = clean(row.get("parent_task_code"))
+        task_name = clean(row.get("parent_task_name"))
+
+        if goal_code:
+            goal = goals.setdefault(goal_code, {
+                "code": goal_code, "name": goal_name, "measures": [], "tasks": [],
+            })
+            if goal_name and not goal["name"]:
+                goal["name"] = goal_name
+            goal["measures"].append(measure)
+
+        if task_code:
+            task_key = (goal_code, task_code)
+            task = tasks.setdefault(task_key, {
+                "code": task_code, "name": task_name, "goal_code": goal_code,
+                "goal_name": goal_name, "measures": [],
+            })
+            if task_name and not task["name"]:
+                task["name"] = task_name
+            task["measures"].append(measure)
+
+        ssp_code = dashboard_filters.main_ssp_index(row)
+        add_measure(ssps, ssp_code, measure, code=ssp_code, label=f"ССП {ssp_code}")
+        add_measure(extras["deputies"], dashboard_filters.main_ssp_deputy(row), measure)
+        add_measure(extras["product_types"], clean(row.get("product_type")), measure)
+        add_measure(extras["kpkvk"], clean(row.get("budget_kpkvk")), measure)
+        for value in {clean(source) for source in classify_finance_sources(row)}:
+            add_measure(extras["financing"], value, measure)
+
+        # Normalize sources only once per measure, preserving the same
+        # exact-or-contained matching semantics as canonical_documents().
+        source_cells = [
+            normalize_for_match(clean(row.get(col)))
+            for col in ("source_global", "source_national")
+        ]
+        source_cells = [cell for cell in source_cells if cell]
+        for label, wanted in document_matches:
+            if wanted and any(wanted in cell for cell in source_cells):
+                add_measure(documents, label, measure)
+
+    def sort_code(value: str) -> tuple[tuple[int, ...], str]:
+        import re
+        nums = tuple(int(number) for number in re.findall(r"\d+", value))
+        return (nums if nums else (999999,), value.casefold())
+
+    def finish(item: dict[str, Any]) -> dict[str, Any]:
+        item["measure_count"] = len(item["measures"])
+        item["measures"].sort(key=lambda row: sort_code(row["code"]))
+        return item
+
+    for task in tasks.values():
+        finish(task)
+        if task["goal_code"] in goals:
+            goals[task["goal_code"]]["tasks"].append(task)
+    for goal in goals.values():
+        finish(goal)
+        goal["tasks"].sort(key=lambda task: sort_code(task["code"]))
+
+    return {
+        "goals": sorted(goals.values(), key=lambda item: sort_code(item["code"])),
+        "tasks": sorted(tasks.values(), key=lambda item: (sort_code(item["goal_code"]), sort_code(item["code"]))),
+        "ssps": [finish(ssps[key]) for key in sorted(ssps, key=sort_code)],
+        "documents": [finish(documents[key]) for key in sorted(documents, key=str.casefold)],
+        **{
+            category: [finish(values[key]) for key in sorted(values, key=str.casefold)]
+            for category, values in extras.items()
+        },
+    }
